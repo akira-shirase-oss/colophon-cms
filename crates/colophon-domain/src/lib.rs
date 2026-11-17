@@ -23,6 +23,7 @@ pub mod locale;
 pub mod migrate;
 pub mod policy;
 pub mod populate;
+pub mod preview;
 pub mod project;
 pub mod query;
 pub mod receipt;

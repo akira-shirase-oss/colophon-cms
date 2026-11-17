@@ -1031,6 +1031,93 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/projects/{project}/environments/{environment}/preview-target": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Where this environment's previews open on the site */
+        get: operations["getPreviewTarget"];
+        /** Set or clear the site address previews open */
+        put: operations["setPreviewTarget"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/projects/{project}/environments/{environment}/previews": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Your own live previews, newest first */
+        get: operations["listMyPreviews"];
+        put?: never;
+        /** Open a preview of an entry or a publish request: a one-time code and the site address it fills */
+        post: operations["issuePreview"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/projects/{project}/environments/{environment}/previews/{preview}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** End one of your previews now: its token answers 401 preview_revoked */
+        delete: operations["revokePreview"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/projects/{project}/environments/{environment}/previews/{preview}/code": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** A fresh one-time code for one of your live previews (exchanging it replaces the token) */
+        post: operations["newPreviewCode"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/projects/{project}/environments/{environment}/previews/{preview}/renew": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Keep one of your live previews open: its time to live again, never past 8 hours from opening */
+        post: operations["renewPreview"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/projects/{project}/environments/{environment}/releases": {
         parameters: {
             query?: never;
@@ -1790,6 +1877,91 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/preview/v1/{project}/{environment}/exchange": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Exchange a preview address's one-time code for a bearer token */
+        post: operations["previewExchange"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/preview/v1/{project}/{environment}/session": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** The preview token's scope and end, for the site's preview banner */
+        get: operations["previewSession"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/preview/v1/{project}/{environment}/{collection}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** A collection as the preview sees it: the scope's drafts over the latest release */
+        get: operations["previewList"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/preview/v1/{project}/{environment}/{collection}/query": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Run the bounded query language over the preview's overlay */
+        post: operations["previewQuery"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/preview/v1/{project}/{environment}/{collection}/{entry}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** One entry as the preview sees it */
+        get: operations["previewGet"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/readyz": {
         parameters: {
             query?: never;
@@ -2003,6 +2175,8 @@ export interface components {
             /** Format: uuid */
             entry_id?: string;
             kind?: string;
+            /** @description the pinned revision's language (D-173); absent for the default */
+            locale?: string;
             /** Format: uuid */
             published_revision_id?: string | null;
             /** Format: uuid */
@@ -2104,18 +2278,25 @@ export interface components {
             next_cursor: string | null;
         };
         DeliveryView: {
-            attempts?: number | null;
-            covered_by?: number | null;
+            attempts: number | null;
+            covered_by: number | null;
             /** Format: uuid */
-            destination_id?: string;
+            destination_id: string;
             /** Format: date-time */
-            finished_at?: string | null;
-            kind?: string;
-            last_error?: string | null;
-            location?: string | null;
-            name?: string;
-            state?: string;
-            status?: string | null;
+            finished_at: string | null;
+            /** @enum {string} */
+            kind: "webhook" | "cdn" | "probe";
+            last_error: string | null;
+            /** @description a probe's pinned location */
+            location: string | null;
+            name: string;
+            /**
+             * @description `covered`: a later release's job succeeded, which covers this one (`covered_by`)
+             * @enum {string}
+             */
+            state: "done" | "covered" | "pending" | "failed";
+            /** @description its job for this very release, if it had one */
+            status: string | null;
         };
         DestinationEnabled: {
             enabled: boolean;
@@ -2550,6 +2731,15 @@ export interface components {
             /** @description declared `fill`/`move` operations for values the target can't derive */
             operations?: Record<string, unknown>;
         };
+        /** @description exactly one of `entry` and `changeset` */
+        NewPreview: {
+            /** Format: uuid */
+            changeset?: string;
+            /** Format: uuid */
+            entry?: string;
+            /** @default 900 */
+            ttl_seconds: number;
+        };
         NewProject: {
             name: string;
             slug: string;
@@ -2724,6 +2914,89 @@ export interface components {
             /** Format: date-time */
             updated_at?: string;
         };
+        PreviewCodeView: {
+            code?: string;
+            /** Format: date-time */
+            code_expires_at?: string;
+            url?: string;
+        };
+        /** @description a `PublishedEntryView`, byte for byte, plus `preview` */
+        PreviewEntryView: components["schemas"]["PublishedEntryView"] & {
+            preview: {
+                /** @description fields the issuer's role can't read, left out */
+                hidden_fields?: string[];
+                /** @enum {string} */
+                source: "published" | "draft" | "changeset";
+            };
+        };
+        PreviewExchange: {
+            /** @description the `cpc_…` code from the preview address */
+            code: string;
+        };
+        PreviewIssuedView: {
+            /** @description the one-time code (`cpc_…`): exchangeable once, for 60 seconds */
+            code?: string;
+            /** Format: date-time */
+            code_expires_at?: string;
+            /** Format: date-time */
+            expires_at?: string;
+            /** Format: uuid */
+            id?: string;
+            origin?: string;
+            scope?: components["schemas"]["PreviewScope"];
+            /** @description the preview address with the code in it */
+            url?: string;
+        };
+        PreviewLiveView: {
+            /** Format: date-time */
+            created_at?: string;
+            /** @description whether a site has exchanged its code */
+            exchanged?: boolean;
+            /** Format: date-time */
+            expires_at?: string;
+            /** Format: uuid */
+            id?: string;
+            scope?: components["schemas"]["PreviewScope"];
+        };
+        PreviewQueryPage: {
+            applied: components["schemas"]["AppliedQuery"];
+            data: components["schemas"]["PreviewEntryView"][];
+            next_cursor: string | null;
+        };
+        PreviewRenewedView: {
+            /** Format: date-time */
+            expires_at?: string;
+            /** Format: uuid */
+            id?: string;
+        };
+        PreviewScope: {
+            /** Format: uuid */
+            changeset?: string;
+            /** Format: uuid */
+            entry?: string;
+            /** @enum {string} */
+            kind: "entry" | "changeset";
+        };
+        PreviewSessionView: {
+            /** Format: date-time */
+            expires_at?: string;
+            scope?: components["schemas"]["PreviewScope"];
+        };
+        PreviewTargetView: {
+            /** @description the address's origin: where the Studio posts `colophon:draft-saved` */
+            origin?: string | null;
+            /** Format: date-time */
+            updated_at?: string | null;
+            /** @description the site address a preview opens, with `{code}` and optional `{collection}`, `{id}`, `{slug}`, `{locale}` */
+            url_template?: string | null;
+        };
+        PreviewTokenView: {
+            /** Format: date-time */
+            expires_at?: string;
+            scope?: components["schemas"]["PreviewScope"];
+            /** @description the bearer token (`cpv_…`); keep it in an HttpOnly cookie, never a URL */
+            token?: string;
+        };
         Problem: {
             message?: string;
             pointer?: string;
@@ -2754,7 +3027,7 @@ export interface components {
             content_hash?: string;
             /** Format: uuid */
             id?: string;
-            /** @description its language: its own tag, or the default language's for an untagged entry (D-172) */
+            /** @description its language: its own tag, or the default language's for an untagged entry (D-174) */
             locale?: string | null;
             /** @description on a `locale` read: what was asked for, what was served, and whether it is a fallback */
             localization?: {
@@ -2825,11 +3098,42 @@ export interface components {
             /** @enum {string} */
             status: "starting" | "ready" | "degraded" | "not_ready" | "draining";
         };
-        /** @description a release plus its deliveries and observations — the publish receipt */
+        /** @description a release — every `ReleaseView` field, at the top level — plus its deliveries and observations: the publish receipt */
         ReceiptView: {
-            deliveries?: components["schemas"]["DeliveryView"][];
-            observations?: components["schemas"]["SeenView"][];
-        } & components["schemas"]["ReleaseView"];
+            /** @description the approved hash it published */
+            changeset_hash: string;
+            /** Format: uuid */
+            changeset_id: string;
+            deliveries: components["schemas"]["DeliveryView"][];
+            /** @description entries whose published revision changed */
+            entries: number;
+            /** @description the environment's epoch when it committed */
+            epoch: number;
+            /** @description its number in the environment: 1 for the first, up by exactly one each release */
+            generation: number;
+            /**
+             * @description the release's one label (D-051); `verified` is at `locations` locations
+             * @enum {string}
+             */
+            label: "published" | "pending" | "verified" | "needs_attention";
+            /** @description distinct locations a probe saw this release, or a later one, from */
+            locations: number;
+            observations: components["schemas"]["SeenView"][];
+            /** Format: date-time */
+            published_at: string;
+            /** Format: uuid */
+            published_by: string;
+            published_by_name: string | null;
+            /**
+             * @description whether the environment's CDNs accepted a purge covering it (D-050)
+             * @enum {string}
+             */
+            purge: "none" | "pending" | "accepted" | "failed";
+            /** @description the changeset's title */
+            title: string;
+            /** @description entries it took down */
+            unpublished: number;
+        };
         ReferrerView: {
             collection?: string;
             /** Format: uuid */
@@ -2839,23 +3143,37 @@ export interface components {
             published?: boolean;
         };
         ReleaseView: {
-            changeset_hash?: string;
+            /** @description the approved hash it published */
+            changeset_hash: string;
             /** Format: uuid */
-            changeset_id?: string;
-            entries?: number;
-            epoch?: number;
-            generation?: number;
-            label?: string;
-            locations?: number;
+            changeset_id: string;
+            /** @description entries whose published revision changed */
+            entries: number;
+            /** @description the environment's epoch when it committed */
+            epoch: number;
+            /** @description its number in the environment: 1 for the first, up by exactly one each release */
+            generation: number;
+            /**
+             * @description the release's one label (D-051); `verified` is at `locations` locations
+             * @enum {string}
+             */
+            label: "published" | "pending" | "verified" | "needs_attention";
+            /** @description distinct locations a probe saw this release, or a later one, from */
+            locations: number;
             /** Format: date-time */
-            published_at?: string;
+            published_at: string;
             /** Format: uuid */
-            published_by?: string;
-            published_by_name?: string | null;
-            /** @description the purge job's state for this release */
-            purge?: string;
-            title?: string;
-            unpublished?: number;
+            published_by: string;
+            published_by_name: string | null;
+            /**
+             * @description whether the environment's CDNs accepted a purge covering it (D-050)
+             * @enum {string}
+             */
+            purge: "none" | "pending" | "accepted" | "failed";
+            /** @description the changeset's title */
+            title: string;
+            /** @description entries it took down */
+            unpublished: number;
         };
         RemovedView: {
             removed?: boolean;
@@ -2955,15 +3273,20 @@ export interface components {
             title?: string;
         };
         SeenView: {
-            body_hash?: string | null;
+            body_hash: string | null;
             /** Format: uuid */
-            destination_id?: string;
-            error?: string | null;
-            http_status?: number | null;
-            location?: string;
+            destination_id: string;
+            error: string | null;
+            http_status: number | null;
+            location: string;
             /** Format: date-time */
-            observed_at?: string;
-            observed_generation?: number | null;
+            observed_at: string;
+            /** @description the release the answer said it was built from, if it said */
+            observed_generation: number | null;
+        };
+        SetPreviewTarget: {
+            /** @description https (http only to localhost on a development server), at most 2,048 characters, holding `{code}`; `null` clears it */
+            url_template: string | null;
         };
         SetUp: {
             administrator?: boolean;
@@ -3368,7 +3691,7 @@ export interface operations {
                 content: {
                     "application/json": {
                         data: components["schemas"]["ProjectView"][];
-                        /** @description pass back as `?cursor=`; `null` on the last page */
+                        /** @description pass back in the operation's cursor parameter for the next page; `null` on the last page */
                         next_cursor: string | null;
                     };
                 };
@@ -4104,7 +4427,7 @@ export interface operations {
                 content: {
                     "application/json": {
                         data: components["schemas"]["SiteUser"][];
-                        /** @description pass back as `?cursor=`; `null` on the last page */
+                        /** @description pass back in the operation's cursor parameter for the next page; `null` on the last page */
                         next_cursor: string | null;
                     };
                 };
@@ -4506,7 +4829,7 @@ export interface operations {
                 content: {
                     "application/json": {
                         data: components["schemas"]["EventView"][];
-                        /** @description pass back as `?cursor=`; `null` on the last page */
+                        /** @description pass back in the operation's cursor parameter for the next page; `null` on the last page */
                         next_cursor: string | null;
                     };
                 };
@@ -5113,7 +5436,7 @@ export interface operations {
                 content: {
                     "application/json": {
                         data: components["schemas"]["BulkJobView"][];
-                        /** @description pass back as `?cursor=`; `null` on the last page */
+                        /** @description pass back in the operation's cursor parameter for the next page; `null` on the last page */
                         next_cursor: string | null;
                     };
                 };
@@ -5438,7 +5761,7 @@ export interface operations {
                 content: {
                     "application/json": {
                         data: components["schemas"]["BulkItemView"][];
-                        /** @description pass back as `?cursor=`; `null` on the last page */
+                        /** @description pass back in the operation's cursor parameter for the next page; `null` on the last page */
                         next_cursor: string | null;
                     };
                 };
@@ -5615,7 +5938,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description ok */
+            /** @description the latest 100 changesets; no further pages (`next_cursor` is always `null`) */
             200: {
                 headers: {
                     [name: string]: unknown;
@@ -5623,8 +5946,8 @@ export interface operations {
                 content: {
                     "application/json": {
                         data: components["schemas"]["ChangesetSummaryView"][];
-                        /** @description pass back as `?cursor=`; `null` on the last page */
-                        next_cursor: string | null;
+                        /** @description always `null`: this list answers in one page */
+                        next_cursor: null;
                     };
                 };
             };
@@ -6411,7 +6734,7 @@ export interface operations {
                 content: {
                     "application/json": {
                         data: components["schemas"]["EntrySummaryView"][];
-                        /** @description pass back as `?cursor=`; `null` on the last page */
+                        /** @description pass back in the operation's cursor parameter for the next page; `null` on the last page */
                         next_cursor: string | null;
                     };
                 };
@@ -7012,7 +7335,7 @@ export interface operations {
                 content: {
                     "application/json": {
                         data: components["schemas"]["CommentView"][];
-                        /** @description pass back as `?cursor=`; `null` on the last page */
+                        /** @description pass back in the operation's cursor parameter for the next page; `null` on the last page */
                         next_cursor: string | null;
                     };
                 };
@@ -8022,7 +8345,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description ok */
+            /** @description every shared component; one answer (`next_cursor` is always `null`) */
             200: {
                 headers: {
                     [name: string]: unknown;
@@ -8030,8 +8353,8 @@ export interface operations {
                 content: {
                     "application/json": {
                         data: components["schemas"]["ComponentView"][];
-                        /** @description pass back as `?cursor=`; `null` on the last page */
-                        next_cursor: string | null;
+                        /** @description always `null`: this list answers in one page */
+                        next_cursor: null;
                     };
                 };
             };
@@ -8352,7 +8675,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description ok */
+            /** @description every content type; one answer (`next_cursor` is always `null`) */
             200: {
                 headers: {
                     [name: string]: unknown;
@@ -8360,8 +8683,8 @@ export interface operations {
                 content: {
                     "application/json": {
                         data: components["schemas"]["TypeVersionView"][];
-                        /** @description pass back as `?cursor=`; `null` on the last page */
-                        next_cursor: string | null;
+                        /** @description always `null`: this list answers in one page */
+                        next_cursor: null;
                     };
                 };
             };
@@ -8779,7 +9102,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description ok */
+            /** @description the first 100 destinations; no further pages (`next_cursor` is always `null`) */
             200: {
                 headers: {
                     [name: string]: unknown;
@@ -8787,8 +9110,8 @@ export interface operations {
                 content: {
                     "application/json": {
                         data: components["schemas"]["DestinationView"][];
-                        /** @description pass back as `?cursor=`; `null` on the last page */
-                        next_cursor: string | null;
+                        /** @description always `null`: this list answers in one page */
+                        next_cursor: null;
                     };
                 };
             };
@@ -9076,7 +9399,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description ok */
+            /** @description the newest 100 jobs; no further pages (`next_cursor` is always `null`) */
             200: {
                 headers: {
                     [name: string]: unknown;
@@ -9084,8 +9407,8 @@ export interface operations {
                 content: {
                     "application/json": {
                         data: components["schemas"]["JobView"][];
-                        /** @description pass back as `?cursor=`; `null` on the last page */
-                        next_cursor: string | null;
+                        /** @description always `null`: this list answers in one page */
+                        next_cursor: null;
                     };
                 };
             };
@@ -9517,7 +9840,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description ok */
+            /** @description the newest 100 plans; no further pages (`next_cursor` is always `null`) */
             200: {
                 headers: {
                     [name: string]: unknown;
@@ -9525,8 +9848,8 @@ export interface operations {
                 content: {
                     "application/json": {
                         data: components["schemas"]["MigrationSummaryView"][];
-                        /** @description pass back as `?cursor=`; `null` on the last page */
-                        next_cursor: string | null;
+                        /** @description always `null`: this list answers in one page */
+                        next_cursor: null;
                     };
                 };
             };
@@ -10028,7 +10351,7 @@ export interface operations {
                 content: {
                     "application/json": {
                         data: components["schemas"]["MigrationItemView"][];
-                        /** @description pass back as `?cursor=`; `null` on the last page */
+                        /** @description pass back in the operation's cursor parameter for the next page; `null` on the last page */
                         next_cursor: string | null;
                     };
                 };
@@ -10247,7 +10570,7 @@ export interface operations {
             };
         };
     };
-    listReleases: {
+    getPreviewTarget: {
         parameters: {
             query?: never;
             header?: never;
@@ -10261,7 +10584,567 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description the current generation is in `Colophon-Generation` */
+            /** @description unset fields are null */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        data: components["schemas"]["PreviewTargetView"];
+                    };
+                };
+            };
+            /** @description `unauthorized` — not signed in, the credential is invalid, or the token was revoked */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description `api_token_not_allowed` — people open previews; an API token can't */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description `not_found` — no such resource — or one the caller may not see, which looks the same */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description `rate_limited` — over the per-credential or per-address limit; `Retry-After` */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description any other failure, in the one error envelope */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    setPreviewTarget: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description the project's id */
+                project: string;
+                /** @description the environment's slug, such as `production` */
+                environment: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SetPreviewTarget"];
+            };
+        };
+        responses: {
+            /** @description as stored */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        data: components["schemas"]["PreviewTargetView"];
+                    };
+                };
+            };
+            /** @description `unauthorized` — not signed in, the credential is invalid, or the token was revoked */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description `missing_permission and friends` — signed in, but the role does not allow this */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description `not_found` — no such resource — or one the caller may not see, which looks the same */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description `invalid_preview_url` — the address refused */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description `rate_limited` — over the per-credential or per-address limit; `Retry-After` */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description any other failure, in the one error envelope */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    listMyPreviews: {
+        parameters: {
+            query?: {
+                /** @description only those of this entry */
+                entry?: string;
+            };
+            header?: never;
+            path: {
+                /** @description the project's id */
+                project: string;
+                /** @description the environment's slug, such as `production` */
+                environment: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description the newest 100 of the caller's own live previews; `next_cursor` is always null */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        data: components["schemas"]["PreviewLiveView"][];
+                        /** @description always `null`: this list answers in one page */
+                        next_cursor: null;
+                    };
+                };
+            };
+            /** @description `unauthorized` — not signed in, the credential is invalid, or the token was revoked */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description `api_token_not_allowed` — people open previews; an API token can't */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description `not_found` — no such resource — or one the caller may not see, which looks the same */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description `rate_limited` — over the per-credential or per-address limit; `Retry-After` */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description any other failure, in the one error envelope */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    issuePreview: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description the project's id */
+                project: string;
+                /** @description the environment's slug, such as `production` */
+                environment: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["NewPreview"];
+            };
+        };
+        responses: {
+            /** @description created */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        data: components["schemas"]["PreviewIssuedView"];
+                    };
+                };
+            };
+            /** @description `unauthorized` — not signed in, the credential is invalid, or the token was revoked */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description `api_token_not_allowed` — people open previews; an API token can't */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description `not_found` — no such resource — or one the caller may not see, which looks the same */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description `already_published` — the publish request is already live */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description `preview_not_configured, invalid_scope, invalid_ttl` — no preview address is set, or the request refused */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description `preview_limit` — the project has 1,000 previews open; over the per-credential or per-address limit; `Retry-After` */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description any other failure, in the one error envelope */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    revokePreview: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description the project's id */
+                project: string;
+                /** @description the environment's slug, such as `production` */
+                environment: string;
+                /** @description the path parameter */
+                preview: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description ended */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description `unauthorized` — not signed in, the credential is invalid, or the token was revoked */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description `api_token_not_allowed` — people open previews; an API token can't */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description `not_found` — no such resource — or one the caller may not see, which looks the same */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description `rate_limited` — over the per-credential or per-address limit; `Retry-After` */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description any other failure, in the one error envelope */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    newPreviewCode: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description the project's id */
+                project: string;
+                /** @description the environment's slug, such as `production` */
+                environment: string;
+                /** @description the path parameter */
+                preview: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description created */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        data: components["schemas"]["PreviewCodeView"];
+                    };
+                };
+            };
+            /** @description `unauthorized` — not signed in, the credential is invalid, or the token was revoked */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description `api_token_not_allowed` — people open previews; an API token can't */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description `not_found` — no such resource — or one the caller may not see, which looks the same */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description `preview_not_configured` — no preview address is set */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description `rate_limited` — over the per-credential or per-address limit; `Retry-After` */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description any other failure, in the one error envelope */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    renewPreview: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description the project's id */
+                project: string;
+                /** @description the environment's slug, such as `production` */
+                environment: string;
+                /** @description the path parameter */
+                preview: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description the new end */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        data: components["schemas"]["PreviewRenewedView"];
+                    };
+                };
+            };
+            /** @description `unauthorized` — not signed in, the credential is invalid, or the token was revoked */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description `api_token_not_allowed` — people open previews; an API token can't */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description `not_found` — no such resource — or one the caller may not see, which looks the same */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description `rate_limited` — over the per-credential or per-address limit; `Retry-After` */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description any other failure, in the one error envelope */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    listReleases: {
+        parameters: {
+            query?: {
+                /** @description page size: 1–100, default 100 */
+                limit?: number;
+                /** @description the `next_cursor` a previous page answered */
+                cursor?: string;
+            };
+            header?: never;
+            path: {
+                /** @description the project's id */
+                project: string;
+                /** @description the environment's slug, such as `production` */
+                environment: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description a page of releases, newest first; the current generation is in `Colophon-Generation` */
             200: {
                 headers: {
                     "Colophon-Generation"?: string;
@@ -10270,9 +11153,18 @@ export interface operations {
                 content: {
                     "application/json": {
                         data: components["schemas"]["ReleaseView"][];
-                        /** @description pass back as `?cursor=`; `null` on the last page */
+                        /** @description pass back in the operation's cursor parameter for the next page; `null` on the last page */
                         next_cursor: string | null;
                     };
+                };
+            };
+            /** @description `bad_request` — `limit` out of range, or a cursor that isn't this list's */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
                 };
             };
             /** @description `unauthorized` — not signed in, the credential is invalid, or the token was revoked */
@@ -10677,7 +11569,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description ok */
+            /** @description up to 100 pending schedules in time order, then the 20 most recently finished; no further pages (`next_cursor` is always `null`) */
             200: {
                 headers: {
                     [name: string]: unknown;
@@ -10685,8 +11577,8 @@ export interface operations {
                 content: {
                     "application/json": {
                         data: components["schemas"]["ScheduleView"][];
-                        /** @description pass back as `?cursor=`; `null` on the last page */
-                        next_cursor: string | null;
+                        /** @description always `null`: this list answers in one page */
+                        next_cursor: null;
                     };
                 };
             };
@@ -10846,7 +11738,7 @@ export interface operations {
                 content: {
                     "application/json": {
                         data: components["schemas"]["TaskView"][];
-                        /** @description pass back as `?cursor=`; `null` on the last page */
+                        /** @description pass back in the operation's cursor parameter for the next page; `null` on the last page */
                         next_cursor: string | null;
                     };
                 };
@@ -11185,7 +12077,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description ok */
+            /** @description the newest 1,000 invitations; no further pages (`next_cursor` is always `null`) */
             200: {
                 headers: {
                     [name: string]: unknown;
@@ -11193,8 +12085,8 @@ export interface operations {
                 content: {
                     "application/json": {
                         data: components["schemas"]["InvitationView"][];
-                        /** @description pass back as `?cursor=`; `null` on the last page */
-                        next_cursor: string | null;
+                        /** @description always `null`: this list answers in one page */
+                        next_cursor: null;
                     };
                 };
             };
@@ -11408,7 +12300,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description ok */
+            /** @description up to 1,000 members, owners first; no further pages (`next_cursor` is always `null`) */
             200: {
                 headers: {
                     [name: string]: unknown;
@@ -11416,8 +12308,8 @@ export interface operations {
                 content: {
                     "application/json": {
                         data: components["schemas"]["MemberView"][];
-                        /** @description pass back as `?cursor=`; `null` on the last page */
-                        next_cursor: string | null;
+                        /** @description always `null`: this list answers in one page */
+                        next_cursor: null;
                     };
                 };
             };
@@ -11638,7 +12530,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description ok */
+            /** @description up to 100 roles, the built-in ones first; no further pages (`next_cursor` is always `null`) */
             200: {
                 headers: {
                     [name: string]: unknown;
@@ -11646,8 +12538,8 @@ export interface operations {
                 content: {
                     "application/json": {
                         data: components["schemas"]["RoleView"][];
-                        /** @description pass back as `?cursor=`; `null` on the last page */
-                        next_cursor: string | null;
+                        /** @description always `null`: this list answers in one page */
+                        next_cursor: null;
                     };
                 };
             };
@@ -12035,7 +12927,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description ok */
+            /** @description the newest 200 tokens; no further pages (`next_cursor` is always `null`) */
             200: {
                 headers: {
                     [name: string]: unknown;
@@ -12043,8 +12935,8 @@ export interface operations {
                 content: {
                     "application/json": {
                         data: components["schemas"]["TokenView"][];
-                        /** @description pass back as `?cursor=`; `null` on the last page */
-                        next_cursor: string | null;
+                        /** @description always `null`: this list answers in one page */
+                        next_cursor: null;
                     };
                 };
             };
@@ -13498,7 +14390,7 @@ export interface operations {
                 limit?: number;
                 /** @description the `next_cursor` a previous page answered */
                 cursor?: string;
-                /** @description answer in one language (D-172): one row per translation group, the best published member through the fallback chain; a listed tag when the environment lists languages */
+                /** @description answer in one language (D-174): one row per translation group, the best published member through the fallback chain; a listed tag when the environment lists languages */
                 locale?: string;
                 /** @description with `locale`: `policy` (the environment's chain, the default), `none`, or up to four tags separated by commas */
                 fallback?: string;
@@ -13531,7 +14423,7 @@ export interface operations {
                 content: {
                     "application/json": {
                         data: components["schemas"]["PublishedEntryView"][];
-                        /** @description pass back as `?cursor=`; `null` on the last page */
+                        /** @description pass back in the operation's cursor parameter for the next page; `null` on the last page */
                         next_cursor: string | null;
                     };
                 };
@@ -13590,7 +14482,7 @@ export interface operations {
                 generation?: number;
                 /** @description the `next_cursor` a previous page answered */
                 cursor?: string;
-                /** @description answer in one language (D-172): one row per translation group, the best published member through the fallback chain; a listed tag when the environment lists languages */
+                /** @description answer in one language (D-174): one row per translation group, the best published member through the fallback chain; a listed tag when the environment lists languages */
                 locale?: string;
                 /** @description with `locale`: `policy` (the environment's chain, the default), `none`, or up to four tags separated by commas */
                 fallback?: string;
@@ -13671,7 +14563,7 @@ export interface operations {
             query?: {
                 /** @description pin the read to one release generation */
                 generation?: number;
-                /** @description answer in one language (D-172): one row per translation group, the best published member through the fallback chain; a listed tag when the environment lists languages */
+                /** @description answer in one language (D-174): one row per translation group, the best published member through the fallback chain; a listed tag when the environment lists languages */
                 locale?: string;
                 /** @description with `locale`: `policy` (the environment's chain, the default), `none`, or up to four tags separated by commas */
                 fallback?: string;
@@ -14013,6 +14905,443 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content?: never;
+            };
+        };
+    };
+    previewExchange: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description the project's id */
+                project: string;
+                /** @description the environment's slug, such as `production` */
+                environment: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PreviewExchange"];
+            };
+        };
+        responses: {
+            /** @description `private, no-store`; a code works once */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        data: components["schemas"]["PreviewTokenView"];
+                    };
+                };
+            };
+            /** @description `preview_not_found` — unknown, used and expired codes all answer alike */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description any other failure, in the one error envelope */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    previewSession: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description the project's id */
+                project: string;
+                /** @description the environment's slug, such as `production` */
+                environment: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description `private, no-store`, `noindex` */
+            200: {
+                headers: {
+                    "Colophon-Generation"?: string;
+                    "Colophon-Preview"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        data: components["schemas"]["PreviewSessionView"];
+                    };
+                };
+            };
+            /** @description `unauthorized` — not signed in, the credential is invalid, or the token was revoked; no token, an ended one, or its issuer can no longer read here */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description `not_found` — no such resource — or one the caller may not see, which looks the same */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description `preview_stale` — the publish request changed after the preview opened */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description `preview_published` — the publish request is live; `Colophon-Generation` names its release */
+            410: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description `preview_reads_latest, preview_depth` — `?generation=` or `depth` asked for */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description `unavailable` — preview read capacity is full; `Retry-After` says when */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description any other failure, in the one error envelope */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    previewList: {
+        parameters: {
+            query?: {
+                /** @description page size: 1–100, default 20 */
+                limit?: number;
+                /** @description the `next_cursor` a previous page answered */
+                cursor?: string;
+            };
+            header?: never;
+            path: {
+                /** @description the project's id */
+                project: string;
+                /** @description the environment's slug, such as `production` */
+                environment: string;
+                /** @description the collection's slug */
+                collection: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description `/content/v1`'s shape; `private, no-store`, `noindex`, never `ETag` */
+            200: {
+                headers: {
+                    "Colophon-Generation"?: string;
+                    "Colophon-Preview"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        data: components["schemas"]["PreviewEntryView"][];
+                        /** @description pass back in the operation's cursor parameter for the next page; `null` on the last page */
+                        next_cursor: string | null;
+                    };
+                };
+            };
+            /** @description `unauthorized` — not signed in, the credential is invalid, or the token was revoked; no token, an ended one, or its issuer can no longer read here */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description `not_found` — no such resource — or one the caller may not see, which looks the same */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description `preview_stale` — the publish request changed after the preview opened */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description `preview_published` — the publish request is live; `Colophon-Generation` names its release */
+            410: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description `preview_reads_latest, preview_depth` — `?generation=` or `depth` asked for */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description `unavailable` — preview read capacity is full; `Retry-After` says when */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description any other failure, in the one error envelope */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    previewQuery: {
+        parameters: {
+            query?: {
+                /** @description the `next_cursor` a previous page answered */
+                cursor?: string;
+            };
+            header?: never;
+            path: {
+                /** @description the project's id */
+                project: string;
+                /** @description the environment's slug, such as `production` */
+                environment: string;
+                /** @description the collection's slug */
+                collection: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["QueryDocument"];
+            };
+        };
+        responses: {
+            /** @description `/content/v1`'s query page; `depth` isn't served in preview yet (422 `preview_depth`) */
+            200: {
+                headers: {
+                    "Colophon-Generation"?: string;
+                    "Colophon-Preview"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PreviewQueryPage"];
+                };
+            };
+            /** @description `unauthorized` — not signed in, the credential is invalid, or the token was revoked; no token, an ended one, or its issuer can no longer read here */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description `not_found` — no such resource — or one the caller may not see, which looks the same */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description `preview_stale` — the publish request changed after the preview opened */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description `preview_published` — the publish request is live; `Colophon-Generation` names its release */
+            410: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description `preview_reads_latest, preview_depth` — `?generation=` or `depth` asked for */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description `unavailable` — preview read capacity is full; `Retry-After` says when */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description any other failure, in the one error envelope */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    previewGet: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description the project's id */
+                project: string;
+                /** @description the environment's slug, such as `production` */
+                environment: string;
+                /** @description the collection's slug */
+                collection: string;
+                /** @description the entry's id */
+                entry: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description `/content/v1`'s shape; `private, no-store`, `noindex`, never `ETag` */
+            200: {
+                headers: {
+                    "Colophon-Generation"?: string;
+                    "Colophon-Preview"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        data: components["schemas"]["PreviewEntryView"];
+                    };
+                };
+            };
+            /** @description `unauthorized` — not signed in, the credential is invalid, or the token was revoked; no token, an ended one, or its issuer can no longer read here */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description `not_found` — no such resource — or one the caller may not see, which looks the same */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description `preview_stale` — the publish request changed after the preview opened */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description `preview_published` — the publish request is live; `Colophon-Generation` names its release */
+            410: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description `preview_reads_latest, preview_depth` — `?generation=` or `depth` asked for */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description `unavailable` — preview read capacity is full; `Retry-After` says when */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description any other failure, in the one error envelope */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
             };
         };
     };

@@ -207,7 +207,7 @@ jobs:
             -c "ALTER SYSTEM SET log_lock_waits = on" \
             -c "ALTER SYSTEM SET deadlock_timeout = '50ms'" \
             -c "SELECT pg_reload_conf()"
-      - name: Load smoke runs (health, rich-text validation, signed-in and bearer requests, members, custom roles, API tokens, schedules, who may create projects, changesets, public delivery, publishing with the worker, drafts, content types, content modelling, deleting entries, the Studio)
+      - name: Load smoke runs (health, rich-text validation, signed-in and bearer requests, members, custom roles, API tokens, schedules, who may create projects, changesets, public delivery, draft preview, publishing with the worker, drafts, content types, content modelling, deleting entries, the Studio)
         # Endpoints that never touch the database run back to back (throughput): their p99 has
         # threefold headroom even on the slowest runner seen, and health's requests a second say
         # how fast this runner is. Database-backed endpoints run at a fixed rate (steady), about
@@ -251,9 +251,12 @@ jobs:
           RATE=500 P99_MS=200 scripts/load.sh projects steady
           RATE=400 P99_MS=200 scripts/load.sh changesets steady
           RATE=1500 P99_MS=200 scripts/load.sh delivery steady
-          # The same reads in one language through fallbacks, 20 languages listed (D-172): a
+          # The same reads in one language through fallbacks, 20 languages listed (D-174): a
           # smoke on the laptop did 2,923 a second back to back at p99 16 ms; a third of that.
           RATE=1000 P99_MS=200 scripts/load.sh delivery-locales steady
+          # Draft preview reads (D-172): never cached, each re-checked as its issuer — the
+          # spec's 200/s budget, at the drafts smoke's p99 until a runner baseline exists.
+          RATE=200 P99_MS=500 scripts/load.sh preview steady
           # RATE counts publishes here, five requests each.
           RATE=60 P99_MS=500 scripts/load.sh publishing steady
           # Step 3.5 made the drafts mix heavier (title searches walk the collection, lists read

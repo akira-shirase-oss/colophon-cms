@@ -107,6 +107,7 @@ elif docker compose -f deploy/compose.yaml ps --quiet 2>/dev/null | grep -q .; t
     PATH="$PATH:$HOME/.local/bin" TOTAL=10000 P99_MS=500 KEEP=0 scripts/load.sh live throughput
     PATH="$PATH:$HOME/.local/bin" TOTAL=50000 P99_MS=200 KEEP=0 scripts/load.sh delivery throughput
     PATH="$PATH:$HOME/.local/bin" TOTAL=20000 P99_MS=200 KEEP=0 scripts/load.sh delivery-locales throughput
+    PATH="$PATH:$HOME/.local/bin" TOTAL=10000 P99_MS=250 KEEP=0 scripts/load.sh preview throughput
     # USERS bounds the audience the smoke signs up, not the traffic share it drives.
     PATH="$PATH:$HOME/.local/bin" TOTAL=10000 USERS=64 P99_MS=700 KEEP=0 scripts/load.sh audience throughput
     PATH="$PATH:$HOME/.local/bin" TOTAL=20000 P99_MS=500 KEEP=0 scripts/load.sh publishing throughput

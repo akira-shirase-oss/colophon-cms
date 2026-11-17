@@ -245,7 +245,7 @@ impl Tool {
             ),
             Self::ListReleases => (
                 "List releases",
-                "Lists the environment's published releases, newest first: generation, label, title, counts and who published. Read-only.",
+                "Lists the environment's published releases, newest first, 100 a page: generation, label, title, counts and who published. Pass next_cursor as cursor for the next page. Read-only.",
             ),
             Self::GetRelease => (
                 "Get a release",
@@ -290,7 +290,8 @@ impl Tool {
         let cursor = json!({"type": "string", "description": "Optional. next_cursor from the previous page."});
         let uuid_field = |description: &str| json!({"type": "string", "format": "uuid", "description": description});
         let (properties, required) = match self {
-            Self::ListContentTypes | Self::ListReleases => (json!({}), json!([])),
+            Self::ListContentTypes => (json!({}), json!([])),
+            Self::ListReleases => (json!({"cursor": cursor}), json!([])),
             Self::ListEntries => (
                 json!({"collection": collection, "q": {"type": "string", "maxLength": MAX_SEARCH, "description": "Optional. Words to find in titles."}, "cursor": cursor}),
                 json!(["collection"]),
@@ -581,6 +582,12 @@ struct OneRelease {
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
+struct ListReleases {
+    cursor: Option<String>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
 struct ListMigrations {
     collection: Option<String>,
     state: Option<String>,
@@ -759,8 +766,12 @@ fn plan_get_publish_request(arguments: Value) -> Result<Plan, Invalid> {
 }
 
 fn plan_list_releases(arguments: Value) -> Result<Plan, Invalid> {
-    let NoArguments {} = self::arguments(arguments)?;
-    Ok(Plan::new(Method::GET, "/releases".into()))
+    let args: ListReleases = self::arguments(arguments)?;
+    let mut plan = Plan::new(Method::GET, "/releases".into());
+    if let Some(cursor) = args.cursor {
+        plan.query.push(("cursor", self::cursor(cursor)?));
+    }
+    Ok(plan)
 }
 
 fn plan_get_release(arguments: Value) -> Result<Plan, Invalid> {
@@ -1593,6 +1604,17 @@ mod tests {
                 .as_deref()
                 .is_some_and(|key| key.starts_with("mcp-"))
         );
+        // The releases list pages (`next_cursor` back in as `cursor`); a cursor that isn't a
+        // route's opaque token is refused before anything is sent.
+        let releases =
+            plan(Tool::ListReleases, json!({"cursor": "cmVsZWFzZXM6djE"})).expect("valid");
+        assert_eq!(releases.path, "/releases");
+        assert_eq!(
+            releases.query,
+            vec![("cursor", "cmVsZWFzZXM6djE".to_owned())]
+        );
+        assert!(plan(Tool::ListReleases, json!({})).is_ok_and(|first| first.query.is_empty()));
+        assert!(plan(Tool::ListReleases, json!({"cursor": "a&b=c"})).is_err());
         let tasks =
             plan(Tool::ListTasks, json!({"assignee": "me", "status": "open"})).expect("valid");
         assert_eq!(tasks.path, "/tasks");

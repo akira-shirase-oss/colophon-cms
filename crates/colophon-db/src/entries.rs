@@ -1181,7 +1181,7 @@ pub async fn create_localization(
 ) -> Result<Localized, DbError> {
     // The source was locked by `source_for_localization`; COALESCE keeps a group a concurrent
     // localize won while this one prepared its copy. A new group takes its source's own id
-    // (D-171): publications name an ungrouped entry's group by its id, so a source published
+    // (D-173): publications name an ungrouped entry's group by its id, so a source published
     // before it was translated stays in the same group as its translations.
     let candidate = source_id;
     let group = sqlx::query!(

@@ -33,6 +33,7 @@ pub mod middleware;
 mod migrations;
 mod openapi;
 mod populate;
+mod preview;
 mod projects;
 mod receipts;
 mod rich_text;

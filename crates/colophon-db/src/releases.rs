@@ -198,7 +198,7 @@ pub async fn commit(
          JOIN revisions r ON r.project_id = i.project_id AND r.environment_id = i.environment_id
                          AND r.id = i.revision_id
          -- The locale is the revision's, pinned when it was written; the translation group is
-         -- the entry's, which never changes once set (D-171).
+         -- the entry's, which never changes once set (D-173).
          LEFT JOIN entries e ON e.project_id = i.project_id AND e.environment_id = i.environment_id
                             AND e.id = i.entry_id
          WHERE i.project_id = $1 AND i.environment_id = $2 AND i.changeset_id = $3 AND i.kind = 'publish'
@@ -523,8 +523,43 @@ pub async fn of_changeset(
     .map_err(DbError::from_query)
 }
 
-/// The environment's releases, newest first, at most 100; only the one at `generation` when
-/// given.
+/// The most releases one page of [`list`] reads.
+pub const MAX_PAGE: i64 = 100;
+
+/// Which releases [`list`] reads.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Window {
+    /// Only the one at this generation (a receipt).
+    At(i64),
+    /// Newest first, only those older than `before` when it is given (the generation a previous
+    /// page ended at), at most `limit` — clamped to `1..=MAX_PAGE + 1`, so a caller can ask one
+    /// more than a page to learn whether another follows.
+    Page {
+        /// Read only generations below this one.
+        before: Option<i64>,
+        /// How many at most.
+        limit: i64,
+    },
+}
+
+impl Window {
+    /// The half-open range of generations, `[from, to)`, and the row limit. A range, never an
+    /// `IS NULL OR` filter, so even a generic plan walks the primary key from the right place:
+    /// a page past thousands of releases reads only its own rows, and a receipt for a
+    /// generation that doesn't exist reads none.
+    fn bounds(self) -> (i64, i64, i64) {
+        match self {
+            Self::At(generation) => (generation, generation.saturating_add(1), 1),
+            Self::Page { before, limit } => (
+                i64::MIN,
+                before.unwrap_or(i64::MAX),
+                limit.clamp(1, MAX_PAGE + 1),
+            ),
+        }
+    }
+}
+
+/// The environment's releases in `window`, newest first (D-050, D-051).
 ///
 /// A destination counts as done for a release once one of its jobs at that release or later
 /// succeeded (D-050, D-051), which is to say once its latest success is at that release or later.
@@ -532,10 +567,8 @@ pub async fn of_changeset(
 /// answer for every release on the page. Asked per release instead, as a range of jobs, the list
 /// read every later job for every release: 5.2 seconds for a project with 3,139 releases, timed
 /// out at the end of a million-request load test. This way it takes about 7 ms.
-pub async fn list(
-    tx: &mut ProjectTransaction,
-    generation: Option<i64>,
-) -> Result<Vec<Release>, DbError> {
+pub async fn list(tx: &mut ProjectTransaction, window: Window) -> Result<Vec<Release>, DbError> {
+    let (from, to, limit) = window.bounds();
     sqlx::query_as!(
         Release,
         r#"WITH page AS MATERIALIZED (
@@ -546,9 +579,10 @@ pub async fn list(
                JOIN changesets c ON c.project_id = r.project_id AND c.environment_id = r.environment_id
                                 AND c.id = r.changeset_id
                JOIN identities i ON i.id = r.published_by
-               WHERE r.project_id = $1 AND r.environment_id = $2 AND ($3::bigint IS NULL OR r.generation = $3)
+               WHERE r.project_id = $1 AND r.environment_id = $2
+                 AND r.generation >= $3 AND r.generation < $4
                ORDER BY r.generation DESC
-               LIMIT 100
+               LIMIT $5
            ), latest AS MATERIALIZED (
                SELECT d.id, d.kind,
                       (SELECT max(j.generation) FROM jobs j
@@ -594,7 +628,9 @@ pub async fn list(
            ORDER BY p.generation DESC"#,
         tx.project,
         tx.environment,
-        generation
+        from,
+        to,
+        limit
     )
     .fetch_all(&mut *tx.transaction)
     .await

@@ -19,6 +19,19 @@ through `--version` and `GET /version`.
 - **`@colophon-cms/rich-text` (D-170):** the content renderer as its own zero-dependency
   package, built from the one renderer the Studio uses, so a site reading the delivery API
   renders rich text exactly as the Studio previews it.
+- Draft preview on your own site, the backend (D-171, D-172): a person opens a preview of an
+  entry (with its translations) or a publish request; the site exchanges the address's
+  one-time code for a 15-minute bearer token and reads `/preview/v1`, which answers
+  `/content/v1`'s shapes with the drafts laid over the latest release. Never cached, never
+  indexed, re-checked against the issuer on every read, revocable. Set the address with
+  `PUT {P}/preview-target`; the Studio pane and the SDK's site helpers follow.
+- Languages in delivery (D-173, D-174): each environment may list its languages with a
+  default and ordered fallbacks (`GET`/`PUT {P}/locales`), and `/content/v1` lists, entry
+  reads and queries take `?locale=` and `?fallback=`, answering one row per translation
+  group with what was served labelled, `alternates` on entry reads, and the cache keyed by
+  the chain and the policy version. The Studio gains Settings → Languages, a language select
+  in the editor, a language filter on lists, What readers get in one language, and each
+  publish request item's language.
 
 ### Security
 
@@ -52,16 +65,16 @@ closes and carries a test that failed without it.
   (D-169); a token on an unmatched path is redacted from logs (D-152); a magic link's token
   goes before a `return_to` fragment.
 
-### Added
-
-- Languages in delivery (D-171, D-172): each environment may list its languages with a
-  default and ordered fallbacks (`GET`/`PUT {P}/locales`), and `/content/v1` lists, entry
-  reads and queries take `?locale=` and `?fallback=`, answering one row per translation
-  group with what was served labelled, `alternates` on entry reads, and the cache keyed by
-  the chain and the policy version.
-
 ### Fixed
 
+- The releases list pages: `GET {P}/releases` takes `?limit=` (1–100, default 100, what it
+  answered before) and `?cursor=`, and its `next_cursor` is real. It used to stop at the
+  newest 100 while the OpenAPI document advertised a cursor. The MCP `list_releases` tool
+  takes the cursor too.
+- The OpenAPI document says only what the routes do: lists that answer in one page say how
+  much it holds and that `next_cursor` is always `null`; the receipt schema lists every
+  release field itself instead of through `allOf`, and the release, delivery and observation
+  fields are marked required. `@colophon-cms/sdk`'s generated types follow.
 - Adding a translation of a page with a slug into a tag with capitals (`pt-BR`, `zh-Hant`)
   was refused `invalid_slug`: the derived slug kept the tag's capitals. It is lowercased now
   (`home-pt-br`).
@@ -73,8 +86,7 @@ closes and carries a test that failed without it.
   under the old shape are not served. Without `?locale=` every language still comes back.
   Once an environment lists languages, entry writes with an unlisted tag are refused
   (`locale_not_configured`). The database function `delivery_environment` takes a third
-  argument (migration 0065).
-
+  argument (migration 0066).
 - **Magic links stop until origins are listed:** `PUT {P}/audience/origins` must name each
   site a link may land on; until then a request is `422 return_to_not_allowed` (D-148).
 - **A database on another machine needs `sslmode=verify-full`:** the server and the admin

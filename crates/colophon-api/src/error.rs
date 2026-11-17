@@ -152,10 +152,10 @@ pub struct ErrorDetails {
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub changesets: Vec<PendingChangeset>,
     /// For a delivery read in a language nothing in the chain is published in
-    /// (`not_in_locale`, D-172): the tags the entry's translations are published in.
+    /// (`not_in_locale`, D-174): the tags the entry's translations are published in.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub available: Vec<String>,
-    /// For a refused language list (`locale_in_use`, D-171): the tag the entries are written in.
+    /// For a refused language list (`locale_in_use`, D-173): the tag the entries are written in.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub locale: Option<String>,
 }
@@ -361,7 +361,7 @@ pub enum ApiError {
         /// The current list's `ETag`, as `sha256:<hex>`.
         current: String,
     },
-    /// A language-list change named a policy version that is no longer current (D-171). The
+    /// A language-list change named a policy version that is no longer current (D-173). The
     /// response's `ETag` names the list now.
     #[error(
         "someone changed this environment's languages since you loaded them; review them and save again"
@@ -370,12 +370,12 @@ pub enum ApiError {
         /// The list's current policy version.
         current: i64,
     },
-    /// A language list leaves out a tag that live entries carry (D-171): 409 `locale_in_use`,
+    /// A language list leaves out a tag that live entries carry (D-173): 409 `locale_in_use`,
     /// naming the tag and the first entries. Boxed, so every `Result` in the API stays small.
     #[error("{}", .0.1.message)]
     LocaleInUse(Box<(String, InTheWay)>),
     /// A delivery read asked for an entry in a language that neither it nor any translation in
-    /// the fallback chain is published in (D-172). 404 — it may exist in others.
+    /// the fallback chain is published in (D-174). 404 — it may exist in others.
     #[error("this entry isn't published in that language or its fallbacks")]
     NotInLocale {
         /// The tags its group is published in, for the reader to choose from.
@@ -527,6 +527,21 @@ pub enum ApiError {
     /// Sign-in failed. Details are logged, never shown: they can help an attacker.
     #[error("sign-in failed or expired; start again")]
     SignInFailed,
+    /// A preview read or exchange refused (D-171): 401 for a token that ended, 404 for a code
+    /// that can't be spent, 409 when the publish request moved, 410 once it is published, 422
+    /// for a pinned read. `reason` is the stable code (`preview_expired`, …); the message is
+    /// safe to show.
+    #[error("{message}")]
+    Preview {
+        /// The status: 401, 404, 409, 410 or 422.
+        status: StatusCode,
+        /// A stable code clients can act on.
+        reason: &'static str,
+        /// What is wrong, for people.
+        message: &'static str,
+        /// For 410: the release that published the request, sent as `Colophon-Generation`.
+        generation: Option<i64>,
+    },
     /// An unexpected failure; the boxed error is the private cause.
     #[error("internal error")]
     Internal(#[source] Box<dyn StdError + Send + Sync>),
@@ -732,6 +747,7 @@ impl ApiError {
             | Self::WorkFull { .. }
             | Self::PayloadFull { .. } => StatusCode::SERVICE_UNAVAILABLE,
             Self::Internal(_) => StatusCode::INTERNAL_SERVER_ERROR,
+            Self::Preview { status, .. } => *status,
         }
     }
 
@@ -775,6 +791,14 @@ impl ApiError {
             | Self::PayloadFull { .. } => ErrorCode::Unavailable,
             Self::SignInFailed => ErrorCode::SignInFailed,
             Self::Internal(_) => ErrorCode::Internal,
+            Self::Preview { status, .. } => match *status {
+                StatusCode::UNAUTHORIZED => ErrorCode::Unauthorized,
+                StatusCode::NOT_FOUND => ErrorCode::NotFound,
+                StatusCode::CONFLICT => ErrorCode::Conflict,
+                StatusCode::GONE => ErrorCode::Gone,
+                StatusCode::TOO_MANY_REQUESTS => ErrorCode::RateLimited,
+                _ => ErrorCode::ValidationFailed,
+            },
         }
     }
 
@@ -809,7 +833,9 @@ impl ApiError {
                 permission: *permission,
                 ..ErrorDetails::new(reason, "")
             }),
-            Self::Conflict { reason, .. } => Some(ErrorDetails::new(reason, "")),
+            Self::Conflict { reason, .. } | Self::Preview { reason, .. } => {
+                Some(ErrorDetails::new(reason, ""))
+            }
             Self::WorkFull { .. } => Some(ErrorDetails::new("work_full", "")),
             Self::PayloadFull { .. } => Some(ErrorDetails::new("payload_full", "")),
             Self::TooManyRequests { .. } => Some(ErrorDetails::new("rate_limited", "")),
@@ -956,6 +982,21 @@ impl IntoResponse for ApiError {
                 response
                     .headers_mut()
                     .insert(crate::delivery::GENERATION, HeaderValue::from(current));
+            }
+            Self::Preview {
+                status, generation, ..
+            } => {
+                if status == StatusCode::UNAUTHORIZED {
+                    response.headers_mut().insert(
+                        header::WWW_AUTHENTICATE,
+                        HeaderValue::from_static("Bearer error=\"invalid_token\""),
+                    );
+                }
+                if let Some(generation) = generation {
+                    response
+                        .headers_mut()
+                        .insert(crate::delivery::GENERATION, HeaderValue::from(generation));
+                }
             }
             Self::RateLimited { retry_after } | Self::TooManyRequests { retry_after } => {
                 response

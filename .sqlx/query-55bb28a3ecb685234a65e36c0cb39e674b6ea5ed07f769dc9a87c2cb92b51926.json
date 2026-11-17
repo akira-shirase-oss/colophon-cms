@@ -1,0 +1,31 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE preview_grants\n         SET expires_at = greatest(expires_at, least(created_at + interval '8 hours',\n                                                     now() + make_interval(secs => ttl_seconds)))\n         WHERE project_id = $1 AND environment_id = $2 AND id = $3 AND issuer_id = $4\n           AND revoked_at IS NULL AND expires_at > now()\n         RETURNING expires_at",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "expires_at",
+        "type_info": "Timestamptz",
+        "origin": {
+          "Table": {
+            "table": "preview_grants",
+            "name": "expires_at"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid",
+        "Uuid",
+        "Uuid"
+      ]
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "55bb28a3ecb685234a65e36c0cb39e674b6ea5ed07f769dc9a87c2cb92b51926"
+}

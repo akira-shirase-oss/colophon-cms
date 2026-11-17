@@ -30,7 +30,7 @@
 //! it out and a read of it is 410 `gone`, uncached. Cache keys name the environment's latest
 //! unpublish, so answers cached before it are never served again.
 //!
-//! Locales (D-171, D-172): every row names its `locale` — its own tag, or the default language's
+//! Locales (D-173, D-174): every row names its `locale` — its own tag, or the default language's
 //! for an untagged entry — and an entry read lists its published translations as `alternates`.
 //! `?locale=` (with `?fallback=policy|none|<tags>`) answers in one language: lists and queries
 //! give one row per translation group, the best published member through the chain, labelled
@@ -75,7 +75,7 @@ pub(crate) const GENERATION: HeaderName = HeaderName::from_static("colophon-gene
 pub(crate) const CACHE: HeaderName = HeaderName::from_static("colophon-cache");
 /// The tags a CDN purges by (Cloudflare's header name).
 pub(crate) const CACHE_TAG: HeaderName = HeaderName::from_static("cache-tag");
-/// The response header naming the locale policy version an answer resolved with (D-172).
+/// The response header naming the locale policy version an answer resolved with (D-174).
 pub(crate) const LOCALE_POLICY: HeaderName = HeaderName::from_static("colophon-locale-policy");
 
 /// Module 06: live public queries may be shared for 30 seconds; browsers revalidate every time.
@@ -114,7 +114,7 @@ pub(crate) struct ReadQuery {
 }
 
 /// The `?generation=`, `?cursor=`, `?locale=` and `?fallback=` a delivery query takes (DX.4,
-/// D-172): the release pin, the page boundary and the language travel outside the document,
+/// D-174): the release pin, the page boundary and the language travel outside the document,
 /// which the validator holds to its own keys — `limit` among them, the document's own, not a
 /// parameter's.
 #[derive(Deserialize)]
@@ -125,7 +125,7 @@ pub(crate) struct QueryParams {
     fallback: Option<String>,
 }
 
-/// A `?locale=` read, checked against the environment's policy (D-172).
+/// A `?locale=` read, checked against the environment's policy (D-174).
 struct Asked {
     /// The requested tag, as the environment's list spells it (or as asked, without a list).
     tag: String,
@@ -253,7 +253,7 @@ fn with_locale(
     response
 }
 
-/// How a `?locale=` row was resolved (D-172).
+/// How a `?locale=` row was resolved (D-174).
 #[derive(Serialize)]
 struct Localization {
     /// The tag asked for.
@@ -264,7 +264,7 @@ struct Localization {
     fallback: bool,
 }
 
-/// A published translation of an entry (D-172): what a site needs for `hreflang` links.
+/// A published translation of an entry (D-174): what a site needs for `hreflang` links.
 #[derive(Serialize)]
 struct Alternate {
     id: Uuid,
@@ -273,6 +273,8 @@ struct Alternate {
     slug: Option<String>,
 }
 
+/// One published entry as `/content/v1` answers it — and, with a `preview` member beside it,
+/// as `/preview/v1` does (D-172): one serialization for both.
 #[derive(Serialize)]
 pub(crate) struct PublishedView {
     id: Uuid,
@@ -289,7 +291,7 @@ pub(crate) struct PublishedView {
     /// Who may read it (D-137): a site that caches pages needs to know which answers are
     /// member-only even before it signs anyone in.
     visibility: String,
-    /// Its language (D-172): its own tag, or the default language's for an untagged entry;
+    /// Its language (D-174): its own tag, or the default language's for an untagged entry;
     /// `null` when it has none and the environment lists no default.
     locale: Option<String>,
     /// On a `?locale=` read: what was asked for, what was served, and whether it fell back.
@@ -304,6 +306,10 @@ pub(crate) struct PublishedView {
 }
 
 impl PublishedView {
+    pub(crate) fn new(row: Published) -> Result<Self, ApiError> {
+        Self::in_locale(row, None, None)
+    }
+
     /// The row as a reader of `asked`'s language gets it, with `default` the language of an
     /// untagged entry.
     fn in_locale(
@@ -348,7 +354,7 @@ enum Read {
     Found(Answer),
     Missing,
     Gone,
-    /// Published, but not in the language asked for or its fallbacks: in these (D-172).
+    /// Published, but not in the language asked for or its fallbacks: in these (D-174).
     NotInLocale(Vec<String>),
 }
 
@@ -396,7 +402,7 @@ fn cursor(path: &CollectionPath, project: Uuid, generation: i64, last: Uuid) -> 
     ))
 }
 
-/// A `?locale=` list's cursor (D-172): `d2:` adds the chain's digest, so a page of one
+/// A `?locale=` list's cursor (D-174): `d2:` adds the chain's digest, so a page of one
 /// language never continues another's, and its position is the last row's translation group.
 fn locale_cursor(
     path: &CollectionPath,
@@ -741,7 +747,7 @@ pub(crate) async fn list(
 }
 
 /// `GET /content/v1/{project}/{environment}/{collection}/{entry}`. With `?locale=`, the entry's
-/// best published translation through the chain (D-172): `id` is the translation's,
+/// best published translation through the chain (D-174): `id` is the translation's,
 /// `requested_id` the one asked for; nothing in the chain is 404 `not_in_locale`, naming the
 /// languages that are published. Every answer lists the other published translations as
 /// `alternates`.

@@ -379,9 +379,9 @@ export interface Details {
 	 *  collections the caller reads. */
 	referenced_by?: AssetReference[];
 	/** For a delivery read in a language nothing in its chain is published in (404
-	 *  `not_in_locale`, D-172): the languages it is published in. */
+	 *  `not_in_locale`, D-174): the languages it is published in. */
 	available?: string[];
-	/** For a refused language list (409 `locale_in_use`, D-171): the tag the entries are
+	/** For a refused language list (409 `locale_in_use`, D-173): the tag the entries are
 	 *  written in. */
 	locale?: string;
 }
@@ -475,7 +475,7 @@ async function send(method: string, path: string, body?: unknown, headers: Recor
 		case response.status === 401:
 			throw new ApiError('signed-out', message, 401);
 		case response.status === 404:
-			// A delivery read in a language nothing in its chain is published in (D-172) says
+			// A delivery read in a language nothing in its chain is published in (D-174) says
 			// which languages it is: the reason and details ride along.
 			throw new ApiError('not-found', message, 404, reason, null, details);
 		case response.status === 409 && (reason === 'stale_revision' || reason === 'stale_version' || reason === 'stale_role' || reason === 'stale_stages' || reason === 'stale_locales'):
@@ -744,7 +744,7 @@ export async function uploadAsset(project: string, file: File): Promise<Asset> {
 		case response.status === 401:
 			throw new ApiError('signed-out', message, 401);
 		case response.status === 404:
-			// A delivery read in a language nothing in its chain is published in (D-172) says
+			// A delivery read in a language nothing in its chain is published in (D-174) says
 			// which languages it is: the reason and details ride along.
 			throw new ApiError('not-found', message, 404, reason, null, details);
 		case response.status >= 500 || response.status === 429:
@@ -791,7 +791,7 @@ export async function importEntries(project: string, collection: string, body: s
 		case response.status === 401:
 			throw new ApiError('signed-out', message, 401);
 		case response.status === 404:
-			// A delivery read in a language nothing in its chain is published in (D-172) says
+			// A delivery read in a language nothing in its chain is published in (D-174) says
 			// which languages it is: the reason and details ride along.
 			throw new ApiError('not-found', message, 404, reason, null, details);
 		case response.status >= 500 || response.status === 429:
@@ -1004,7 +1004,7 @@ export interface ChangesetItem {
 	published_revision_id: string | null;
 	/** Who created the entry, for permissions limited to one's own entries. */
 	created_by: string;
-	/** The language the pinned revision is written in (D-171); absent for the default. */
+	/** The language the pinned revision is written in (D-173); absent for the default. */
 	locale?: string;
 }
 
@@ -1397,7 +1397,7 @@ export interface Delivered {
 	content: Content;
 	content_hash: string;
 	published_in: number;
-	/** Its language (D-172): its own tag, or the default language's for an untagged entry. */
+	/** Its language (D-174): its own tag, or the default language's for an untagged entry. */
 	locale?: string | null;
 	/** On a read in one language: what was asked for, what was served, whether it fell back. */
 	localization?: { requested: string; resolved: string | null; fallback: boolean };
@@ -1405,7 +1405,7 @@ export interface Delivered {
 
 /** What readers get for one entry right now, with the release it was read at (the
  *  `Colophon-Generation` header) and the answer exactly as sent — in every language, or with
- *  `locale` the way a site reads it in that one (D-172). Taken down: 410 `gone`; not out yet:
+ *  `locale` the way a site reads it in that one (D-174). Taken down: 410 `gone`; not out yet:
  *  404; published, but not in that language or its fallbacks: 404 `not_in_locale`. */
 export async function readDelivered(
 	project: string,

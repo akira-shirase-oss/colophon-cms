@@ -33,7 +33,7 @@ L10, L11, L13, the spec §27 cache-isolation tests and the mixed-release checker
 - CDN headers and tag purge.
 - Unpublish and revocation.
 - Evidence probes.
-- The preview origin.
+- Preview reads, `/preview/v1` (D-172).
 - Sitemaps, feeds and redirects.
 - Locale fallback.
 
@@ -56,7 +56,7 @@ L10, L11, L13, the spec §27 cache-isolation tests and the mixed-release checker
   `…/{collection}/{entry}`, with no sign-in, from `publications` as `colophon_delivery` (`colophon_db::delivery`,
   which switches role for each transaction). Answers carry `Colophon-Generation`; a list's cursor keeps the
   generation of its first page; a generation that hasn't committed is 422 `invalid_generation`. Projects are
-  addressed by id; languages are chosen with `?locale=` (E, D-172, below).
+  addressed by id; languages are chosen with `?locale=` (E, D-174, below).
 - Step 3.1 (D-048) adds a strong `ETag` (304 for a matching `If-None-Match`), the cache policies below,
   `Cache-Tag`, and `Colophon-Cache: hit | miss | coalesced | bypass`.
 - Step 3.2 (D-049): revoked publications are never delivered; an unpublished entry is 410 `gone`.
@@ -83,7 +83,7 @@ L10, L11, L13, the spec §27 cache-isolation tests and the mixed-release checker
   publication revoked or taken down since resolves to nothing, staying the stored id at any generation.
   `applied` echoes the canonical
   document and its `query_hash`. With `?locale=` the rows are resolved to one per translation group first, and
-  the document's filters, order and keyset run over what readers of that language get (D-172, below).
+  the document's filters, order and keyset run over what readers of that language get (D-174, below).
 
 ### Gated content (P7, D-137)
 - Every draft, revision and publication carries a `visibility`: `public` (the default), `authenticated` (any
@@ -104,16 +104,16 @@ L10, L11, L13, the spec §27 cache-isolation tests and the mixed-release checker
   simply anonymous — delivery never 401s a public collection, it answers the public rows, and the member
   answer's `Vary: Authorization, Cookie` keeps any shared cache between the two honest.
 
-### Locales (E, D-171, D-172)
+### Locales (E, D-173, D-174)
 - **What a publication says.** A revision pins the tag its entry had when it was written (`revisions.locale`,
   set by a trigger on every insert, so saves, creates, translations, bulk items and the content-migration run all
   pin alike; a save that changes the tag moves the entry first). A release copies it into the projection
   (`publications.locale`) beside the translation group (`publications.group_key`: the entry's `localization_id`,
   or its own id when it has none — a new group takes its source's id, so a page published before it was
   translated stays in its group). Delivery reads the locale from there, never from the moving draft. Migration
-  0065 backfilled revisions from their entry's tag at the time, which is exact for every revision written since
+  0066 backfilled revisions from their entry's tag at the time, which is exact for every revision written since
   and an approximation for older ones whose entry changed its tag later.
-- **The policy.** Each environment may list its languages (`environment_locales`, `GET|PUT {P}/locales`, D-171):
+- **The policy.** Each environment may list its languages (`environment_locales`, `GET|PUT {P}/locales`, D-173):
   at most 50 tags, one default (the language of entries with no tag), each with up to four ordered fallbacks
   drawn from the list, and a non-empty list must cover every tag live entries carry (`locale_in_use`). Every
   replace bumps `environments.locale_policy_version`. Once a list exists, entry
@@ -270,16 +270,45 @@ These are policies to test, not a global 30-second consistency guarantee.
   read in one snapshot (`scope::Isolation::Snapshot`, REPEATABLE READ) so the deliveries and the locations that saw
   them always describe the same moment.
 
-### Preview origin (spec §06)
-- A separate, sandboxed origin validates the 15-minute capability ([auth](03-auth.md)) on every protected fetch.
-- Responses are `no-store` and `noindex`, with a restrictive referrer policy.
-- Preview artifacts never enter public CDN routes, sitemaps or search indexes.
+### Preview reads (D-172; built 2026-11-17, gap 1)
+`/preview/v1` answers exactly what `/content/v1` answers, with a grant's scope ([auth](03-auth.md), D-171) laid over
+the latest release. It deviates from spec §06's separate preview origin: Colophon serves JSON, not pages — the page
+sandbox is the customer's own site — so preview is a path family on the content origin, which an operator may still
+route to its own host.
+
+- `POST /preview/v1/{project}/{environment}/exchange {code}` → the bearer token;
+  `GET …/session` → scope and end, for the site's banner;
+  `GET …/{collection}?limit=&cursor=`, `GET …/{collection}/{entry}`, `POST …/{collection}/query?cursor=`.
+- **The overlay.** For the latest generation G: every publication open at G, not revoked, whose entry the scope
+  doesn't name — plus each scope row that shows a revision of a live entry of the collection (the entry's current
+  draft, or the request's pinned revision); a scope row without one (an unpublish item) takes the entry out, and a
+  deleted entry is invisible to the API role so it can't be in scope. One statement head,
+  `colophon_db::query::OVERLAY`, serves list, get and the query language (its third source, `overlay_page`), so the
+  three can't disagree; it runs as `colophon_api` in the issuer's transaction, never as `colophon_delivery`.
+  `colophon_domain::preview::overlay` is the same rule as a pure function, the model the scope property test checks
+  the SQL against.
+- **The shape.** Each row is delivery's own `PublishedView` (one serializer for both) plus
+  `preview: {source: "published" | "draft" | "changeset", hidden_fields?}`; for a scope row `published_in` is G, the
+  release the preview is laid over. A published row reads byte for byte as `/content/v1` reads it (`tests/preview.rs`).
+  When the locale (gap 2) and media (gap 3) shapes land in `PublishedView`, preview carries them unchanged.
+- **Never cached.** Every answer — refusals included — is `Cache-Control: private, no-store`,
+  `X-Robots-Tag: noindex, nofollow, noarchive`, `Referrer-Policy: no-referrer`, `Vary: Authorization`, with
+  `Colophon-Preview: entry | changeset` and `Colophon-Generation: G`; never `ETag`, never `Cache-Tag`, never the
+  delivery cache. Operators bypass `/preview/*` at the CDN.
+- **Refusals.** 401 `preview_invalid | preview_expired | preview_revoked` with `WWW-Authenticate: Bearer
+  error="invalid_token"`; 404 for another environment or an unknown entry; 409 `preview_stale`; 410
+  `preview_published`; 422 `preview_reads_latest` (`?generation=`) and `preview_depth` (`depth` population isn't
+  served in preview yet); 503 with `Retry-After` past the per-server bound of 32 concurrent preview reads.
+- **Bounds.** `/preview/` counts in admission per client address and per bearer (D-076's management rates); the
+  semaphore keeps a burst of previews from taking the connections delivery needs; the exchange reads at most 1 KiB.
+- **Not yet.** CORS for browser-side preview fetching (sites fetch server-side today), `depth` over the overlay,
+  locale selection (arrives with gap 2's `?locale=`).
 
 ### Site metadata (spec §06)
 - Sitemaps, feeds and language alternates are generated from a single published generation.
 - Canonical URLs are normalized against the verified site configuration.
 - A slug change proposes a reviewed redirect, with cycles and collisions rejected.
-- Locale fallback follows an explicit environment policy (D-171): none until a list names fallbacks; it resolves
+- Locale fallback follows an explicit environment policy (D-173): none until a list names fallbacks; it resolves
   only to published revisions and labels the resolved locale (built in E, above). Sitemaps and feeds aren't built.
 
 ## Invariants
@@ -296,7 +325,7 @@ These are policies to test, not a global 30-second consistency guarantee.
 
 ## Interfaces
 
-- HTTP: `/content/v1/{project}/{env}/…` and the preview origin.
+- HTTP: `/content/v1/{project}/{env}/…` and `/preview/v1/{project}/{env}/…` (D-172).
 - Purge and probe adapters used by [worker](05-worker.md) jobs.
 - Cache-key and tag builders shared with the site build adapter.
 
