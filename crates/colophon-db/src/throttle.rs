@@ -67,8 +67,19 @@ pub(crate) async fn count(
     address: &str,
 ) -> Result<Counted, DbError> {
     let realm = realm.key();
-    // The key's row, locked: attempts on one key serialize here, so the check and the count
-    // below can't interleave. (No row yet means no pause: it takes LOCK_AFTER attempts.)
+    // One attempt at an account at a time (D-162): the account's advisory lock, then the key's
+    // row. A row lock alone serialized nothing while the key had no row yet, so concurrent
+    // first attempts all passed the check below and the one counted after the pause took it
+    // for a pause that had run out. Under this lock the check, the account's sum and the count
+    // are one step; the transaction commits at once, before any Argon2 (D-150).
+    sqlx::query!(
+        "SELECT 1 AS \"locked!\" FROM pg_advisory_xact_lock(22355, hashtext($1 || '/' || $2))",
+        realm,
+        email
+    )
+    .fetch_one(&mut **tx)
+    .await
+    .map_err(DbError::from_query)?;
     let key = sqlx::query!(
         r#"SELECT coalesce(locked_until > now(), false) AS "paused!", trusted
            FROM sign_in_throttle
@@ -105,9 +116,11 @@ pub(crate) async fn count(
         "INSERT INTO sign_in_throttle AS t (realm, email, address, failures, locked_until)
          VALUES ($1, $2, $3, 1, CASE WHEN 1 >= $4 THEN now() + make_interval(secs => $5) END)
          ON CONFLICT (realm, email, address) DO UPDATE SET
-             failures = CASE WHEN t.locked_until IS NOT NULL THEN 1
+             failures = CASE WHEN t.locked_until > now() THEN t.failures
+                             WHEN t.locked_until IS NOT NULL THEN 1
                              ELSE least(t.failures + 1, 1000000) END,
              locked_until = CASE
+                 WHEN t.locked_until > now() THEN t.locked_until
                  WHEN (CASE WHEN t.locked_until IS NOT NULL THEN 1 ELSE t.failures + 1 END) >= $4
                      THEN now() + make_interval(secs => $5)
              END,

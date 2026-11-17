@@ -75,8 +75,9 @@ operation, and the cross-project and identity test families from spec §27 pass.
   email is normalized the same way before the lookup.
 - Bounded guessing, per (account, client address) (D-154, migration 0057): every attempt is counted in
   `sign_in_throttle` against its key — the realm (`staff` or `audience:<project>`), the normalized email and the
-  client address admission believes (IPv6 by its /64) — *before* the verify, under the key's row lock, in a
-  transaction that commits at once; Argon2 then runs with nothing held (D-150). The eighth attempt pauses that key
+  client address admission believes (IPv6 by its /64) — *before* the verify, under the account's advisory lock and
+  the key's row lock (so concurrent first attempts can't race past a pause one of them sets), in a transaction that
+  commits at once; Argon2 then runs with nothing held (D-150). The eighth attempt pauses that key
   for fifteen minutes; while paused, an attempt — even with the right password — is refused unverified with the
   same `400 sign_in_failed` a wrong password gets, and since the key doesn't depend on whether the account exists,
   a pause tells a guesser nothing. A guesser pauses only their own address: the owner elsewhere signs in, and a

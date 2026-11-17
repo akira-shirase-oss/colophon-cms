@@ -182,3 +182,75 @@ async fn an_invited_person_creates_their_account_and_joins() {
     );
     db.drop().await;
 }
+
+/// Concurrent first attempts can't clear the pause one of them set (D-162):
+/// with no row yet for the key, every attempt used to pass the pause check at once, and the
+/// one counted after the [`LOCK_AFTER`]th took the pause for "a pause that ran out" and reset
+/// it. Here the table is held so that every attempt has checked before any has counted.
+#[tokio::test]
+#[ignore = "needs the local stack: scripts/stack.sh up"]
+async fn concurrent_first_misses_keep_the_pause_they_reach() {
+    let db = TestDb::new().await;
+    let password = "the real password";
+    made(&db.app, "erin@example.com", password).await;
+    let guesser = "198.51.100.10";
+    let attempts = usize::try_from(LOCK_AFTER).expect("small") + 4;
+    let pool = db.app_pool(u32::try_from(attempts).expect("small")).await;
+    let gate = colophon_db::passwords::PasswordGate::new(attempts);
+
+    // Counting writes wait behind this SHARE lock; the pause checks (row locks) don't.
+    let owner = db.owner().await;
+    let mut hold = owner.begin().await.expect("begin");
+    sqlx::query("LOCK TABLE sign_in_throttle IN SHARE MODE")
+        .execute(&mut *hold)
+        .await
+        .expect("lock");
+    let misses: Vec<_> = (0..attempts)
+        .map(|_| {
+            let (pool, gate) = (pool.clone(), gate.clone());
+            tokio::spawn(async move {
+                identity::password_sign_in(&pool, &gate, "erin@example.com", guesser, "a guess")
+                    .await
+                    .expect("sign-in")
+            })
+        })
+        .collect();
+    // Every attempt is waiting on a lock: past its check, or (fixed) behind the account's.
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    loop {
+        let waiting: i64 = sqlx::query_scalar("SELECT count(*) FROM pg_locks WHERE NOT granted")
+            .fetch_one(&owner)
+            .await
+            .expect("locks");
+        if waiting >= i64::try_from(attempts).expect("small") {
+            break;
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "only {waiting} attempts waiting"
+        );
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+    }
+    hold.commit().await.expect("release");
+    for miss in misses {
+        assert_eq!(miss.await.expect("joined"), PasswordSignIn::Refused);
+    }
+
+    // More misses than LOCK_AFTER, so the guesser is paused — the right password included.
+    assert_eq!(
+        identity::password_sign_in(
+            &db.app,
+            &common::gate(),
+            "erin@example.com",
+            guesser,
+            password
+        )
+        .await
+        .expect("sign-in"),
+        PasswordSignIn::Refused,
+        "the pause the eighth miss set was cleared by the misses after it"
+    );
+    pool.close().await;
+    owner.close().await;
+    db.drop().await;
+}

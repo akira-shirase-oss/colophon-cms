@@ -618,7 +618,10 @@ async fn dead_magic_links_are_swept_and_live_ones_kept() {
     let swept = retention::sweep(&db.app, &Retention::DEFAULT, BATCH)
         .await
         .expect("swept");
-    assert_eq!(swept.magic_links, 1, "only the link dead for a day: {swept:?}");
+    assert_eq!(
+        swept.magic_links, 1,
+        "only the link dead for a day: {swept:?}"
+    );
     let left: Vec<String> =
         sqlx::query_scalar("SELECT email FROM audience_magic_links ORDER BY email")
             .fetch_all(&owner)
