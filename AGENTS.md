@@ -1,9 +1,10 @@
 # Colophon CMS: agent instructions
 
-**Current state (2026-11-16).** `main` carries migrations through 0054 and decisions
-through D-147 (D-147, the Studio's first-run answers to Strapi, merged from `studio/dashboard`). The content-cards port era is finished — its unique work landed on this
-lineage as D-083 to D-087 (migrations 0031–0034); the archived branch stays at
-`origin/lineage/content-cards` for reference.
+**Current state (2026-11-16).** `main` carries migrations through 0058 and decisions
+through D-159 (D-148 to D-159, the 2026-11-16 security fixes and the MIT licence, merged from
+`fix/security-2026-11-16`; D-147, the Studio's first-run answers to Strapi, from `studio/dashboard`). The content-cards port era is finished — its unique work landed on this
+lineage as D-083 to D-087 (migrations 0031–0034); the old branch is kept as the annotated tag
+`archive/lineage/content-cards` for reference (its branch was deleted from origin).
 
 Every roadmap milestone is built; what remains before v0.1 is the human-run proof-gate
 work: the rehearsed usability sessions and one independent install (P6's gate, D-132),

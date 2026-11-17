@@ -80,7 +80,7 @@ The landing pages for Colophon, Service Monitor and Durable Runner are content i
 Each page is rendered and exported to static hosting (Cloudflare Pages) on publish, so a Colophon outage stops
 editing, not the other products' landing pages. That keeps the products independent.
 
-Note: the older landing page (`apps/site` on `site/new-look`) is unmerged and breaks on main's data; rebuild it on
+Note: the older landing page (`apps/site`, kept as the tag `archive/site/new-look`) is unmerged and breaks on main's data; rebuild it on
 main rather than reviving the branch.
 
 ## Integrations (public API only)
