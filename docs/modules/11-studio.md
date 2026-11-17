@@ -86,6 +86,26 @@ screen-reader journeys pass, and no screen ever shows a success the server has n
   than the sender — for roles that may `schema.change`, under the list's ETag so a moved list is refused and offers
   the latest; every member reads it, so other roles see it without the controls. Tests:
   `tests/server/stages.spec.ts`, `tests/server/collaboration.spec.ts`.
+  Since gap/locales: `…/settings/languages` (*Languages* in Settings and search, for roles that may
+  `schema.change`; read-only to the rest) lists the environment's languages — each one's name (editable), its code
+  small and in mono, a *Default* badge or *Make default*, and *If missing, show:* the languages readers get where it
+  is missing, added from a menu and ordered with up/down buttons (at most four, never itself; focus stays on the
+  language moved). *Add language* opens a dialog for the code, checked with the server's BCP-47 shape rule, and a
+  name suggested from it in the language itself; removing one asks first. The builder's save bar saves the whole
+  list under the ETag it was read at with an idempotency key; a list changed meanwhile (`stale_locales`) loads in
+  its place with "Someone changed languages; review and save again"; `locale_in_use` (a non-empty list must name
+  every tag live entries carry: one just removed, one written before any list, one spelled otherwise) names the
+  tag from the refusal's message and the entries in the way, each linked once its collection is found by listing
+  each collection in that tag, with *Keep* for a language just removed, *Add* for a tag the list never had, and
+  for another spelling a note that choosing the listed language saves it the list's way; other refusals are said
+  at the language their pointer names. With languages listed, the
+  editor's *Language* is a select of them ("Default language (en)" for no tag), a tag the list lacks is marked *Not
+  in your languages* (its other changes still save: the editor sends `?locale=` only when the language changes),
+  `locale_not_configured` is said beside the select, and *Add version* offers the listed languages the group
+  lacks; without a list both stay free text (tags match the list case-insensitively, as the server matches them).
+  The collection list names each entry's language and, with languages listed, filters by one (`?locale=`, also
+  from the address); at 360 px the title keeps its room (*Updated* hides below `sm`, the state tabs scroll instead
+  of the page). Test: `tests/server/languages.spec.ts`.
   Since step E3 (D-108, branch `e3-surfaces`): the project shell holds one `GET {P}/events` stream per open project
   (`lib/live.ts`, `watchProject`, mounted in the project layout) and turns each `change` hint — a kind and a scope,
   never content — into the query invalidations a fresh visit would run: entries, drafts, history, changesets, stages,
