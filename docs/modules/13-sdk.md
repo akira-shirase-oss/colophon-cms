@@ -44,6 +44,14 @@ Built in DX.8 (D-112): `@colophon-cms/sdk`, versioned `0.1.0-alpha.1` with the s
   asking for a different generation on it throws.
 - **Bounds:** `timeoutMs` (15 s default, joined with the caller's `signal`) and `maxBodyBytes`
   (16 MiB default) on every call.
+- **Images:** `mediaFor(row[, { current, sizes }])` turns a delivery row's `media` sidecar — every
+  asset its published revision names, at the version its release recorded
+  ([06](06-delivery.md), [07](07-media.md)) — into the rich-text renderer's `media` option
+  (renderer v2, [12](12-content-renderer.md)): the immutable versioned source, `width`/`height`,
+  and the `wN` renditions as `srcset` width candidates with a default `sizes`. `{ current: true }`
+  follows replacements through `current_url` instead. An id the sidecar doesn't hold answers
+  `undefined`, so the renderer falls back to its bare address. The sidecar's types are
+  hand-written in `src/media.ts`, compatible with the generated row type.
 
 Still to come from the end goal: adoption by the blog/Studio, and the epoch half of the pin — the
 delivery API reads `?generation=` today; pinning `(epoch, generation)` waits on the wire naming
@@ -91,6 +99,8 @@ epochs. Spec §10's deprecation window for contract changes applies when the SDK
 - `new Client({ baseUrl, token | session, fetch?, headers?, timeoutMs?, maxBodyBytes? })`,
   `client.environment(project[, environment])`, `client.delivery(project[, environment])` and
   `.atGeneration(g)`, `newIdempotencyKey()`.
+- `mediaFor(row, options?)`, `imageSource(media, options?)`, `DEFAULT_SIZES`, and the
+  `PublishedMedia`/`MediaSidecar`/`ImageSource` types.
 - `ApiError` with `status`, `code`, `details`, `reason`, `pointer`, `etag`, `retryAfterMs`,
   `retryable`.
 
@@ -108,6 +118,8 @@ epochs. Spec §10's deprecation window for contract changes applies when the SDK
 - Mocked-fetch contract tests per method group (what is sent; envelope, ETag, idempotency and
   refusal handling on the way back) plus type-level tests in `packages/sdk/test/` — `tsc` is the
   proof for half of them.
+- `test/media.test.ts`: `mediaFor` — released and current sources, candidates narrowest first,
+  narrow uploads without a `srcset`, unknown and inherited ids falling back.
 - A real-server suite gated on `COLOPHON_TEST_ORIGIN` (the `#[ignore]` equivalent): version,
   livez, a typed 401, the served document.
 - A pinned-read test with a publish landing mid-sequence — pending, with the adoption milestone.
