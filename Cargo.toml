@@ -51,6 +51,9 @@ http-body-util = "0.1.5"
 # v0.1 formats: png, jpeg, webp — no gif (animated decoders complicate pixel budgets) and no svg.
 image = { version = "0.25.10", default-features = false, features = ["png", "jpeg", "webp"] }
 jsonwebtoken = { version = "11.1", default-features = false, features = ["aws_lc_rs", "use_pem"] }
+# The static Linux (musl) server's allocator (D-176): musl's own serializes on one lock and ran
+# allocation-heavy requests five times slower than glibc's. Only musl builds link it.
+mimalloc = { version = "0.1.52", default-features = false }
 redis = { version = "1.8", default-features = false, features = ["tokio-comp"] }
 reqwest = { version = "0.13.5", default-features = false, features = ["json", "form", "rustls"] }
 # The CLI compares its version with the server's by SemVer precedence (D-062).

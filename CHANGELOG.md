@@ -87,6 +87,9 @@ closes and carries a test that failed without it.
 
 ### Changed — read before upgrading
 
+- **The static Linux server allocates through mimalloc (D-176):** musl's own allocator ran
+  allocation-heavy requests five times slower than glibc's on the same runner. Other builds are
+  unchanged.
 - **Magic links stop until origins are listed:** `PUT {P}/audience/origins` must name each
   site a link may land on; until then a request is `422 return_to_not_allowed` (D-148).
 - **A database on another machine needs `sslmode=verify-full`:** the server and the admin
