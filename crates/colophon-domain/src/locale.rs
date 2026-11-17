@@ -1,4 +1,4 @@
-//! Languages (docs/modules/06-delivery.md, "Locales"; D-087, D-173, D-174): the shape of a
+//! Languages (docs/modules/06-delivery.md, "Locales"; D-087, D-177, D-178): the shape of a
 //! locale tag, an environment's language list with its default and ordered fallbacks, the
 //! chain a delivery request resolves through, and the resolution itself — which published
 //! member of a translation group a reader gets.

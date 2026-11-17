@@ -1,4 +1,4 @@
--- Locale selection in delivery (milestone E; D-173, D-174). docs/modules/02-db.md,
+-- Locale selection in delivery (milestone E; D-177, D-178). docs/modules/02-db.md,
 -- docs/modules/06-delivery.md ("Locales").
 --
 -- D-087 gave entries a locale tag and translation groups, but publications carried neither, so

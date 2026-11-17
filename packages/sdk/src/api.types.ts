@@ -2175,7 +2175,7 @@ export interface components {
             /** Format: uuid */
             entry_id?: string;
             kind?: string;
-            /** @description the pinned revision's language (D-173); absent for the default */
+            /** @description the pinned revision's language (D-177); absent for the default */
             locale?: string;
             /** Format: uuid */
             published_revision_id?: string | null;
@@ -2493,6 +2493,11 @@ export interface components {
         };
         Installation: {
             has_administrator: boolean;
+            /**
+             * @description How the server was installed, when its installer said (`GET /api/v1/installation` only): `container` means the setup code is in `docker compose logs colophon`.
+             * @enum {string}
+             */
+            install_kind?: "container";
         };
         InvitationToken: {
             token: string;
@@ -3027,7 +3032,7 @@ export interface components {
             content_hash?: string;
             /** Format: uuid */
             id?: string;
-            /** @description its language: its own tag, or the default language's for an untagged entry (D-174) */
+            /** @description its language: its own tag, or the default language's for an untagged entry (D-178) */
             locale?: string | null;
             /** @description on a `locale` read: what was asked for, what was served, and whether it is a fallback */
             localization?: {
@@ -14390,7 +14395,7 @@ export interface operations {
                 limit?: number;
                 /** @description the `next_cursor` a previous page answered */
                 cursor?: string;
-                /** @description answer in one language (D-174): one row per translation group, the best published member through the fallback chain; a listed tag when the environment lists languages */
+                /** @description answer in one language (D-178): one row per translation group, the best published member through the fallback chain; a listed tag when the environment lists languages */
                 locale?: string;
                 /** @description with `locale`: `policy` (the environment's chain, the default), `none`, or up to four tags separated by commas */
                 fallback?: string;
@@ -14482,7 +14487,7 @@ export interface operations {
                 generation?: number;
                 /** @description the `next_cursor` a previous page answered */
                 cursor?: string;
-                /** @description answer in one language (D-174): one row per translation group, the best published member through the fallback chain; a listed tag when the environment lists languages */
+                /** @description answer in one language (D-178): one row per translation group, the best published member through the fallback chain; a listed tag when the environment lists languages */
                 locale?: string;
                 /** @description with `locale`: `policy` (the environment's chain, the default), `none`, or up to four tags separated by commas */
                 fallback?: string;
@@ -14563,7 +14568,7 @@ export interface operations {
             query?: {
                 /** @description pin the read to one release generation */
                 generation?: number;
-                /** @description answer in one language (D-174): one row per translation group, the best published member through the fallback chain; a listed tag when the environment lists languages */
+                /** @description answer in one language (D-178): one row per translation group, the best published member through the fallback chain; a listed tag when the environment lists languages */
                 locale?: string;
                 /** @description with `locale`: `policy` (the environment's chain, the default), `none`, or up to four tags separated by commas */
                 fallback?: string;

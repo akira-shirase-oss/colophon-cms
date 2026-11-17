@@ -9,7 +9,7 @@
 //! an entry under one of these keys can't go stale; a new release is a new generation and so new
 //! keys.
 //!
-//! Locales (D-174): a request with `?locale=` resolves through a chain of tags — the requested
+//! Locales (D-178): a request with `?locale=` resolves through a chain of tags — the requested
 //! one, then its fallbacks — and its key names that chain's digest, so `fr` and `fr` falling back
 //! to `en` are two answers. Every key also names the environment's locale policy version: which
 //! tag an untagged entry reads as, and which fallbacks a tag has, are the policy's, so a changed

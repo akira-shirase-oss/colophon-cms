@@ -661,9 +661,8 @@ fn finish(result: Result<(), client::Failure>, out: &out::Out) -> Exit {
 enum AdminCommand {
     /// Apply pending database migrations, as the migrator role (the table owner).
     Migrate {
-        /// The migrator's connection URL. Never the application's.
-        #[arg(long, env = "COLOPHON_MIGRATION_DATABASE_URL", hide_env_values = true)]
-        database_url: String,
+        #[command(flatten)]
+        database: admin::MigratorUrl,
         /// Print one versioned JSON result instead of text.
         #[arg(long)]
         json: bool,
@@ -672,9 +671,25 @@ enum AdminCommand {
     /// runbook's pre-check and rollback gate). Exits 4 when the database holds a migration
     /// this binary doesn't know: the schema is newer than the code.
     MigrateStatus {
-        /// The migrator's connection URL. Never the application's.
-        #[arg(long, env = "COLOPHON_MIGRATION_DATABASE_URL", hide_env_values = true)]
-        database_url: String,
+        #[command(flatten)]
+        database: admin::MigratorUrl,
+        /// Print one versioned JSON result instead of text.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Create the database roles the server needs, with passwords from files (D-173): what
+    /// the development stack's roles.sql does with its public password. Idempotent: existing
+    /// roles, passwords included, are left as they are. Run before `admin migrate`.
+    InitRoles {
+        #[command(flatten)]
+        database: admin::MigratorUrl,
+        /// A file holding the password for `colophon_app`, the login the server uses.
+        #[arg(long, env = "COLOPHON_APP_PASSWORD_FILE")]
+        app_password_file: std::path::PathBuf,
+        /// A file holding the password for `colophon_backup`, the replication login
+        /// `scripts/backup.sh` uses; without it that role is skipped.
+        #[arg(long, env = "COLOPHON_BACKUP_PASSWORD_FILE")]
+        backup_password_file: Option<std::path::PathBuf>,
         /// Print one versioned JSON result instead of text.
         #[arg(long)]
         json: bool,
@@ -683,9 +698,8 @@ enum AdminCommand {
     /// provider's pair, or `password` plus the account's email. Afterwards bootstrap is
     /// disabled for good.
     Bootstrap {
-        /// The migrator's connection URL. Never the application's.
-        #[arg(long, env = "COLOPHON_MIGRATION_DATABASE_URL", hide_env_values = true)]
-        database_url: String,
+        #[command(flatten)]
+        database: admin::MigratorUrl,
         /// The identity provider's issuer URL; by default the server's. For the built-in
         /// email-and-password accounts pass `password` and the account's email as the subject.
         #[arg(long, env = "COLOPHON_OIDC_ISSUER")]
@@ -701,9 +715,8 @@ enum AdminCommand {
     /// administrator — the idempotent half bootstrap can't do after its one run: more
     /// administrators, an operator's account, the development owner (D-146).
     Account {
-        /// The migrator's connection URL. Never the application's.
-        #[arg(long, env = "COLOPHON_MIGRATION_DATABASE_URL", hide_env_values = true)]
-        database_url: String,
+        #[command(flatten)]
+        database: admin::MigratorUrl,
         /// The account's email — also its sign-in name.
         #[arg(long)]
         email: String,
@@ -726,9 +739,8 @@ enum AdminCommand {
     /// `COLOPHON_S3_*` object store. Run from the backup schedule; each export is a complete
     /// interval up to its high-water mark.
     LedgerExport {
-        /// The migrator's connection URL. Never the application's.
-        #[arg(long, env = "COLOPHON_MIGRATION_DATABASE_URL", hide_env_values = true)]
-        database_url: String,
+        #[command(flatten)]
+        database: admin::MigratorUrl,
         /// Write the export to this file ('-' for stdout).
         #[arg(long, conflicts_with = "s3_key", required_unless_present = "s3_key")]
         out: Option<String>,
@@ -748,9 +760,9 @@ enum AdminCommand {
     /// restore procedure's step 4 (O2): before read APIs or caches serve. Idempotent; exits
     /// non-zero while any row can't be replayed — the restore stays blocked.
     LedgerReplay {
-        /// The migrator's connection URL of the restored database.
-        #[arg(long, env = "COLOPHON_MIGRATION_DATABASE_URL", hide_env_values = true)]
-        database_url: String,
+        // The migrator's connection URL of the restored database (or a file holding it).
+        #[command(flatten)]
+        database: admin::MigratorUrl,
         /// The export file to replay ('-' for standard input).
         #[arg(long)]
         input: String,
@@ -775,9 +787,9 @@ enum RestoreStep {
     /// migrations (spec step 2): exits 4 when the backup applied anything this binary doesn't
     /// know — the backup is newer than the code and serving it would be guessing.
     Verify {
-        /// The migrator's connection URL of the restored database.
-        #[arg(long, env = "COLOPHON_MIGRATION_DATABASE_URL", hide_env_values = true)]
-        database_url: String,
+        // The migrator's connection URL of the restored database (or a file holding it).
+        #[command(flatten)]
+        database: admin::MigratorUrl,
         /// The backup's manifest.json.
         #[arg(long)]
         manifest: String,
@@ -788,9 +800,9 @@ enum RestoreStep {
     /// cached generation or stale lease from the old timeline can never act on the new one.
     /// The procedure runs it exactly once, before anything serves.
     Epoch {
-        /// The migrator's connection URL of the restored database.
-        #[arg(long, env = "COLOPHON_MIGRATION_DATABASE_URL", hide_env_values = true)]
-        database_url: String,
+        // The migrator's connection URL of the restored database (or a file holding it).
+        #[command(flatten)]
+        database: admin::MigratorUrl,
         #[arg(long)]
         json: bool,
     },
@@ -798,27 +810,27 @@ enum RestoreStep {
     /// timeline dispatched — sent or not — may fire again before external effects are
     /// reconciled. Reports each held job with the state it was taken from.
     Hold {
-        /// The migrator's connection URL of the restored database.
-        #[arg(long, env = "COLOPHON_MIGRATION_DATABASE_URL", hide_env_values = true)]
-        database_url: String,
+        // The migrator's connection URL of the restored database (or a file holding it).
+        #[command(flatten)]
+        database: admin::MigratorUrl,
         #[arg(long)]
         json: bool,
     },
     /// List the restore's work inventory for the operator's reconciliation: the held outbox,
     /// plus due schedules and in-flight asset, bulk and content-migration work.
     Jobs {
-        /// The migrator's connection URL of the restored database.
-        #[arg(long, env = "COLOPHON_MIGRATION_DATABASE_URL", hide_env_values = true)]
-        database_url: String,
+        // The migrator's connection URL of the restored database (or a file holding it).
+        #[command(flatten)]
+        database: admin::MigratorUrl,
         #[arg(long)]
         json: bool,
     },
     /// Return every held job to 'pending' with a fresh attempt window — the explicit enable of
     /// spec step 6. Only after reconciliation; jobs past their old deadline get a new lifetime.
     Resume {
-        /// The migrator's connection URL of the restored database.
-        #[arg(long, env = "COLOPHON_MIGRATION_DATABASE_URL", hide_env_values = true)]
-        database_url: String,
+        // The migrator's connection URL of the restored database (or a file holding it).
+        #[command(flatten)]
+        database: admin::MigratorUrl,
         /// The fresh lifetime a resumed job gets when its old deadline has passed (seconds).
         #[arg(long, default_value_t = 3600)]
         lifetime_secs: i32,
@@ -886,33 +898,46 @@ fn main() -> ExitCode {
 
 fn run_admin(runtime: &Runtime, command: AdminCommand) -> ExitCode {
     match command {
-        AdminCommand::Migrate { database_url, json } => runtime
+        AdminCommand::Migrate { database, json } => runtime
             .block_on(admin::migrate(
-                &database_url,
+                &database,
                 out::Out::new("admin migrate", out::Format::of(json, false)),
             ))
             .into(),
-        AdminCommand::MigrateStatus { database_url, json } => runtime
+        AdminCommand::MigrateStatus { database, json } => runtime
             .block_on(admin::migrate_status(
-                &database_url,
+                &database,
                 out::Out::new("admin migrate-status", out::Format::of(json, false)),
             ))
             .into(),
+        AdminCommand::InitRoles {
+            database,
+            app_password_file,
+            backup_password_file,
+            json,
+        } => runtime
+            .block_on(admin::init_roles(
+                &database,
+                &app_password_file,
+                backup_password_file.as_deref(),
+                out::Out::new("admin init-roles", out::Format::of(json, false)),
+            ))
+            .into(),
         AdminCommand::Bootstrap {
-            database_url,
+            database,
             issuer,
             subject,
             json,
         } => runtime
             .block_on(admin::bootstrap(
-                &database_url,
+                &database,
                 &issuer,
                 &subject,
                 out::Out::new("admin bootstrap", out::Format::of(json, false)),
             ))
             .into(),
         AdminCommand::Account {
-            database_url,
+            database,
             email,
             password,
             display_name,
@@ -920,7 +945,7 @@ fn run_admin(runtime: &Runtime, command: AdminCommand) -> ExitCode {
             json,
         } => runtime
             .block_on(admin::account(
-                &database_url,
+                &database,
                 &email,
                 &password,
                 display_name.as_deref(),
@@ -929,14 +954,14 @@ fn run_admin(runtime: &Runtime, command: AdminCommand) -> ExitCode {
             ))
             .into(),
         AdminCommand::LedgerExport {
-            database_url,
+            database,
             out: file,
             s3_key,
             after,
             json,
         } => runtime
             .block_on(admin::ledger_export(
-                &database_url,
+                &database,
                 file.as_deref(),
                 s3_key.as_deref(),
                 after,
@@ -944,12 +969,12 @@ fn run_admin(runtime: &Runtime, command: AdminCommand) -> ExitCode {
             ))
             .into(),
         AdminCommand::LedgerReplay {
-            database_url,
+            database,
             input,
             json,
         } => runtime
             .block_on(admin::ledger_replay(
-                &database_url,
+                &database,
                 &input,
                 out::Out::new("admin ledger replay", out::Format::of(json, false)),
             ))
@@ -1508,41 +1533,41 @@ fn run_task(runtime: &Runtime, command: TaskCommand) -> ExitCode {
 fn run_restore(runtime: &Runtime, step: RestoreStep) -> ExitCode {
     match step {
         RestoreStep::Verify {
-            database_url,
+            database,
             manifest,
             json,
         } => runtime
             .block_on(admin::restore_verify(
-                &database_url,
+                &database,
                 &manifest,
                 out::Out::new("admin restore verify", out::Format::of(json, false)),
             ))
             .into(),
-        RestoreStep::Epoch { database_url, json } => runtime
+        RestoreStep::Epoch { database, json } => runtime
             .block_on(admin::restore_epoch(
-                &database_url,
+                &database,
                 out::Out::new("admin restore epoch", out::Format::of(json, false)),
             ))
             .into(),
-        RestoreStep::Hold { database_url, json } => runtime
+        RestoreStep::Hold { database, json } => runtime
             .block_on(admin::restore_hold(
-                &database_url,
+                &database,
                 out::Out::new("admin restore hold", out::Format::of(json, false)),
             ))
             .into(),
-        RestoreStep::Jobs { database_url, json } => runtime
+        RestoreStep::Jobs { database, json } => runtime
             .block_on(admin::restore_jobs(
-                &database_url,
+                &database,
                 out::Out::new("admin restore jobs", out::Format::of(json, false)),
             ))
             .into(),
         RestoreStep::Resume {
-            database_url,
+            database,
             lifetime_secs,
             json,
         } => runtime
             .block_on(admin::restore_resume(
-                &database_url,
+                &database,
                 lifetime_secs,
                 out::Out::new("admin restore resume", out::Format::of(json, false)),
             ))

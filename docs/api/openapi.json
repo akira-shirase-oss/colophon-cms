@@ -535,7 +535,7 @@
             "type": "string"
           },
           "locale": {
-            "description": "the pinned revision's language (D-173); absent for the default",
+            "description": "the pinned revision's language (D-177); absent for the default",
             "type": "string"
           },
           "published_revision_id": {
@@ -1454,6 +1454,13 @@
         "properties": {
           "has_administrator": {
             "type": "boolean"
+          },
+          "install_kind": {
+            "description": "How the server was installed, when its installer said (`GET /api/v1/installation` only): `container` means the setup code is in `docker compose logs colophon`.",
+            "enum": [
+              "container"
+            ],
+            "type": "string"
           }
         },
         "required": [
@@ -3112,7 +3119,7 @@
             "type": "string"
           },
           "locale": {
-            "description": "its language: its own tag, or the default language's for an untagged entry (D-174)",
+            "description": "its language: its own tag, or the default language's for an untagged entry (D-178)",
             "type": [
               "string",
               "null"
@@ -21888,7 +21895,7 @@
             }
           },
           {
-            "description": "answer in one language (D-174): one row per translation group, the best published member through the fallback chain; a listed tag when the environment lists languages",
+            "description": "answer in one language (D-178): one row per translation group, the best published member through the fallback chain; a listed tag when the environment lists languages",
             "in": "query",
             "name": "locale",
             "required": false,
@@ -22077,7 +22084,7 @@
             }
           },
           {
-            "description": "answer in one language (D-174): one row per translation group, the best published member through the fallback chain; a listed tag when the environment lists languages",
+            "description": "answer in one language (D-178): one row per translation group, the best published member through the fallback chain; a listed tag when the environment lists languages",
             "in": "query",
             "name": "locale",
             "required": false,
@@ -22248,7 +22255,7 @@
             }
           },
           {
-            "description": "answer in one language (D-174): one row per translation group, the best published member through the fallback chain; a listed tag when the environment lists languages",
+            "description": "answer in one language (D-178): one row per translation group, the best published member through the fallback chain; a listed tag when the environment lists languages",
             "in": "query",
             "name": "locale",
             "required": false,

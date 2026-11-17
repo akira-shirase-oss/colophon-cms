@@ -276,7 +276,7 @@ const LIMIT: Param = query("limit", Kind::Int, "page size: 1–100, default 20")
 const LOCALE: Param = query(
     "locale",
     Kind::Str,
-    "answer in one language (D-174): one row per translation group, the best published member through the fallback chain; a listed tag when the environment lists languages",
+    "answer in one language (D-178): one row per translation group, the best published member through the fallback chain; a listed tag when the environment lists languages",
 );
 const FALLBACK: Param = query(
     "fallback",
@@ -5102,7 +5102,14 @@ fn identity() -> Value {
         "Installation": {
             "type": "object",
             "required": ["has_administrator"],
-            "properties": { "has_administrator": { "type": "boolean" } },
+            "properties": {
+                "has_administrator": { "type": "boolean" },
+                "install_kind": {
+                    "type": "string",
+                    "enum": ["container"],
+                    "description": "How the server was installed, when its installer said (`GET /api/v1/installation` only): `container` means the setup code is in `docker compose logs colophon`.",
+                },
+            },
         },
         "AuthProviders": {
             "type": "object",
@@ -6182,7 +6189,7 @@ fn publishing_parts() -> Value {
                 "published_revision_id": { "type": ["string", "null"], "format": "uuid" },
                 "created_by": { "type": ["string", "null"], "format": "uuid" },
                 "entry_deleted": { "type": "boolean" },
-                "locale": { "type": "string", "description": "the pinned revision's language (D-173); absent for the default" },
+                "locale": { "type": "string", "description": "the pinned revision's language (D-177); absent for the default" },
             },
         },
         "ReviewView": {
@@ -6484,7 +6491,7 @@ fn delivery_parts() -> Value {
     })
 }
 
-/// Languages (D-173, D-174): the list's own shapes, and the delivered row that names its
+/// Languages (D-177, D-178): the list's own shapes, and the delivered row that names its
 /// language.
 fn locale_parts() -> Value {
     json!({
@@ -6525,7 +6532,7 @@ fn locale_parts() -> Value {
                 "content_hash": { "type": "string" },
                 "published_in": { "type": "integer", "description": "the generation this revision went live in" },
                 "visibility": { "type": "string", "description": "`public`, `authenticated` or `role:<name>` (D-137)" },
-                "locale": { "type": ["string", "null"], "description": "its language: its own tag, or the default language's for an untagged entry (D-174)" },
+                "locale": { "type": ["string", "null"], "description": "its language: its own tag, or the default language's for an untagged entry (D-178)" },
                 "localization": {
                     "type": "object",
                     "description": "on a `locale` read: what was asked for, what was served, and whether it is a fallback",

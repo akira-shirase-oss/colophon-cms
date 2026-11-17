@@ -25,7 +25,23 @@ through `--version` and `GET /version`.
   `/content/v1`'s shapes with the drafts laid over the latest release. Never cached, never
   indexed, re-checked against the issuer on every read, revocable. Set the address with
   `PUT {P}/preview-target`; the Studio pane and the SDK's site helpers follow.
-- Languages in delivery (D-173, D-174): each environment may list its languages with a
+- **Secrets from files:** every secret setting also takes `<KEY>_FILE`, a path to a mounted
+  secret; the admin commands take `COLOPHON_MIGRATION_DATABASE_URL_FILE` (D-173).
+- **`colophon admin init-roles`:** creates the server's database roles with passwords from
+  files, sent as SCRAM verifiers; refuses the development password; safe to rerun (D-173).
+- **A container image and a one-command quick start:** `deploy/image/Dockerfile` (server, CLI
+  and Studio on distroless static, non-root, 25 MB compressed) and
+  `deploy/quickstart/compose.yaml` — `docker compose up -d --wait` brings up Colophon with
+  PostgreSQL, Valkey and Garage, secrets generated on first start, only `127.0.0.1:8080`
+  published (D-174, D-175). The Studio's first-run screens say where a container's setup code
+  is. Operator guide: `deploy/runbooks/install.md`.
+- **Releases carry the image and the Studio:** the release workflow builds the image for amd64
+  and arm64 from the release's own checked binaries, scans it (Trivy: no fixable critical CVE),
+  and on a tag pushes it to `ghcr.io/akira-shirase-oss/colophon` with signed provenance; it
+  attaches `colophon-studio-<version>.tar.gz` and the quick start's `compose.yaml`, pinned to the
+  image's digest (`SHA256SUMS` now lists 24 files). An allocator job measures the musl server
+  against a glibc build of the same commit (D-174, D-176).
+- Languages in delivery (D-177, D-178): each environment may list its languages with a
   default and ordered fallbacks (`GET`/`PUT {P}/locales`), and `/content/v1` lists, entry
   reads and queries take `?locale=` and `?fallback=`, answering one row per translation
   group with what was served labelled, `alternates` on entry reads, and the cache keyed by
@@ -41,7 +57,7 @@ closes and carries a test that failed without it.
 - A content-migration run no longer un-gates an entry: the revision it wrote took the default
   `public` visibility, so publishing a migrated member-only entry served it to anonymous
   readers. The run's revision now keeps the gate of the draft it replaces, and revisions and
-  publications runs already wrote are corrected (D-175, migration 0067).
+  publications runs already wrote are corrected (D-179, migration 0067).
 - Magic links land only on an origin the project lists, and spending one retires its
   siblings (D-148); requests are bounded per client address first, then per recipient with
   an escalating cooldown, then per project (D-153, D-161).
@@ -85,6 +101,9 @@ closes and carries a test that failed without it.
 
 ### Changed — read before upgrading
 
+- **The static Linux server allocates through mimalloc (D-176):** musl's own allocator ran
+  allocation-heavy requests five times slower than glibc's on the same runner. Other builds are
+  unchanged.
 - Delivery rows gain `locale` (the row's tag, or the default language's for an untagged
   entry) and entry reads gain `alternates`; the render version is now 2, so answers cached
   under the old shape are not served. Without `?locale=` every language still comes back.

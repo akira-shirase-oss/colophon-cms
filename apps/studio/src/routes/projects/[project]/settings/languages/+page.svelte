@@ -266,7 +266,7 @@
 		const listed = failure.details?.entries ?? [];
 		const total = failure.details?.total ?? listed.length;
 		const unlinked = listed.map((item) => ({ entry: item.entry, title: item.title, href: null }));
-		// The refusal names the tag in its details (D-173).
+		// The refusal names the tag in its details (D-177).
 		const named = failure.details?.locale;
 		const asked = named === undefined ? removed : [named];
 		inUse = { total, tags: asked, entries: unlinked, places: [], finding: true };

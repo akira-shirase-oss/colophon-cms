@@ -31,7 +31,7 @@ pub struct Environment {
     pub generation: i64,
     /// The generation of its latest release that unpublished something (0 if none has).
     pub last_unpublish: i64,
-    /// Its locale policy version: bumped by every change to its languages (D-173).
+    /// Its locale policy version: bumped by every change to its languages (D-177).
     pub locale_policy: i64,
     /// The tags it lists, in display order (at most 50); empty when it lists none, and then any
     /// well-formed tag may be asked for.
@@ -67,14 +67,14 @@ pub struct Published {
     /// Who may read it: `public`, `authenticated` or `role:<name>` — what the transaction's
     /// audience already proved it may see (D-137).
     pub visibility: String,
-    /// The tag its revision was written in, `None` for the default language (D-173).
+    /// The tag its revision was written in, `None` for the default language (D-177).
     pub locale: Option<String>,
     /// Its translation group: the entry's `localization_id`, or its own id when it has none.
     pub group_key: Uuid,
 }
 
 /// A published member of a translation group, without its content: what resolution and an
-/// entry's `alternates` need (D-174).
+/// entry's `alternates` need (D-178).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Sibling {
     /// The entry.
@@ -85,7 +85,7 @@ pub struct Sibling {
     pub slug: Option<String>,
 }
 
-/// How a `?locale=` read picks rows (D-174).
+/// How a `?locale=` read picks rows (D-178).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Resolution {
     /// The tags to try, best first: the requested tag, then its fallbacks — as the
@@ -107,7 +107,7 @@ pub async fn environment(
     environment_in(pool, project, slug, None).await
 }
 
-/// [`environment`], also answering the locale policy for `requested` (D-174): the tag as the
+/// [`environment`], also answering the locale policy for `requested` (D-178): the tag as the
 /// list spells it and its fallback chain — still one statement.
 pub async fn environment_in(
     pool: &PgPool,
@@ -338,7 +338,7 @@ impl DeliveryTransaction {
         .map_err(DbError::from_query)
     }
 
-    /// A page of the collection as one row per translation group, at `generation` (D-174):
+    /// A page of the collection as one row per translation group, at `generation` (D-178):
     /// each group's best published member for `resolution` — the earliest tag in its chain
     /// that the group publishes, an untagged member counting as the default — in group order,
     /// newest first, after the group `before` when given; at most `limit` (capped like

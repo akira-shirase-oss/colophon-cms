@@ -25,6 +25,7 @@ pub mod identity;
 pub mod jobs;
 pub mod ledger;
 pub mod locales;
+pub mod login_roles;
 pub mod members;
 pub mod migrations;
 pub mod passwords;
