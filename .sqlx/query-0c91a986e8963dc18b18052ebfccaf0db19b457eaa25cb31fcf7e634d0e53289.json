@@ -1,0 +1,43 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO preview_targets (project_id, environment_id, url_template, updated_by)\n         VALUES ($1, $2, $3, $4)\n         ON CONFLICT (project_id, environment_id) DO UPDATE\n             SET url_template = EXCLUDED.url_template, updated_by = EXCLUDED.updated_by,\n                 updated_at = now()\n         RETURNING url_template, updated_at",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "url_template",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "preview_targets",
+            "name": "url_template"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "updated_at",
+        "type_info": "Timestamptz",
+        "origin": {
+          "Table": {
+            "table": "preview_targets",
+            "name": "updated_at"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid",
+        "Text",
+        "Uuid"
+      ]
+    },
+    "nullable": [
+      false,
+      false
+    ]
+  },
+  "hash": "0c91a986e8963dc18b18052ebfccaf0db19b457eaa25cb31fcf7e634d0e53289"
+}

@@ -1,0 +1,38 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT entry_id,\n                      CASE WHEN kind = 'publish' THEN revision_id END AS \"revision?\"\n               FROM changeset_items\n               WHERE project_id = $1 AND environment_id = $2 AND changeset_id = $3\n               ORDER BY entry_id\n               LIMIT $4",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "entry_id",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "changeset_items",
+            "name": "entry_id"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "revision?",
+        "type_info": "Uuid",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid",
+        "Uuid",
+        "Int8"
+      ]
+    },
+    "nullable": [
+      false,
+      null
+    ]
+  },
+  "hash": "5ff3250097d4306a30bd83b3b18dbb3e491d0c76b07cf1130b81e8f3ca95614b"
+}

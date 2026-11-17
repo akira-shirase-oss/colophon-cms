@@ -94,12 +94,11 @@ async fn act(session: &Session, path: &str, hash: Option<&str>) -> Reply {
     reason = "one story, told in order: refuse, plan, resolve, approve, apply, blocked"
 )]
 async fn a_plan_dry_runs_blocks_writes_and_applies() {
-    // The story checks the plan while it is still `running` after apply, so the worker must not
-    // reach it first: its migration loop scans once at start, then once a poll. At the default
-    // 500 ms a scan could land between apply and the checks and finish the one-entry plan
-    // (seen in CI twice on 2026-11-17: `plan_finished` for the cancel, and an empty running
-    // list); a minute-long poll leaves the plan running for the whole story.
-    let _server = Server::start_with(&[("COLOPHON_WORKER_POLL_MS", "60000")]).await;
+    // The API alone, no worker: once applied, the plan has to stay `running` for the checks
+    // below (writes blocked, cancel refused, the running list), and a worker finishes a
+    // one-entry run in milliseconds — on CI it sometimes did, between the plan's read and the
+    // list, which then came back empty.
+    let _server = Server::start_with(&[("COLOPHON_ROLE", "api")]).await;
     let owner = sign_in("dev-owner").await;
     let editor = sign_in("dev-editor").await;
     let project = project(&owner).await;

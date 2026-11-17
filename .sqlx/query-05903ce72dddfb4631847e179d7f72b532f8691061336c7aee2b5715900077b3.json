@@ -1,0 +1,17 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE preview_grants SET revoked_at = now(), code_hash = NULL, code_expires_at = NULL\n         WHERE project_id = $1 AND environment_id = $2 AND id = $3 AND issuer_id = $4\n           AND revoked_at IS NULL",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid",
+        "Uuid",
+        "Uuid"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "05903ce72dddfb4631847e179d7f72b532f8691061336c7aee2b5715900077b3"
+}

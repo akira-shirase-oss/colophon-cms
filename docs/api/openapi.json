@@ -839,6 +839,11 @@
             ]
           },
           "kind": {
+            "enum": [
+              "webhook",
+              "cdn",
+              "probe"
+            ],
             "type": "string"
           },
           "last_error": {
@@ -848,6 +853,7 @@
             ]
           },
           "location": {
+            "description": "a probe's pinned location",
             "type": [
               "string",
               "null"
@@ -857,15 +863,35 @@
             "type": "string"
           },
           "state": {
+            "description": "`covered`: a later release's job succeeded, which covers this one (`covered_by`)",
+            "enum": [
+              "done",
+              "covered",
+              "pending",
+              "failed"
+            ],
             "type": "string"
           },
           "status": {
+            "description": "its job for this very release, if it had one",
             "type": [
               "string",
               "null"
             ]
           }
         },
+        "required": [
+          "destination_id",
+          "name",
+          "kind",
+          "location",
+          "state",
+          "covered_by",
+          "status",
+          "attempts",
+          "last_error",
+          "finished_at"
+        ],
         "type": "object"
       },
       "DestinationEnabled": {
@@ -2112,6 +2138,27 @@
         ],
         "type": "object"
       },
+      "NewPreview": {
+        "additionalProperties": false,
+        "description": "exactly one of `entry` and `changeset`",
+        "properties": {
+          "changeset": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "entry": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "ttl_seconds": {
+            "default": 900,
+            "maximum": 3600,
+            "minimum": 60,
+            "type": "integer"
+          }
+        },
+        "type": "object"
+      },
       "NewProject": {
         "additionalProperties": false,
         "properties": {
@@ -2680,6 +2727,243 @@
         },
         "type": "object"
       },
+      "PreviewCodeView": {
+        "properties": {
+          "code": {
+            "type": "string"
+          },
+          "code_expires_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "url": {
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "PreviewEntryView": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/PublishedEntryView"
+          },
+          {
+            "properties": {
+              "preview": {
+                "properties": {
+                  "hidden_fields": {
+                    "description": "fields the issuer's role can't read, left out",
+                    "items": {
+                      "type": "string"
+                    },
+                    "type": "array"
+                  },
+                  "source": {
+                    "enum": [
+                      "published",
+                      "draft",
+                      "changeset"
+                    ],
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "source"
+                ],
+                "type": "object"
+              }
+            },
+            "required": [
+              "preview"
+            ],
+            "type": "object"
+          }
+        ],
+        "description": "a `PublishedEntryView`, byte for byte, plus `preview`"
+      },
+      "PreviewExchange": {
+        "additionalProperties": false,
+        "properties": {
+          "code": {
+            "description": "the `cpc_…` code from the preview address",
+            "type": "string"
+          }
+        },
+        "required": [
+          "code"
+        ],
+        "type": "object"
+      },
+      "PreviewIssuedView": {
+        "properties": {
+          "code": {
+            "description": "the one-time code (`cpc_…`): exchangeable once, for 60 seconds",
+            "type": "string"
+          },
+          "code_expires_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "expires_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "origin": {
+            "type": "string"
+          },
+          "scope": {
+            "$ref": "#/components/schemas/PreviewScope"
+          },
+          "url": {
+            "description": "the preview address with the code in it",
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "PreviewLiveView": {
+        "properties": {
+          "created_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "exchanged": {
+            "description": "whether a site has exchanged its code",
+            "type": "boolean"
+          },
+          "expires_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "scope": {
+            "$ref": "#/components/schemas/PreviewScope"
+          }
+        },
+        "type": "object"
+      },
+      "PreviewQueryPage": {
+        "properties": {
+          "applied": {
+            "$ref": "#/components/schemas/AppliedQuery"
+          },
+          "data": {
+            "items": {
+              "$ref": "#/components/schemas/PreviewEntryView"
+            },
+            "type": "array"
+          },
+          "next_cursor": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "data",
+          "next_cursor",
+          "applied"
+        ],
+        "type": "object"
+      },
+      "PreviewRenewedView": {
+        "properties": {
+          "expires_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "PreviewScope": {
+        "properties": {
+          "changeset": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "entry": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "kind": {
+            "enum": [
+              "entry",
+              "changeset"
+            ],
+            "type": "string"
+          }
+        },
+        "required": [
+          "kind"
+        ],
+        "type": "object"
+      },
+      "PreviewSessionView": {
+        "properties": {
+          "expires_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "scope": {
+            "$ref": "#/components/schemas/PreviewScope"
+          }
+        },
+        "type": "object"
+      },
+      "PreviewTargetView": {
+        "properties": {
+          "origin": {
+            "description": "the address's origin: where the Studio posts `colophon:draft-saved`",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "updated_at": {
+            "format": "date-time",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "url_template": {
+            "description": "the site address a preview opens, with `{code}` and optional `{collection}`, `{id}`, `{slug}`, `{locale}`",
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "type": "object"
+      },
+      "PreviewTokenView": {
+        "properties": {
+          "expires_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "scope": {
+            "$ref": "#/components/schemas/PreviewScope"
+          },
+          "token": {
+            "description": "the bearer token (`cpv_…`); keep it in an HttpOnly cookie, never a URL",
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
       "Problem": {
         "properties": {
           "message": {
@@ -2928,26 +3212,104 @@
         "type": "object"
       },
       "ReceiptView": {
-        "allOf": [
-          {
-            "$ref": "#/components/schemas/ReleaseView"
-          }
-        ],
-        "description": "a release plus its deliveries and observations — the publish receipt",
+        "description": "a release — every `ReleaseView` field, at the top level — plus its deliveries and observations: the publish receipt",
         "properties": {
+          "changeset_hash": {
+            "description": "the approved hash it published",
+            "type": "string"
+          },
+          "changeset_id": {
+            "format": "uuid",
+            "type": "string"
+          },
           "deliveries": {
             "items": {
               "$ref": "#/components/schemas/DeliveryView"
             },
             "type": "array"
           },
+          "entries": {
+            "description": "entries whose published revision changed",
+            "type": "integer"
+          },
+          "epoch": {
+            "description": "the environment's epoch when it committed",
+            "type": "integer"
+          },
+          "generation": {
+            "description": "its number in the environment: 1 for the first, up by exactly one each release",
+            "type": "integer"
+          },
+          "label": {
+            "description": "the release's one label (D-051); `verified` is at `locations` locations",
+            "enum": [
+              "published",
+              "pending",
+              "verified",
+              "needs_attention"
+            ],
+            "type": "string"
+          },
+          "locations": {
+            "description": "distinct locations a probe saw this release, or a later one, from",
+            "type": "integer"
+          },
           "observations": {
             "items": {
               "$ref": "#/components/schemas/SeenView"
             },
             "type": "array"
+          },
+          "published_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "published_by": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "published_by_name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "purge": {
+            "description": "whether the environment's CDNs accepted a purge covering it (D-050)",
+            "enum": [
+              "none",
+              "pending",
+              "accepted",
+              "failed"
+            ],
+            "type": "string"
+          },
+          "title": {
+            "description": "the changeset's title",
+            "type": "string"
+          },
+          "unpublished": {
+            "description": "entries it took down",
+            "type": "integer"
           }
         },
+        "required": [
+          "deliveries",
+          "observations",
+          "generation",
+          "epoch",
+          "changeset_id",
+          "title",
+          "changeset_hash",
+          "published_by",
+          "published_by_name",
+          "published_at",
+          "entries",
+          "unpublished",
+          "purge",
+          "label",
+          "locations"
+        ],
         "type": "object"
       },
       "ReferrerView": {
@@ -2974,6 +3336,7 @@
       "ReleaseView": {
         "properties": {
           "changeset_hash": {
+            "description": "the approved hash it published",
             "type": "string"
           },
           "changeset_id": {
@@ -2981,18 +3344,29 @@
             "type": "string"
           },
           "entries": {
+            "description": "entries whose published revision changed",
             "type": "integer"
           },
           "epoch": {
+            "description": "the environment's epoch when it committed",
             "type": "integer"
           },
           "generation": {
+            "description": "its number in the environment: 1 for the first, up by exactly one each release",
             "type": "integer"
           },
           "label": {
+            "description": "the release's one label (D-051); `verified` is at `locations` locations",
+            "enum": [
+              "published",
+              "pending",
+              "verified",
+              "needs_attention"
+            ],
             "type": "string"
           },
           "locations": {
+            "description": "distinct locations a probe saw this release, or a later one, from",
             "type": "integer"
           },
           "published_at": {
@@ -3010,16 +3384,39 @@
             ]
           },
           "purge": {
-            "description": "the purge job's state for this release",
+            "description": "whether the environment's CDNs accepted a purge covering it (D-050)",
+            "enum": [
+              "none",
+              "pending",
+              "accepted",
+              "failed"
+            ],
             "type": "string"
           },
           "title": {
+            "description": "the changeset's title",
             "type": "string"
           },
           "unpublished": {
+            "description": "entries it took down",
             "type": "integer"
           }
         },
+        "required": [
+          "generation",
+          "epoch",
+          "changeset_id",
+          "title",
+          "changeset_hash",
+          "published_by",
+          "published_by_name",
+          "published_at",
+          "entries",
+          "unpublished",
+          "purge",
+          "label",
+          "locations"
+        ],
         "type": "object"
       },
       "RemovedView": {
@@ -3330,12 +3727,38 @@
             "type": "string"
           },
           "observed_generation": {
+            "description": "the release the answer said it was built from, if it said",
             "type": [
               "integer",
               "null"
             ]
           }
         },
+        "required": [
+          "destination_id",
+          "location",
+          "observed_generation",
+          "http_status",
+          "body_hash",
+          "error",
+          "observed_at"
+        ],
+        "type": "object"
+      },
+      "SetPreviewTarget": {
+        "additionalProperties": false,
+        "properties": {
+          "url_template": {
+            "description": "https (http only to localhost on a development server), at most 2,048 characters, holding `{code}`; `null` clears it",
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "url_template"
+        ],
         "type": "object"
       },
       "SetUp": {
@@ -3926,6 +4349,12 @@
         "scheme": "bearer",
         "type": "http"
       },
+      "previewToken": {
+        "bearerFormat": "cpv_",
+        "description": "a preview token (D-171): a customer's site exchanges a one-time code from a preview address for it. It reads one entry's drafts (or one publish request's pinned revisions) over the latest release, as the person who opened the preview may read them, until it expires or is revoked.",
+        "scheme": "bearer",
+        "type": "http"
+      },
       "sessionCookie": {
         "description": "a browser session. Cookie-authenticated writes (anything but GET, HEAD, OPTIONS) also need an `Origin` the server trusts exactly and an `X-CSRF-Token` header matching the session's CSRF token, which lives in the readable `colophon_csrf` cookie.",
         "in": "cookie",
@@ -4222,7 +4651,7 @@
                       "type": "array"
                     },
                     "next_cursor": {
-                      "description": "pass back as `?cursor=`; `null` on the last page",
+                      "description": "pass back in the operation's cursor parameter for the next page; `null` on the last page",
                       "type": [
                         "string",
                         "null"
@@ -5283,7 +5712,7 @@
                       "type": "array"
                     },
                     "next_cursor": {
-                      "description": "pass back as `?cursor=`; `null` on the last page",
+                      "description": "pass back in the operation's cursor parameter for the next page; `null` on the last page",
                       "type": [
                         "string",
                         "null"
@@ -5906,7 +6335,7 @@
                       "type": "array"
                     },
                     "next_cursor": {
-                      "description": "pass back as `?cursor=`; `null` on the last page",
+                      "description": "pass back in the operation's cursor parameter for the next page; `null` on the last page",
                       "type": [
                         "string",
                         "null"
@@ -6898,7 +7327,7 @@
                       "type": "array"
                     },
                     "next_cursor": {
-                      "description": "pass back as `?cursor=`; `null` on the last page",
+                      "description": "pass back in the operation's cursor parameter for the next page; `null` on the last page",
                       "type": [
                         "string",
                         "null"
@@ -7465,7 +7894,7 @@
                       "type": "array"
                     },
                     "next_cursor": {
-                      "description": "pass back as `?cursor=`; `null` on the last page",
+                      "description": "pass back in the operation's cursor parameter for the next page; `null` on the last page",
                       "type": [
                         "string",
                         "null"
@@ -7770,11 +8199,8 @@
                       "type": "array"
                     },
                     "next_cursor": {
-                      "description": "pass back as `?cursor=`; `null` on the last page",
-                      "type": [
-                        "string",
-                        "null"
-                      ]
+                      "description": "always `null`: this list answers in one page",
+                      "type": "null"
                     }
                   },
                   "required": [
@@ -7785,7 +8211,7 @@
                 }
               }
             },
-            "description": "ok"
+            "description": "the latest 100 changesets; no further pages (`next_cursor` is always `null`)"
           },
           "401": {
             "content": {
@@ -9077,7 +9503,7 @@
                       "type": "array"
                     },
                     "next_cursor": {
-                      "description": "pass back as `?cursor=`; `null` on the last page",
+                      "description": "pass back in the operation's cursor parameter for the next page; `null` on the last page",
                       "type": [
                         "string",
                         "null"
@@ -10123,7 +10549,7 @@
                       "type": "array"
                     },
                     "next_cursor": {
-                      "description": "pass back as `?cursor=`; `null` on the last page",
+                      "description": "pass back in the operation's cursor parameter for the next page; `null` on the last page",
                       "type": [
                         "string",
                         "null"
@@ -11875,11 +12301,8 @@
                       "type": "array"
                     },
                     "next_cursor": {
-                      "description": "pass back as `?cursor=`; `null` on the last page",
-                      "type": [
-                        "string",
-                        "null"
-                      ]
+                      "description": "always `null`: this list answers in one page",
+                      "type": "null"
                     }
                   },
                   "required": [
@@ -11890,7 +12313,7 @@
                 }
               }
             },
-            "description": "ok"
+            "description": "every shared component; one answer (`next_cursor` is always `null`)"
           },
           "401": {
             "content": {
@@ -12425,11 +12848,8 @@
                       "type": "array"
                     },
                     "next_cursor": {
-                      "description": "pass back as `?cursor=`; `null` on the last page",
-                      "type": [
-                        "string",
-                        "null"
-                      ]
+                      "description": "always `null`: this list answers in one page",
+                      "type": "null"
                     }
                   },
                   "required": [
@@ -12440,7 +12860,7 @@
                 }
               }
             },
-            "description": "ok"
+            "description": "every content type; one answer (`next_cursor` is always `null`)"
           },
           "401": {
             "content": {
@@ -13131,11 +13551,8 @@
                       "type": "array"
                     },
                     "next_cursor": {
-                      "description": "pass back as `?cursor=`; `null` on the last page",
-                      "type": [
-                        "string",
-                        "null"
-                      ]
+                      "description": "always `null`: this list answers in one page",
+                      "type": "null"
                     }
                   },
                   "required": [
@@ -13146,7 +13563,7 @@
                 }
               }
             },
-            "description": "ok"
+            "description": "the first 100 destinations; no further pages (`next_cursor` is always `null`)"
           },
           "401": {
             "content": {
@@ -13601,11 +14018,8 @@
                       "type": "array"
                     },
                     "next_cursor": {
-                      "description": "pass back as `?cursor=`; `null` on the last page",
-                      "type": [
-                        "string",
-                        "null"
-                      ]
+                      "description": "always `null`: this list answers in one page",
+                      "type": "null"
                     }
                   },
                   "required": [
@@ -13616,7 +14030,7 @@
                 }
               }
             },
-            "description": "ok"
+            "description": "the newest 100 jobs; no further pages (`next_cursor` is always `null`)"
           },
           "401": {
             "content": {
@@ -14013,11 +14427,8 @@
                       "type": "array"
                     },
                     "next_cursor": {
-                      "description": "pass back as `?cursor=`; `null` on the last page",
-                      "type": [
-                        "string",
-                        "null"
-                      ]
+                      "description": "always `null`: this list answers in one page",
+                      "type": "null"
                     }
                   },
                   "required": [
@@ -14028,7 +14439,7 @@
                 }
               }
             },
-            "description": "ok"
+            "description": "the newest 100 plans; no further pages (`next_cursor` is always `null`)"
           },
           "401": {
             "content": {
@@ -14895,7 +15306,7 @@
                       "type": "array"
                     },
                     "next_cursor": {
-                      "description": "pass back as `?cursor=`; `null` on the last page",
+                      "description": "pass back in the operation's cursor parameter for the next page; `null` on the last page",
                       "type": [
                         "string",
                         "null"
@@ -15267,9 +15678,9 @@
         ]
       }
     },
-    "/api/v1/projects/{project}/environments/{environment}/releases": {
+    "/api/v1/projects/{project}/environments/{environment}/preview-target": {
       "get": {
-        "operationId": "listReleases",
+        "operationId": "getPreviewTarget",
         "parameters": [
           {
             "description": "the project's id",
@@ -15298,13 +15709,874 @@
                 "schema": {
                   "properties": {
                     "data": {
+                      "$ref": "#/components/schemas/PreviewTargetView"
+                    }
+                  },
+                  "required": [
+                    "data"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "unset fields are null"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "`unauthorized` — not signed in, the credential is invalid, or the token was revoked"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "`api_token_not_allowed` — people open previews; an API token can't"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "`not_found` — no such resource — or one the caller may not see, which looks the same"
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "`rate_limited` — over the per-credential or per-address limit; `Retry-After`"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "any other failure, in the one error envelope"
+          }
+        },
+        "security": [
+          {
+            "sessionCookie": []
+          },
+          {
+            "bearerToken": []
+          }
+        ],
+        "summary": "Where this environment's previews open on the site",
+        "tags": [
+          "preview"
+        ]
+      },
+      "put": {
+        "operationId": "setPreviewTarget",
+        "parameters": [
+          {
+            "description": "the project's id",
+            "in": "path",
+            "name": "project",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          },
+          {
+            "description": "the environment's slug, such as `production`",
+            "in": "path",
+            "name": "environment",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SetPreviewTarget"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "data": {
+                      "$ref": "#/components/schemas/PreviewTargetView"
+                    }
+                  },
+                  "required": [
+                    "data"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "as stored"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "`unauthorized` — not signed in, the credential is invalid, or the token was revoked"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "`missing_permission and friends` — signed in, but the role does not allow this"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "`not_found` — no such resource — or one the caller may not see, which looks the same"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "`invalid_preview_url` — the address refused"
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "`rate_limited` — over the per-credential or per-address limit; `Retry-After`"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "any other failure, in the one error envelope"
+          }
+        },
+        "security": [
+          {
+            "sessionCookie": []
+          },
+          {
+            "bearerToken": []
+          }
+        ],
+        "summary": "Set or clear the site address previews open",
+        "tags": [
+          "preview"
+        ]
+      }
+    },
+    "/api/v1/projects/{project}/environments/{environment}/previews": {
+      "get": {
+        "operationId": "listMyPreviews",
+        "parameters": [
+          {
+            "description": "the project's id",
+            "in": "path",
+            "name": "project",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          },
+          {
+            "description": "the environment's slug, such as `production`",
+            "in": "path",
+            "name": "environment",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "only those of this entry",
+            "in": "query",
+            "name": "entry",
+            "required": false,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "data": {
+                      "items": {
+                        "$ref": "#/components/schemas/PreviewLiveView"
+                      },
+                      "type": "array"
+                    },
+                    "next_cursor": {
+                      "description": "always `null`: this list answers in one page",
+                      "type": "null"
+                    }
+                  },
+                  "required": [
+                    "data",
+                    "next_cursor"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "the newest 100 of the caller's own live previews; `next_cursor` is always null"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "`unauthorized` — not signed in, the credential is invalid, or the token was revoked"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "`api_token_not_allowed` — people open previews; an API token can't"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "`not_found` — no such resource — or one the caller may not see, which looks the same"
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "`rate_limited` — over the per-credential or per-address limit; `Retry-After`"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "any other failure, in the one error envelope"
+          }
+        },
+        "security": [
+          {
+            "sessionCookie": []
+          },
+          {
+            "bearerToken": []
+          }
+        ],
+        "summary": "Your own live previews, newest first",
+        "tags": [
+          "preview"
+        ]
+      },
+      "post": {
+        "operationId": "issuePreview",
+        "parameters": [
+          {
+            "description": "the project's id",
+            "in": "path",
+            "name": "project",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          },
+          {
+            "description": "the environment's slug, such as `production`",
+            "in": "path",
+            "name": "environment",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/NewPreview"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "data": {
+                      "$ref": "#/components/schemas/PreviewIssuedView"
+                    }
+                  },
+                  "required": [
+                    "data"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "created"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "`unauthorized` — not signed in, the credential is invalid, or the token was revoked"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "`api_token_not_allowed` — people open previews; an API token can't"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "`not_found` — no such resource — or one the caller may not see, which looks the same"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "`already_published` — the publish request is already live"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "`preview_not_configured, invalid_scope, invalid_ttl` — no preview address is set, or the request refused"
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "`preview_limit` — the project has 1,000 previews open; over the per-credential or per-address limit; `Retry-After`"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "any other failure, in the one error envelope"
+          }
+        },
+        "security": [
+          {
+            "sessionCookie": []
+          },
+          {
+            "bearerToken": []
+          }
+        ],
+        "summary": "Open a preview of an entry or a publish request: a one-time code and the site address it fills",
+        "tags": [
+          "preview"
+        ]
+      }
+    },
+    "/api/v1/projects/{project}/environments/{environment}/previews/{preview}": {
+      "delete": {
+        "operationId": "revokePreview",
+        "parameters": [
+          {
+            "description": "the project's id",
+            "in": "path",
+            "name": "project",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          },
+          {
+            "description": "the environment's slug, such as `production`",
+            "in": "path",
+            "name": "environment",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "the path parameter",
+            "in": "path",
+            "name": "preview",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "ended"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "`unauthorized` — not signed in, the credential is invalid, or the token was revoked"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "`api_token_not_allowed` — people open previews; an API token can't"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "`not_found` — no such resource — or one the caller may not see, which looks the same"
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "`rate_limited` — over the per-credential or per-address limit; `Retry-After`"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "any other failure, in the one error envelope"
+          }
+        },
+        "security": [
+          {
+            "sessionCookie": []
+          },
+          {
+            "bearerToken": []
+          }
+        ],
+        "summary": "End one of your previews now: its token answers 401 preview_revoked",
+        "tags": [
+          "preview"
+        ]
+      }
+    },
+    "/api/v1/projects/{project}/environments/{environment}/previews/{preview}/code": {
+      "post": {
+        "operationId": "newPreviewCode",
+        "parameters": [
+          {
+            "description": "the project's id",
+            "in": "path",
+            "name": "project",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          },
+          {
+            "description": "the environment's slug, such as `production`",
+            "in": "path",
+            "name": "environment",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "the path parameter",
+            "in": "path",
+            "name": "preview",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "data": {
+                      "$ref": "#/components/schemas/PreviewCodeView"
+                    }
+                  },
+                  "required": [
+                    "data"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "created"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "`unauthorized` — not signed in, the credential is invalid, or the token was revoked"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "`api_token_not_allowed` — people open previews; an API token can't"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "`not_found` — no such resource — or one the caller may not see, which looks the same"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "`preview_not_configured` — no preview address is set"
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "`rate_limited` — over the per-credential or per-address limit; `Retry-After`"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "any other failure, in the one error envelope"
+          }
+        },
+        "security": [
+          {
+            "sessionCookie": []
+          },
+          {
+            "bearerToken": []
+          }
+        ],
+        "summary": "A fresh one-time code for one of your live previews (exchanging it replaces the token)",
+        "tags": [
+          "preview"
+        ]
+      }
+    },
+    "/api/v1/projects/{project}/environments/{environment}/previews/{preview}/renew": {
+      "post": {
+        "operationId": "renewPreview",
+        "parameters": [
+          {
+            "description": "the project's id",
+            "in": "path",
+            "name": "project",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          },
+          {
+            "description": "the environment's slug, such as `production`",
+            "in": "path",
+            "name": "environment",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "the path parameter",
+            "in": "path",
+            "name": "preview",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "data": {
+                      "$ref": "#/components/schemas/PreviewRenewedView"
+                    }
+                  },
+                  "required": [
+                    "data"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "the new end"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "`unauthorized` — not signed in, the credential is invalid, or the token was revoked"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "`api_token_not_allowed` — people open previews; an API token can't"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "`not_found` — no such resource — or one the caller may not see, which looks the same"
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "`rate_limited` — over the per-credential or per-address limit; `Retry-After`"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "any other failure, in the one error envelope"
+          }
+        },
+        "security": [
+          {
+            "sessionCookie": []
+          },
+          {
+            "bearerToken": []
+          }
+        ],
+        "summary": "Keep one of your live previews open: its time to live again, never past 8 hours from opening",
+        "tags": [
+          "preview"
+        ]
+      }
+    },
+    "/api/v1/projects/{project}/environments/{environment}/releases": {
+      "get": {
+        "operationId": "listReleases",
+        "parameters": [
+          {
+            "description": "the project's id",
+            "in": "path",
+            "name": "project",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          },
+          {
+            "description": "the environment's slug, such as `production`",
+            "in": "path",
+            "name": "environment",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "page size: 1–100, default 100",
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          {
+            "description": "the `next_cursor` a previous page answered",
+            "in": "query",
+            "name": "cursor",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "data": {
                       "items": {
                         "$ref": "#/components/schemas/ReleaseView"
                       },
                       "type": "array"
                     },
                     "next_cursor": {
-                      "description": "pass back as `?cursor=`; `null` on the last page",
+                      "description": "pass back in the operation's cursor parameter for the next page; `null` on the last page",
                       "type": [
                         "string",
                         "null"
@@ -15319,7 +16591,7 @@
                 }
               }
             },
-            "description": "the current generation is in `Colophon-Generation`",
+            "description": "a page of releases, newest first; the current generation is in `Colophon-Generation`",
             "headers": {
               "Colophon-Generation": {
                 "schema": {
@@ -15327,6 +16599,16 @@
                 }
               }
             }
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "`bad_request` — `limit` out of range, or a cursor that isn't this list's"
           },
           "401": {
             "content": {
@@ -16003,11 +17285,8 @@
                       "type": "array"
                     },
                     "next_cursor": {
-                      "description": "pass back as `?cursor=`; `null` on the last page",
-                      "type": [
-                        "string",
-                        "null"
-                      ]
+                      "description": "always `null`: this list answers in one page",
+                      "type": "null"
                     }
                   },
                   "required": [
@@ -16018,7 +17297,7 @@
                 }
               }
             },
-            "description": "ok"
+            "description": "up to 100 pending schedules in time order, then the 20 most recently finished; no further pages (`next_cursor` is always `null`)"
           },
           "401": {
             "content": {
@@ -16302,7 +17581,7 @@
                       "type": "array"
                     },
                     "next_cursor": {
-                      "description": "pass back as `?cursor=`; `null` on the last page",
+                      "description": "pass back in the operation's cursor parameter for the next page; `null` on the last page",
                       "type": [
                         "string",
                         "null"
@@ -16872,11 +18151,8 @@
                       "type": "array"
                     },
                     "next_cursor": {
-                      "description": "pass back as `?cursor=`; `null` on the last page",
-                      "type": [
-                        "string",
-                        "null"
-                      ]
+                      "description": "always `null`: this list answers in one page",
+                      "type": "null"
                     }
                   },
                   "required": [
@@ -16887,7 +18163,7 @@
                 }
               }
             },
-            "description": "ok"
+            "description": "the newest 1,000 invitations; no further pages (`next_cursor` is always `null`)"
           },
           "401": {
             "content": {
@@ -17193,11 +18469,8 @@
                       "type": "array"
                     },
                     "next_cursor": {
-                      "description": "pass back as `?cursor=`; `null` on the last page",
-                      "type": [
-                        "string",
-                        "null"
-                      ]
+                      "description": "always `null`: this list answers in one page",
+                      "type": "null"
                     }
                   },
                   "required": [
@@ -17208,7 +18481,7 @@
                 }
               }
             },
-            "description": "ok"
+            "description": "up to 1,000 members, owners first; no further pages (`next_cursor` is always `null`)"
           },
           "401": {
             "content": {
@@ -17519,11 +18792,8 @@
                       "type": "array"
                     },
                     "next_cursor": {
-                      "description": "pass back as `?cursor=`; `null` on the last page",
-                      "type": [
-                        "string",
-                        "null"
-                      ]
+                      "description": "always `null`: this list answers in one page",
+                      "type": "null"
                     }
                   },
                   "required": [
@@ -17534,7 +18804,7 @@
                 }
               }
             },
-            "description": "ok"
+            "description": "up to 100 roles, the built-in ones first; no further pages (`next_cursor` is always `null`)"
           },
           "401": {
             "content": {
@@ -18113,11 +19383,8 @@
                       "type": "array"
                     },
                     "next_cursor": {
-                      "description": "pass back as `?cursor=`; `null` on the last page",
-                      "type": [
-                        "string",
-                        "null"
-                      ]
+                      "description": "always `null`: this list answers in one page",
+                      "type": "null"
                     }
                   },
                   "required": [
@@ -18128,7 +19395,7 @@
                 }
               }
             },
-            "description": "ok"
+            "description": "the newest 200 tokens; no further pages (`next_cursor` is always `null`)"
           },
           "401": {
             "content": {
@@ -20238,7 +21505,7 @@
                       "type": "array"
                     },
                     "next_cursor": {
-                      "description": "pass back as `?cursor=`; `null` on the last page",
+                      "description": "pass back in the operation's cursor parameter for the next page; `null` on the last page",
                       "type": [
                         "string",
                         "null"
@@ -20975,6 +22242,713 @@
         ]
       }
     },
+    "/preview/v1/{project}/{environment}/exchange": {
+      "post": {
+        "operationId": "previewExchange",
+        "parameters": [
+          {
+            "description": "the project's id",
+            "in": "path",
+            "name": "project",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          },
+          {
+            "description": "the environment's slug, such as `production`",
+            "in": "path",
+            "name": "environment",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PreviewExchange"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "data": {
+                      "$ref": "#/components/schemas/PreviewTokenView"
+                    }
+                  },
+                  "required": [
+                    "data"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "`private, no-store`; a code works once"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "`preview_not_found` — unknown, used and expired codes all answer alike"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "any other failure, in the one error envelope"
+          }
+        },
+        "security": [],
+        "summary": "Exchange a preview address's one-time code for a bearer token",
+        "tags": [
+          "preview"
+        ]
+      }
+    },
+    "/preview/v1/{project}/{environment}/session": {
+      "get": {
+        "operationId": "previewSession",
+        "parameters": [
+          {
+            "description": "the project's id",
+            "in": "path",
+            "name": "project",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          },
+          {
+            "description": "the environment's slug, such as `production`",
+            "in": "path",
+            "name": "environment",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "data": {
+                      "$ref": "#/components/schemas/PreviewSessionView"
+                    }
+                  },
+                  "required": [
+                    "data"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "`private, no-store`, `noindex`",
+            "headers": {
+              "Colophon-Generation": {
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "Colophon-Preview": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "`unauthorized` — not signed in, the credential is invalid, or the token was revoked; no token, an ended one, or its issuer can no longer read here"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "`not_found` — no such resource — or one the caller may not see, which looks the same"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "`preview_stale` — the publish request changed after the preview opened"
+          },
+          "410": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "`preview_published` — the publish request is live; `Colophon-Generation` names its release"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "`preview_reads_latest, preview_depth` — `?generation=` or `depth` asked for"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "`unavailable` — preview read capacity is full; `Retry-After` says when"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "any other failure, in the one error envelope"
+          }
+        },
+        "security": [
+          {
+            "previewToken": []
+          }
+        ],
+        "summary": "The preview token's scope and end, for the site's preview banner",
+        "tags": [
+          "preview"
+        ]
+      }
+    },
+    "/preview/v1/{project}/{environment}/{collection}": {
+      "get": {
+        "operationId": "previewList",
+        "parameters": [
+          {
+            "description": "the project's id",
+            "in": "path",
+            "name": "project",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          },
+          {
+            "description": "the environment's slug, such as `production`",
+            "in": "path",
+            "name": "environment",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "the collection's slug",
+            "in": "path",
+            "name": "collection",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "page size: 1–100, default 20",
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          {
+            "description": "the `next_cursor` a previous page answered",
+            "in": "query",
+            "name": "cursor",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "data": {
+                      "items": {
+                        "$ref": "#/components/schemas/PreviewEntryView"
+                      },
+                      "type": "array"
+                    },
+                    "next_cursor": {
+                      "description": "pass back in the operation's cursor parameter for the next page; `null` on the last page",
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "data",
+                    "next_cursor"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "`/content/v1`'s shape; `private, no-store`, `noindex`, never `ETag`",
+            "headers": {
+              "Colophon-Generation": {
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "Colophon-Preview": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "`unauthorized` — not signed in, the credential is invalid, or the token was revoked; no token, an ended one, or its issuer can no longer read here"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "`not_found` — no such resource — or one the caller may not see, which looks the same"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "`preview_stale` — the publish request changed after the preview opened"
+          },
+          "410": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "`preview_published` — the publish request is live; `Colophon-Generation` names its release"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "`preview_reads_latest, preview_depth` — `?generation=` or `depth` asked for"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "`unavailable` — preview read capacity is full; `Retry-After` says when"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "any other failure, in the one error envelope"
+          }
+        },
+        "security": [
+          {
+            "previewToken": []
+          }
+        ],
+        "summary": "A collection as the preview sees it: the scope's drafts over the latest release",
+        "tags": [
+          "preview"
+        ]
+      }
+    },
+    "/preview/v1/{project}/{environment}/{collection}/query": {
+      "post": {
+        "operationId": "previewQuery",
+        "parameters": [
+          {
+            "description": "the project's id",
+            "in": "path",
+            "name": "project",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          },
+          {
+            "description": "the environment's slug, such as `production`",
+            "in": "path",
+            "name": "environment",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "the collection's slug",
+            "in": "path",
+            "name": "collection",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "the `next_cursor` a previous page answered",
+            "in": "query",
+            "name": "cursor",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/QueryDocument"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PreviewQueryPage"
+                }
+              }
+            },
+            "description": "`/content/v1`'s query page; `depth` isn't served in preview yet (422 `preview_depth`)",
+            "headers": {
+              "Colophon-Generation": {
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "Colophon-Preview": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "`unauthorized` — not signed in, the credential is invalid, or the token was revoked; no token, an ended one, or its issuer can no longer read here"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "`not_found` — no such resource — or one the caller may not see, which looks the same"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "`preview_stale` — the publish request changed after the preview opened"
+          },
+          "410": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "`preview_published` — the publish request is live; `Colophon-Generation` names its release"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "`preview_reads_latest, preview_depth` — `?generation=` or `depth` asked for"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "`unavailable` — preview read capacity is full; `Retry-After` says when"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "any other failure, in the one error envelope"
+          }
+        },
+        "security": [
+          {
+            "previewToken": []
+          }
+        ],
+        "summary": "Run the bounded query language over the preview's overlay",
+        "tags": [
+          "preview"
+        ]
+      }
+    },
+    "/preview/v1/{project}/{environment}/{collection}/{entry}": {
+      "get": {
+        "operationId": "previewGet",
+        "parameters": [
+          {
+            "description": "the project's id",
+            "in": "path",
+            "name": "project",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          },
+          {
+            "description": "the environment's slug, such as `production`",
+            "in": "path",
+            "name": "environment",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "the collection's slug",
+            "in": "path",
+            "name": "collection",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "the entry's id",
+            "in": "path",
+            "name": "entry",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "data": {
+                      "$ref": "#/components/schemas/PreviewEntryView"
+                    }
+                  },
+                  "required": [
+                    "data"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "`/content/v1`'s shape; `private, no-store`, `noindex`, never `ETag`",
+            "headers": {
+              "Colophon-Generation": {
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "Colophon-Preview": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "`unauthorized` — not signed in, the credential is invalid, or the token was revoked; no token, an ended one, or its issuer can no longer read here"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "`not_found` — no such resource — or one the caller may not see, which looks the same"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "`preview_stale` — the publish request changed after the preview opened"
+          },
+          "410": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "`preview_published` — the publish request is live; `Colophon-Generation` names its release"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "`preview_reads_latest, preview_depth` — `?generation=` or `depth` asked for"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "`unavailable` — preview read capacity is full; `Retry-After` says when"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "any other failure, in the one error envelope"
+          }
+        },
+        "security": [
+          {
+            "previewToken": []
+          }
+        ],
+        "summary": "One entry as the preview sees it",
+        "tags": [
+          "preview"
+        ]
+      }
+    },
     "/readyz": {
       "get": {
         "operationId": "readiness",
@@ -21134,6 +23108,10 @@
     {
       "description": "verified asset bytes, publicly: sha addresses immutable, current-version addresses revalidating",
       "name": "media"
+    },
+    {
+      "description": "drafts on the editor's own site: scoped, short-lived grants and the `/preview/v1` reads (never cached)",
+      "name": "preview"
     }
   ]
 }

@@ -31,7 +31,7 @@ operation, and the cross-project and identity test families from spec §27 pass.
 - Roles and memberships.
 - Machine credentials for scripts and agents.
 - The policy function.
-- Preview capabilities.
+- Preview grants (D-171): scoped, short-lived, hashed, re-checked against the issuer on every read.
 - The row-level-security context for each transaction.
 
 ## Not its job
@@ -427,11 +427,54 @@ Built in step 1.7 (D-042), for people:
 - Revocation is checked before every later authorized operation, including the worker's next external attempt.
 - The decision sets the transaction-local row-level-security context that [db](02-db.md) relies on.
 
-### Preview capabilities (P4; spec §06)
-- A short-lived capability, 15 minutes by default, scoped to project, environment, the exact revision set and the
-  permitted asset IDs.
-- It is validated on every protected fetch from the separate preview origin.
-- It is never a public cache key.
+### Preview grants (D-171; built 2026-11-17, gap 1)
+A preview is a **delegated, scoped, short-lived read**: a person lets their own site's server read drafts they can
+read, for a few minutes, and nothing else. Built as `colophon_db::previews`, `colophon_api::preview` and
+`colophon_domain::preview` (migration 0065).
+
+- **Who issues.** A person, signed in (session or personal token), on an entry they can read or a publish request
+  in their environment: `POST {P}/previews {entry | changeset, ttl_seconds?}`. Project API tokens are refused
+  (`api_token_not_allowed`): agents don't show people drafts in v1.
+- **Scope.** `entry`: the entry and its translation group, following their *latest saved* drafts. `changeset`: a
+  publish request's pinned revisions, bound to its hash when the grant was issued (as approvals are, D-044).
+- **Code, then token.** Issuing returns a one-time code `cpc_…` (256 bits, 60 s, single use) and the site address
+  with the code filled in. The site's server exchanges it, `POST /preview/v1/{project}/{environment}/exchange`,
+  for a bearer token `cpv_…` (256 bits). Both are stored only as SHA-256; one `UPDATE` clears the code and sets the
+  token, so two racing exchanges can't both win. Unknown, spent and expired codes all answer the same 404.
+- **Lifetime.** 15 minutes by default, 60 s to 60 min; `POST {P}/previews/{id}/renew` (issuer only) moves the end
+  again while the Studio holds the preview open, never past 8 hours from creation (a CHECK). `POST
+  {P}/previews/{id}/code` mints a fresh code for the same grant (its exchange replaces the token);
+  `DELETE {P}/previews/{id}` revokes. A project holds at most 1,000 live grants (`preview_limit`, 429).
+- **Every read re-checks.** The token's grant is looked up in the URL's project only (another project's token is
+  unknown there: 401 `preview_invalid`); revoked → 401 `preview_revoked`, expired → 401 `preview_expired`; the
+  environment must be the grant's (else 404). The read then opens its transaction **as the issuer**
+  (`begin_in_project_isolated`, one snapshot): a removed member or a deleted role ends the preview on the next
+  request (401 `preview_revoked`), and each row is narrowed by the issuer's field policy (`hidden_fields`), so a
+  preview never shows more than its issuer could read in the Studio. A changeset grant whose request was refreshed
+  answers 409 `preview_stale`; once published, 410 `preview_published` naming the release.
+- **Audit.** `preview.issued`, `preview.exchanged`, `preview.revoked`, `preview.target_updated`.
+- **Retention.** Ended grants are swept a week after they end (`colophon_sweep_preview_grants`, D-165's pattern).
+- **The site address.** `GET | PUT {P}/preview-target`: one template per environment, `https` (plain `http` only to
+  localhost on a development server, D-149's switch), ≤ 2,048 characters, holding `{code}`, with only `{code}`,
+  `{collection}`, `{id}`, `{slug}` and `{locale}` and none in the host, so its origin is fixed (the Studio posts
+  messages to exactly it). Changing it needs `destinations.manage`.
+
+### Preview threat model (D-171, D-172)
+
+| Threat | Mitigation | Test |
+|---|---|---|
+| A draft enters Colophon's cache or a CDN in front of the API | Preview never touches `DeliveryCache`; every answer, refusals included, is `private, no-store`, `Vary: Authorization`, with no `ETag` and no `Cache-Tag`; a separate `/preview/` path family the operator bypasses at the CDN | `tests/preview.rs`: a caching proxy that keeps whatever `Cache-Control` doesn't forbid and keys on the URL alone stores no preview answer, an anonymous read of the same address gets 401, delivery still reads the published title |
+| A draft cached by the customer's CDN in front of their site | The SDK's handler and `previewHeaders` force `private, no-store` and `noindex` on preview-mode pages; the guide says to bypass the preview cookie | the testbed's site-side caching proxy (slice 3) |
+| Indexing | `X-Robots-Tag: noindex, nofollow, noarchive` on every preview answer; the guide disallows preview routes in `robots.txt` | asserted on every read in `tests/preview.rs` |
+| Token theft through a URL (Referer, history, logs) | Only the 60 s single-use code is ever in a URL; it travels to Colophon in a POST body; `Referrer-Policy: no-referrer`; the request span logs no query strings (D-152) | a spent code 404s; the race test |
+| Replay after access is removed | Every read re-checks the grant and opens as the issuer; revoke endpoint | member removed mid-run → 401 on the next read; revoke → 401 |
+| Scope escalation (A's token on B's drafts, another project) | The overlay uses only the grant's scope ids; the grant is found only in the URL's project; the environment must match | the scope property test: random grants and reads over two projects, checked against `colophon_domain::preview::overlay` |
+| Field leakage | Rows narrowed by the issuer's read fields; filters and sorts on unreadable fields refused (D-109) | a title-only role's preview shows the title alone and lists `body` in `hidden_fields` |
+| Stale approval confusion | Changeset scope is bound to the request's hash | refresh after preview → 409 `preview_stale`; publish → 410 |
+| Open redirect in the site handler | The SDK's handler accepts only same-site relative paths | SDK unit tests (slice 3) |
+| Clickjacking or framing | The site sends `frame-ancestors` for the Studio's origin; the Studio's iframe is sandboxed; messages use an exact `targetOrigin` and receivers check `origin` | Studio journey (slice 2) |
+| Abuse and denial of service | 1,000 live grants per project; `/preview/` counts per address and per bearer in admission (D-076); a per-server semaphore of 32 preview reads answers 503 + `Retry-After` past it, so preview can't take delivery's connections; exchange bodies ≤ 1 KiB | `perf/k6/preview.js` (smoke) |
+| Agent misuse | Project API tokens can't issue previews | `tests/preview.rs` |
 
 ## Invariants
 
@@ -454,7 +497,7 @@ Built in step 1.7 (D-042), for people:
 - **Policy:** `authorize(principal, action, resource)`.
 - **Session store and credential store** ports, implemented in [db](02-db.md).
 - **Identity-provider adapter:** discovery, code exchange, token validation.
-- **Preview:** capability issue and verify.
+- **Preview:** grant issue, exchange, renew, revoke; every read re-checked as the issuer (`tests/preview.rs`).
 
 ## Failure modes
 

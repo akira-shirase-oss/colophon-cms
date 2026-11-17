@@ -1,0 +1,66 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT collection, created_by, draft_slug AS slug, locale FROM entries\n         WHERE project_id = $1 AND environment_id = $2 AND id = $3",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "collection",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "entries",
+            "name": "collection"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "created_by",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "entries",
+            "name": "created_by"
+          }
+        }
+      },
+      {
+        "ordinal": 2,
+        "name": "slug",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "entries",
+            "name": "draft_slug"
+          }
+        }
+      },
+      {
+        "ordinal": 3,
+        "name": "locale",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "entries",
+            "name": "locale"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid",
+        "Uuid"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      true,
+      true
+    ]
+  },
+  "hash": "b7ff7566826fa1a5302499476fb7200cdcc86c7f254d4470addbbf57d01ddaf9"
+}
