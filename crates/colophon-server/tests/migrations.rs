@@ -94,7 +94,11 @@ async fn act(session: &Session, path: &str, hash: Option<&str>) -> Reply {
     reason = "one story, told in order: refuse, plan, resolve, approve, apply, blocked"
 )]
 async fn a_plan_dry_runs_blocks_writes_and_applies() {
-    let _server = Server::start().await;
+    // The API alone, no worker: once applied, the plan has to stay `running` for the checks
+    // below (writes blocked, cancel refused, the running list), and a worker finishes a
+    // one-entry run in milliseconds — on CI it sometimes did, between the plan's read and the
+    // list, which then came back empty.
+    let _server = Server::start_with(&[("COLOPHON_ROLE", "api")]).await;
     let owner = sign_in("dev-owner").await;
     let editor = sign_in("dev-editor").await;
     let project = project(&owner).await;
