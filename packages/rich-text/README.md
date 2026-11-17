@@ -36,6 +36,14 @@ for (const entry of page.data) {
 - `RICH_TEXT_SCHEMA`, `RICH_TEXT_VERSION`, and the `RichTextValue`, `StoredNode`, `StoredMark`
   types.
 
+## In a component
+
+The HTML is safe to insert as it is, so a framework needs no wrapper — in Svelte:
+
+```svelte
+<article>{@html renderToHtml(entry.content.body, { assetUrl })}</article>
+```
+
 ## Safety
 
 The output contains only markup the renderer built itself: text and attributes are escaped,
