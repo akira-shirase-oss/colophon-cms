@@ -103,19 +103,20 @@ export interface LocaleList {
 	locales: LocaleSetting[];
 }
 
-/** What a `?locale=` read resolved: the tag asked for, the tag actually served, and whether that
- *  was a fallback. */
+/** What a `?locale=` read resolved: the tag asked for, the tag actually served (`null` for an
+ *  untagged entry in an environment with no default language), and whether that was a fallback. */
 export interface Localization {
 	requested: string;
-	resolved: string;
+	resolved: string | null;
 	fallback: boolean;
 }
 
-/** A published sibling of the entry read — the same entry in another language. */
+/** A published sibling of the entry read — the same entry in another language. `slug` is absent
+ *  when the collection has none. */
 export interface Alternate {
 	id: string;
-	locale: string;
-	slug: string | null;
+	locale: string | null;
+	slug?: string;
 }
 
 /** A delivery row: the published entry, its locale (the default tag for an untagged entry when
