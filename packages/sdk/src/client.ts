@@ -75,6 +75,116 @@ export function newIdempotencyKey(): string {
 	return crypto.randomUUID();
 }
 
+/* ---------------------------------------------------------------- locales */
+//
+// Hand-written until `docs/api/openapi.json` carries the environment's language list and the
+// delivery API's locale fields; `api.types.ts` is generated from that document and never edited
+// by hand. When it does, these become aliases of the generated schemas (`ReplyJson<…>`), and the
+// intersections below stay harmless — the same fields, declared twice.
+
+/** One language in an environment's list (`GET {P}/locales`). */
+export interface LocaleSetting {
+	/** BCP-47-shaped: 2–3 letters, then `-` subtags of 1–8 letters or digits (`en`, `pt-BR`,
+	 *  `zh-Hant`), at most 35 characters. Unique in the list, ignoring case. */
+	tag: string;
+	/** What a person sees: 1–80 characters. */
+	label: string;
+	/** Exactly one language in a non-empty list is the default — what an untagged entry counts as. */
+	default: boolean;
+	/** The tags a read in this language tries next, in order: at most four, each listed, never
+	 *  the tag itself or a repeat. */
+	fallback: string[];
+}
+
+/** An environment's languages, in display order. An empty list at version 0 means one language
+ *  with free tags; `version` goes up by one on every successful `putLocales`. */
+export interface LocaleList {
+	version: number;
+	locales: LocaleSetting[];
+}
+
+/** What a `?locale=` read resolved: the tag asked for, the tag actually served, and whether that
+ *  was a fallback. */
+export interface Localization {
+	requested: string;
+	resolved: string;
+	fallback: boolean;
+}
+
+/** A published sibling of the entry read — the same entry in another language. */
+export interface Alternate {
+	id: string;
+	locale: string;
+	slug: string | null;
+}
+
+/** A delivery row: the published entry, its locale (the default tag for an untagged entry when
+ *  the environment lists languages, else `null`), and — on a `?locale=` read — what resolved. */
+export type DeliveryEntry = components['schemas']['PublishedEntryView'] & {
+	locale?: string | null;
+	localization?: Localization;
+};
+
+/** One entry read: a row plus its published siblings at that generation (`[]` when it has
+ *  none). On a `?locale=` read the row may be a sibling: `id` is the sibling's, `requested_id`
+ *  the id that was asked for. */
+export type DeliveryEntryRead = DeliveryEntry & {
+	requested_id?: string;
+	alternates?: Alternate[];
+};
+
+/** `Delivery.list`'s answer. */
+export type DeliveryListReply = Omit<ReplyJson<'deliveryList'>, 'data'> & { data: DeliveryEntry[] };
+/** `Delivery.get`'s answer. */
+export type DeliveryGetReply = Omit<ReplyJson<'deliveryGet'>, 'data'> & { data: DeliveryEntryRead };
+/** `Delivery.query`'s answer. */
+export type DeliveryQueryReply = Omit<ReplyJson<'deliveryQuery'>, 'data'> & { data: DeliveryEntry[] };
+
+/**
+ * How a localized read falls back when an entry has nothing published in the asked tag:
+ * `'policy'` (the server's default) follows the environment's chain for that tag; `'none'`
+ * answers exact matches only; a list names this read's own chain, at most four tags.
+ */
+export type Fallback = 'policy' | 'none' | readonly string[];
+
+export interface LocaleOptions {
+	fallback?: Fallback;
+}
+
+/** The most tags a `?fallback=` list may name — the server refuses more (`invalid_fallback`). */
+export const MAX_FALLBACKS = 4;
+
+/** A tag as it can ride a query string unchanged in meaning: non-empty, no comma (the list
+ *  separator), no whitespace. Its BCP-47 shape is the server's to judge. */
+function tagArg(tag: string, what: string): string {
+	if (tag === '' || /[\s,]/.test(tag)) {
+		throw new TypeError(`${what} must be a language tag such as "pt-BR", got ${JSON.stringify(tag)}`);
+	}
+	return tag;
+}
+
+/** `?fallback=`'s value: absent for `'policy'` (the server's default — one URL per answer, so a
+ *  CDN key never splits on it), `none`, or the list joined with commas. */
+function fallbackArg(fallback: Fallback | undefined): string | undefined {
+	if (fallback === undefined || fallback === 'policy') return undefined;
+	if (fallback === 'none') return 'none';
+	if (typeof fallback === 'string') {
+		throw new TypeError(`fallback must be 'policy', 'none' or a list of tags, got ${JSON.stringify(fallback)}`);
+	}
+	if (fallback.length > MAX_FALLBACKS) {
+		throw new TypeError(`a fallback chain names at most ${MAX_FALLBACKS} tags, got ${fallback.length}`);
+	}
+	if (fallback.length === 0) return 'none';
+	return fallback.map((tag) => tagArg(tag, 'a fallback')).join(',');
+}
+
+/** A delivery scope's locale: the tag every read names and the `?fallback=` it sends, if any
+ *  (`Delivery.inLocale` builds it). */
+export interface LocaleScope {
+	readonly locale: string;
+	readonly fallback: string | undefined;
+}
+
 /** How the caller proves who it is. Exactly one of `ClientOptions.token` / `.session`. */
 export interface SessionCredential {
 	/** The readable `colophon_csrf` cookie's value, echoed as `X-CSRF-Token` on every write —
@@ -340,7 +450,8 @@ export class Client {
 
 	/**
 	 * The public delivery surface — `/content/v1`, published content only, no draft ever reaches
-	 * it. `delivery(project).atGeneration(g)` pins every read to one release (invariant K1).
+	 * it. `delivery(project).atGeneration(g)` pins every read to one release (invariant K1);
+	 * `.inLocale(tag, { fallback })` reads in one language.
 	 */
 	delivery(project: string, environment = 'production'): Delivery {
 		return new Delivery(this.#send, project, environment);
@@ -364,6 +475,33 @@ export class Environment {
 	/** `GET {P}/permissions` — what the caller's role allows here, as data. */
 	ownPermissions(options: ReadOptions = {}): Promise<Reply<ReplyJson<'ownPermissions'>>> {
 		return this.#send({ method: 'GET', path: `${this.#base}/permissions`, ...(options.signal !== undefined ? { signal: options.signal } : {}) });
+	}
+
+	/* ------------------------------------------------------------- languages */
+
+	/** `GET {P}/locales` — the environment's languages in display order, each with its default
+	 *  flag and fallback chain. `response.etag` (`"locales-{version}"`) is `putLocales`' `ifMatch`.
+	 *  Any member of the project may read it. */
+	getLocales(options: ReadOptions = {}): Promise<Reply<{ data: LocaleList }>> {
+		return this.#send({ method: 'GET', path: `${this.#base}/locales`, ...(options.signal !== undefined ? { signal: options.signal } : {}) });
+	}
+
+	/** `PUT {P}/locales` — the whole list, in order, on top of the version `ifMatch` names
+	 *  (`schema.change`). Refusals: 409 `stale_locales` (changed since — `error.etag` is the
+	 *  current one), 409 `locale_in_use` (a removed tag live entries still carry: `details.entries`,
+	 *  `details.total`), 422 `validation_failed` with its reason and pointer (`invalid_locale`,
+	 *  `duplicate_locale`, `locale_default_required`, `fallback_not_listed`, `invalid_fallback`,
+	 *  `too_many_locales`, `invalid_locale_label`). A replay of the same key and body gets the
+	 *  recorded answer. */
+	putLocales(locales: readonly LocaleSetting[], opts: GuardedOptions): Promise<Reply<{ data: LocaleList }>> {
+		const { signal, idempotencyKey, ifMatch } = opts;
+		return this.#send({
+			method: 'PUT',
+			path: `${this.#base}/locales`,
+			headers: { 'if-match': ifMatch, 'idempotency-key': idempotencyKey },
+			body: { locales },
+			...(signal !== undefined ? { signal } : {})
+		});
 	}
 
 	/* -------------------------------------------------------------- entries */
@@ -649,56 +787,76 @@ export class Environment {
 /**
  * `/content/v1/{project}/{environment}` — the published projection, readable without signing in.
  * Every read may name a `generation`; `atGeneration(g)` returns a scope that always names it, so
- * the reads one page makes can never mix releases (invariant K1).
+ * the reads one page makes can never mix releases (invariant K1). `inLocale(tag)` returns a scope
+ * whose reads all ask for one language, falling back as the environment's policy (or the read's
+ * own chain) says; the two compose in either order.
  */
 export class Delivery {
 	readonly #send: Send;
 	readonly #project: string;
 	readonly #environment: string;
 	readonly #generation: number | undefined;
+	readonly #locale: LocaleScope | undefined;
 
-	constructor(send: Send, project: string, environment: string, generation?: number) {
+	constructor(send: Send, project: string, environment: string, generation?: number, locale?: LocaleScope) {
 		this.#send = send;
 		this.#project = project;
 		this.#environment = environment;
 		this.#generation = generation;
+		this.#locale = locale;
 	}
 
 	/** The same reads, pinned to `generation` for every call that follows (K1). A call may not
 	 *  name a different generation on a pinned scope — that would be the mixing the pin exists to
-	 *  prevent. */
+	 *  prevent. A locale the scope already has is kept. */
 	atGeneration(generation: number): Delivery {
-		return new Delivery(this.#send, this.#project, this.#environment, generation);
+		return new Delivery(this.#send, this.#project, this.#environment, generation, this.#locale);
+	}
+
+	/**
+	 * The same reads in one language: every `list`, `get` and `query` sends `?locale=tag` (and
+	 * `?fallback=` unless it's the policy). Rows then carry `localization` — the tag asked for,
+	 * the tag served and whether that was a fallback; an entry `get` answers the entry's best
+	 * sibling (`requested_id` names the one asked for), or 404 `not_found` with
+	 * `details.reason` `not_in_locale` when nothing in the chain is published —
+	 * `availableLocales(error)` lists what is. A generation the scope is pinned to is kept.
+	 */
+	inLocale(tag: string, options: LocaleOptions = {}): Delivery {
+		const locale: LocaleScope = { locale: tagArg(tag, 'the locale'), fallback: fallbackArg(options.fallback) };
+		return new Delivery(this.#send, this.#project, this.#environment, this.#generation, locale);
 	}
 
 	#collection(collection: string): string {
 		return `/content/v1/${segment(this.#project)}/${segment(this.#environment)}/${segment(collection)}`;
 	}
 
-	#gen(asked: number | undefined): number | undefined {
+	/** The scope's query: the pinned (or asked) generation, then the locale and its fallback. */
+	#scoped(asked: number | undefined): Record<string, QueryValue | undefined> {
 		if (this.#generation !== undefined && asked !== undefined && asked !== this.#generation) {
 			throw new TypeError(`this delivery scope is pinned to generation ${this.#generation}`);
 		}
-		return this.#generation ?? asked;
+		return { generation: this.#generation ?? asked, locale: this.#locale?.locale, fallback: this.#locale?.fallback };
 	}
 
 	/** `GET /content/v1/{project}/{environment}/{collection}` — published entries: `limit`,
-	 *  `cursor`, and `generation` to read a past release. */
-	list(collection: string, opts: { limit?: number; cursor?: string; generation?: number } & ReadOptions = {}): Promise<Reply<ReplyJson<'deliveryList'>>> {
+	 *  `cursor`, and `generation` to read a past release. In a locale, one row per translation
+	 *  group — its best published member for the tag and chain. */
+	list(collection: string, opts: { limit?: number; cursor?: string; generation?: number } & ReadOptions = {}): Promise<Reply<DeliveryListReply>> {
 		const { signal, generation, ...rest } = opts;
-		return this.#send({ method: 'GET', path: this.#collection(collection), query: { ...rest, generation: this.#gen(generation) }, ...(signal !== undefined ? { signal } : {}) });
+		return this.#send({ method: 'GET', path: this.#collection(collection), query: { ...rest, ...this.#scoped(generation) }, ...(signal !== undefined ? { signal } : {}) });
 	}
 
-	/** `GET /content/v1/{project}/{environment}/{collection}/{entry}` — one published entry. */
-	get(collection: string, entry: string, opts: { generation?: number } & ReadOptions = {}): Promise<Reply<ReplyJson<'deliveryGet'>>> {
+	/** `GET /content/v1/{project}/{environment}/{collection}/{entry}` — one published entry, with
+	 *  its published siblings in `alternates`. */
+	get(collection: string, entry: string, opts: { generation?: number } & ReadOptions = {}): Promise<Reply<DeliveryGetReply>> {
 		const { signal, generation } = opts;
-		return this.#send({ method: 'GET', path: `${this.#collection(collection)}/${segment(entry)}`, query: { generation: this.#gen(generation) }, ...(signal !== undefined ? { signal } : {}) });
+		return this.#send({ method: 'GET', path: `${this.#collection(collection)}/${segment(entry)}`, query: this.#scoped(generation), ...(signal !== undefined ? { signal } : {}) });
 	}
 
 	/** `POST /content/v1/{project}/{environment}/{collection}/query` — the same bounded document
 	 *  as `queryEntries`, over the published projection; `cursor` continues a page. */
-	query(collection: string, document: RequestJson<'deliveryQuery'>, opts: { cursor?: string; generation?: number } & ReadOptions = {}): Promise<Reply<ReplyJson<'deliveryQuery'>>> {
+	query(collection: string, document: RequestJson<'deliveryQuery'>, opts: { cursor?: string; generation?: number } & ReadOptions = {}): Promise<Reply<DeliveryQueryReply>> {
 		const { signal, generation, ...rest } = opts;
-		return this.#send({ method: 'POST', path: `${this.#collection(collection)}/query`, query: { ...rest, generation: this.#gen(generation) }, body: document, ...(signal !== undefined ? { signal } : {}) });
+		return this.#send({ method: 'POST', path: `${this.#collection(collection)}/query`, query: { ...rest, ...this.#scoped(generation) }, body: document, ...(signal !== undefined ? { signal } : {}) });
 	}
 }

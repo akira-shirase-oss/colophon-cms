@@ -98,3 +98,16 @@ export function errorOf(body: unknown): ErrorEnvelope['error'] | null {
 	if (typeof fields['code'] !== 'string' || typeof fields['message'] !== 'string') return null;
 	return fields as unknown as ErrorEnvelope['error'];
 }
+
+/**
+ * What a localized entry read can offer instead when nothing in its chain is published: the
+ * published tags of the entry's translation group, from a 404 `not_found` whose
+ * `details.reason` is `not_in_locale` — `[]` when the group has nothing published at all. Any
+ * other error (or value) gives `null`, so a page can tell "not in this language" from "no such
+ * entry".
+ */
+export function availableLocales(error: unknown): string[] | null {
+	if (!(error instanceof ApiError) || error.status !== 404 || error.reason !== 'not_in_locale') return null;
+	const available = (error.details as Record<string, unknown> | null)?.['available'];
+	return Array.isArray(available) ? available.filter((tag): tag is string => typeof tag === 'string') : [];
+}

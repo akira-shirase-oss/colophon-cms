@@ -6,13 +6,14 @@
 //   const { data: draft, response } = await env.getEntry('articles', entryId);
 //   await env.saveEntry('articles', entryId, { ...draft.content, title: 'New' },
 //     { ifMatch: response.etag!, idempotencyKey: newIdempotencyKey() });
+//   const page = await client.delivery(projectId).inLocale('pt-BR').atGeneration(9).list('articles');
 //
 // The client carries a credential, it never creates one: signing in is `/auth/…`, `colophon
 // login`, or the Studio — not this package's job (one API, no bypass). Every method's types come
 // from `api.types.ts`, regenerated from the served OpenAPI document; failures arrive as
 // `ApiError` with the error envelope's code, message, request id and details.
 
-export { Client, Environment, Delivery, newIdempotencyKey } from './client.js';
+export { Client, Environment, Delivery, newIdempotencyKey, MAX_FALLBACKS } from './client.js';
 export type {
 	ClientOptions,
 	SessionCredential,
@@ -25,9 +26,21 @@ export type {
 	ReplyMeta,
 	RequestJson,
 	ReplyJson,
-	QueryOf
+	QueryOf,
+	LocaleSetting,
+	LocaleList,
+	Localization,
+	Alternate,
+	DeliveryEntry,
+	DeliveryEntryRead,
+	DeliveryListReply,
+	DeliveryGetReply,
+	DeliveryQueryReply,
+	Fallback,
+	LocaleOptions,
+	LocaleScope
 } from './client.js';
-export { ApiError, errorOf } from './error.js';
+export { ApiError, errorOf, availableLocales } from './error.js';
 export type { ErrorEnvelope, ErrorCode, ErrorDetails, ClientCode } from './error.js';
 
 /* The whole contract, for anyone building on the wire shapes directly. */

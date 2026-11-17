@@ -42,6 +42,16 @@ Built in DX.8 (D-112): `@colophon-cms/sdk`, versioned `0.1.0-alpha.1` with the s
   (`{csrf, cookie?}`); it never signs in, refreshes or stores a credential.
 - **Pinned reads:** `client.delivery(p).atGeneration(g)` returns a scope whose reads all name `g`;
   asking for a different generation on it throws.
+- **Reads in a language (gap/locales):** `client.delivery(p).inLocale(tag, { fallback })` returns a
+  scope whose `list`, `get` and `query` all send `?locale=tag`, and `?fallback=none` or a
+  comma-joined chain of at most four tags (`'policy'`, the server's default, isn't sent, so a CDN
+  key never splits on it); a longer chain, an empty tag or a comma inside one throws before any
+  request. It composes with `atGeneration` in either order and keeps the pin's refusal. Rows are
+  typed with `locale` and `localization` (`requested`, `resolved`, `fallback`), an entry read with
+  `requested_id` and `alternates`; `availableLocales(error)` reads a 404 `not_in_locale`'s
+  published tags. `env.getLocales()` and `env.putLocales(list, { ifMatch, idempotencyKey })`
+  manage the environment's languages. These shapes are hand-written in `src/client.ts` until
+  `docs/api/openapi.json` carries them.
 - **Bounds:** `timeoutMs` (15 s default, joined with the caller's `signal`) and `maxBodyBytes`
   (16 MiB default) on every call.
 

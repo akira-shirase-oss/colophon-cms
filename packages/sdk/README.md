@@ -38,13 +38,46 @@ site, tool or agent actually calls — and keeps wire names verbatim (`next_curs
   approving and applying a migration stays a person's CLI act
 - **assets:** `listAssets`, `getAsset` (byte serving is `/media/v1`, deliberately not wrapped)
 - **`ownPermissions`** — the caller's role as data
+- **languages:** `getLocales`, `putLocales` — the environment's list, each language's default
+  flag and fallback chain, replaced whole under `If-Match`
 - **delivery:** `client.delivery(project)` — `list`, `get`, `query` over published content;
-  `.atGeneration(g)` pins every read to one release so a page can never mix two
+  `.atGeneration(g)` pins every read to one release so a page can never mix two;
+  `.inLocale(tag, { fallback })` reads in one language
 
 The rest of the surface (invitations, members, roles, tokens, destinations, schedules, exports,
 the `/auth` flows, media bytes, the SSE event stream) is reachable the same way if you need it:
 the generated `paths`/`operations`/`components` types are exported, so extending the client is a
 typed call, not a new convention.
+
+## Reading in a language
+
+```ts
+import { availableLocales } from '@colophon-cms/sdk';
+
+const site = client.delivery(projectId).inLocale('pt-BR').atGeneration(generation);
+const { data: rows } = await site.list('articles');
+// One row per translation group: its best published member for pt-BR and the chain.
+for (const row of rows) console.log(row.localization); // { requested: 'pt-BR', resolved: 'pt', fallback: true }
+
+try {
+  const { data: post } = await site.get('articles', id); // post.id may be a sibling; post.requested_id is `id`
+  console.log(post.alternates);                           // [{ id, locale: 'en', slug }, …]
+} catch (error) {
+  const published = availableLocales(error); // ['en', 'pt'] when nothing in the chain is out
+  if (published === null) throw error;
+}
+```
+
+`fallback` is `'policy'` (the default: the environment's chain for that tag, so it isn't sent),
+`'none'` (exact matches only) or a list of at most four tags, sent as `?fallback=pt,en`. The two
+scopes compose in either order. `env.getLocales()` reads the environment's languages and its
+`ETag`; `env.putLocales(list, { ifMatch, idempotencyKey })` replaces the whole list, refused with
+`stale_locales` (someone changed it — `error.etag` is current), `locale_in_use` (a removed tag
+live entries still carry) or a 422 naming the reason and the pointer into the list.
+
+The locale fields (`locale`, `localization`, `requested_id`, `alternates`) and the language-list
+shapes are hand-written in `src/client.ts` until the served OpenAPI document carries them; they
+become aliases of the generated schemas then.
 
 ## Errors
 
@@ -88,8 +121,8 @@ test refuses a stale `openapi.json`.
 
 - `src/api.types.ts` — generated (do not edit; `openapi-typescript@7.13.0`,
   `--empty-objects-unknown`)
-- `src/client.ts` — `Client`, `Environment`, `Delivery`, `newIdempotencyKey`
-- `src/error.ts` — `ApiError`, the envelope types
+- `src/client.ts` — `Client`, `Environment`, `Delivery`, `newIdempotencyKey`, the locale types
+- `src/error.ts` — `ApiError`, the envelope types, `availableLocales`
 - `src/index.ts` — exports and the common schema aliases
 - `test/` — mocked-fetch contract tests, type-level tests, and a real-server suite gated on
   `COLOPHON_TEST_ORIGIN`

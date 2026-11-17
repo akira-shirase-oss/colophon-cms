@@ -6,8 +6,13 @@
 import { describe, expectTypeOf, it } from 'vitest';
 import { Client } from '../src/index.ts';
 import type {
+	Alternate,
 	ApiError,
+	DeliveryEntry,
+	DeliveryEntryRead,
 	DraftView,
+	LocaleList,
+	Localization,
 	EntryDocument,
 	EntrySummaryView,
 	QueryDocument,
@@ -73,10 +78,37 @@ describe('the guards the routes require are required in types', () => {
 		void env.reviewChangeset('c1', { decision: 'approve' }, {});
 		// @ts-expect-error — ifMatch is required
 		void env.submitChangeset('c1', {});
+		// @ts-expect-error — ifMatch is required
+		void env.putLocales([], { idempotencyKey: 'k-abcdefghijklmnop' });
+		// @ts-expect-error — idempotencyKey is required
+		void env.putLocales([], { ifMatch: '"locales-0"' });
 	});
 
 	it('reads take no key and no match', () => {
 		expectTypeOf(env.getEntry).parameter(2).toEqualTypeOf<{ signal?: AbortSignal } | undefined>();
+	});
+});
+
+describe('locales: the scope and the row fields are typed', () => {
+	it('inLocale takes a policy, none or a list of tags — nothing else', () => {
+		const delivery = client.delivery('p');
+		void delivery.inLocale('pt-BR', { fallback: ['pt', 'en'] });
+		void delivery.inLocale('pt-BR', { fallback: 'none' });
+		// Not called: the client would refuse it at run time too.
+		// @ts-expect-error — not a fallback mode
+		const nearest = () => delivery.inLocale('pt-BR', { fallback: 'nearest' });
+		void nearest;
+		expectTypeOf(delivery.inLocale('fr').atGeneration(3)).toEqualTypeOf(delivery);
+	});
+
+	it('delivery rows carry locale and localization; an entry read carries alternates', () => {
+		expectTypeOf<DeliveryEntry['locale']>().toEqualTypeOf<string | null | undefined>();
+		expectTypeOf<DeliveryEntry['localization']>().toEqualTypeOf<Localization | undefined>();
+		expectTypeOf<DeliveryEntryRead['alternates']>().toEqualTypeOf<Alternate[] | undefined>();
+		expectTypeOf<DeliveryEntryRead['requested_id']>().toEqualTypeOf<string | undefined>();
+		expectTypeOf(client.delivery('p').get('articles', 'e1')).resolves.toMatchTypeOf<{ data: DeliveryEntryRead }>();
+		expectTypeOf(client.delivery('p').list('articles')).resolves.toMatchTypeOf<{ data: DeliveryEntry[]; next_cursor: string | null }>();
+		expectTypeOf(env.getLocales()).resolves.toMatchTypeOf<{ data: LocaleList }>();
 	});
 });
 

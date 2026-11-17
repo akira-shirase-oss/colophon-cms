@@ -5,7 +5,7 @@
 // `server.test.ts` when `COLOPHON_TEST_ORIGIN` is set.
 
 import { describe, expect, it } from 'vitest';
-import { ApiError, Client, newIdempotencyKey } from '../src/index.ts';
+import { ApiError, Client, availableLocales, newIdempotencyKey } from '../src/index.ts';
 
 interface Seen {
 	url: string;
@@ -273,5 +273,171 @@ describe('delivery: published reads and the pinned scope', () => {
 		expect(calls[1]!.url).toContain('generation=42');
 		expect(() => pinned.get('articles', 'e1', { generation: 7 })).toThrow(TypeError);
 		expect(() => pinned.query('articles', {}, { generation: 7 })).toThrow(TypeError);
+	});
+});
+
+describe('delivery in a locale: inLocale composes with the pinned scope', () => {
+	const page = { data: [], next_cursor: null, applied: { query: {}, query_hash: 'sha256:0' } };
+
+	it('names the locale on list, get and query, and no fallback for the policy', async () => {
+		const { calls, fetch } = stubFetch(() => json(page));
+		const delivery = new Client({ baseUrl: 'http://server.test', fetch }).delivery('p').inLocale('pt-BR');
+		await delivery.list('articles', { limit: 5 });
+		expect(calls[0]!.url).toBe('http://server.test/content/v1/p/production/articles?limit=5&locale=pt-BR');
+		await delivery.get('articles', 'e1');
+		expect(calls[1]!.url).toBe('http://server.test/content/v1/p/production/articles/e1?locale=pt-BR');
+		await delivery.query('articles', { limit: 3 }, { cursor: 'q1' });
+		expect(calls[2]!.url).toBe('http://server.test/content/v1/p/production/articles/query?cursor=q1&locale=pt-BR');
+		// The policy is the server's default, so naming it changes nothing on the wire.
+		await new Client({ baseUrl: 'http://server.test', fetch }).delivery('p').inLocale('fr', { fallback: 'policy' }).list('articles');
+		expect(calls[3]!.url).toBe('http://server.test/content/v1/p/production/articles?locale=fr');
+	});
+
+	it("sends fallback=none, and a chain joined with commas", async () => {
+		const { calls, fetch } = stubFetch(() => json(page));
+		const delivery = new Client({ baseUrl: 'http://server.test', fetch }).delivery('p');
+		await delivery.inLocale('pt-BR', { fallback: 'none' }).get('articles', 'e1');
+		expect(new URL(calls[0]!.url).searchParams.get('fallback')).toBe('none');
+		await delivery.inLocale('pt-BR', { fallback: ['pt', 'en'] }).list('articles');
+		const url = new URL(calls[1]!.url);
+		expect(url.searchParams.get('locale')).toBe('pt-BR');
+		expect(url.searchParams.get('fallback')).toBe('pt,en');
+		// An empty chain is no chain.
+		await delivery.inLocale('pt-BR', { fallback: [] }).list('articles');
+		expect(new URL(calls[2]!.url).searchParams.get('fallback')).toBe('none');
+	});
+
+	it('refuses a chain over four tags, a comma in a tag, and an empty tag — before any request', () => {
+		const { calls, fetch } = stubFetch(() => json(page));
+		const delivery = new Client({ baseUrl: 'http://server.test', fetch }).delivery('p');
+		expect(() => delivery.inLocale('pt-BR', { fallback: ['pt', 'en', 'es', 'fr', 'de'] })).toThrow(TypeError);
+		expect(() => delivery.inLocale('pt-BR', { fallback: ['pt,en'] })).toThrow(TypeError);
+		expect(() => delivery.inLocale('')).toThrow(TypeError);
+		expect(() => delivery.inLocale('pt BR')).toThrow(TypeError);
+		// Four is the bound, not a refusal.
+		expect(() => delivery.inLocale('pt-BR', { fallback: ['pt', 'en', 'es', 'fr'] })).not.toThrow();
+		expect(calls).toHaveLength(0);
+	});
+
+	it('composes with atGeneration in either order, and the pin still refuses another generation', async () => {
+		const { calls, fetch } = stubFetch(() => json(page));
+		const delivery = new Client({ baseUrl: 'http://server.test', fetch }).delivery('p');
+		await delivery.inLocale('pt-BR', { fallback: ['en'] }).atGeneration(9).list('articles');
+		await delivery.atGeneration(9).inLocale('pt-BR', { fallback: ['en'] }).list('articles');
+		expect(calls[0]!.url).toBe('http://server.test/content/v1/p/production/articles?generation=9&locale=pt-BR&fallback=en');
+		expect(calls[1]!.url).toBe(calls[0]!.url);
+		const pinned = delivery.atGeneration(9).inLocale('fr');
+		expect(() => pinned.get('articles', 'e1', { generation: 8 })).toThrow(TypeError);
+		await pinned.query('articles', {});
+		expect(calls[2]!.url).toBe('http://server.test/content/v1/p/production/articles/query?generation=9&locale=fr');
+	});
+
+	it('leaves the unlocalized scope exactly as it was', async () => {
+		const { calls, fetch } = stubFetch(() => json(page));
+		const delivery = new Client({ baseUrl: 'http://server.test', fetch }).delivery('p');
+		delivery.inLocale('fr'); // a new scope; this one is untouched
+		await delivery.list('articles');
+		expect(calls[0]!.url).toBe('http://server.test/content/v1/p/production/articles');
+	});
+
+	it('answers the row fields: locale, localization, requested_id, alternates', async () => {
+		const row = {
+			id: 'pt-1',
+			requested_id: 'en-1',
+			locale: 'pt',
+			localization: { requested: 'pt-BR', resolved: 'pt', fallback: true },
+			alternates: [{ id: 'en-1', locale: 'en', slug: 'hello' }]
+		};
+		const { fetch } = stubFetch(() => json({ data: row }, 200, { 'content-language': 'pt-BR' }));
+		const read = await new Client({ baseUrl: 'http://server.test', fetch }).delivery('p').inLocale('pt-BR').get('articles', 'en-1');
+		expect(read.data.id).toBe('pt-1');
+		expect(read.data.requested_id).toBe('en-1');
+		expect(read.data.localization).toEqual({ requested: 'pt-BR', resolved: 'pt', fallback: true });
+		expect(read.data.alternates?.map((alternate) => alternate.locale)).toEqual(['en']);
+	});
+
+	it('a 404 not_in_locale names what is published; any other error gives null', async () => {
+		const { fetch } = stubFetch(({ url }) =>
+			url.includes('locale=ja')
+				? json(envelope('not_found', 'not published in ja', { reason: 'not_in_locale', available: ['en', 'pt'] }), 404)
+				: json(envelope('not_found', 'no such entry'), 404)
+		);
+		const delivery = new Client({ baseUrl: 'http://server.test', fetch }).delivery('p');
+		const missing = await failure(delivery.inLocale('ja', { fallback: 'none' }).get('articles', 'e1'));
+		expect(missing).toMatchObject({ status: 404, code: 'not_found', reason: 'not_in_locale' });
+		expect(availableLocales(missing)).toEqual(['en', 'pt']);
+		const gone = await failure(delivery.get('articles', 'e2'));
+		expect(availableLocales(gone)).toBeNull();
+		expect(availableLocales(new Error('not an ApiError'))).toBeNull();
+	});
+});
+
+describe("the environment's languages: getLocales and putLocales", () => {
+	const list = {
+		version: 3,
+		locales: [
+			{ tag: 'en', label: 'English', default: true, fallback: [] },
+			{ tag: 'pt-BR', label: 'Português (Brasil)', default: false, fallback: ['en'] }
+		]
+	};
+
+	it('reads the list with its ETag', async () => {
+		const { calls, fetch } = stubFetch(() => json({ data: list }, 200, { etag: '"locales-3"' }));
+		const read = await new Client({ baseUrl: 'http://server.test', fetch }).environment('p', 'staging').getLocales();
+		expect(calls[0]!.method).toBe('GET');
+		expect(calls[0]!.url).toBe('http://server.test/api/v1/projects/p/environments/staging/locales');
+		expect(read.data.locales.map((locale) => locale.tag)).toEqual(['en', 'pt-BR']);
+		expect(read.response.etag).toBe('"locales-3"');
+	});
+
+	it('puts the whole list under If-Match and an Idempotency-Key', async () => {
+		const { calls, fetch } = stubFetch(() => json({ data: { ...list, version: 4 } }, 200, { etag: '"locales-4"' }));
+		const saved = await new Client({ baseUrl: 'http://server.test', fetch })
+			.environment('p')
+			.putLocales(list.locales, { ifMatch: '"locales-3"', idempotencyKey: 'k-abcdefghijklmnop' });
+		const call = calls[0]!;
+		expect(call.method).toBe('PUT');
+		expect(call.url).toBe('http://server.test/api/v1/projects/p/environments/production/locales');
+		const headers = call.init.headers as Record<string, string>;
+		expect(headers['if-match']).toBe('"locales-3"');
+		expect(headers['idempotency-key']).toBe('k-abcdefghijklmnop');
+		expect(JSON.parse(call.init.body as string)).toEqual({ locales: list.locales });
+		expect(saved.data.version).toBe(4);
+		expect(saved.response.etag).toBe('"locales-4"');
+	});
+
+	it('a stale list is a 409 carrying the current ETag; a removed tag in use names the entries', async () => {
+		const { fetch } = stubFetch(({ init }) =>
+			(init.headers as Record<string, string>)['if-match'] === '"locales-2"'
+				? json(envelope('conflict', 'the languages changed', { reason: 'stale_locales' }), 409, { etag: '"locales-3"' })
+				: json(
+						envelope('conflict', '12 entries are written in pt-BR', {
+							reason: 'locale_in_use',
+							pointer: '/locales',
+							total: 12,
+							entries: [{ entry: 'e1', title: 'Olá', state: 'draft' }]
+						}),
+						409
+					)
+		);
+		const env = new Client({ baseUrl: 'http://server.test', fetch }).environment('p');
+		const stale = await failure(env.putLocales([], { ifMatch: '"locales-2"', idempotencyKey: 'k-abcdefghijklmnop' }));
+		expect(stale).toMatchObject({ status: 409, code: 'conflict', reason: 'stale_locales', etag: '"locales-3"', retryable: false });
+		const inUse = await failure(env.putLocales([], { ifMatch: '"locales-3"', idempotencyKey: 'k-abcdefghijklmnoq' }));
+		expect(inUse.reason).toBe('locale_in_use');
+		expect(inUse.message).toBe('12 entries are written in pt-BR');
+		expect(inUse.details?.total).toBe(12);
+	});
+
+	it('a 422 names the reason and the pointer into the list', async () => {
+		const { fetch } = stubFetch(() =>
+			json(envelope('validation_failed', 'pt-BR falls back to a tag that is not listed', { reason: 'fallback_not_listed', pointer: '/locales/1/fallback/0' }), 422)
+		);
+		const error = await failure(
+			new Client({ baseUrl: 'http://server.test', fetch })
+				.environment('p')
+				.putLocales([{ tag: 'pt-BR', label: 'PT', default: true, fallback: ['xx'] }], { ifMatch: '"locales-0"', idempotencyKey: 'k-abcdefghijklmnop' })
+		);
+		expect(error).toMatchObject({ status: 422, code: 'validation_failed', reason: 'fallback_not_listed', pointer: '/locales/1/fallback/0' });
 	});
 });
