@@ -275,10 +275,10 @@ jobs:
           retention-days: 7
 
   npm-pack:
-    name: npm packages (assembled from the archives, packed, installed and run)
+    name: npm packages (assembled from the archives, packed, installed and run; the SDK and rich-text checked from their tarballs)
     needs: [plan, assemble]
     runs-on: ubuntu-24.04
-    timeout-minutes: 10
+    timeout-minutes: 15
     env:
       VERSION: ${{ needs.plan.outputs.version }}
     steps:
@@ -320,6 +320,34 @@ jobs:
             echo "::error::npx colophon --version printed '$line'"
             exit 1
           fi
+      # The SDK and the rich-text renderer (D-170) are built from this commit, not the archives.
+      - name: Install the workspace (the SDK's and the renderer's build and check tools)
+        run: npm ci --no-audit --no-fund
+      - name: Pack @colophon-cms/sdk and @colophon-cms/rich-text and check the tarballs as consumers use them
+        # Allowlist and size budget, the release version, no dependencies, publint, Are the Types
+        # Wrong, a stub-server call, every rich-text fixture, the READMEs compiled under nodenext
+        # and bundler, the browser bundle budget (packages/sdk/scripts/pack-check.mjs).
+        run: node packages/sdk/scripts/pack-check.mjs --out npm-dist
+      - name: npm publish --dry-run for every package, into the job summary (no token needed)
+        run: |
+          set -euo pipefail
+          tag=latest
+          if [[ "$PRERELEASE" == true ]]; then tag=next; fi
+          {
+            echo "## npm publish --dry-run ($VERSION, tag \`$tag\`)"
+            echo
+            echo "What the publish job would send once a maintainer approves it. Nothing was published."
+            echo
+            echo '```'
+            for file in ./npm-dist/*.tgz; do
+              npm publish "$file" --dry-run --access public --tag "$tag" --no-provenance 2>&1 \
+                | grep -E 'npm notice (name|version|filename|package size|unpacked size|total files|Publishing)|^\+ '
+              echo
+            done
+            echo '```'
+          } >>"$GITHUB_STEP_SUMMARY"
+        env:
+          PRERELEASE: ${{ needs.plan.outputs.prerelease }}
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: npm-${{ needs.plan.outputs.version }}
@@ -413,7 +441,7 @@ jobs:
         with:
           name: npm-${{ needs.plan.outputs.version }}
           path: npm-dist
-      - name: Publish the platform packages, then the launcher that depends on them
+      - name: Publish the platform packages, the launcher that depends on them, then the SDK and the rich-text renderer
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
@@ -432,9 +460,13 @@ jobs:
               echo "$name@$VERSION is already on npm"
               return
             fi
-            npm publish "npm-dist/$file" --access public --provenance --tag "$tag"
+            # ./ makes it a file: npm reads a bare npm-dist/x.tgz as the GitHub repository npm-dist/x.tgz.
+            npm publish "./npm-dist/$file" --access public --provenance --tag "$tag"
           }
           for platform in darwin-arm64 darwin-x64 linux-arm64 linux-x64 win32-x64; do
             publish "@colophon-cms/cli-$platform" "colophon-cms-cli-$platform-$VERSION.tgz"
           done
           publish "@colophon-cms/cli" "colophon-cms-cli-$VERSION.tgz"
+          # Packed and checked from their tarballs in npm-pack (D-170).
+          publish "@colophon-cms/sdk" "colophon-cms-sdk-$VERSION.tgz"
+          publish "@colophon-cms/rich-text" "colophon-cms-rich-text-$VERSION.tgz"
