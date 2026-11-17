@@ -67,7 +67,8 @@ Step 2.3 (D-046): `crates/colophon-worker`, run by `colophon-server --role worke
   bound is never tipped by work nobody admitted.
 - **The table-retention sweep** (P6, D-135): `colophon_worker::tables::Sweeper` runs beside the
   delivery loop every `COLOPHON_TABLE_SWEEP_MS` (default hourly): `colophon_db::retention::sweep`
-  deletes dead state in 500-row batches, oldest first, up to 20 passes a tick — the ledger, receipts
+  deletes dead state in 500-row batches (5,000 for magic links and sign-in keys, D-165), oldest first, up to 200
+  passes a tick — 100,000 rows a table an hour, a million of each of those two — the ledger, receipts
   and terminal work at their ages, the audit log through `colophon_audit_sweep`, and the private
   session and flow tables through `colophon_retention`'s definer functions, which the worker may
   execute but never read. What it never removes — `deletion_ledger`, content history, `uncertain`

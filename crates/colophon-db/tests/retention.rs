@@ -632,25 +632,30 @@ async fn dead_magic_links_are_swept_and_live_ones_kept() {
     db.drop().await;
 }
 
-/// Sign-in keys idle for a day are swept (D-154): their count starts over; a recent one, and
-/// an old one still paused, stay.
+/// Sign-in keys an attacker can mint without limit are swept on the scale they grow (D-165):
+/// an untrusted key idle an hour — the account ceiling's whole window (D-162) — is gone, and a
+/// trusted one after 90 days unused; a recent key, a paused one and a trusted one in use stay.
 #[tokio::test]
 #[ignore = "needs the local stack: scripts/stack.sh up"]
 async fn idle_sign_in_keys_are_swept_and_live_ones_kept() {
     let db = TestDb::new().await;
     let owner = db.owner().await;
-    for (address, touched, paused_until) in [
-        ("198.51.100.1", "2 days", None),
-        ("198.51.100.2", "1 hour", None),
-        ("198.51.100.3", "2 days", Some("1 hour")),
+    for (address, touched, paused_until, trusted) in [
+        ("198.51.100.1", "2 hours", None, false),
+        ("198.51.100.2", "30 minutes", None, false),
+        ("198.51.100.3", "2 days", Some("1 hour"), false),
+        ("198.51.100.4", "30 days", None, true),
+        ("198.51.100.5", "91 days", None, true),
     ] {
         let until = paused_until.map_or_else(
             || "NULL".to_owned(),
             |ahead| format!("now() + interval '{ahead}'"),
         );
         sqlx::query(AssertSqlSafe(format!(
-            "INSERT INTO sign_in_throttle (realm, email, address, failures, locked_until, updated_at)
-             VALUES ('staff', 'a@b.c', '{address}', 3, {until}, now() - interval '{touched}')"
+            "INSERT INTO sign_in_throttle
+                 (realm, email, address, failures, locked_until, updated_at, trusted)
+             VALUES ('staff', 'a@b.c', '{address}', 3, {until}, now() - interval '{touched}',
+                     {trusted})"
         )))
         .execute(&owner)
         .await
@@ -659,13 +664,56 @@ async fn idle_sign_in_keys_are_swept_and_live_ones_kept() {
     let swept = retention::sweep(&db.app, &Retention::DEFAULT, BATCH)
         .await
         .expect("swept");
-    assert_eq!(swept.sign_in_throttle, 1, "{swept:?}");
+    assert_eq!(swept.sign_in_throttle, 2, "{swept:?}");
     let left: Vec<String> =
         sqlx::query_scalar("SELECT address FROM sign_in_throttle ORDER BY address")
             .fetch_all(&owner)
             .await
             .expect("read");
-    assert_eq!(left, ["198.51.100.2", "198.51.100.3"]);
+    assert_eq!(left, ["198.51.100.2", "198.51.100.3", "198.51.100.4"]);
+    owner.close().await;
+    db.drop().await;
+}
+
+/// The tables unauthenticated requests grow — magic links and sign-in keys — sweep ten batches
+/// a pass (D-165), so the sweep outruns what the request bounds let them grow by: one project's
+/// magic-link ceiling alone records 18,000 links an hour, more than twenty passes of one batch
+/// could ever remove.
+#[tokio::test]
+#[ignore = "needs the local stack: scripts/stack.sh up"]
+async fn tables_strangers_grow_are_swept_ten_batches_a_pass() {
+    let db = TestDb::new().await;
+    let fix = released(&db).await;
+    let owner = db.owner().await;
+    sqlx::query(
+        "INSERT INTO audience_magic_links
+             (project_id, id, email, token_hash, return_to, created_at, expires_at)
+         SELECT $1, gen_random_uuid(), 'flood' || n || '@example.test',
+                sha256(n::text::bytea), 'http://site.test/magic',
+                now() - interval '3 days', now() - interval '3 days' + interval '15 minutes'
+         FROM generate_series(1, 6000) AS n",
+    )
+    .bind(fix.project)
+    .execute(&owner)
+    .await
+    .expect("dead links");
+    sqlx::query(
+        "INSERT INTO sign_in_throttle (realm, email, address, failures, updated_at)
+         SELECT 'staff', 'flood' || n || '@example.test', '198.51.100.9', 1,
+                now() - interval '2 hours'
+         FROM generate_series(1, 6000) AS n",
+    )
+    .execute(&owner)
+    .await
+    .expect("idle keys");
+    let swept = retention::sweep(&db.app, &Retention::DEFAULT, BATCH)
+        .await
+        .expect("swept");
+    assert_eq!(
+        (swept.magic_links, swept.sign_in_throttle),
+        (5_000, 5_000),
+        "{swept:?}"
+    );
     owner.close().await;
     db.drop().await;
 }

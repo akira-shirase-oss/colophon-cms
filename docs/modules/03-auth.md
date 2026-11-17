@@ -87,7 +87,7 @@ operation, and the cross-project and identity test families from spec §27 pass.
   it pause every such address for it, answered the same `sign_in_failed`, while trusted addresses keep working —
   so rotating through /64s buys a guesser about fifty guesses an hour, and the ceiling can't lock the owner out of
   a device they already used. While it holds, a new device waits for the hour to pass (an audience user can sign
-  in by magic link instead, which this throttle doesn't count). Untrusted keys idle a day are swept; trusted ones
+  in by magic link instead, which this throttle doesn't count). Untrusted keys idle an hour are swept (D-165); trusted ones
   after 90 days unused. `last_sign_in_at` updates only on a success; the
   accounts' old `failed_sign_ins`/`locked_until` columns are no longer written.
 - Bounded password work (D-150): every sign-up, sign-in, staff-made account and magic-link account hashes or

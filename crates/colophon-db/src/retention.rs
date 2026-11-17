@@ -76,8 +76,10 @@ pub struct Retention {
     pub flow: time::Duration,
     /// `setup_attempts`: the throttle's own 15-minute window.
     pub attempt: time::Duration,
-    /// `sign_in_throttle` keys untouched this long, and not paused (D-154): their count starts
-    /// over.
+    /// `sign_in_throttle` keys untouched this long, not paused and not trusted (D-154, D-165):
+    /// their count starts over. An hour is the account ceiling's whole window (D-162), so an
+    /// older miss counts for nothing anyway; a trusted key stays 90 days unused (migration
+    /// 0060's sweep).
     pub throttle: time::Duration,
     /// `audience_magic_links` past `expires_at`: as long as a recipient's escalating cooldown
     /// counts their unused links (D-161).
@@ -94,7 +96,7 @@ impl Retention {
         session: time::Duration::days(90),
         flow: time::Duration::days(90),
         attempt: time::Duration::minutes(15),
-        throttle: time::Duration::days(1),
+        throttle: time::Duration::hours(1),
         magic_link: time::Duration::days(1),
     };
 }
@@ -104,6 +106,13 @@ impl Default for Retention {
         Self::DEFAULT
     }
 }
+
+/// How many batches a pass sweeps from the tables strangers grow without signing in —
+/// `audience_magic_links` and `sign_in_throttle` (D-165). A pass removes up to
+/// `batch × HOT_BATCHES` of each, so at the production batch and the worker's passes a tick the
+/// sweep outruns their request bounds: one project's magic-link ceiling (300 a minute, D-161)
+/// records 18,000 links an hour.
+pub const HOT_BATCHES: i64 = 10;
 
 /// The most rows one statement — so one sweep — touches per table. Small enough that a
 /// pass over a busy install never holds a worker's connection long; a backlog drains at
@@ -477,15 +486,16 @@ pub async fn sweep(pool: &PgPool, ages: &Retention, batch: i64) -> Result<Swept,
     // Magic links are dead at `expires_at`; their `audience.magic_link_*` events are the
     // record. Kept a day past it, as long as the cooldown and the ceilings read them.
     let magic_cut = OffsetDateTime::now_utc() - ages.magic_link;
-    let magic_links = retained(&mut tx, "colophon_sweep_magic_links", magic_cut, batch).await?;
-    // A sign-in key idle for a day starts its count over; a paused one stays until its
-    // pause is that old too.
+    let hot = batch.saturating_mul(HOT_BATCHES);
+    let magic_links = retained(&mut tx, "colophon_sweep_magic_links", magic_cut, hot).await?;
+    // A sign-in key idle an hour starts its count over; a paused one stays until its pause
+    // is that old too, and a trusted one 90 days.
     let throttle_cut = OffsetDateTime::now_utc() - ages.throttle;
     let sign_in_throttle = retained(
         &mut tx,
         "colophon_sweep_sign_in_throttle",
         throttle_cut,
-        batch,
+        hot,
     )
     .await?;
 
