@@ -116,14 +116,21 @@ versioned source, `width`/`height` (no layout shift), and the renditions as a `s
 default `sizes`:
 
 ```ts
-import { mediaFor } from '@colophon-cms/sdk';
+import { Client, mediaFor } from '@colophon-cms/sdk';
+import { renderToHtml, type RichTextValue } from '@colophon-cms/rich-text';
 
-const { data: row } = await client.delivery(projectId).get('articles', entryId);
-const html = renderToHtml(row.content.body, {
-  assetUrl: (id) => `${origin}/media/v1/${projectId}/production/${id}`, // fallback for older answers
-  media: mediaFor(row)                     // or mediaFor(row, { current: true, sizes: '50vw' })
+const origin = 'https://cms.example.com';
+const site = new Client({ baseUrl: origin }).delivery('my-site');
+
+const { data: row } = await site.get('articles', '0199f0a2-6c1e-7b3a-9d42-5e8f1a2b3c4d');
+const body = row.content?.['body'] as RichTextValue | undefined;
+const html = body === undefined ? '' : renderToHtml(body, {
+  assetUrl: (id) => `${origin}/media/v1/my-site/production/${id}`, // fallback for older answers
+  media: mediaFor(row) // or mediaFor(row, { current: true, sizes: '50vw' })
 });
-const hero = mediaFor(row)(row.content.hero); // an asset field: { src, width, height, srcset, sizes }
+// An asset field's upload: { src, width, height, srcset, sizes }, or undefined.
+const hero = mediaFor(row)(String(row.content?.['hero'] ?? ''));
+console.log(html.length, hero?.src);
 ```
 
 An id the sidecar doesn't hold — an answer cached before the sidecar existed — answers
