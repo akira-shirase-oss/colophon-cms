@@ -1062,15 +1062,27 @@ mod tests {
 
     #[test]
     fn an_unverified_remote_database_url_stops_the_server_at_start() {
-        // `sslmode=require` encrypts but accepts any certificate (D-156): the server refuses to
-        // start on it, naming the variable and the fix, never the URL.
-        let url =
-            "postgres://app:s3cret@ep-quiet-1.eu-central-1.aws.neon.tech/colophon?sslmode=require";
-        let error = load(&[("COLOPHON_DATABASE_URL", url)]).expect_err("refused");
-        let text = error.to_string();
-        assert!(text.contains("COLOPHON_DATABASE_URL"), "{text}");
-        assert!(text.contains("sslmode=verify-full"), "{text}");
-        assert!(!text.contains("s3cret"), "{text}");
+        // `require` takes any certificate, `verify-ca` any publicly trusted one, and the driver
+        // ignores `channel_binding` (D-156): the server refuses to start on any of them — Neon's
+        // copied URL carries the first and the last — naming the variable and the fix, never
+        // the URL.
+        let neon = "postgres://app:s3cret@ep-quiet-1.eu-central-1.aws.neon.tech/colophon";
+        for query in [
+            "?sslmode=require",
+            "?sslmode=require&channel_binding=require",
+            "?sslmode=verify-ca&sslrootcert=/etc/colophon/db-ca.pem",
+            "?sslmode=verify-full&channel_binding=require",
+        ] {
+            let url = format!("{neon}{query}");
+            let error = load(&[("COLOPHON_DATABASE_URL", url.as_str())]).expect_err("refused");
+            let text = error.to_string();
+            assert!(text.contains("COLOPHON_DATABASE_URL"), "{query}: {text}");
+            assert!(text.contains("database URL refused"), "{query}: {text}");
+            assert!(
+                text.contains("sslmode=verify-full") && !text.contains("s3cret"),
+                "{query}: {text}"
+            );
+        }
     }
 
     #[test]

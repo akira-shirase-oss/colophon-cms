@@ -59,8 +59,11 @@ serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.154"
 sha2 = "0.11"
 # TLS for Postgres (D-156): rustls on aws-lc-rs, the provider reqwest's rustls already uses — one
-# TLS stack — with the Mozilla roots built in, so `sslmode=require`/`verify-full` URLs (Neon's)
-# connect without the host's certificate store.
+# TLS stack — with the Mozilla roots built in, so `sslmode=verify-full` URLs (Neon's, or a
+# private CA's with `sslrootcert`) connect without the host's certificate store.
+# `colophon_db::check_url` refuses every other mode for a database off this machine: sqlx's
+# `verify-ca` adds `sslrootcert` to the public roots and skips the name, so any publicly trusted
+# certificate passes it; and sqlx ignores `channel_binding`.
 sqlx = { version = "0.9.0", default-features = false, features = ["runtime-tokio", "postgres", "macros", "migrate", "uuid", "time", "tls-rustls-aws-lc-rs"] }
 thiserror = "2.0.21"
 tokio = { version = "1.54", features = ["rt-multi-thread", "macros", "net", "signal", "sync", "time"] }
