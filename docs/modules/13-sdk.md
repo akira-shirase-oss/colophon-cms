@@ -70,6 +70,19 @@ Built in DX.8 (D-112): `@colophon-cms/sdk`, versioned `0.1.0-alpha.1` with the s
   format's types from `stored.ts`) and compiles them, so it can't drift from the Studio's preview;
   its tests and the pack check render every fixture from the built and the packed code.
 
+- **Draft preview on a customer's site** (D-171 to D-173; `src/preview.ts`, framework-agnostic on the Web
+  `Request`/`Response` types): `previewClient({baseUrl, project, environment})` → `.exchange(code)` and
+  `.reader(token)` with `list`, `get`, `query` and `session` over `/preview/v1` (bearer, `ApiError` keeping the
+  refusal's `reason`); `createPreviewHandler` (validates `?path=` as a same-site relative path — no open redirect
+  — exchanges the code, keeps the token in an `HttpOnly; Secure; SameSite=None; Partitioned` cookie and answers
+  `303` with `no-store`, `no-referrer`, `noindex`); `previewTokenFromRequest`; `previewHeaders({studioOrigin})`
+  (`private, no-store`, `noindex`, `frame-ancestors <studio>`) for every preview-mode page; `exitPreviewHandler`;
+  and the browser's `listenForDraftUpdates({studioOrigin, previewing})`, which sends the Studio's
+  `colophon:preview-ready` handshake and reloads on `colophon:draft-saved` from exactly the Studio's origin.
+  The testbed's `/preview/{project}/…` pages are the SvelteKit example (`docs/guides/preview.md` adds Astro and
+  Next.js); its spec puts a caching proxy in front of the site and proves a preview page is never stored or
+  served to an anonymous reader.
+
 Still to come from the end goal: adoption by the blog/Studio, and the epoch half of the pin — the
 delivery API reads `?generation=` today; pinning `(epoch, generation)` waits on the wire naming
 epochs. Spec §10's deprecation window for contract changes applies when the SDK ships publicly.
