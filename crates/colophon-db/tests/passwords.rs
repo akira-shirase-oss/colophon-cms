@@ -254,3 +254,71 @@ async fn concurrent_first_misses_keep_the_pause_they_reach() {
     owner.close().await;
     db.drop().await;
 }
+
+/// Sign-in keys hold emails and client addresses, so each realm's keys are visible only where
+/// that realm signs in (D-166): staff keys outside any project, a project's audience keys in
+/// that project's context, nobody else's anywhere.
+#[tokio::test]
+#[ignore = "needs the local stack: scripts/stack.sh up"]
+async fn sign_in_keys_are_visible_only_in_their_own_realm() {
+    let db = TestDb::new().await;
+    let owner = db.owner().await;
+    let (mine, theirs) = (Uuid::now_v7(), Uuid::now_v7());
+    for realm in [
+        "staff".to_owned(),
+        format!("audience:{mine}"),
+        format!("audience:{theirs}"),
+    ] {
+        sqlx::query(
+            "INSERT INTO sign_in_throttle (realm, email, address, failures)
+             VALUES ($1, 'a@b.c', '198.51.100.1', 1)",
+        )
+        .bind(realm)
+        .execute(&owner)
+        .await
+        .expect("a key");
+    }
+    let visible = |project: Option<Uuid>| {
+        let pool = db.app.clone();
+        async move {
+            let mut tx = scope::begin(
+                &pool,
+                scope::Scope {
+                    identity: None,
+                    project,
+                },
+            )
+            .await
+            .expect("begin");
+            let realms: Vec<String> =
+                sqlx::query_scalar("SELECT realm FROM sign_in_throttle ORDER BY realm")
+                    .fetch_all(&mut *tx)
+                    .await
+                    .expect("read");
+            tx.commit().await.expect("commit");
+            realms
+        }
+    };
+    assert_eq!(visible(None).await, ["staff"]);
+    assert_eq!(visible(Some(mine)).await, [format!("audience:{mine}")]);
+    // Nor can a project's context write another realm's key.
+    let mut tx = scope::begin(
+        &db.app,
+        scope::Scope {
+            identity: None,
+            project: Some(mine),
+        },
+    )
+    .await
+    .expect("begin");
+    let written = sqlx::query(
+        "INSERT INTO sign_in_throttle (realm, email, address, failures)
+         VALUES ('staff', 'b@b.c', '198.51.100.2', 1)",
+    )
+    .execute(&mut *tx)
+    .await;
+    assert!(written.is_err(), "a project context wrote a staff key");
+    drop(tx);
+    owner.close().await;
+    db.drop().await;
+}
