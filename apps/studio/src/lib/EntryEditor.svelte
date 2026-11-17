@@ -141,7 +141,7 @@
 	$effect(() => {
 		latest = initial.draft;
 	});
-	// Preview on the editor's own site (D-173): the pane, and the last save the server
+	// Preview on the editor's own site (D-178): the pane, and the last save the server
 	// acknowledged, which the pane tells the site about — never a keystroke.
 	let previewOpen = $state(false);
 	let acknowledged = $state.raw<{ revision: string; at: number } | null>(null);

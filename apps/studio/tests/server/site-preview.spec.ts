@@ -1,4 +1,4 @@
-// Preview on the editor's own site (D-173), against the real server: the owner sets the
+// Preview on the editor's own site (D-178), against the real server: the owner sets the
 // preview address in Settings; the editor's Preview opens the site beside the fields; the site —
 // a page served by route fulfilment whose server side is this test, which trades the one-time
 // code at the real exchange endpoint and reads the draft with the token, as a site's preview

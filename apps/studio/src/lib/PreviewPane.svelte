@@ -1,5 +1,5 @@
 <!--
-  Preview on your site (D-173): the editor's draft on the real site, in a frame beside
+  Preview on your site (D-178): the editor's draft on the real site, in a frame beside
   the fields. Opening issues a short-lived grant for this entry and loads its address; the site's
   preview route trades the one-time code for a token and says, by message, whether it is showing
   the draft. Each save the server acknowledged is told to the site (never a keystroke), the grant

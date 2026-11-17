@@ -1,0 +1,107 @@
+{
+  "kind": "allocator",
+  "stamp": "2026-11-17T214918Z",
+  "commit": "3fab7eb19bafc0223eeb9995840de6a9777e7791",
+  "machine": {
+    "id": "intel-r-xeon-r-6975p-c-4c",
+    "cpu": "Intel(R) Xeon(R) 6975P-C",
+    "cores": 4
+  },
+  "method": "each build in turn, interleaved; k6 throughput, 64 VUs, 200000 requests per run; no database, rate limits off; k6 on the same machine",
+  "rounds": [
+    {
+      "build": "musl",
+      "round": 1,
+      "rich_text": {
+        "rps": 4588.668055826008,
+        "p99_ms": 29.378678570000012
+      },
+      "health": {
+        "rps": 34398.5461224699,
+        "p99_ms": 7.214823340000002
+      },
+      "rss_kb_after": 17652
+    },
+    {
+      "build": "glibc",
+      "round": 1,
+      "rich_text": {
+        "rps": 23340.000888892264,
+        "p99_ms": 10.330896960000006
+      },
+      "health": {
+        "rps": 40289.54251360856,
+        "p99_ms": 7.0914391800000045
+      },
+      "rss_kb_after": 32604
+    },
+    {
+      "build": "musl",
+      "round": 2,
+      "rich_text": {
+        "rps": 4553.834004071308,
+        "p99_ms": 29.112975100000025
+      },
+      "health": {
+        "rps": 35587.74077932748,
+        "p99_ms": 7.2328493100000015
+      },
+      "rss_kb_after": 17648
+    },
+    {
+      "build": "glibc",
+      "round": 2,
+      "rich_text": {
+        "rps": 23772.735865852705,
+        "p99_ms": 10.035957970000013
+      },
+      "health": {
+        "rps": 44128.79580646754,
+        "p99_ms": 6.222651230000016
+      },
+      "rss_kb_after": 32232
+    },
+    {
+      "build": "musl",
+      "round": 3,
+      "rich_text": {
+        "rps": 4681.935015134195,
+        "p99_ms": 28.383244140000006
+      },
+      "health": {
+        "rps": 34906.17448932712,
+        "p99_ms": 7.070534680000001
+      },
+      "rss_kb_after": 17636
+    },
+    {
+      "build": "glibc",
+      "round": 3,
+      "rich_text": {
+        "rps": 23203.446074458327,
+        "p99_ms": 10.354774930000028
+      },
+      "health": {
+        "rps": 43279.93138373711,
+        "p99_ms": 6.40006622
+      },
+      "rss_kb_after": 32388
+    }
+  ],
+  "medians": {
+    "glibc": {
+      "rich_text_rps": 23340.000888892264,
+      "rich_text_p99_ms": 10.330896960000006,
+      "health_rps": 43279.93138373711,
+      "health_p99_ms": 6.40006622,
+      "rss_kb_after": 32388
+    },
+    "musl": {
+      "rich_text_rps": 4588.668055826008,
+      "rich_text_p99_ms": 29.112975100000025,
+      "health_rps": 34906.17448932712,
+      "health_p99_ms": 7.214823340000002,
+      "rss_kb_after": 17648
+    }
+  }
+}

@@ -57,6 +57,13 @@ on clean infrastructure and an independent install, so operations are a module w
 - `colophon doctor --json` reports readiness per dependency. A cache outage shows as degraded while authoritative writes
   stay available (spec §04).
 
+### One-machine install (D-174, D-175)
+- `deploy/quickstart/compose.yaml`: Colophon's image with PostgreSQL, Valkey and Garage in one shared network
+  namespace — only `127.0.0.1:8080` is published, the dependencies listen on its loopback, secrets are generated on
+  first start into per-service volumes and read through `COLOPHON_*_FILE`. `deploy/runbooks/install.md` covers
+  install, first run, serving it behind a proxy, upgrade, backup and troubleshooting; `scripts/quickstart.sh` runs it
+  as documented (CI's `quickstart` job).
+
 ### Production topology (spec §03, §26, §32)
 - An external TLS proxy or CDN in front.
 - Non-root containers with read-only file systems where possible, and resource limits.
@@ -92,6 +99,11 @@ on clean infrastructure and an independent install, so operations are a module w
   counts alone, so a cluster of N admits up to N times the rate until it is back. `scripts/load.sh` and
   `scripts/cluster.sh` raise the limits so far that they never refuse (one machine sends everything), and still
   pay for every check.
+- Secrets from files (D-173): `COLOPHON_DATABASE_URL`, `COLOPHON_CACHE_URL`, `COLOPHON_S3_SECRET_KEY`,
+  `COLOPHON_OIDC_CLIENT_SECRET` and `COLOPHON_RESEND_API_KEY` each also take `<KEY>_FILE`, a path to a mounted secret
+  (trimmed, at most 16 KiB, never quoted in a problem); setting both stops the server at start-up. Outside the local
+  stack the database roles come from `colophon admin init-roles` (module 08), not `deploy/postgres/roles.sql`, whose
+  password is public; a unit test keeps the two lists identical.
 - Database TLS (D-156): a database on another machine is reached only with `sslmode=verify-full` in
   `COLOPHON_DATABASE_URL` and `COLOPHON_MIGRATION_DATABASE_URL` (plus `sslrootcert=<CA file>` when a private CA
   signs its certificate); the driver speaks TLS through rustls with the Mozilla roots built in. The server refuses

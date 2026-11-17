@@ -520,8 +520,15 @@ export async function signOut(): Promise<string | null> {
 
 /** Whether anyone is this installation's administrator yet (`GET /api/v1/installation`, D-147):
  *  answered without signing in, so the signed-out front door can say a new Colophon is new. */
-export async function installation(): Promise<{ has_administrator: boolean }> {
-	return ((await (await send('GET', '/api/v1/installation')).json()) as { data: { has_administrator: boolean } }).data;
+/** What anyone may know about the installation before signing in. `install_kind` is `container`
+ *  when the server runs from Colophon's image (D-174): its setup code is in `docker compose logs`. */
+export interface Installation {
+	has_administrator: boolean;
+	install_kind?: 'container';
+}
+
+export async function installation(): Promise<Installation> {
+	return ((await (await send('GET', '/api/v1/installation')).json()) as { data: Installation }).data;
 }
 
 /** Which Colophon the server is (`GET /version`, D-062): its release version, the full git commit
@@ -1175,11 +1182,18 @@ export async function getReceipt(project: string, generation: number): Promise<R
 	return ((await (await send('GET', `${base(project)}/releases/${generation}`)).json()) as { data: Receipt }).data;
 }
 
-/** The environment's releases, newest first, and its current generation. */
-export async function listReleases(project: string): Promise<{ releases: Release[]; generation: number }> {
-	const response = await send('GET', `${base(project)}/releases`);
+/** One page of the environment's releases, newest first (100 a page), its current generation, and
+ *  the cursor of the page after it — `null` on the last. Pass a page's `nextCursor` back as
+ *  `cursor` for the releases older than it. */
+export async function listReleases(
+	project: string,
+	cursor: string | null = null
+): Promise<{ releases: Release[]; generation: number; nextCursor: string | null }> {
+	const query = cursor === null ? '' : `?cursor=${encodeURIComponent(cursor)}`;
+	const response = await send('GET', `${base(project)}/releases${query}`);
 	const generation = Number(response.headers.get('colophon-generation') ?? '0');
-	return { releases: ((await response.json()) as { data: Release[] }).data, generation };
+	const page = (await response.json()) as { data: Release[]; next_cursor?: string | null };
+	return { releases: page.data, generation, nextCursor: page.next_cursor ?? null };
 }
 
 /** Publishes the approved changeset with `hash` as the release after `baseGeneration`; refused

@@ -6,7 +6,7 @@ const PORT = Number(process.env['STUDIO_E2E_PORT'] ?? 58201);
 export default defineConfig({
 	testDir: 'tests',
 	// tests/server/ runs against a real colophon-server (playwright.server.config.ts).
-	testIgnore: 'server/**',
+	testIgnore: ['server/**', 'quickstart/**'],
 	fullyParallel: true,
 	retries: 0,
 	forbidOnly: Boolean(process.env['CI']),

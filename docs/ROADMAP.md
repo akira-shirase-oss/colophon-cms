@@ -266,7 +266,7 @@ expired-approval scheduling).
   and `/preview/v1` answering `/content/v1`'s shapes with the scope's drafts laid over the latest release — never
   cached, re-checked against the issuer's membership and field policy on every read, revocable. Proved by a caching
   proxy that never keeps a preview answer and a scope property test against a pure model. The Studio's side
-  of it is built too (D-173): Settings → Website connections sets the preview address, and the entry editor's
+  of it is built too (D-178): Settings → Website connections sets the preview address, and the entry editor's
   Preview menu shows the saved draft on the site side by side or in a new tab, refreshed after each acknowledged
   save, with every state designed; a publish request previews on the site too, bound to its hash. The SDK's site
   helpers are built, with a SvelteKit example site in the testbed and a guide (`docs/guides/preview.md`), and

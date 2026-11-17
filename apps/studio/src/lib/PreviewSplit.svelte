@@ -1,5 +1,5 @@
 <!--
-  The editor beside its preview (D-173). Closed, it adds nothing: the editor renders
+  The editor beside its preview (D-178). Closed, it adds nothing: the editor renders
   as it always does. Open, the editor and the preview pane sit side by side with a handle between
   them that drags, and moves with the arrow keys (a separator, like a slider); at 640 px and under,
   they become two tabs, Edit and Preview. The editor stays mounted, in the same place, whatever

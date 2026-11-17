@@ -40,6 +40,38 @@
 
 ---
 
+## Quick start
+
+Docker is all you need: no Rust, no Node, no database of your own. Colophon, PostgreSQL, Valkey
+and Garage start together, and only Colophon's port is published, on `127.0.0.1:8080`.
+
+Until the first release is published, build the image from a clone (Docker compiles everything;
+about ten minutes on a laptop):
+
+```sh
+git clone https://github.com/akira-shirase-oss/colophon-cms.git
+cd colophon-cms
+docker build -f deploy/image/Dockerfile -t colophon:local .
+cd deploy/quickstart
+echo "COLOPHON_IMAGE=colophon:local" >.env
+docker compose up -d --wait
+```
+
+From a release it is one file: `curl -fsSLO
+https://github.com/akira-shirase-oss/colophon-cms/releases/download/v<version>/compose.yaml`,
+then `docker compose up -d --wait`.
+
+Then open **<http://localhost:8080/studio/>**, create the first account, and become the
+administrator with the setup code the server printed:
+
+```sh
+docker compose logs colophon | grep "Setup code"
+```
+
+Upgrades, backups, serving it on a domain, and what to do when it won't start:
+[deploy/runbooks/install.md](deploy/runbooks/install.md). To work on Colophon itself, see
+[Development](#development).
+
 ## Why "Colophon"?
 
 In a book, the *colophon* is the note at the back that records how, when and by whom it was printed. Colophon does the

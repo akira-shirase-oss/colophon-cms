@@ -1,5 +1,5 @@
 <!--
-  Settings → Website connections → Preview on your site (D-173): one address
+  Settings → Website connections → Preview on your site (D-178): one address
   template, where an environment's draft previews open. Colophon fills in a one-time code (and,
   if asked, the entry's collection, id, URL name and locale); the site's preview route trades
   the code for access and shows the draft. The checks here are the server's, mirrored, so a

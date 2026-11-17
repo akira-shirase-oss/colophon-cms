@@ -144,7 +144,7 @@
 		</ul>
 	{/if}
 
-	<!-- Where editors' draft previews open (D-173): every member who reads content sees it. -->
+	<!-- Where editors' draft previews open (D-178): every member who reads content sees it. -->
 	{#if mine.isSuccess}
 		<PreviewTargetCard {project} {manages} />
 	{/if}

@@ -1,5 +1,5 @@
 <!--
-  The entry editor's Preview button (D-173): a menu with "Side by side" (the site in a
+  The entry editor's Preview button (D-178): a menu with "Side by side" (the site in a
   pane beside the fields; Edit and Preview tabs on a phone) and "Open on my site" (a new tab). When
   nobody has set the site's preview address yet, the button is shown disabled with the reason and,
   for roles that may set it, a link to where.

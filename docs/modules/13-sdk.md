@@ -70,7 +70,7 @@ Built in DX.8 (D-112): `@colophon-cms/sdk`, versioned `0.1.0-alpha.1` with the s
   format's types from `stored.ts`) and compiles them, so it can't drift from the Studio's preview;
   its tests and the pack check render every fixture from the built and the packed code.
 
-- **Draft preview on a customer's site** (D-171 to D-173; `src/preview.ts`, framework-agnostic on the Web
+- **Draft preview on a customer's site** (D-171, D-172, D-178; `src/preview.ts`, framework-agnostic on the Web
   `Request`/`Response` types): `previewClient({baseUrl, project, environment})` → `.exchange(code)` and
   `.reader(token)` with `list`, `get`, `query` and `session` over `/preview/v1` (bearer, `ApiError` keeping the
   refusal's `reason`); `createPreviewHandler` (validates `?path=` as a same-site relative path — no open redirect
