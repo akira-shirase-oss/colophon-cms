@@ -391,8 +391,10 @@ Built in step 1.7 (D-042), for people:
   through `colophon-server::mail::Resend` (one `POST`, bearer key, ten-second deadline, failure logged but
   never changing the 202), and `COLOPHON_RESEND_ENDPOINT` moves the provider's address. With no provider the
   link is recorded but nothing carries it; the loopback-only `COLOPHON_DEV_MAIL` hands it back as `dev_link`,
-  refused off loopback like the development client's secret, which is how the demo sites and the testbed run
-  the whole flow.
+  refused — like the development client's secret — unless the server both listens on loopback and serves a
+  localhost `COLOPHON_PUBLIC_URL` (`localhost`, `*.localhost`, a loopback address; D-163), since a production
+  server behind a reverse proxy listens on loopback too. That is how the demo sites and the testbed run the
+  whole flow.
 - What the session buys is on the delivery side: [delivery](06-delivery.md). Billing, subscriptions and
   entitlements are explicitly out of scope — a role is a label, not a plan.
 

@@ -270,6 +270,26 @@ fn parse_origin(text: &str) -> Option<String> {
     (bare && web && url.host().is_some()).then(|| url.origin().ascii_serialization())
 }
 
+/// Whether `origin` (as [`parse_origin`] wrote it) is one only this machine can use: `localhost`
+/// or a `*.localhost` name, or a loopback address. The development affordances need one (D-163):
+/// behind a reverse proxy a production server listens on loopback too, but serves a public
+/// origin.
+fn is_loopback_origin(origin: &str) -> bool {
+    match url::Url::parse(origin)
+        .ok()
+        .as_ref()
+        .and_then(url::Url::host)
+    {
+        Some(url::Host::Domain(name)) => {
+            name.eq_ignore_ascii_case("localhost")
+                || name.to_ascii_lowercase().ends_with(".localhost")
+        }
+        Some(url::Host::Ipv4(address)) => address.is_loopback(),
+        Some(url::Host::Ipv6(address)) => address.is_loopback(),
+        None => false,
+    }
+}
+
 /// Every configuration problem found, in one error. Never contains secret values.
 #[derive(Debug, thiserror::Error)]
 #[error("invalid configuration ({} problem(s)):\n  {}", .problems.len(), .problems.join("\n  "))]
@@ -403,13 +423,15 @@ impl<F: Fn(&str) -> Option<String>> Reader<F> {
                 None
             }
         };
-        // The development realm's secret is public: never on an address others can reach (O-008).
+        // The development realm's secret is public: never on an address others can reach
+        // (O-008), nor behind a public origin, which a loopback listener behind a reverse proxy
+        // serves too (D-163).
         if oidc
             .as_ref()
             .is_some_and(|oidc| oidc.client_secret.expose() == DEV_CLIENT_SECRET)
-            && !listen_addr.ip().is_loopback()
+            && !(listen_addr.ip().is_loopback() && is_loopback_origin(&public_origin))
         {
-            env.problems.push("the development sign-in client (its secret is public) may only run on a loopback COLOPHON_LISTEN_ADDR".to_owned());
+            env.problems.push("the development sign-in client (its secret is public) may only run on a loopback COLOPHON_LISTEN_ADDR with a localhost COLOPHON_PUBLIC_URL".to_owned());
         }
 
         (public_origin, extra_trusted_origins, oidc)
@@ -692,13 +714,14 @@ impl Config {
             );
         }
         let dev_mail = env.flag("COLOPHON_DEV_MAIL");
-        // Development mail answers a sign-in link in the response itself: on an address others
-        // can reach it is an account-takeover switch, so like the dev client's secret it is a
-        // loopback-only affordance (D-140).
-        if dev_mail && !listen_addr.ip().is_loopback() {
+        // Development mail answers a sign-in link in the response itself: wherever others can
+        // reach it, it is an account-takeover switch, so like the dev client's secret it needs
+        // a loopback listener (D-140) and a localhost public origin — a production server
+        // behind a reverse proxy listens on loopback too (D-163).
+        if dev_mail && !(listen_addr.ip().is_loopback() && is_loopback_origin(&public_origin)) {
             env.problems.push(
                 "COLOPHON_DEV_MAIL hands sign-in links back in responses: it may only run on a \
-                 loopback COLOPHON_LISTEN_ADDR"
+                 loopback COLOPHON_LISTEN_ADDR with a localhost COLOPHON_PUBLIC_URL"
                     .to_owned(),
             );
         }
@@ -973,6 +996,47 @@ mod tests {
         public.push(("COLOPHON_LISTEN_ADDR", "0.0.0.0:58000"));
         let error = load(&public).expect_err("refused on 0.0.0.0");
         assert!(error.to_string().contains("COLOPHON_DEV_MAIL"), "{error}");
+    }
+
+    #[test]
+    fn development_affordances_refuse_a_public_origin_even_on_loopback() {
+        // Behind a reverse proxy a production server listens on loopback too (D-163): what
+        // says "development" is a public origin nobody else can use, not the listen address.
+        let behind_a_proxy = [
+            ("COLOPHON_DATABASE_URL", DB),
+            ("COLOPHON_LISTEN_ADDR", "127.0.0.1:58000"),
+            ("COLOPHON_PUBLIC_URL", "https://cms.example.com"),
+        ];
+        let mut mail = behind_a_proxy.to_vec();
+        mail.push(("COLOPHON_DEV_MAIL", "1"));
+        let error = load(&mail).expect_err("development mail behind a public origin");
+        assert!(error.to_string().contains("COLOPHON_DEV_MAIL"), "{error}");
+        let mut client = behind_a_proxy.to_vec();
+        client.extend([
+            (
+                "COLOPHON_OIDC_ISSUER",
+                "https://id.example.com/realms/colophon",
+            ),
+            ("COLOPHON_OIDC_CLIENT_ID", "colophon-server"),
+            ("COLOPHON_OIDC_CLIENT_SECRET", "colophon-dev-client-secret"),
+        ]);
+        let error = load(&client).expect_err("the public client secret behind a public origin");
+        assert!(
+            error.to_string().contains("development sign-in client"),
+            "{error}"
+        );
+        // A loopback origin — localhost, *.localhost, 127.0.0.0/8 or [::1] — is development.
+        for origin in [
+            "http://localhost:58000",
+            "http://colophon.localhost:58000",
+            "http://127.0.0.2:58000",
+            "http://[::1]:58000",
+        ] {
+            let mut local = mail.clone();
+            local.retain(|(name, _)| *name != "COLOPHON_PUBLIC_URL");
+            local.push(("COLOPHON_PUBLIC_URL", origin));
+            assert!(load(&local).is_ok_and(|config| config.dev_mail), "{origin}");
+        }
     }
 
     #[tokio::test]
