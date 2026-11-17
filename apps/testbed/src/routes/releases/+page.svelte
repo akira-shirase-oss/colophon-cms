@@ -65,12 +65,20 @@
 		if (projectId !== '') await load();
 	}
 
+	// Each load reads one project and is applied only if no later load started: the first load
+	// (of the first project, from onMount) used to finish after a project was picked — reading
+	// the picked project's changesets half-way, since `api` had moved — and reset the changeset
+	// just chosen, so Publish released another one.
+	let loads = 0;
 	async function load() {
-		const listed = await call('GET', `${api}/releases`);
+		const mine = ++loads;
+		const at = api;
+		const listed = await call('GET', `${at}/releases`);
+		const sets = await call('GET', `${at}/changesets`);
+		if (mine !== loads) return;
 		releases = listed.status === 200 ? (listed.body as { data: Release[] }).data : [];
 		generation = Number(listed.headers.get('colophon-generation') ?? '0');
 		base = generation;
-		const sets = await call('GET', `${api}/changesets`);
 		changesets = sets.status === 200 ? (sets.body as { data: Summary[] }).data : [];
 		changesetId = changesets.find((set) => set.status.state === 'approved')?.id ?? changesets[0]?.id ?? '';
 	}
