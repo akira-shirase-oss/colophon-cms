@@ -128,7 +128,10 @@ evidence".
   approval, and first refuses to go on if that environment has no required reviewers. With `NPM_TOKEN` from the
   environment's secrets it publishes the five platform packages, the launcher, then the SDK and the rich-text renderer, each with `--provenance` and
   `--access public`, under the dist-tag `next` for a pre-release (`latest` otherwise); a package version already on
-  npm is skipped, so a rerun after a partial failure finishes the job. Nothing is ever published from a laptop.
+  npm is skipped, so a rerun after a partial failure finishes the job. Nothing is ever published from a laptop (the
+  SDK's and the renderer's `publishConfig.provenance` makes npm refuse outside CI). Once the packages exist, move to
+  npm trusted publishing (GitHub OIDC) and drop the long-lived `NPM_TOKEN`; whether the very first publish can use it
+  must be checked on npmjs.com then, so assume a token for the first.
 - Every third-party action is pinned to a full commit SHA, as in `ci.yml`. Known gaps: the Studio's static files are
   not in the server archive yet (the container images, still to build, will carry them); the Linux server is a musl
   build, whose allocator is often reported slower than glibc's for threaded servers, and its throughput has not been
