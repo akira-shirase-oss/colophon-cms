@@ -4,11 +4,13 @@
 //! Recursion is bounded: a node deeper than `MAX_DEPTH` is refused before its children are
 //! looked at, so hostile nesting can't exhaust the stack.
 
+use std::collections::HashSet;
+
 use serde_json::{Map, Value};
 
 use super::{
-    MAX_ALT_CHARS, MAX_BYTES, MAX_DEPTH, MAX_NODES, RejectCode, Rejection, RichText, SCHEMA,
-    VERSION, href::is_allowed_href, json::write_string, pointer::Pointer,
+    Image, MAX_ALT_CHARS, MAX_BYTES, MAX_DEPTH, MAX_IMAGES, MAX_NODES, RejectCode, Rejection,
+    RichText, SCHEMA, VERSION, href::is_allowed_href, json::write_string, pointer::Pointer,
 };
 
 /// Checks `value` against `colophon/rich-text` v1 and returns it in canonical form.
@@ -18,6 +20,8 @@ pub fn validate(value: &Value) -> Result<RichText, Rejection> {
         out: String::with_capacity(256),
         nodes: 0,
         depth: 0,
+        images: Vec::new(),
+        named: HashSet::new(),
     };
     validator.envelope(value)?;
     if validator.out.len() > MAX_BYTES {
@@ -30,6 +34,7 @@ pub fn validate(value: &Value) -> Result<RichText, Rejection> {
         canonical: validator.out,
         nodes: validator.nodes,
         depth: validator.depth,
+        images: validator.images,
     })
 }
 
@@ -185,6 +190,10 @@ struct Validator {
     out: String,
     nodes: usize,
     depth: usize,
+    /// The distinct assets named so far, in first-named order (D-170).
+    images: Vec<Image>,
+    /// Their ids, for the distinct check: at most [`MAX_IMAGES`] entries.
+    named: HashSet<String>,
 }
 
 impl Validator {
@@ -357,6 +366,18 @@ impl Validator {
                 let alt = self.string(attrs, "alt", true)?.unwrap_or_default();
                 if alt.chars().all(is_blank) || alt.chars().count() > MAX_ALT_CHARS {
                     return Err(self.reject_at(RejectCode::InvalidAttribute, "alt"));
+                }
+                // A repeat of an image already named adds nothing to keep; a new one past the
+                // bound is refused where it is named (D-170).
+                if !self.named.contains(asset_id) {
+                    if self.images.len() >= MAX_IMAGES {
+                        return Err(self.reject_at(RejectCode::TooManyImages, "assetId"));
+                    }
+                    self.named.insert(asset_id.to_owned());
+                    self.images.push(Image {
+                        asset_id: asset_id.to_owned(),
+                        pointer: self.pointer.with("assetId"),
+                    });
                 }
                 self.out.push_str(r#","attrs":{"assetId":"#);
                 write_string(&mut self.out, asset_id);
@@ -584,7 +605,7 @@ fn is_blank(character: char) -> bool {
 mod tests {
     use serde_json::{Value, json};
 
-    use super::super::{MAX_BYTES, MAX_DEPTH, MAX_NODES, RejectCode, validate};
+    use super::super::{MAX_BYTES, MAX_DEPTH, MAX_IMAGES, MAX_NODES, RejectCode, validate};
 
     fn doc(content: &Value) -> Value {
         json!({ "schema": "colophon/rich-text", "version": 1, "doc": { "type": "doc", "content": content } })
@@ -703,6 +724,63 @@ mod tests {
         let (code, pointer) = code_of(&value).expect("refused");
         assert_eq!(code, RejectCode::TooDeep);
         assert_eq!(pointer, format!("/doc{}", "/content/0".repeat(MAX_DEPTH)));
+    }
+
+    fn image(asset: usize) -> Value {
+        json!({ "type": "image", "attrs": { "assetId": format!("00000000-0000-4000-8000-{asset:012x}"), "alt": "a picture" } })
+    }
+
+    #[test]
+    fn images_are_collected_distinct_in_first_named_order() {
+        let value = doc(&json!([
+            image(2),
+            { "type": "blockquote", "content": [image(1), { "type": "paragraph" }] },
+            image(2),
+            image(3)
+        ]));
+        let document = validate(&value).expect("valid");
+        let named: Vec<(&str, &str)> = document
+            .images()
+            .iter()
+            .map(|image| (image.asset_id.as_str(), image.pointer.as_str()))
+            .collect();
+        assert_eq!(
+            named,
+            vec![
+                (
+                    "00000000-0000-4000-8000-000000000002",
+                    "/doc/content/0/attrs/assetId"
+                ),
+                (
+                    "00000000-0000-4000-8000-000000000001",
+                    "/doc/content/1/content/0/attrs/assetId"
+                ),
+                (
+                    "00000000-0000-4000-8000-000000000003",
+                    "/doc/content/3/attrs/assetId"
+                ),
+            ]
+        );
+        let none = validate(&doc(&json!([{ "type": "paragraph" }]))).expect("valid");
+        assert_eq!(none.images(), &[]);
+    }
+
+    #[test]
+    fn too_many_distinct_images_are_refused_at_the_first_one_over() {
+        // MAX_IMAGES distinct images, each named twice, pass: repeats aren't new references.
+        let mut content: Vec<Value> = (0..MAX_IMAGES).map(image).collect();
+        content.extend((0..MAX_IMAGES).map(image));
+        let document = validate(&doc(&json!(content))).expect("at the bound");
+        assert_eq!(document.images().len(), MAX_IMAGES);
+        // One more distinct image is refused where it is named.
+        content.push(image(MAX_IMAGES));
+        assert_eq!(
+            code_of(&doc(&json!(content))),
+            Some((
+                RejectCode::TooManyImages,
+                format!("/doc/content/{}/attrs/assetId", 2 * MAX_IMAGES)
+            ))
+        );
     }
 
     #[test]

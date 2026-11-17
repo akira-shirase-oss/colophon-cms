@@ -30,6 +30,9 @@ pub const MAX_NODES: usize = 10_000;
 pub const MAX_ALT_CHARS: usize = 300;
 /// The longest link, in Unicode code points.
 pub const MAX_HREF_CHARS: usize = 2048;
+/// The most distinct images one document may name (D-170): each is an asset reference the
+/// database keeps, checks at publish and pins against deletion.
+pub const MAX_IMAGES: usize = 200;
 
 /// Why a document was refused. Stable: clients and the fixtures branch on these.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -65,6 +68,8 @@ pub enum RejectCode {
     TooLarge,
     /// Over [`MAX_NODES`] nodes.
     TooManyNodes,
+    /// Over [`MAX_IMAGES`] distinct images.
+    TooManyImages,
 }
 
 impl RejectCode {
@@ -86,6 +91,7 @@ impl RejectCode {
             Self::TooDeep => "too_deep",
             Self::TooLarge => "too_large",
             Self::TooManyNodes => "too_many_nodes",
+            Self::TooManyImages => "too_many_images",
         }
     }
 }
@@ -112,6 +118,17 @@ pub struct RichText {
     canonical: String,
     nodes: usize,
     depth: usize,
+    images: Vec<Image>,
+}
+
+/// One upload a document's `image` nodes name (D-170): the asset, and where it is first named.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Image {
+    /// The asset's id, a lowercase UUID.
+    pub asset_id: String,
+    /// RFC 6901 JSON Pointer to the first `image` node's `assetId` naming it, from the
+    /// document's root (`/doc/content/3/attrs/assetId`).
+    pub pointer: String,
 }
 
 impl RichText {
@@ -133,5 +150,11 @@ impl RichText {
     /// The size of the canonical JSON, in bytes.
     pub fn bytes(&self) -> usize {
         self.canonical.len()
+    }
+
+    /// The distinct uploads the document's images name, in the order each is first named:
+    /// what the database records as the field's asset references (D-170).
+    pub fn images(&self) -> &[Image] {
+        &self.images
     }
 }
