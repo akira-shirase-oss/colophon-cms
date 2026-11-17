@@ -90,16 +90,42 @@ fn contains_pattern(text: &str) -> String {
 /// A page of the environment's assets, newest first: at most `limit` (clamped to
 /// 1..=[`MAX_PAGE`] + 1, so a caller can ask for one more to learn whether a next page exists),
 /// keyset-paged on `(created_at, id)` so an upload landing between two pages never shifts what
-/// the next one holds. The `assets_library` index serves the order. A search can't use the
-/// `assets_search_trgm` trigram index under row security (`ILIKE` isn't leakproof), so it
-/// scans the environment's rows: tens of milliseconds at 50,000 (module 07).
+/// the next one holds. The `assets_library` index serves the order; a search goes through
+/// `colophon_asset_search` and its trigram index (migration 0066), since row security keeps a
+/// non-leakproof `ILIKE` on `assets` from using an index (module 07).
 pub async fn page(
     tx: &mut ProjectTransaction,
     filter: &Filter<'_>,
     limit: i64,
 ) -> Result<Vec<Asset>, DbError> {
-    let pattern = filter.q.map(contains_pattern);
+    let limit = limit.clamp(1, MAX_PAGE + 1);
     let (after_at, after_id) = filter.after.unzip();
+    if let Some(q) = filter.q {
+        // A search reads its page of ids through `colophon_asset_search` (migration 0066),
+        // whose trigram index row security would keep out of an `ILIKE` on `assets` itself,
+        // then the rows themselves through `assets` and its policy.
+        return sqlx::query_as!(
+            Asset,
+            r#"SELECT a.id, a.state, a.file_name, a.declared_type, a.detected_type, a.sha256,
+                      a.size_bytes, a.width, a.height, a.rejected_reason, a.derivatives,
+                      a.created_at, a.alt, a.title, a.credit, a.tags, a.metadata_version
+               FROM colophon_asset_search($2, $3, $4, $5, $6, $7, $8) f
+               JOIN assets a
+                 ON a.project_id = $1 AND a.environment_id = $2 AND a.id = f.asset_id
+               ORDER BY a.created_at DESC, a.id DESC"#,
+            tx.project,
+            tx.environment,
+            contains_pattern(q),
+            filter.state,
+            filter.tag,
+            after_at,
+            after_id,
+            i32::try_from(limit).unwrap_or(i32::MAX)
+        )
+        .fetch_all(&mut *tx.transaction)
+        .await
+        .map_err(DbError::from_query);
+    }
     sqlx::query_as!(
         Asset,
         r#"SELECT id, state, file_name, declared_type, detected_type, sha256, size_bytes, width,
@@ -107,20 +133,18 @@ pub async fn page(
                   metadata_version
            FROM assets
            WHERE project_id = $1 AND environment_id = $2
-             AND ($3::text IS NULL OR search ILIKE $3 ESCAPE '\')
-             AND ($4::text IS NULL OR state = $4)
-             AND ($5::text IS NULL OR tags @> ARRAY[$5::text])
-             AND ($6::timestamptz IS NULL OR (created_at, id) < ($6, $7::uuid))
+             AND ($3::text IS NULL OR state = $3)
+             AND ($4::text IS NULL OR tags @> ARRAY[$4::text])
+             AND ($5::timestamptz IS NULL OR (created_at, id) < ($5, $6::uuid))
            ORDER BY created_at DESC, id DESC
-           LIMIT $8"#,
+           LIMIT $7"#,
         tx.project,
         tx.environment,
-        pattern,
         filter.state,
         filter.tag,
         after_at,
         after_id,
-        limit.clamp(1, MAX_PAGE + 1)
+        limit
     )
     .fetch_all(&mut *tx.transaction)
     .await

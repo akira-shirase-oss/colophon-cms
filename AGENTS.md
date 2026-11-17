@@ -1,6 +1,6 @@
 # Colophon CMS: agent instructions
 
-**Current state (2026-11-17).** This tree carries migrations through 0065 and decisions
+**Current state (2026-11-17).** This tree carries migrations through 0066 and decisions
 through D-173 (D-171 to D-173, gap 3: rich-text images as asset references, release media, the library API) (D-148 to D-169, the 2026-11-16 security fixes and the MIT licence, made on
 `fix/security-2026-11-16`; D-147, the Studio's first-run answers to Strapi, from `studio/dashboard`). The content-cards port era is finished — its unique work landed on this
 lineage as D-083 to D-087 (migrations 0031–0034); the old branch is kept as the annotated tag

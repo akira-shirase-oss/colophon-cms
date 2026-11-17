@@ -220,7 +220,7 @@ M.1 to M.3, single types and patterns (branch `studio/dashboard`).
   deleted bytes is the remaining gap. Gap 3 (2026-11-17): images inside rich text are tracked asset references
   (D-171), releases record the upload versions they publish and delivery hands sites versioned URLs with sizes and
   renditions (D-172), and the library pages, searches and keeps alt text, titles, credits and tags (D-173). Still
-  open there: media `Cache-Tag` and CDN purge, an index-served library search, the full 1M load runs.
+  open there: media `Cache-Tag` and CDN purge, the full 1M load runs.
 - Preview capabilities on a separate origin; sitemaps and feeds from one generation; scheduled publishing with time
   zones and daylight-saving handling.
 

@@ -885,3 +885,43 @@ async fn a_query_row_carries_its_populated_references_images_and_only_what_it_an
         "{page}"
     );
 }
+
+#[tokio::test]
+#[ignore = "needs the stack and scripts/migrate.sh"]
+async fn a_search_never_finds_another_projects_uploads() {
+    let _server = common::Server::start_with(&FAST).await;
+    let owner = sign_in("dev-owner").await;
+    let mine = project(&owner).await;
+    let theirs = common::project(&owner).await;
+    let own = upload(&owner, &mine, PNG, "lighthouse-mine.png").await;
+    upload(&owner, &theirs, PNG, "lighthouse-theirs.png").await;
+    // The search reads through colophon_asset_search (migration 0066), which has no row
+    // security of its own: it must scope to the transaction's project exactly as the policy does.
+    let found = call(
+        &owner,
+        Method::GET,
+        &format!("{}?q=lighthouse", assets(&mine)),
+        None,
+        &[],
+    )
+    .await
+    .expect("request");
+    let ids: Vec<&str> = found.body["data"]
+        .as_array()
+        .expect("data")
+        .iter()
+        .filter_map(|asset| asset["id"].as_str())
+        .collect();
+    assert_eq!(ids, [own.as_str()], "{}", found.body);
+    // A state filter and a tag combine with the search inside the function.
+    let none = call(
+        &owner,
+        Method::GET,
+        &format!("{}?q=lighthouse&state=rejected", assets(&mine)),
+        None,
+        &[],
+    )
+    .await
+    .expect("request");
+    assert_eq!(none.body["data"], json!([]), "{}", none.body);
+}
