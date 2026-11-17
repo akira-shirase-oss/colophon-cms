@@ -95,21 +95,48 @@ async fn sanitize_request_id(mut request: Request) -> Request {
 /// line logged while handling such a request — at any level — carries the secret.
 const SECRET_PARAMS: &[&str] = &["{token}", "{code}"];
 
+/// For a path no route matched — a trailing slash after a token, a wrong prefix — the
+/// segment after one of these is written as the credential it would have been (D-152):
+/// `magic-link/{token}`, `device/{code}`.
+const SECRET_AFTER: &[(&str, &str)] = &[("magic-link", "{token}"), ("device", "{code}")];
+
 /// The path as the request span records it: as sent, except that each segment the matched
 /// route's template names as a credential is written as that name
-/// (`/audience/v1/{uuid}/magic-link/{token}`). An unmatched path has no template to say
-/// which segment is which, and is recorded as sent.
+/// (`/audience/v1/{uuid}/magic-link/{token}`). An unmatched path has no template, so any
+/// segment after `magic-link` or `device` is written as its name instead ([`SECRET_AFTER`]).
 fn loggable_path<'a>(path: &'a str, route: Option<&str>) -> Cow<'a, str> {
-    let Some(route) = route.filter(|route| SECRET_PARAMS.iter().any(|name| route.contains(name)))
-    else {
-        return Cow::Borrowed(path);
+    let Some(route) = route else {
+        return unmatched_path(path);
     };
+    if !SECRET_PARAMS.iter().any(|name| route.contains(name)) {
+        return Cow::Borrowed(path);
+    }
     let mut template = route.split('/');
     let segments: Vec<&str> = path
         .split('/')
         .map(|segment| match template.next() {
             Some(name) if SECRET_PARAMS.contains(&name) => name,
             _ => segment,
+        })
+        .collect();
+    Cow::Owned(segments.join("/"))
+}
+
+/// [`loggable_path`] for a path no route matched.
+fn unmatched_path(path: &str) -> Cow<'_, str> {
+    if !SECRET_AFTER.iter().any(|(after, _)| path.contains(after)) {
+        return Cow::Borrowed(path);
+    }
+    let mut previous = "";
+    let segments: Vec<&str> = path
+        .split('/')
+        .map(|segment| {
+            let written = SECRET_AFTER
+                .iter()
+                .find(|(after, _)| *after == previous && !segment.is_empty())
+                .map_or(segment, |(_, name)| name);
+            previous = segment;
+            written
         })
         .collect();
     Cow::Owned(segments.join("/"))
@@ -270,6 +297,20 @@ mod tests {
             plain
         );
         assert_eq!(loggable_path("/nowhere/s3cret", None), "/nowhere/s3cret");
+        // Unmatched, a credential's segment is still known by what precedes it: a trailing
+        // slash or a wrong prefix never logs a live token.
+        assert_eq!(
+            loggable_path("/audience/v1/01a1/magic-link/s3cret/", None),
+            "/audience/v1/01a1/magic-link/{token}/"
+        );
+        assert_eq!(
+            loggable_path("/v1/magic-link/s3cret", None),
+            "/v1/magic-link/{token}"
+        );
+        assert_eq!(
+            loggable_path("/auth/device/WXYZ-1234/", None),
+            "/auth/device/{code}/"
+        );
     }
 
     #[test]

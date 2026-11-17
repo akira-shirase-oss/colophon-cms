@@ -122,7 +122,8 @@ on clean infrastructure and an independent install, so operations are a module w
 - **Correlation fields (built):** request id (UUIDv7 minted, or a sanitised client
   `x-request-id`, echoed on the response header and the error envelope), `method`, `route`
   (low-cardinality template), `path` without the query string and with credential segments
-  (`{token}`, `{code}`) written as their template names (D-152), `latency`, `status`, and the
+  (`{token}`, `{code}`) written as their template names — and, on a path no route matched, any segment after
+  `magic-link` or `device` likewise (D-152), `latency`, `status`, and the
   deployment's `version`/`commit` on every request-attributed line. Work events carry their
   own ids (`job`, `generation`, `attempts`, `project`, `identity`, `changeset`) where the
   event has one — the bare request span does not resolve a project, by design.
