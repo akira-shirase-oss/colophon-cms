@@ -40,8 +40,10 @@ for (const entry of page.data) {
   console.log(entry.title, html.length);
 }
 
-// The next page, if there is one; `.atGeneration(g)` pins every read to one release.
-if (page.next_cursor) await site.list('articles', { limit: 10, cursor: page.next_cursor });
+// The rest of this page's reads come from the same release, even if another lands meanwhile.
+const release = page.response.generation;
+const pinned = release === null ? site : site.atGeneration(release);
+if (page.next_cursor) await pinned.list('articles', { limit: 10, cursor: page.next_cursor });
 ```
 
 **Never ship a staff or personal token to a browser.** Delivery reads need no credential; when a

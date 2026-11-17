@@ -29,7 +29,7 @@ Built in DX.8 (D-112): `@colophon-cms/sdk`, versioned `0.1.0-alpha.1` with the s
 - **The client** is hand-written: `new Client({ baseUrl, token })`, `client.environment(project)` for
   the `{P}` content surface, `client.delivery(project)` for `/content/v1`. Methods carry the generated
   types verbatim — request bodies are the document's schemas, replies are the wire shapes plus a
-  `response` of `{status, etag, replayed, requestId}` — and required route guards are required
+  `response` of `{status, etag, replayed, requestId, generation}` — and required route guards are required
   parameters: `idempotencyKey` on every write, `ifMatch` wherever the route reads `If-Match`. Coverage
   is the core third of the operations (entries and their bounded query, content types, changesets and
   reviews, releases and receipts, comments and tasks, migrations read-only, assets list, health,
