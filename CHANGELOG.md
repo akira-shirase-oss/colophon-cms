@@ -27,7 +27,10 @@ through `--version` and `GET /version`.
   `PUT {P}/preview-target`.
 - Preview in the Studio (D-173): Settings → Website connections → "Preview on your site", and
   a Preview menu in the entry editor that shows the saved draft on your site side by side or
-  in a new tab, refreshed after each save.
+  in a new tab, refreshed after each save; a publish request's page previews exactly what it
+  will publish.
+- `/preview/v1` answers CORS for the environment's preview origin, so a static site can read
+  previews from the browser (never with credentials).
 - `@colophon-cms/sdk` preview helpers for your site (D-173): `previewClient`,
   `createPreviewHandler`, `previewTokenFromRequest`, `previewHeaders`, `exitPreviewHandler` and
   `listenForDraftUpdates`, with a guide for SvelteKit, Astro and Next.js

@@ -268,11 +268,11 @@ expired-approval scheduling).
   proxy that never keeps a preview answer and a scope property test against a pure model. The Studio's side
   of it is built too (D-173): Settings → Website connections sets the preview address, and the entry editor's
   Preview menu shows the saved draft on the site side by side or in a new tab, refreshed after each acknowledged
-  save, with every state designed. The SDK's site helpers are built
-  with a SvelteKit example site in the testbed and a guide (`docs/guides/preview.md`). Still to come: the full k6
-  runs,
-  per-collection addresses and a publish-request preview button, CORS for browser-side fetching, `depth` over the
-  overlay, and click-to-edit.
+  save, with every state designed; a publish request previews on the site too, bound to its hash. The SDK's site
+  helpers are built, with a SvelteKit example site in the testbed and a guide (`docs/guides/preview.md`), and
+  browsers on the preview origin may read previews directly (CORS, never with credentials). Still to come: the full
+  k6 runs (1M, stress, mixed with delivery), per-collection addresses, The Draft demo site's preview route, the
+  CLI's `colophon preview`, `depth` over the overlay, and click-to-edit.
 
 **Proof gate:** two editors editing at once never lose an acknowledged edit; a schedule missed during downtime is
 reported as delayed, never on time; locale variants publish independently; comments and tasks follow permissions.

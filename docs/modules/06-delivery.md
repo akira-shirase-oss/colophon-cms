@@ -218,8 +218,12 @@ route to its own host.
   served in preview yet); 503 with `Retry-After` past the per-server bound of 32 concurrent preview reads.
 - **Bounds.** `/preview/` counts in admission per client address and per bearer (D-076's management rates); the
   semaphore keeps a burst of previews from taking the connections delivery needs; the exchange reads at most 1 KiB.
-- **Not yet.** CORS for browser-side preview fetching (sites fetch server-side today), `depth` over the overlay,
-  locale selection (arrives with gap 2's `?locale=`).
+- **Browsers.** A static or client-rendered site may exchange and read from the browser: `/preview/v1` answers
+  CORS for exactly the environment's preview-address origin (`Access-Control-Allow-Origin` echoed, `Authorization`
+  and `Content-Type` allowed, `GET` and `POST`, never `Allow-Credentials` — preview reads are bearer, never cookie;
+  `Vary: Origin`). Any other origin gets no CORS headers, so the browser keeps the answer from its page. Preflights
+  are answered before the router; a request without `Origin` (a site's server) costs nothing extra.
+- **Not yet.** `depth` over the overlay, locale selection (arrives with gap 2's `?locale=`).
 
 ### Site metadata (spec §06)
 - Sitemaps, feeds and language alternates are generated from a single published generation.
