@@ -3,7 +3,7 @@
 // doesn't hold (so the renderer falls back to its bare address).
 
 import { describe, expect, expectTypeOf, it } from 'vitest';
-import { DEFAULT_SIZES, imageSource, mediaFor, type ImageSource, type MediaSidecar, type PublishedMedia } from '../src/index.ts';
+import { DEFAULT_SIZES, imageSource, mediaFor, type ImageSource, type MediaSidecar, type PublishedEntryView, type PublishedMedia } from '../src/index.ts';
 
 const BASE = 'https://cms.example.com/media/v1/p1/production';
 const SHA = 'b'.repeat(64);
@@ -72,6 +72,11 @@ describe('mediaFor', () => {
 	it('ignores rendition names that are not widths, and any not narrower than the original', () => {
 		const odd: PublishedMedia = { ...media[SMALL]!, width: 1000, renditions: { thumb: 'x', w1280: `${BASE}/a/w1280`, w320: `${BASE}/a/w320` } };
 		expect(imageSource(odd).srcset).toBe(`${BASE}/a/w320 320w, ${BASE}/${SMALL}/${SHA} 1000w`);
+	});
+
+	it('takes a delivery row as the generated types describe it', () => {
+		const row: PublishedEntryView = { id: WIDE, media };
+		expect(mediaFor(row)(WIDE)?.width).toBe(2400);
 	});
 
 	it('is the renderer’s media option as it stands', () => {

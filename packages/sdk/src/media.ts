@@ -7,21 +7,14 @@
 // reaches `url` at the entry's next publish; `current_url` always follows the newest version, for
 // sites that want that instead (`mediaFor(row, { current: true })`).
 
-/** One image a published revision names, as its delivery row's `media` sidecar records it. */
-export interface PublishedMedia {
-	/** The released version's original: `…/media/v1/{project}/{environment}/{asset}/{sha256}`. */
-	url: string;
-	/** The asset's current version, whatever was released: `…/media/v1/{project}/{environment}/{asset}`. */
-	current_url: string;
-	/** The type verification proved, e.g. `image/webp`. */
-	type: string;
-	/** The original's size in pixels. */
-	width: number;
-	height: number;
-	/** The released version's renditions by name (`w320`, `w1280`): only those the worker wrote.
-	 *  `wN` exists only when the original is wider than N, and is exactly N pixels wide. */
-	renditions: Record<string, string>;
-}
+import type { components } from './api.types.js';
+
+/** One image a published revision names, as its delivery row's `media` sidecar records it —
+ *  the generated wire type: `url` (the released version's original, immutable),
+ *  `current_url` (follows replacements), `type`, the original's `width`/`height`, and
+ *  `renditions` by name (`wN` exists only when the original is wider than N, and is exactly N
+ *  pixels wide). */
+export type PublishedMedia = components['schemas']['PublishedMedia'];
 
 /** A delivery row's sidecar: every asset its published revision names, by asset id. Absent when
  *  the revision names none (and on answers cached before the sidecar existed). */
