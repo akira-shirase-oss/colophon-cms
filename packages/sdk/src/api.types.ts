@@ -858,6 +858,24 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/projects/{project}/environments/{environment}/locales": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** The environment's languages, in order, `ETag`'d by policy version */
+        get: operations["listLocales"];
+        /** Replace the whole language list in the body's order */
+        put: operations["replaceLocales"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/projects/{project}/environments/{environment}/mcp": {
         parameters: {
             query?: never;
@@ -1660,7 +1678,7 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** One published entry at a generation */
+        /** One published entry at a generation, or its best translation with `locale` */
         get: operations["deliveryGet"];
         put?: never;
         post?: never;
@@ -2344,6 +2362,15 @@ export interface components {
         };
         /** @description one JSON object per line, each an entry's content document */
         JsonLines: string;
+        LanguageView: {
+            /** @description the language of entries with no tag; exactly one when the list isn't empty */
+            default?: boolean;
+            /** @description listed tags to serve, in order, when this one isn't published */
+            fallback?: string[];
+            label: string;
+            /** @description a BCP-47 tag, like `pt-BR` */
+            tag: string;
+        };
         LiveView: {
             generation?: number;
             /** Format: uuid */
@@ -2352,6 +2379,11 @@ export interface components {
         Liveness: {
             /** @enum {string} */
             status: "live";
+        };
+        LocalesView: {
+            locales?: components["schemas"]["LanguageView"][];
+            /** @description the policy version; the `ETag` is `"locales-<version>"` */
+            version?: number;
         };
         LocalizationView: {
             /** Format: uuid */
@@ -2508,6 +2540,9 @@ export interface components {
         NewInvitation: {
             label: string;
             role: string;
+        };
+        NewLocales: {
+            locales: components["schemas"]["LanguageView"][];
         };
         NewPlan: {
             collection: string;
@@ -2707,17 +2742,39 @@ export interface components {
             slug: string;
         };
         PublishedEntryView: {
+            /** @description on an entry read: its other published translations at the same generation */
+            alternates?: {
+                /** Format: uuid */
+                id?: string;
+                locale?: string | null;
+                slug?: string;
+            }[];
             collection?: string;
             content?: components["schemas"]["EntryDocument"];
             content_hash?: string;
             /** Format: uuid */
             id?: string;
+            /** @description its language: its own tag, or the default language's for an untagged entry (D-171) */
+            locale?: string | null;
+            /** @description on a `locale` read: what was asked for, what was served, and whether it is a fallback */
+            localization?: {
+                fallback?: boolean;
+                requested?: string;
+                resolved?: string | null;
+            };
             /** @description the generation this revision went live in */
             published_in?: number;
+            /**
+             * Format: uuid
+             * @description on a `locale` entry read: the id asked for
+             */
+            requested_id?: string;
             /** Format: uuid */
             revision_id?: string;
             slug?: string;
             title?: string;
+            /** @description `public`, `authenticated` or `role:<name>` (D-137) */
+            visibility?: string;
         };
         PublishedView: {
             changeset_hash?: string;
@@ -9070,6 +9127,188 @@ export interface operations {
             };
         };
     };
+    listLocales: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description the project's id */
+                project: string;
+                /** @description the environment's slug, such as `production` */
+                environment: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description ok */
+            200: {
+                headers: {
+                    ETag?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        data: components["schemas"]["LocalesView"];
+                    };
+                };
+            };
+            /** @description `unauthorized` — not signed in, the credential is invalid, or the token was revoked */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description `not_found` — no such resource — or one the caller may not see, which looks the same */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description `rate_limited` — over the per-credential or per-address limit; `Retry-After` */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description any other failure, in the one error envelope */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    replaceLocales: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description the resource's `ETag`, exactly as a response carried it */
+                "if-match": string;
+                /** @description 16–128 of `A-Z a-z 0-9 - _`, scoped to the actor, operation and environment */
+                "idempotency-key": string;
+            };
+            path: {
+                /** @description the project's id */
+                project: string;
+                /** @description the environment's slug, such as `production` */
+                environment: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["NewLocales"];
+            };
+        };
+        responses: {
+            /** @description ok */
+            200: {
+                headers: {
+                    ETag?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        data: components["schemas"]["LocalesView"];
+                    };
+                };
+            };
+            /** @description `bad_request` — a malformed `If-Match` */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description `unauthorized` — not signed in, the credential is invalid, or the token was revoked */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description `missing_permission and friends` — signed in, but the role does not allow this */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description `not_found` — no such resource — or one the caller may not see, which looks the same */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description `stale_locales` — the list moved; the `ETag` names it now; `locale_in_use` — live entries are written in a language the list drops; `details.entries` and `details.total` name them; `idempotency_key_reused` — this `Idempotency-Key` was used before for a different request */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description `invalid_locale, invalid_locale_label, duplicate_locale, too_many_locales, locale_default_required, fallback_not_listed, invalid_fallback` — the list refused, at the offending position */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description `precondition_required` — a required `If-Match` or `Idempotency-Key` is missing */
+            428: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description `rate_limited` — over the per-credential or per-address limit; `Retry-After` */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description any other failure, in the one error envelope */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
     mcpPost: {
         parameters: {
             query?: never;
@@ -13259,6 +13498,10 @@ export interface operations {
                 limit?: number;
                 /** @description the `next_cursor` a previous page answered */
                 cursor?: string;
+                /** @description answer in one language (D-171): one row per translation group, the best published member through the fallback chain; a listed tag when the environment lists languages */
+                locale?: string;
+                /** @description with `locale`: `policy` (the environment's chain, the default), `none`, or up to four tags separated by commas */
+                fallback?: string;
             };
             header?: {
                 /** @description `Bearer <token>` — a site user's session; the read gains its audience role, and the answer is marked `private`. Without it the read is anonymous */
@@ -13280,6 +13523,8 @@ export interface operations {
             200: {
                 headers: {
                     "Colophon-Generation"?: string;
+                    "Colophon-Locale-Policy"?: string;
+                    "Content-Language"?: string;
                     ETag?: string;
                     [name: string]: unknown;
                 };
@@ -13302,6 +13547,15 @@ export interface operations {
             };
             /** @description `gone` — the collection was published and has been taken down */
             410: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description `invalid_locale, unknown_locale, invalid_fallback` — the language or its fallbacks refused */
+            422: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -13336,6 +13590,10 @@ export interface operations {
                 generation?: number;
                 /** @description the `next_cursor` a previous page answered */
                 cursor?: string;
+                /** @description answer in one language (D-171): one row per translation group, the best published member through the fallback chain; a listed tag when the environment lists languages */
+                locale?: string;
+                /** @description with `locale`: `policy` (the environment's chain, the default), `none`, or up to four tags separated by commas */
+                fallback?: string;
             };
             header?: {
                 /** @description `Bearer <token>` — a site user's session; the read gains its audience role, and the answer is marked `private`. Without it the read is anonymous */
@@ -13361,6 +13619,8 @@ export interface operations {
             200: {
                 headers: {
                     "Colophon-Generation"?: string;
+                    "Colophon-Locale-Policy"?: string;
+                    "Content-Language"?: string;
                     ETag?: string;
                     [name: string]: unknown;
                 };
@@ -13377,7 +13637,7 @@ export interface operations {
                     "application/json": components["schemas"]["Error"];
                 };
             };
-            /** @description `invalid_cursor, invalid_*, too_large` — the document or cursor refused */
+            /** @description `invalid_cursor, invalid_*, too_large, unknown_locale` — the document, cursor, language or fallbacks refused */
             422: {
                 headers: {
                     [name: string]: unknown;
@@ -13411,6 +13671,10 @@ export interface operations {
             query?: {
                 /** @description pin the read to one release generation */
                 generation?: number;
+                /** @description answer in one language (D-171): one row per translation group, the best published member through the fallback chain; a listed tag when the environment lists languages */
+                locale?: string;
+                /** @description with `locale`: `policy` (the environment's chain, the default), `none`, or up to four tags separated by commas */
+                fallback?: string;
             };
             header?: {
                 /** @description `Bearer <token>` — a site user's session; the read gains its audience role, and the answer is marked `private`. Without it the read is anonymous */
@@ -13434,6 +13698,8 @@ export interface operations {
             200: {
                 headers: {
                     "Colophon-Generation"?: string;
+                    "Colophon-Locale-Policy"?: string;
+                    "Content-Language"?: string;
                     ETag?: string;
                     [name: string]: unknown;
                 };
@@ -13443,7 +13709,7 @@ export interface operations {
                     };
                 };
             };
-            /** @description `not_found` — no such resource — or one the caller may not see, which looks the same */
+            /** @description `not_found` — no such resource — or one the caller may not see, which looks the same; `not_in_locale` — not published in that language or its fallbacks; `details.available` names the languages that are */
             404: {
                 headers: {
                     [name: string]: unknown;
@@ -13454,6 +13720,15 @@ export interface operations {
             };
             /** @description `gone` — the entry was published and has been taken down */
             410: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description `invalid_locale, unknown_locale, invalid_fallback` — the language or its fallbacks refused */
+            422: {
                 headers: {
                     [name: string]: unknown;
                 };

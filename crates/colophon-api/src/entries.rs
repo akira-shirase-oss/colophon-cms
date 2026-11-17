@@ -35,7 +35,7 @@ use colophon_db::{
     content_types,
     entries::{self, Deleted, Draft, NewRevision, Revision, Saved, Summary},
     idempotency::{self, Claim},
-    query as db_query,
+    locales, query as db_query,
     scope::{self, ProjectTransaction},
 };
 use colophon_domain::{
@@ -314,15 +314,7 @@ pub(crate) struct ImportQuery {
 /// letters, then subtags of one to eight letters or digits, at most 35 characters over all
 /// (BCP 47's own bound). The API shape-checks it; there is no locale table to join against.
 fn check_locale(locale: &str) -> Result<(), ApiError> {
-    let shape = locale.len() <= 35
-        && locale.split('-').enumerate().all(|(index, tag)| {
-            if index == 0 {
-                (2..=3).contains(&tag.len()) && tag.bytes().all(|byte| byte.is_ascii_alphabetic())
-            } else {
-                (1..=8).contains(&tag.len()) && tag.bytes().all(|byte| byte.is_ascii_alphanumeric())
-            }
-        });
-    if shape {
+    if colophon_domain::locale::is_tag(locale) {
         Ok(())
     } else {
         Err(ApiError::Invalid(Refusal {
@@ -683,9 +675,31 @@ async fn unique_free(
     ))
 }
 
-/// The `?locale=` a save writes once its revision lands (D-087): `None` clears to the project's
-/// default. A locale a sibling of the entry's group already holds is refused `locale_taken`,
-/// and clearing a grouped entry `locale_required` — the group needs each member named.
+/// The tag an entry write stores (D-170): once the environment lists languages, only a listed
+/// one, respelled as the list spells it — `locale_not_configured` otherwise. Without a list,
+/// any well-formed tag, as written.
+async fn listed_locale(tx: &mut ProjectTransaction, locale: &str) -> Result<String, ApiError> {
+    match locales::configured(tx, locale)
+        .await
+        .map_err(ApiError::from_db)?
+    {
+        None => Ok(locale.to_owned()),
+        Some(Some(spelled)) => Ok(spelled),
+        Some(None) => Err(ApiError::Invalid(Refusal {
+            code: "locale_not_configured",
+            pointer: "/locale".to_owned(),
+            message: format!(
+                "{locale} isn't one of this environment's languages; add it in Settings, Languages first"
+            ),
+        })),
+    }
+}
+
+/// The `?locale=` a save writes (D-087): `None` clears to the project's default. It moves the
+/// entry before the save writes its revision, which pins the entry's tag as it is written
+/// (D-170), so the revision and the entry always agree. A locale a sibling of the entry's group
+/// already holds is refused `locale_taken`, and clearing a grouped entry `locale_required` —
+/// the group needs each member named.
 async fn apply_locale(
     tx: &mut ProjectTransaction,
     collection: &str,
@@ -1033,6 +1047,11 @@ pub(crate) async fn create(
         check_locale(locale)?;
     }
     let mut tx = open(&state, caller, &path.project, &path.environment).await?;
+    let locale = match locale {
+        Some(locale) => Some(listed_locale(&mut tx, locale).await?),
+        None => None,
+    };
+    let locale = locale.as_deref();
     // A new entry is the creator's own.
     let create = tx
         .policy
@@ -1326,6 +1345,8 @@ pub(crate) async fn localize(
     })?;
     check_locale(locale)?;
     let mut tx = open(&state, caller, &path.project, &path.environment).await?;
+    let locale = listed_locale(&mut tx, locale).await?;
+    let locale = locale.as_str();
     let create = tx
         .policy
         .fields(Action::ContentCreate, &path.collection, true)
@@ -1414,9 +1435,9 @@ pub(crate) async fn localize(
     }
 }
 
-/// Gives a copied document a slug of its own: `{slug}-{locale}`, numbered past it when that is
-/// taken — at most ten tries before the write is refused. A document whose type has no slug
-/// field, or whose slug is empty, copies verbatim.
+/// Gives a copied document a slug of its own: `{slug}-{locale}`, the tag lowercased, numbered
+/// past it when that is taken — at most ten tries before the write is refused. A document whose
+/// type has no slug field, or whose slug is empty, copies verbatim.
 async fn derive_slug(
     tx: &mut ProjectTransaction,
     collection: &str,
@@ -1440,6 +1461,9 @@ async fn derive_slug(
     if base.is_empty() {
         return Ok(());
     }
+    // A slug is lowercase; a tag needn't be (`pt-BR`), and its capitals made every slugged
+    // translation into one `invalid_slug`.
+    let locale = locale.to_ascii_lowercase();
     for suffix in 1..=10 {
         let candidate = if suffix == 1 {
             format!("{base}-{locale}")
@@ -1653,10 +1677,15 @@ async fn import_create(
             Action::ContentCreate,
             "your role can't create entries here",
         ))?;
-    // A Strapi `locale` maps to the entry's tag (D-087), shape-checked before it writes.
-    if let Some(locale) = mapped.locale.as_deref() {
-        check_locale(locale)?;
-    }
+    // A Strapi `locale` maps to the entry's tag (D-087), shape-checked before it writes — and,
+    // once the environment lists languages, one of them (D-170).
+    let locale = match mapped.locale.as_deref() {
+        Some(locale) => {
+            check_locale(locale)?;
+            Some(listed_locale(tx, locale).await?)
+        }
+        None => None,
+    };
     // A single type holds one entry: a create into an occupied one is refused — an update of
     // that entry, by its id, is how it changes.
     if target.content_type.single()
@@ -1690,7 +1719,7 @@ async fn import_create(
         id.unwrap_or_else(Uuid::now_v7),
         target.collection,
         new_revision(&content, &hash, target.version, &unique, None),
-        mapped.locale.as_deref(),
+        locale.as_deref(),
     )
     .await
     .map_err(ApiError::from_db)?;
@@ -1959,6 +1988,12 @@ pub(crate) async fn save(
         check_locale(locale)?;
     }
     let mut tx = open(&state, caller, &path.project, &path.environment).await?;
+    let set = match set {
+        Some(Some(locale)) => Some(Some(listed_locale(&mut tx, locale).await?)),
+        Some(None) => Some(None),
+        None => None,
+    };
+    let set = set.as_ref().map(Option::as_deref);
     // `?visibility=` rides the same write like `?locale=`: absent leaves the gate alone.
     let gate = gate(&mut tx, query.visibility.as_deref()).await?;
     let prepared = prepare_save(&state, &mut tx, &path, entry, expected, value).await?;
@@ -2000,7 +2035,12 @@ pub(crate) async fn save(
         &unique,
         gate.as_deref(),
     );
-    // A refusal returns early, dropping the transaction: the claim and anything else roll back.
+    // The save and the locale change commit or fail together (D-087); the entry moves first,
+    // so the revision the save writes pins the new tag (D-170). A refusal returns early,
+    // dropping the transaction: the claim, the tag and anything else roll back.
+    if let Some(locale) = set {
+        apply_locale(&mut tx, &path.collection, entry, locale).await?;
+    }
     match entries::save(&mut tx, entry, expected, revision)
         .await
         .map_err(ApiError::from_db)?
@@ -2018,12 +2058,7 @@ pub(crate) async fn save(
                 Some(&draft.content),
             )
             .await?;
-            let mut draft = *draft;
-            // The save and the locale change commit or fail together (D-087).
-            if let Some(locale) = set {
-                apply_locale(&mut tx, &path.collection, entry, locale).await?;
-                draft.locale = locale.map(str::to_owned);
-            }
+            let draft = *draft;
             let view = DraftView::shown(
                 draft,
                 Publication::NotLookedUp,

@@ -87,6 +87,9 @@ pub(crate) enum Filled {
     Missing,
     /// Taken down (D-049): 410, not cached.
     Gone,
+    /// Not published in the language asked for or its fallbacks, but in these (D-171): 404,
+    /// not cached.
+    NotInLocale(Vec<String>),
 }
 
 /// Why a fill failed, shared with every request that waited for it.

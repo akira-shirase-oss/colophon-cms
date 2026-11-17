@@ -34,7 +34,7 @@ use uuid::Uuid;
 
 use crate::{
     DbError,
-    delivery::{DeliveryTransaction, Published},
+    delivery::{DeliveryTransaction, Published, Resolution},
     entries::Draft,
     scope::ProjectTransaction,
 };
@@ -141,6 +141,37 @@ pub async fn published_page(
     after: Option<&Position>,
     generation: i64,
 ) -> Result<PublishedPage, Error> {
+    published_page_in(
+        tx,
+        environment,
+        collection,
+        definition,
+        query,
+        after,
+        generation,
+        None,
+    )
+    .await
+}
+
+/// [`published_page`] for a `?locale=` read (D-171): with a `resolution`, the rows the query
+/// filters, sorts and pages are first resolved to one per translation group — each group's
+/// best published member through the chain, inside the audience's own row-level security —
+/// so a filter sees the language a reader gets, never a sibling it doesn't.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the delivery read's own parts: where, what, after which, when, in which language"
+)]
+pub async fn published_page_in(
+    tx: &mut DeliveryTransaction,
+    environment: Uuid,
+    collection: &str,
+    definition: &ContentType,
+    query: &Query,
+    after: Option<&Position>,
+    generation: i64,
+    resolution: Option<&Resolution>,
+) -> Result<PublishedPage, Error> {
     let statement = published_statement(
         environment,
         collection,
@@ -148,6 +179,7 @@ pub async fn published_page(
         definition,
         query,
         after,
+        resolution,
     )?;
     let rows = bound(statement)
         .fetch_all(&mut *tx.transaction)
@@ -240,7 +272,7 @@ pub async fn resolved_publications(
     for chunk in ids.chunks(RESOLVE_BATCH) {
         let rows = sqlx::query(sqlx::AssertSqlSafe(
             "SELECT p.entry_id, p.revision_id, p.collection, p.title, p.slug, p.content,
-                    p.content_hash, p.valid_from, p.visibility
+                    p.content_hash, p.valid_from, p.visibility, p.locale, p.group_key
              FROM publications p
              WHERE p.project_id = nullif(current_setting('app.project_id', true), '')::uuid
                AND p.environment_id = $1 AND p.entry_id = ANY($2)
@@ -285,6 +317,7 @@ fn bound(
             Arg::Text(value) => run.bind(value),
             Arg::OptText(value) => run.bind(value),
             Arg::Generation(value) | Arg::Rows(value) => run.bind(value),
+            Arg::Tags(value) => run.bind(value),
         };
     }
     run
@@ -305,6 +338,8 @@ enum Arg {
     Generation(i64),
     /// The row cap.
     Rows(i64),
+    /// Tags: a locale read's chain (D-171).
+    Tags(Vec<String>),
 }
 
 /// The statement a [`Query`] translates to: its SQL text and the values to bind, kept
@@ -395,6 +430,7 @@ fn published_statement(
     definition: &ContentType,
     query: &Query,
     after: Option<&Position>,
+    resolution: Option<&Resolution>,
 ) -> Result<Statement, Error> {
     let mut text = String::with_capacity(1024);
     let mut args: Vec<Arg> = Vec::new();
@@ -408,16 +444,41 @@ fn published_statement(
     if let Some(position) = &after {
         literals_fit(definition, &order, position)?;
     }
-    text.push_str(
-        "SELECT p.entry_id, p.revision_id, p.collection, p.title, p.slug, p.content,
-         p.content_hash, p.valid_from, p.visibility
+    if let Some(resolution) = resolution {
+        // One row per translation group first (D-171): the group's earliest tag in the chain,
+        // an untagged member counting as the default. The filters, the order and the keyset
+        // below run over what readers of that language get.
+        args.extend([
+            Arg::OptText(resolution.default.clone()),
+            Arg::Tags(resolution.chain.clone()),
+        ]);
+        text.push_str(
+            "SELECT p.entry_id, p.revision_id, p.collection, p.title, p.slug, p.content,
+         p.content_hash, p.valid_from, p.visibility, p.locale, p.group_key
+         FROM (SELECT DISTINCT ON (r.group_key) r.*
+               FROM publications r
+               WHERE r.project_id = nullif(current_setting('app.project_id', true), '')::uuid
+                 AND r.environment_id = $1 AND r.collection = $2
+                 AND r.valid_from <= $3 AND (r.valid_to IS NULL OR r.valid_to > $3)
+                 AND r.revoked_in IS NULL
+                 AND coalesce(r.locale, $4) = ANY ($5::text[])
+               ORDER BY r.group_key DESC, array_position($5::text[], coalesce(r.locale, $4)),
+                        r.entry_id DESC) p
+         CROSS JOIN LATERAL (SELECT p.content::jsonb AS body) d
+         WHERE true",
+        );
+    } else {
+        text.push_str(
+            "SELECT p.entry_id, p.revision_id, p.collection, p.title, p.slug, p.content,
+         p.content_hash, p.valid_from, p.visibility, p.locale, p.group_key
          FROM publications p
          CROSS JOIN LATERAL (SELECT p.content::jsonb AS body) d
          WHERE p.project_id = nullif(current_setting('app.project_id', true), '')::uuid
            AND p.environment_id = $1 AND p.collection = $2
            AND p.valid_from <= $3 AND (p.valid_to IS NULL OR p.valid_to > $3)
            AND p.revoked_in IS NULL",
-    );
+        );
+    }
     tail(
         &mut text,
         &mut args,
@@ -796,6 +857,8 @@ fn published(row: &sqlx::postgres::PgRow) -> Result<Published, DbError> {
         content_hash: row.try_get("content_hash").map_err(DbError::Query)?,
         valid_from: row.try_get("valid_from").map_err(DbError::Query)?,
         visibility: row.try_get("visibility").map_err(DbError::Query)?,
+        locale: row.try_get("locale").map_err(DbError::Query)?,
+        group_key: row.try_get("group_key").map_err(DbError::Query)?,
     })
 }
 
@@ -1096,7 +1159,7 @@ mod tests {
     /// The statement a document builds over the published projection.
     fn built_published(value: &Value, after: Option<&Position>) -> Result<Statement, Error> {
         let query = checked(value);
-        published_statement(ENVIRONMENT, "posts", 7, &definition(), &query, after)
+        published_statement(ENVIRONMENT, "posts", 7, &definition(), &query, after, None)
     }
 
     #[test]
@@ -1115,7 +1178,7 @@ mod tests {
         let (from, _) = stmt.text.split_once(" FROM ").expect("the projection");
         assert_eq!(
             from.trim_end(),
-            "SELECT p.entry_id, p.revision_id, p.collection, p.title, p.slug, p.content,\n         p.content_hash, p.valid_from, p.visibility"
+            "SELECT p.entry_id, p.revision_id, p.collection, p.title, p.slug, p.content,\n         p.content_hash, p.valid_from, p.visibility, p.locale, p.group_key"
         );
         assert!(
             stmt.text.contains(

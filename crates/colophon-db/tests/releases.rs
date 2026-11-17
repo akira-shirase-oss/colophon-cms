@@ -106,8 +106,8 @@ async fn a_release_commits_once_from_its_base_and_history_never_overlaps() {
     // Below the API: an overlapping interval is refused by the database itself.
     let owner = db.owner().await;
     let error = sqlx::query(
-        "INSERT INTO publications (project_id, environment_id, entry_id, revision_id, collection, title, content, content_hash, valid_from)
-         SELECT project_id, environment_id, entry_id, revision_id, collection, title, content, content_hash, valid_from
+        "INSERT INTO publications (project_id, environment_id, entry_id, revision_id, collection, title, content, content_hash, valid_from, group_key)
+         SELECT project_id, environment_id, entry_id, revision_id, collection, title, content, content_hash, valid_from, group_key
          FROM publications WHERE entry_id = $1",
     )
     .bind(entry)
@@ -236,7 +236,7 @@ async fn the_generation_lookup_answers_for_one_project_and_leaves_nothing_behind
     // Called inside a transaction, it leaves no project context behind.
     let mut held = db.app.begin().await.expect("begin");
     let leftover: Option<String> = sqlx::query_scalar(
-        "SELECT (SELECT generation FROM delivery_environment($1, 'production'))::text \
+        "SELECT (SELECT generation FROM delivery_environment($1, 'production', NULL))::text \
          || ':' || coalesce(nullif(current_setting('app.project_id', true), ''), 'none')",
     )
     .bind(project)
@@ -252,7 +252,7 @@ async fn the_generation_lookup_answers_for_one_project_and_leaves_nothing_behind
         .execute(&mut *worker)
         .await
         .expect("switch");
-    let refused = sqlx::query("SELECT * FROM delivery_environment($1, 'production')")
+    let refused = sqlx::query("SELECT * FROM delivery_environment($1, 'production', NULL)")
         .bind(project)
         .execute(&mut *worker)
         .await

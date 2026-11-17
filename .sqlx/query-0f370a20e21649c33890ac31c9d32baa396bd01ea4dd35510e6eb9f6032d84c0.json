@@ -1,0 +1,30 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT group_key FROM publications\n             WHERE project_id = nullif(current_setting('app.project_id', true), '')::uuid\n               AND environment_id = $1 AND collection = $2 AND entry_id = $3\n             LIMIT 1",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "group_key",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "publications",
+            "name": "group_key"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Text",
+        "Uuid"
+      ]
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "0f370a20e21649c33890ac31c9d32baa396bd01ea4dd35510e6eb9f6032d84c0"
+}

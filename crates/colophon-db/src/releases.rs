@@ -190,11 +190,17 @@ pub async fn commit(
     // A slug another entry still publishes fails `publications_live_slug`: `SlugTaken`, and the
     // whole release rolls back (D-054).
     let opened = sqlx::query!(
-        "INSERT INTO publications (project_id, environment_id, entry_id, revision_id, collection, title, content, content_hash, slug, valid_from, visibility)
-         SELECT i.project_id, i.environment_id, i.entry_id, r.id, r.collection, r.title, r.content, r.content_hash, r.slug, $4, r.visibility
+        "INSERT INTO publications (project_id, environment_id, entry_id, revision_id, collection, title, content, content_hash, slug, valid_from, visibility,
+                                   locale, group_key)
+         SELECT i.project_id, i.environment_id, i.entry_id, r.id, r.collection, r.title, r.content, r.content_hash, r.slug, $4, r.visibility,
+                r.locale, coalesce(e.localization_id, i.entry_id)
          FROM changeset_items i
          JOIN revisions r ON r.project_id = i.project_id AND r.environment_id = i.environment_id
                          AND r.id = i.revision_id
+         -- The locale is the revision's, pinned when it was written; the translation group is
+         -- the entry's, which never changes once set (D-170).
+         LEFT JOIN entries e ON e.project_id = i.project_id AND e.environment_id = i.environment_id
+                            AND e.id = i.entry_id
          WHERE i.project_id = $1 AND i.environment_id = $2 AND i.changeset_id = $3 AND i.kind = 'publish'
            AND NOT EXISTS (
                SELECT 1 FROM publications p

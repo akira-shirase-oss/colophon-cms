@@ -1,0 +1,37 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT locale AS \"tag!\", count(*) AS \"total!\" FROM entries\n               WHERE project_id = $1 AND environment_id = $2 AND deleted_at IS NULL\n                 AND locale IS NOT NULL AND NOT (locale = ANY ($3::text[]))\n               GROUP BY locale\n               ORDER BY locale\n               LIMIT 1",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "tag!",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "entries",
+            "name": "locale"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "total!",
+        "type_info": "Int8",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid",
+        "TextArray"
+      ]
+    },
+    "nullable": [
+      true,
+      null
+    ]
+  },
+  "hash": "f6c6d68c472bde2e2914518ce5cadb7ccaaa4f19ce588d9a203c6e65d73e0d57"
+}

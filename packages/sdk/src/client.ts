@@ -121,7 +121,10 @@ export interface Alternate {
 
 /** A delivery row: the published entry, its locale (the default tag for an untagged entry when
  *  the environment lists languages, else `null`), and — on a `?locale=` read — what resolved. */
-export type DeliveryEntry = components['schemas']['PublishedEntryView'] & {
+export type DeliveryEntry = Omit<
+	components['schemas']['PublishedEntryView'],
+	'locale' | 'localization' | 'requested_id' | 'alternates'
+> & {
 	locale?: string | null;
 	localization?: Localization;
 };

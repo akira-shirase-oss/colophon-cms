@@ -25,8 +25,9 @@ use serde_json::{Map, Value, json};
 
 use crate::{
     AppState, BuildInfo, assets, audience, audit, auth, bulk, changesets, collaboration,
-    components, content_types, delivery, destinations, device, entries, graphql, health, mcp,
-    members, migrations, projects, receipts, rich_text, roles, schedules, setup, tokens, version,
+    components, content_types, delivery, destinations, device, entries, graphql, health, locales,
+    mcp, members, migrations, projects, receipts, rich_text, roles, schedules, setup, tokens,
+    version,
 };
 
 /// A verb Colophon's routes use. Naming them in a small enum keeps the table total: the
@@ -266,6 +267,16 @@ const CURSOR: Param = query(
     "the `next_cursor` a previous page answered",
 );
 const LIMIT: Param = query("limit", Kind::Int, "page size: 1–100, default 20");
+const LOCALE: Param = query(
+    "locale",
+    Kind::Str,
+    "answer in one language (D-171): one row per translation group, the best published member through the fallback chain; a listed tag when the environment lists languages",
+);
+const FALLBACK: Param = query(
+    "fallback",
+    Kind::Str,
+    "with `locale`: `policy` (the environment's chain, the default), `none`, or up to four tags separated by commas",
+);
 const GENERATION: Param = query(
     "generation",
     Kind::Int,
@@ -2967,6 +2978,60 @@ pub(crate) static TABLE: &[Route] = &[
         ],
     ),
     route(
+        (P, "/locales"),
+        &[
+            op(
+                Verb::Get,
+                |f| on(f, locales::list),
+                OpDoc {
+                    id: "listLocales",
+                    summary: "The environment's languages, in order, `ETag`'d by policy version",
+                    tag: "content",
+                    security: Security::Any,
+                    ok: etagd(data("LocalesView")),
+                    extra: &[NOT_FOUND],
+                    ..MIN
+                },
+            ),
+            op(
+                Verb::Put,
+                |f| on(f, locales::replace),
+                OpDoc {
+                    id: "replaceLocales",
+                    summary: "Replace the whole language list in the body's order",
+                    tag: "content",
+                    security: Security::Any,
+                    headers: &[IF_MATCH, IDEMPOTENCY],
+                    body: Some(json("NewLocales")),
+                    ok: etagd(data("LocalesView")),
+                    extra: &[
+                        NOT_FOUND,
+                        FORBIDDEN,
+                        refusal(
+                            409,
+                            "stale_locales",
+                            "the list moved; the `ETag` names it now",
+                        ),
+                        refusal(
+                            409,
+                            "locale_in_use",
+                            "live entries are written in a language the list drops; `details.entries` and `details.total` name them",
+                        ),
+                        refusal(
+                            422,
+                            "invalid_locale, invalid_locale_label, duplicate_locale, too_many_locales, locale_default_required, fallback_not_listed, invalid_fallback",
+                            "the list refused, at the offending position",
+                        ),
+                        P428,
+                        BAD_MATCH,
+                        REUSED_KEY,
+                    ],
+                    ..MIN
+                },
+            ),
+        ],
+    ),
+    route(
         (P, "/releases"),
         &[op(
             Verb::Get,
@@ -3708,17 +3773,27 @@ pub(crate) static TABLE: &[Route] = &[
                 summary: "The published entries of a collection at a generation",
                 tag: "delivery",
                 security: Security::Public,
-                query: &[GENERATION, LIMIT, CURSOR],
+                query: &[GENERATION, LIMIT, CURSOR, LOCALE, FALLBACK],
                 headers: &[AUDIENCE_BEARER],
                 ok: Res {
                     status: 200,
                     shape: Shape::Page("PublishedEntryView"),
-                    headers: &["ETag", "Colophon-Generation"],
+                    headers: &[
+                        "ETag",
+                        "Colophon-Generation",
+                        "Colophon-Locale-Policy",
+                        "Content-Language",
+                    ],
                     media: "",
                     note: "a matching `If-None-Match` gets 304",
                 },
                 extra: &[
                     NOT_FOUND,
+                    refusal(
+                        422,
+                        "invalid_locale, unknown_locale, invalid_fallback",
+                        "the language or its fallbacks refused",
+                    ),
                     refusal(
                         410,
                         "gone",
@@ -3739,13 +3814,18 @@ pub(crate) static TABLE: &[Route] = &[
                 summary: "Run the bounded query language over the published projection",
                 tag: "delivery",
                 security: Security::Public,
-                query: &[GENERATION, CURSOR],
+                query: &[GENERATION, CURSOR, LOCALE, FALLBACK],
                 headers: &[AUDIENCE_BEARER],
                 body: Some(json("QueryDocument")),
                 ok: Res {
                     status: 200,
                     shape: Shape::It("DeliveryQueryPage"),
-                    headers: &["ETag", "Colophon-Generation"],
+                    headers: &[
+                        "ETag",
+                        "Colophon-Generation",
+                        "Colophon-Locale-Policy",
+                        "Content-Language",
+                    ],
                     media: "",
                     note: "a matching `If-None-Match` gets 304",
                 },
@@ -3753,8 +3833,8 @@ pub(crate) static TABLE: &[Route] = &[
                     NOT_FOUND,
                     refusal(
                         422,
-                        "invalid_cursor, invalid_*, too_large",
-                        "the document or cursor refused",
+                        "invalid_cursor, invalid_*, too_large, unknown_locale",
+                        "the document, cursor, language or fallbacks refused",
                     ),
                 ],
                 ..MIN
@@ -3805,20 +3885,35 @@ pub(crate) static TABLE: &[Route] = &[
             |f| on(f, delivery::get),
             OpDoc {
                 id: "deliveryGet",
-                summary: "One published entry at a generation",
+                summary: "One published entry at a generation, or its best translation with `locale`",
                 tag: "delivery",
                 security: Security::Public,
-                query: &[GENERATION],
+                query: &[GENERATION, LOCALE, FALLBACK],
                 headers: &[AUDIENCE_BEARER],
                 ok: Res {
                     status: 200,
                     shape: Shape::Data("PublishedEntryView"),
-                    headers: &["ETag", "Colophon-Generation"],
+                    headers: &[
+                        "ETag",
+                        "Colophon-Generation",
+                        "Colophon-Locale-Policy",
+                        "Content-Language",
+                    ],
                     media: "",
                     note: "a matching `If-None-Match` gets 304",
                 },
                 extra: &[
                     NOT_FOUND,
+                    refusal(
+                        404,
+                        "not_in_locale",
+                        "not published in that language or its fallbacks; `details.available` names the languages that are",
+                    ),
+                    refusal(
+                        422,
+                        "invalid_locale, unknown_locale, invalid_fallback",
+                        "the language or its fallbacks refused",
+                    ),
                     refusal(
                         410,
                         "gone",
@@ -4456,6 +4551,7 @@ fn schemas() -> Value {
         collaboration_parts(),
         publishing_parts(),
         delivery_parts(),
+        locale_parts(),
         mcp_parts(),
     ] {
         if let Value::Object(map) = part {
@@ -5957,6 +6053,47 @@ fn delivery_parts() -> Value {
             "format": "binary",
             "description": "the file's bytes; its name in `X-Colophon-File-Name`, its claimed type in `Content-Type`",
         },
+        "DeliveryQueryPage": {
+            "type": "object",
+            "required": ["data", "next_cursor", "applied"],
+            "properties": {
+                "data": { "type": "array", "items": { "$ref": "#/components/schemas/PublishedEntryView" } },
+                "next_cursor": { "type": ["string", "null"] },
+                "applied": { "$ref": "#/components/schemas/AppliedQuery" },
+            },
+        },
+    })
+}
+
+/// Languages (D-170, D-171): the list's own shapes, and the delivered row that names its
+/// language.
+fn locale_parts() -> Value {
+    json!({
+        "LanguageView": {
+            "type": "object",
+            "required": ["tag", "label"],
+            "properties": {
+                "tag": { "type": "string", "description": "a BCP-47 tag, like `pt-BR`" },
+                "label": { "type": "string", "maxLength": 80 },
+                "default": { "type": "boolean", "description": "the language of entries with no tag; exactly one when the list isn't empty" },
+                "fallback": { "type": "array", "maxItems": 4, "items": { "type": "string" }, "description": "listed tags to serve, in order, when this one isn't published" },
+            },
+        },
+        "LocalesView": {
+            "type": "object",
+            "properties": {
+                "version": { "type": "integer", "description": "the policy version; the `ETag` is `\"locales-<version>\"`" },
+                "locales": { "type": "array", "items": { "$ref": "#/components/schemas/LanguageView" } },
+            },
+        },
+        "NewLocales": {
+            "type": "object",
+            "required": ["locales"],
+            "additionalProperties": false,
+            "properties": {
+                "locales": { "type": "array", "maxItems": 50, "items": { "$ref": "#/components/schemas/LanguageView" } },
+            },
+        },
         "PublishedEntryView": {
             "type": "object",
             "properties": {
@@ -5968,15 +6105,30 @@ fn delivery_parts() -> Value {
                 "content": { "$ref": "#/components/schemas/EntryDocument" },
                 "content_hash": { "type": "string" },
                 "published_in": { "type": "integer", "description": "the generation this revision went live in" },
-            },
-        },
-        "DeliveryQueryPage": {
-            "type": "object",
-            "required": ["data", "next_cursor", "applied"],
-            "properties": {
-                "data": { "type": "array", "items": { "$ref": "#/components/schemas/PublishedEntryView" } },
-                "next_cursor": { "type": ["string", "null"] },
-                "applied": { "$ref": "#/components/schemas/AppliedQuery" },
+                "visibility": { "type": "string", "description": "`public`, `authenticated` or `role:<name>` (D-137)" },
+                "locale": { "type": ["string", "null"], "description": "its language: its own tag, or the default language's for an untagged entry (D-171)" },
+                "localization": {
+                    "type": "object",
+                    "description": "on a `locale` read: what was asked for, what was served, and whether it is a fallback",
+                    "properties": {
+                        "requested": { "type": "string" },
+                        "resolved": { "type": ["string", "null"] },
+                        "fallback": { "type": "boolean" },
+                    },
+                },
+                "requested_id": { "type": "string", "format": "uuid", "description": "on a `locale` entry read: the id asked for" },
+                "alternates": {
+                    "type": "array",
+                    "description": "on an entry read: its other published translations at the same generation",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "id": { "type": "string", "format": "uuid" },
+                            "locale": { "type": ["string", "null"] },
+                            "slug": { "type": "string" },
+                        },
+                    },
+                },
             },
         },
     })

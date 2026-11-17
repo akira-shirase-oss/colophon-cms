@@ -1,0 +1,29 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT locale_policy_version FROM environments WHERE project_id = $1 AND id = $2",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "locale_policy_version",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "environments",
+            "name": "locale_policy_version"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid"
+      ]
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "ffd0054a7adc775239de1617a9dd2b3974e800eba70fc1a82e77f113ec9e985f"
+}

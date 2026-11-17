@@ -1575,6 +1575,35 @@
         "description": "one JSON object per line, each an entry's content document",
         "type": "string"
       },
+      "LanguageView": {
+        "properties": {
+          "default": {
+            "description": "the language of entries with no tag; exactly one when the list isn't empty",
+            "type": "boolean"
+          },
+          "fallback": {
+            "description": "listed tags to serve, in order, when this one isn't published",
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 4,
+            "type": "array"
+          },
+          "label": {
+            "maxLength": 80,
+            "type": "string"
+          },
+          "tag": {
+            "description": "a BCP-47 tag, like `pt-BR`",
+            "type": "string"
+          }
+        },
+        "required": [
+          "tag",
+          "label"
+        ],
+        "type": "object"
+      },
       "LiveView": {
         "properties": {
           "generation": {
@@ -1599,6 +1628,21 @@
         "required": [
           "status"
         ],
+        "type": "object"
+      },
+      "LocalesView": {
+        "properties": {
+          "locales": {
+            "items": {
+              "$ref": "#/components/schemas/LanguageView"
+            },
+            "type": "array"
+          },
+          "version": {
+            "description": "the policy version; the `ETag` is `\"locales-<version>\"`",
+            "type": "integer"
+          }
+        },
         "type": "object"
       },
       "LocalizationView": {
@@ -2082,6 +2126,22 @@
         "required": [
           "role",
           "label"
+        ],
+        "type": "object"
+      },
+      "NewLocales": {
+        "additionalProperties": false,
+        "properties": {
+          "locales": {
+            "items": {
+              "$ref": "#/components/schemas/LanguageView"
+            },
+            "maxItems": 50,
+            "type": "array"
+          }
+        },
+        "required": [
+          "locales"
         ],
         "type": "object"
       },
@@ -2728,6 +2788,28 @@
       },
       "PublishedEntryView": {
         "properties": {
+          "alternates": {
+            "description": "on an entry read: its other published translations at the same generation",
+            "items": {
+              "properties": {
+                "id": {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                "locale": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "slug": {
+                  "type": "string"
+                }
+              },
+              "type": "object"
+            },
+            "type": "array"
+          },
           "collection": {
             "type": "string"
           },
@@ -2741,9 +2823,39 @@
             "format": "uuid",
             "type": "string"
           },
+          "locale": {
+            "description": "its language: its own tag, or the default language's for an untagged entry (D-171)",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "localization": {
+            "description": "on a `locale` read: what was asked for, what was served, and whether it is a fallback",
+            "properties": {
+              "fallback": {
+                "type": "boolean"
+              },
+              "requested": {
+                "type": "string"
+              },
+              "resolved": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            },
+            "type": "object"
+          },
           "published_in": {
             "description": "the generation this revision went live in",
             "type": "integer"
+          },
+          "requested_id": {
+            "description": "on a `locale` entry read: the id asked for",
+            "format": "uuid",
+            "type": "string"
           },
           "revision_id": {
             "format": "uuid",
@@ -2753,6 +2865,10 @@
             "type": "string"
           },
           "title": {
+            "type": "string"
+          },
+          "visibility": {
+            "description": "`public`, `authenticated` or `role:<name>` (D-137)",
             "type": "string"
           }
         },
@@ -13669,6 +13785,298 @@
         ]
       }
     },
+    "/api/v1/projects/{project}/environments/{environment}/locales": {
+      "get": {
+        "operationId": "listLocales",
+        "parameters": [
+          {
+            "description": "the project's id",
+            "in": "path",
+            "name": "project",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          },
+          {
+            "description": "the environment's slug, such as `production`",
+            "in": "path",
+            "name": "environment",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "data": {
+                      "$ref": "#/components/schemas/LocalesView"
+                    }
+                  },
+                  "required": [
+                    "data"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "ok",
+            "headers": {
+              "ETag": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "`unauthorized` — not signed in, the credential is invalid, or the token was revoked"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "`not_found` — no such resource — or one the caller may not see, which looks the same"
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "`rate_limited` — over the per-credential or per-address limit; `Retry-After`"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "any other failure, in the one error envelope"
+          }
+        },
+        "security": [
+          {
+            "sessionCookie": []
+          },
+          {
+            "bearerToken": []
+          },
+          {
+            "apiToken": []
+          }
+        ],
+        "summary": "The environment's languages, in order, `ETag`'d by policy version",
+        "tags": [
+          "content"
+        ]
+      },
+      "put": {
+        "operationId": "replaceLocales",
+        "parameters": [
+          {
+            "description": "the project's id",
+            "in": "path",
+            "name": "project",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          },
+          {
+            "description": "the environment's slug, such as `production`",
+            "in": "path",
+            "name": "environment",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "the resource's `ETag`, exactly as a response carried it",
+            "in": "header",
+            "name": "if-match",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "16–128 of `A-Z a-z 0-9 - _`, scoped to the actor, operation and environment",
+            "in": "header",
+            "name": "idempotency-key",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/NewLocales"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "data": {
+                      "$ref": "#/components/schemas/LocalesView"
+                    }
+                  },
+                  "required": [
+                    "data"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "ok",
+            "headers": {
+              "ETag": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "`bad_request` — a malformed `If-Match`"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "`unauthorized` — not signed in, the credential is invalid, or the token was revoked"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "`missing_permission and friends` — signed in, but the role does not allow this"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "`not_found` — no such resource — or one the caller may not see, which looks the same"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "`stale_locales` — the list moved; the `ETag` names it now; `locale_in_use` — live entries are written in a language the list drops; `details.entries` and `details.total` name them; `idempotency_key_reused` — this `Idempotency-Key` was used before for a different request"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "`invalid_locale, invalid_locale_label, duplicate_locale, too_many_locales, locale_default_required, fallback_not_listed, invalid_fallback` — the list refused, at the offending position"
+          },
+          "428": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "`precondition_required` — a required `If-Match` or `Idempotency-Key` is missing"
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "`rate_limited` — over the per-credential or per-address limit; `Retry-After`"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "any other failure, in the one error envelope"
+          }
+        },
+        "security": [
+          {
+            "sessionCookie": []
+          },
+          {
+            "bearerToken": []
+          },
+          {
+            "apiToken": []
+          }
+        ],
+        "summary": "Replace the whole language list in the body's order",
+        "tags": [
+          "content"
+        ]
+      }
+    },
     "/api/v1/projects/{project}/environments/{environment}/mcp": {
       "delete": {
         "operationId": "mcpDelete",
@@ -20209,6 +20617,24 @@
             }
           },
           {
+            "description": "answer in one language (D-171): one row per translation group, the best published member through the fallback chain; a listed tag when the environment lists languages",
+            "in": "query",
+            "name": "locale",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "with `locale`: `policy` (the environment's chain, the default), `none`, or up to four tags separated by commas",
+            "in": "query",
+            "name": "fallback",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
             "description": "`Bearer <token>` — a site user's session; the read gains its audience role, and the answer is marked `private`. Without it the read is anonymous",
             "in": "header",
             "name": "authorization",
@@ -20253,6 +20679,16 @@
                   "type": "string"
                 }
               },
+              "Colophon-Locale-Policy": {
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "Content-Language": {
+                "schema": {
+                  "type": "string"
+                }
+              },
               "ETag": {
                 "schema": {
                   "type": "string"
@@ -20279,6 +20715,16 @@
               }
             },
             "description": "`gone` — the collection was published and has been taken down"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "`invalid_locale, unknown_locale, invalid_fallback` — the language or its fallbacks refused"
           },
           "429": {
             "content": {
@@ -20360,6 +20806,24 @@
             }
           },
           {
+            "description": "answer in one language (D-171): one row per translation group, the best published member through the fallback chain; a listed tag when the environment lists languages",
+            "in": "query",
+            "name": "locale",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "with `locale`: `policy` (the environment's chain, the default), `none`, or up to four tags separated by commas",
+            "in": "query",
+            "name": "fallback",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
             "description": "`Bearer <token>` — a site user's session; the read gains its audience role, and the answer is marked `private`. Without it the read is anonymous",
             "in": "header",
             "name": "authorization",
@@ -20395,6 +20859,16 @@
                   "type": "string"
                 }
               },
+              "Colophon-Locale-Policy": {
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "Content-Language": {
+                "schema": {
+                  "type": "string"
+                }
+              },
               "ETag": {
                 "schema": {
                   "type": "string"
@@ -20420,7 +20894,7 @@
                 }
               }
             },
-            "description": "`invalid_cursor, invalid_*, too_large` — the document or cursor refused"
+            "description": "`invalid_cursor, invalid_*, too_large, unknown_locale` — the document, cursor, language or fallbacks refused"
           },
           "429": {
             "content": {
@@ -20503,6 +20977,24 @@
             }
           },
           {
+            "description": "answer in one language (D-171): one row per translation group, the best published member through the fallback chain; a listed tag when the environment lists languages",
+            "in": "query",
+            "name": "locale",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "with `locale`: `policy` (the environment's chain, the default), `none`, or up to four tags separated by commas",
+            "in": "query",
+            "name": "fallback",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
             "description": "`Bearer <token>` — a site user's session; the read gains its audience role, and the answer is marked `private`. Without it the read is anonymous",
             "in": "header",
             "name": "authorization",
@@ -20536,6 +21028,16 @@
                   "type": "string"
                 }
               },
+              "Colophon-Locale-Policy": {
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "Content-Language": {
+                "schema": {
+                  "type": "string"
+                }
+              },
               "ETag": {
                 "schema": {
                   "type": "string"
@@ -20551,7 +21053,7 @@
                 }
               }
             },
-            "description": "`not_found` — no such resource — or one the caller may not see, which looks the same"
+            "description": "`not_found` — no such resource — or one the caller may not see, which looks the same; `not_in_locale` — not published in that language or its fallbacks; `details.available` names the languages that are"
           },
           "410": {
             "content": {
@@ -20562,6 +21064,16 @@
               }
             },
             "description": "`gone` — the entry was published and has been taken down"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "`invalid_locale, unknown_locale, invalid_fallback` — the language or its fallbacks refused"
           },
           "429": {
             "content": {
@@ -20585,7 +21097,7 @@
           }
         },
         "security": [],
-        "summary": "One published entry at a generation",
+        "summary": "One published entry at a generation, or its best translation with `locale`",
         "tags": [
           "delivery"
         ]

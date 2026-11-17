@@ -1,0 +1,104 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT id, epoch, generation, last_unpublish, locale_policy_version AS locale_policy,\n                      coalesce((SELECT array_agg(l.tag ORDER BY l.position) FROM environment_locales l\n                                WHERE l.project_id = e.project_id AND l.environment_id = e.id), '{}') AS \"locales!\",\n                      (SELECT l.tag FROM environment_locales l\n                       WHERE l.project_id = e.project_id AND l.environment_id = e.id AND l.is_default) AS default_locale,\n                      NULL::text AS listed_locale, '{}'::text[] AS \"chain!\"\n               FROM environments e\n               WHERE project_id = nullif(current_setting('app.project_id', true), '')::uuid AND slug = $1",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "environments",
+            "name": "id"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "epoch",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "environments",
+            "name": "epoch"
+          }
+        }
+      },
+      {
+        "ordinal": 2,
+        "name": "generation",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "environments",
+            "name": "generation"
+          }
+        }
+      },
+      {
+        "ordinal": 3,
+        "name": "last_unpublish",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "environments",
+            "name": "last_unpublish"
+          }
+        }
+      },
+      {
+        "ordinal": 4,
+        "name": "locale_policy",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "environments",
+            "name": "locale_policy_version"
+          }
+        }
+      },
+      {
+        "ordinal": 5,
+        "name": "locales!",
+        "type_info": "TextArray",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 6,
+        "name": "default_locale",
+        "type_info": "Text",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 7,
+        "name": "listed_locale",
+        "type_info": "Text",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 8,
+        "name": "chain!",
+        "type_info": "TextArray",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      false,
+      null,
+      null,
+      null,
+      null
+    ]
+  },
+  "hash": "69b683a75170a729d2e068762ce3fefbc4861f4ea7ea328ddfa95e04712f6a0c"
+}

@@ -1,0 +1,30 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE environments SET locale_policy_version = locale_policy_version + 1\n         WHERE project_id = $1 AND id = $2 AND locale_policy_version = $3\n         RETURNING locale_policy_version",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "locale_policy_version",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "environments",
+            "name": "locale_policy_version"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid",
+        "Int8"
+      ]
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "3c72c09fbc794ead82503ddc47c0a36067a9d2698d234c56fe4e7448f824296b"
+}

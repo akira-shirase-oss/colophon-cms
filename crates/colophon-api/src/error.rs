@@ -151,6 +151,10 @@ pub struct ErrorDetails {
     /// that would publish it.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub changesets: Vec<PendingChangeset>,
+    /// For a delivery read in a language nothing in the chain is published in
+    /// (`not_in_locale`, D-171): the tags the entry's translations are published in.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub available: Vec<String>,
 }
 
 impl ErrorDetails {
@@ -165,6 +169,7 @@ impl ErrorDetails {
             content_type: None,
             referenced_by: Vec::new(),
             changesets: Vec::new(),
+            available: Vec::new(),
         }
     }
 }
@@ -351,6 +356,22 @@ pub enum ApiError {
     StaleStages {
         /// The current list's `ETag`, as `sha256:<hex>`.
         current: String,
+    },
+    /// A language-list change named a policy version that is no longer current (D-170). The
+    /// response's `ETag` names the list now.
+    #[error(
+        "someone changed this environment's languages since you loaded them; review them and save again"
+    )]
+    StaleLocales {
+        /// The list's current policy version.
+        current: i64,
+    },
+    /// A delivery read asked for an entry in a language that neither it nor any translation in
+    /// the fallback chain is published in (D-171). 404 — it may exist in others.
+    #[error("this entry isn't published in that language or its fallbacks")]
+    NotInLocale {
+        /// The tags its group is published in, for the reader to choose from.
+        available: Vec<String>,
     },
     /// A release was prepared on a generation the environment has moved past: another release
     /// committed first. The response's `Colophon-Generation` header names the current one
@@ -662,7 +683,9 @@ impl ApiError {
     /// HTTP status for this error. Total over the variants, so every new variant must choose.
     pub fn status(&self) -> StatusCode {
         match self {
-            Self::RouteNotFound | Self::NotFound => StatusCode::NOT_FOUND,
+            Self::RouteNotFound | Self::NotFound | Self::NotInLocale { .. } => {
+                StatusCode::NOT_FOUND
+            }
             Self::Gone => StatusCode::GONE,
             Self::MalformedJson(_) | Self::BadRequest | Self::SignInFailed => {
                 StatusCode::BAD_REQUEST
@@ -684,6 +707,7 @@ impl ApiError {
             | Self::StaleChangeset { .. }
             | Self::StalePlan { .. }
             | Self::StaleStages { .. }
+            | Self::StaleLocales { .. }
             | Self::GenerationMoved { .. }
             | Self::StaleRole { .. }
             | Self::RoleInUse { .. }
@@ -718,7 +742,7 @@ impl ApiError {
             Self::PreconditionRequired(_) => ErrorCode::PreconditionRequired,
             Self::Unauthorized => ErrorCode::Unauthorized,
             Self::Forbidden { .. } => ErrorCode::Forbidden,
-            Self::NotFound => ErrorCode::NotFound,
+            Self::NotFound | Self::NotInLocale { .. } => ErrorCode::NotFound,
             Self::Gone => ErrorCode::Gone,
             Self::Conflict { .. }
             | Self::StaleRevision { .. }
@@ -726,6 +750,7 @@ impl ApiError {
             | Self::StaleChangeset { .. }
             | Self::StalePlan { .. }
             | Self::StaleStages { .. }
+            | Self::StaleLocales { .. }
             | Self::GenerationMoved { .. }
             | Self::StaleRole { .. }
             | Self::RoleInUse { .. }
@@ -758,6 +783,11 @@ impl ApiError {
             Self::StaleChangeset { .. } => Some(ErrorDetails::new("stale_changeset", "")),
             Self::StalePlan { .. } => Some(ErrorDetails::new("plan_moved", "")),
             Self::StaleStages { .. } => Some(ErrorDetails::new("stale_stages", "")),
+            Self::StaleLocales { .. } => Some(ErrorDetails::new("stale_locales", "")),
+            Self::NotInLocale { available } => Some(ErrorDetails {
+                available: available.clone(),
+                ..ErrorDetails::new("not_in_locale", "/locale")
+            }),
             Self::GenerationMoved { .. } => Some(ErrorDetails::new("generation_moved", "")),
             Self::StaleRole { .. } => Some(ErrorDetails::new("stale_role", "")),
             Self::RoleInUse { .. } => Some(ErrorDetails::new("role_in_use", "")),
@@ -895,6 +925,11 @@ impl IntoResponse for ApiError {
             | Self::StalePlan { current }
             | Self::StaleStages { current } => {
                 if let Ok(etag) = HeaderValue::from_str(&format!("\"{current}\"")) {
+                    response.headers_mut().insert(header::ETAG, etag);
+                }
+            }
+            Self::StaleLocales { current } => {
+                if let Ok(etag) = HeaderValue::from_str(&format!("\"locales-{current}\"")) {
                     response.headers_mut().insert(header::ETAG, etag);
                 }
             }

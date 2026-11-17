@@ -29,6 +29,14 @@
 //! Since step 3.2 (D-049) an unpublished entry is never delivered, at any generation: lists leave
 //! it out and a read of it is 410 `gone`, uncached. Cache keys name the environment's latest
 //! unpublish, so answers cached before it are never served again.
+//!
+//! Locales (D-170, D-171): every row names its `locale` — its own tag, or the default language's
+//! for an untagged entry — and an entry read lists its published translations as `alternates`.
+//! `?locale=` (with `?fallback=policy|none|<tags>`) answers in one language: lists and queries
+//! give one row per translation group, the best published member through the chain, labelled
+//! with `localization`; an entry read gives the entry's best translation. Without `?locale=`
+//! every language comes back, as before. Resolution runs inside the reader's own row-level
+//! security, so a member-only translation is never an anonymous reader's fallback.
 
 use std::{collections::BTreeSet, future::Future};
 
@@ -44,7 +52,11 @@ use colophon_db::{
     delivery::{self, Audience, Published},
     query as db_query,
 };
-use colophon_domain::{cache::Scope, query::Query as Document};
+use colophon_domain::{
+    cache::Scope,
+    locale::{self, Fallback},
+    query::Query as Document,
+};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, value::RawValue};
 use uuid::Uuid;
@@ -63,6 +75,8 @@ pub(crate) const GENERATION: HeaderName = HeaderName::from_static("colophon-gene
 pub(crate) const CACHE: HeaderName = HeaderName::from_static("colophon-cache");
 /// The tags a CDN purges by (Cloudflare's header name).
 pub(crate) const CACHE_TAG: HeaderName = HeaderName::from_static("cache-tag");
+/// The response header naming the locale policy version an answer resolved with (D-171).
+pub(crate) const LOCALE_POLICY: HeaderName = HeaderName::from_static("colophon-locale-policy");
 
 /// Module 06: live public queries may be shared for 30 seconds; browsers revalidate every time.
 const LATEST: &str = "public, max-age=0, must-revalidate, s-maxage=30";
@@ -95,15 +109,168 @@ pub(crate) struct ReadQuery {
     generation: Option<i64>,
     limit: Option<i64>,
     cursor: Option<String>,
+    locale: Option<String>,
+    fallback: Option<String>,
 }
 
-/// The `?generation=` and `?cursor=` a delivery query takes (DX.4): the release pin and
-/// the page boundary travel outside the document, which the validator holds to its own
-/// keys — `limit` among them, the document's own, not a parameter's.
+/// The `?generation=`, `?cursor=`, `?locale=` and `?fallback=` a delivery query takes (DX.4,
+/// D-171): the release pin, the page boundary and the language travel outside the document,
+/// which the validator holds to its own keys — `limit` among them, the document's own, not a
+/// parameter's.
 #[derive(Deserialize)]
 pub(crate) struct QueryParams {
     generation: Option<i64>,
     cursor: Option<String>,
+    locale: Option<String>,
+    fallback: Option<String>,
+}
+
+/// A `?locale=` read, checked against the environment's policy (D-171).
+struct Asked {
+    /// The requested tag, as the environment's list spells it (or as asked, without a list).
+    tag: String,
+    /// The chain and default the read resolves through.
+    resolution: delivery::Resolution,
+}
+
+/// Checks `?locale=` and `?fallback=` against `environment`'s policy: a well-formed tag, one
+/// the list has when there is a list (`unknown_locale` otherwise — the list bounds the keys a
+/// cache can hold), and fallbacks that are `policy`, `none` or up to four tags, listed when
+/// there is a list. `None` without `?locale=`, which reads every language.
+fn asked(
+    environment: &delivery::Environment,
+    locale: Option<&str>,
+    fallback: Option<&str>,
+) -> Result<Option<Asked>, ApiError> {
+    let Some(requested) = locale else {
+        if fallback.is_some() {
+            return Err(ApiError::InvalidField {
+                reason: "invalid_fallback",
+                pointer: "/fallback",
+                message: "name a ?locale= to fall back from".to_owned(),
+            });
+        }
+        return Ok(None);
+    };
+    if !locale::is_tag(requested) {
+        return Err(ApiError::InvalidField {
+            reason: "invalid_locale",
+            pointer: "/locale",
+            message: format!(
+                "\"{requested}\" isn't a BCP-47 language tag (like \"en\" or \"pt-BR\")"
+            ),
+        });
+    }
+    let listed = !environment.locales.is_empty();
+    let tag = match (&environment.listed_locale, listed) {
+        (Some(spelled), _) => spelled.clone(),
+        (None, false) => requested.to_owned(),
+        (None, true) => {
+            return Err(ApiError::InvalidField {
+                reason: "unknown_locale",
+                pointer: "/locale",
+                message: format!(
+                    "{requested} isn't one of this environment's languages ({})",
+                    environment.locales.join(", ")
+                ),
+            });
+        }
+    };
+    let mut fallback = Fallback::parse(fallback).ok_or_else(|| ApiError::InvalidField {
+        reason: "invalid_fallback",
+        pointer: "/fallback",
+        message: format!(
+            "fallback is policy, none, or up to {} language tags separated by commas",
+            locale::MAX_FALLBACKS
+        ),
+    })?;
+    // Without a list, a made-up tag matches nothing and its empty page is never stored; named
+    // fallbacks would give every made-up tag a real answer to store, so they need a list.
+    if !listed && matches!(fallback, Fallback::Tags(_)) {
+        return Err(ApiError::InvalidField {
+            reason: "invalid_fallback",
+            pointer: "/fallback",
+            message: "list this environment's languages before naming fallbacks".to_owned(),
+        });
+    }
+    if let Fallback::Tags(tags) = &mut fallback {
+        for tag in tags.iter_mut() {
+            let Some(spelled) = environment
+                .locales
+                .iter()
+                .find(|listed| listed.eq_ignore_ascii_case(tag))
+            else {
+                return Err(ApiError::InvalidField {
+                    reason: "unknown_locale",
+                    pointer: "/fallback",
+                    message: format!("{tag} isn't one of this environment's languages"),
+                });
+            };
+            tag.clone_from(spelled);
+        }
+    }
+    let chain = locale::chain(&tag, &fallback, &environment.chain);
+    Ok(Some(Asked {
+        tag,
+        resolution: delivery::Resolution {
+            chain,
+            default: environment.default_locale.clone(),
+        },
+    }))
+}
+
+/// The cache scope of a read at `generation` in `environment`, in the language `asked` names.
+fn scope_of(
+    project: Uuid,
+    environment: &delivery::Environment,
+    generation: i64,
+    asked: Option<&Asked>,
+) -> Scope {
+    Scope {
+        project: project.as_u128(),
+        environment: environment.id.as_u128(),
+        epoch: environment.epoch,
+        generation,
+        unpublished: environment.last_unpublish,
+        locale_policy: environment.locale_policy,
+        locale: asked.map(|asked| locale::chain_digest(&asked.resolution.chain)),
+    }
+}
+
+/// Names the policy an answer resolved with, and — for a `?locale=` read — its language.
+fn with_locale(
+    mut response: Response,
+    environment: &delivery::Environment,
+    asked: Option<&Asked>,
+) -> Response {
+    let headers = response.headers_mut();
+    headers.insert(LOCALE_POLICY, HeaderValue::from(environment.locale_policy));
+    if let Some(asked) = asked
+        && let Ok(value) = HeaderValue::from_str(&asked.tag)
+    {
+        headers.insert(header::CONTENT_LANGUAGE, value);
+    }
+    response
+}
+
+/// How a `?locale=` row was resolved (D-171).
+#[derive(Serialize)]
+struct Localization {
+    /// The tag asked for.
+    requested: String,
+    /// The tag served: the row's own, or the default language's for an untagged entry.
+    resolved: Option<String>,
+    /// Whether that is a fallback rather than the tag asked for.
+    fallback: bool,
+}
+
+/// A published translation of an entry (D-171): what a site needs for `hreflang` links.
+#[derive(Serialize)]
+struct Alternate {
+    id: Uuid,
+    locale: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    slug: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -122,10 +289,36 @@ pub(crate) struct PublishedView {
     /// Who may read it (D-137): a site that caches pages needs to know which answers are
     /// member-only even before it signs anyone in.
     visibility: String,
+    /// Its language (D-171): its own tag, or the default language's for an untagged entry;
+    /// `null` when it has none and the environment lists no default.
+    locale: Option<String>,
+    /// On a `?locale=` read: what was asked for, what was served, and whether it fell back.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    localization: Option<Localization>,
+    /// On a `?locale=` entry read: the id in the URL, when the answer is a translation of it.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    requested_id: Option<Uuid>,
+    /// On an entry read: its other published translations at the same generation.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    alternates: Option<Vec<Alternate>>,
 }
 
 impl PublishedView {
-    fn new(row: Published) -> Result<Self, ApiError> {
+    /// The row as a reader of `asked`'s language gets it, with `default` the language of an
+    /// untagged entry.
+    fn in_locale(
+        row: Published,
+        default: Option<&str>,
+        asked: Option<&Asked>,
+    ) -> Result<Self, ApiError> {
+        let locale = locale::effective(row.locale.as_deref(), default).map(str::to_owned);
+        let localization = asked.map(|asked| Localization {
+            requested: asked.tag.clone(),
+            fallback: !locale
+                .as_deref()
+                .is_some_and(|served| served.eq_ignore_ascii_case(&asked.tag)),
+            resolved: locale.clone(),
+        });
         Ok(Self {
             id: row.entry_id,
             revision_id: row.revision_id,
@@ -136,6 +329,10 @@ impl PublishedView {
             content_hash: crate::entries::content_hash(&row.content_hash),
             published_in: row.valid_from,
             visibility: row.visibility,
+            locale,
+            localization,
+            requested_id: None,
+            alternates: None,
         })
     }
 }
@@ -151,6 +348,8 @@ enum Read {
     Found(Answer),
     Missing,
     Gone,
+    /// Published, but not in the language asked for or its fallbacks: in these (D-171).
+    NotInLocale(Vec<String>),
 }
 
 /// A failed read that other requests were waiting for. Its cause was logged once, by the request
@@ -159,13 +358,17 @@ enum Read {
 #[error("reading published content failed (logged by the request that read it)")]
 struct SharedReadFailed;
 
-/// The project's environment and its latest generation, from Postgres in one statement; or 404.
+/// The project's environment, its latest generation and its locale policy for `requested`,
+/// from Postgres in one statement; or 404.
 async fn resolve(
     services: &Services,
     project: Uuid,
     environment: &str,
+    requested: Option<&str>,
 ) -> Result<delivery::Environment, ApiError> {
-    delivery::environment(&services.pool, project, environment)
+    // A malformed tag never reaches the statement; `asked` refuses it with its own code.
+    let requested = requested.filter(|tag| locale::is_tag(tag));
+    delivery::environment_in(&services.pool, project, environment, requested)
         .await
         .map_err(ApiError::from_db)?
         .ok_or(ApiError::NotFound)
@@ -191,6 +394,45 @@ fn cursor(path: &CollectionPath, project: Uuid, generation: i64, last: Uuid) -> 
         "d1:{project}:{}:{}:{generation}:{last}",
         path.environment, path.collection
     ))
+}
+
+/// A `?locale=` list's cursor (D-171): `d2:` adds the chain's digest, so a page of one
+/// language never continues another's, and its position is the last row's translation group.
+fn locale_cursor(
+    path: &CollectionPath,
+    project: Uuid,
+    generation: i64,
+    chain: u128,
+    last: Uuid,
+) -> String {
+    URL_SAFE_NO_PAD.encode(format!(
+        "d2:{project}:{}:{}:{generation}:{chain:032x}:{last}",
+        path.environment, path.collection
+    ))
+}
+
+fn after_locale_cursor(
+    path: &CollectionPath,
+    project: Uuid,
+    chain: u128,
+    text: &str,
+) -> Result<(i64, Uuid), ApiError> {
+    let prefix = format!("d2:{project}:{}:{}:", path.environment, path.collection);
+    let chain = format!("{chain:032x}");
+    URL_SAFE_NO_PAD
+        .decode(text)
+        .ok()
+        .and_then(|bytes| String::from_utf8(bytes).ok())
+        .and_then(|decoded| {
+            let rest = decoded.strip_prefix(&prefix)?.to_owned();
+            let (generation, rest) = rest.split_once(':')?;
+            let (digest, last) = rest.split_once(':')?;
+            (digest == chain).then_some(())?;
+            Some((generation.parse().ok()?, Uuid::try_parse(last).ok()?))
+        })
+        .ok_or(ApiError::InvalidHeader(
+            "this cursor is not valid for this list in this language",
+        ))
 }
 
 fn after_cursor(path: &CollectionPath, project: Uuid, text: &str) -> Result<(i64, Uuid), ApiError> {
@@ -280,6 +522,7 @@ where
                 }
                 Ok(Read::Missing) => Ok(Filled::Missing),
                 Ok(Read::Gone) => Ok(Filled::Gone),
+                Ok(Read::NotInLocale(available)) => Ok(Filled::NotInLocale(available)),
                 Err(ApiError::Busy) => Err(Refused::Busy),
                 Err(ApiError::Internal(cause)) => {
                     tracing::error!(%cause, "reading published content failed");
@@ -300,6 +543,7 @@ where
         Filled::Keep(cached) | Filled::Once(cached) => cached,
         Filled::Missing => return Err(ApiError::NotFound),
         Filled::Gone => return Err(ApiError::Gone),
+        Filled::NotInLocale(available) => return Err(ApiError::NotInLocale { available }),
     };
     let unchanged = request
         .get(header::IF_NONE_MATCH)
@@ -343,6 +587,7 @@ where
         Read::Found(answer) => answer,
         Read::Missing => return Err(ApiError::NotFound),
         Read::Gone => return Err(ApiError::Gone),
+        Read::NotInLocale(available) => return Err(ApiError::NotInLocale { available }),
     };
     let tag = etag(&answer.body);
     let unchanged = request
@@ -369,6 +614,10 @@ where
 }
 
 /// `GET /content/v1/{project}/{environment}/{collection}`.
+#[expect(
+    clippy::too_many_lines,
+    reason = "one request's own sequence: pin, ask, page, key, fill"
+)]
 pub(crate) async fn list(
     State(state): State<AppState>,
     Path(path): Path<CollectionPath>,
@@ -381,11 +630,28 @@ pub(crate) async fn list(
     }
     let services = services(&state)?;
     let project = Uuid::try_parse(&path.project).map_err(|_| ApiError::NotFound)?;
-    let environment = resolve(services, project, &path.environment).await?;
+    let environment = resolve(
+        services,
+        project,
+        &path.environment,
+        query.locale.as_deref(),
+    )
+    .await?;
+    let asked = asked(
+        &environment,
+        query.locale.as_deref(),
+        query.fallback.as_deref(),
+    )?;
+    let digest = asked
+        .as_ref()
+        .map(|asked| locale::chain_digest(&asked.resolution.chain));
     // A cursor's page is pinned to the generation of the first page, like `?generation=`.
     let (generation, before, pinned) = match query.cursor.as_deref() {
         Some(text) => {
-            let (generation, last) = after_cursor(&path, project, text)?;
+            let (generation, last) = match digest {
+                Some(chain) => after_locale_cursor(&path, project, chain, text)?,
+                None => after_cursor(&path, project, text)?,
+            };
             (
                 at(Some(generation), environment.generation)?,
                 Some(last),
@@ -401,17 +667,13 @@ pub(crate) async fn list(
     // Who the read is for: a live site session makes it a member's, reading as its role
     // (D-137) — otherwise anonymous, which the generation-keyed cache is for.
     let audience = audience::reader(services, project, &request).await?;
-    let scope = Scope {
-        project: project.as_u128(),
-        environment: environment.id.as_u128(),
-        epoch: environment.epoch,
-        generation,
-        unpublished: environment.last_unpublish,
-    };
+    let scope = scope_of(project, &environment, generation, asked.as_ref());
     let key = scope.list_key(&path.collection, limit, before.as_ref().map(Uuid::as_u128));
     let tags = scope.list_tags(&path.collection);
     let fill = || {
         let audience = &audience;
+        let asked = asked.as_ref();
+        let environment = &environment;
         async move {
             let mut rows = if generation == 0 {
                 Vec::new()
@@ -419,16 +681,30 @@ pub(crate) async fn list(
                 let mut tx = delivery::begin(&services.pool, project, audience)
                     .await
                     .map_err(ApiError::from_db)?;
-                let rows = tx
-                    .list(
-                        environment.id,
-                        &path.collection,
-                        generation,
-                        before,
-                        limit + 1,
-                    )
-                    .await
-                    .map_err(ApiError::from_db)?;
+                let rows = match asked {
+                    Some(asked) => {
+                        tx.list_in_locale(
+                            environment.id,
+                            &path.collection,
+                            generation,
+                            &asked.resolution,
+                            before,
+                            limit + 1,
+                        )
+                        .await
+                    }
+                    None => {
+                        tx.list(
+                            environment.id,
+                            &path.collection,
+                            generation,
+                            before,
+                            limit + 1,
+                        )
+                        .await
+                    }
+                }
+                .map_err(ApiError::from_db)?;
                 tx.finish().await.map_err(ApiError::from_db)?;
                 rows
             };
@@ -437,13 +713,18 @@ pub(crate) async fn list(
             rows.truncate(page);
             let next_cursor = more
                 .then(|| {
-                    rows.last()
-                        .map(|row| cursor(&path, project, generation, row.entry_id))
+                    rows.last().map(|row| match digest {
+                        Some(chain) => {
+                            locale_cursor(&path, project, generation, chain, row.group_key)
+                        }
+                        None => cursor(&path, project, generation, row.entry_id),
+                    })
                 })
                 .flatten();
+            let default = environment.default_locale.as_deref();
             let data = rows
                 .into_iter()
-                .map(PublishedView::new)
+                .map(|row| PublishedView::in_locale(row, default, asked))
                 .collect::<Result<Vec<_>, ApiError>>()?;
             let empty = data.is_empty();
             let body =
@@ -451,13 +732,23 @@ pub(crate) async fn list(
             Ok(Read::Found(Answer { body, empty }))
         }
     };
-    if matches!(audience, Audience::Member { .. }) {
-        return serve_member(&request, generation, fill).await;
-    }
-    serve(services, &request, &key, &tags, generation, pinned, fill).await
+    let response = if matches!(audience, Audience::Member { .. }) {
+        serve_member(&request, generation, fill).await?
+    } else {
+        serve(services, &request, &key, &tags, generation, pinned, fill).await?
+    };
+    Ok(with_locale(response, &environment, asked.as_ref()))
 }
 
-/// `GET /content/v1/{project}/{environment}/{collection}/{entry}`.
+/// `GET /content/v1/{project}/{environment}/{collection}/{entry}`. With `?locale=`, the entry's
+/// best published translation through the chain (D-171): `id` is the translation's,
+/// `requested_id` the one asked for; nothing in the chain is 404 `not_in_locale`, naming the
+/// languages that are published. Every answer lists the other published translations as
+/// `alternates`.
+#[expect(
+    clippy::too_many_lines,
+    reason = "one request's own sequence: pin, ask, key, resolve, read"
+)]
 pub(crate) async fn get(
     State(state): State<AppState>,
     Path(path): Path<EntryPath>,
@@ -467,34 +758,103 @@ pub(crate) async fn get(
     let entry = Uuid::try_parse(&path.entry).map_err(|_| ApiError::NotFound)?;
     let services = services(&state)?;
     let project = Uuid::try_parse(&path.project).map_err(|_| ApiError::NotFound)?;
-    let environment = resolve(services, project, &path.environment).await?;
+    let environment = resolve(
+        services,
+        project,
+        &path.environment,
+        query.locale.as_deref(),
+    )
+    .await?;
+    let asked = asked(
+        &environment,
+        query.locale.as_deref(),
+        query.fallback.as_deref(),
+    )?;
     let generation = at(query.generation, environment.generation)?;
     if generation == 0 {
         return Err(ApiError::NotFound);
     }
     // Who the read is for (D-137), as in `list`.
     let audience = audience::reader(services, project, &request).await?;
-    let scope = Scope {
-        project: project.as_u128(),
-        environment: environment.id.as_u128(),
-        epoch: environment.epoch,
-        generation,
-        unpublished: environment.last_unpublish,
-    };
+    let scope = scope_of(project, &environment, generation, asked.as_ref());
     let key = scope.entry_key(&path.collection, entry.as_u128());
     let tags = scope.entry_tags(&path.collection, entry.as_u128());
     let pinned = query.generation.is_some();
     let fill = || {
         let audience = &audience;
+        let asked = asked.as_ref();
+        let environment = &environment;
         async move {
+            let default = environment.default_locale.as_deref();
             let mut tx = delivery::begin(&services.pool, project, audience)
                 .await
                 .map_err(ApiError::from_db)?;
-            let found = tx
-                .get(environment.id, &path.collection, entry, generation)
-                .await
-                .map_err(ApiError::from_db)?;
-            let gone = match found {
+            // The translation to answer with, and its published siblings — all read inside the
+            // audience's own row-level security, so a member-only translation is neither the
+            // answer nor an alternate for anyone who can't read it.
+            let (chosen, siblings) = match asked {
+                None => {
+                    let found = tx
+                        .get(environment.id, &path.collection, entry, generation)
+                        .await
+                        .map_err(ApiError::from_db)?;
+                    let siblings = match &found {
+                        Some(row) => tx
+                            .siblings(environment.id, &path.collection, row.group_key, generation)
+                            .await
+                            .map_err(ApiError::from_db)?,
+                        None => Vec::new(),
+                    };
+                    (found, siblings)
+                }
+                Some(asked) => {
+                    let group = tx
+                        .group_of(environment.id, &path.collection, entry)
+                        .await
+                        .map_err(ApiError::from_db)?;
+                    let siblings = match group {
+                        Some(group) => tx
+                            .siblings(environment.id, &path.collection, group, generation)
+                            .await
+                            .map_err(ApiError::from_db)?,
+                        None => Vec::new(),
+                    };
+                    let stored: Vec<Option<&str>> = siblings
+                        .iter()
+                        .map(|sibling| sibling.locale.as_deref())
+                        .collect();
+                    match locale::resolve(&asked.resolution.chain, default, &stored) {
+                        Some((index, _)) => {
+                            let found = tx
+                                .get(
+                                    environment.id,
+                                    &path.collection,
+                                    siblings[index].entry_id,
+                                    generation,
+                                )
+                                .await
+                                .map_err(ApiError::from_db)?;
+                            (found, siblings)
+                        }
+                        None if !siblings.is_empty() => {
+                            tx.finish().await.map_err(ApiError::from_db)?;
+                            let mut available: Vec<String> = Vec::new();
+                            for sibling in &siblings {
+                                if let Some(tag) =
+                                    locale::effective(sibling.locale.as_deref(), default)
+                                    && !available.iter().any(|seen| seen == tag)
+                                {
+                                    available.push(tag.to_owned());
+                                }
+                            }
+                            available.sort();
+                            return Ok(Read::NotInLocale(available));
+                        }
+                        None => (None, siblings),
+                    }
+                }
+            };
+            let gone = match chosen {
                 Some(_) => false,
                 None => tx
                     .gone(environment.id, &path.collection, entry, generation)
@@ -502,20 +862,36 @@ pub(crate) async fn get(
                     .map_err(ApiError::from_db)?,
             };
             tx.finish().await.map_err(ApiError::from_db)?;
-            let Some(row) = found else {
+            let Some(row) = chosen else {
                 return Ok(if gone { Read::Gone } else { Read::Missing });
             };
-            let body = serde_json::to_string(&Data {
-                data: PublishedView::new(row)?,
-            })
-            .map_err(ApiError::internal)?;
+            let answered = row.entry_id;
+            let mut view = PublishedView::in_locale(row, default, asked)?;
+            if asked.is_some() {
+                view.requested_id = Some(entry);
+            }
+            view.alternates = Some(
+                siblings
+                    .into_iter()
+                    .filter(|sibling| sibling.entry_id != answered)
+                    .map(|sibling| Alternate {
+                        id: sibling.entry_id,
+                        locale: locale::effective(sibling.locale.as_deref(), default)
+                            .map(str::to_owned),
+                        slug: sibling.slug,
+                    })
+                    .collect(),
+            );
+            let body = serde_json::to_string(&Data { data: view }).map_err(ApiError::internal)?;
             Ok(Read::Found(Answer { body, empty: false }))
         }
     };
-    if matches!(audience, Audience::Member { .. }) {
-        return serve_member(&request, generation, fill).await;
-    }
-    serve(services, &request, &key, &tags, generation, pinned, fill).await
+    let response = if matches!(audience, Audience::Member { .. }) {
+        serve_member(&request, generation, fill).await?
+    } else {
+        serve(services, &request, &key, &tags, generation, pinned, fill).await?
+    };
+    Ok(with_locale(response, &environment, asked.as_ref()))
 }
 
 /// The page a `POST …/query` answers with: the published rows, and `applied`, the
@@ -557,7 +933,18 @@ pub(crate) async fn query(
     let Json(document) = body?;
     let services = services(&state)?;
     let project = Uuid::try_parse(&path.project).map_err(|_| ApiError::NotFound)?;
-    let environment = resolve(services, project, &path.environment).await?;
+    let environment = resolve(
+        services,
+        project,
+        &path.environment,
+        parameters.locale.as_deref(),
+    )
+    .await?;
+    let asked = asked(
+        &environment,
+        parameters.locale.as_deref(),
+        parameters.fallback.as_deref(),
+    )?;
     // A cursor's page is pinned to the generation of its first page, like `?generation=`.
     let (generation, inner) = match parameters.cursor.as_deref() {
         Some(text) => {
@@ -604,17 +991,13 @@ pub(crate) async fn query(
         .map(|inner| format!("q1:{generation}:{inner}"));
     // Who the read is for (D-137), as in `list`.
     let audience = audience::reader(services, project, &request).await?;
-    let scope = Scope {
-        project: project.as_u128(),
-        environment: environment.id.as_u128(),
-        epoch: environment.epoch,
-        generation,
-        unpublished: environment.last_unpublish,
-    };
+    let scope = scope_of(project, &environment, generation, asked.as_ref());
     let key = scope.query_key(&path.collection, &language.query_hash(), cursor.as_deref());
     let tags = scope.list_tags(&path.collection);
     let fill = || {
         let audience = &audience;
+        let asked = asked.as_ref();
+        let environment = &environment;
         async move {
             let depth = language.depth();
             let keep = language.fields();
@@ -628,7 +1011,7 @@ pub(crate) async fn query(
                 let mut tx = delivery::begin(&services.pool, project, audience)
                     .await
                     .map_err(ApiError::from_db)?;
-                let mut found = db_query::published_page(
+                let mut found = db_query::published_page_in(
                     &mut tx,
                     environment.id,
                     &path.collection,
@@ -636,6 +1019,7 @@ pub(crate) async fn query(
                     &language,
                     after.as_ref(),
                     generation,
+                    asked.map(|asked| &asked.resolution),
                 )
                 .await
                 .map_err(|error| match error {
@@ -670,13 +1054,14 @@ pub(crate) async fn query(
                 tx.finish().await.map_err(ApiError::from_db)?;
                 found
             };
+            let default = environment.default_locale.as_deref();
             let data = found
                 .rows
                 .into_iter()
                 .map(|mut row| {
                     row.content =
                         crate::populate::expand_document(&content_type, &row.content, &resolved)?;
-                    PublishedView::new(row)
+                    PublishedView::in_locale(row, default, asked)
                 })
                 .collect::<Result<Vec<_>, ApiError>>()?;
             let empty = data.is_empty();
@@ -691,10 +1076,12 @@ pub(crate) async fn query(
             Ok(Read::Found(Answer { body, empty }))
         }
     };
-    if matches!(audience, Audience::Member { .. }) {
-        return serve_member(&request, generation, fill).await;
-    }
-    serve(services, &request, &key, &tags, generation, pinned, fill).await
+    let response = if matches!(audience, Audience::Member { .. }) {
+        serve_member(&request, generation, fill).await?
+    } else {
+        serve(services, &request, &key, &tags, generation, pinned, fill).await?
+    };
+    Ok(with_locale(response, &environment, asked.as_ref()))
 }
 
 #[cfg(test)]
@@ -735,6 +1122,31 @@ mod tests {
         };
         assert!(after_cursor(&elsewhere, project, &token).is_err());
         assert!(after_cursor(&elsewhere, project, "not-a-cursor").is_err());
+    }
+
+    #[test]
+    fn a_locale_cursor_keeps_its_list_its_generation_and_its_language() {
+        let here = CollectionPath {
+            project: "p".to_owned(),
+            environment: "production".to_owned(),
+            collection: "articles".to_owned(),
+        };
+        let (project, group) = (Uuid::now_v7(), Uuid::now_v7());
+        let token = locale_cursor(&here, project, 7, 0xfe, group);
+        assert_eq!(
+            after_locale_cursor(&here, project, 0xfe, &token).ok(),
+            Some((7, group))
+        );
+        assert!(
+            after_locale_cursor(&here, project, 0xff, &token).is_err(),
+            "another language's page"
+        );
+        assert!(
+            after_cursor(&here, project, &token).is_err(),
+            "a page of every language"
+        );
+        let every = cursor(&here, project, 7, group);
+        assert!(after_locale_cursor(&here, project, 0xfe, &every).is_err());
     }
 
     #[test]

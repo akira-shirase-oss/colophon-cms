@@ -21,7 +21,7 @@ pub struct DeliveryTransaction {
 }
 
 /// An environment as delivery sees it.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Environment {
     /// Its id.
     pub id: Uuid,
@@ -31,6 +31,18 @@ pub struct Environment {
     pub generation: i64,
     /// The generation of its latest release that unpublished something (0 if none has).
     pub last_unpublish: i64,
+    /// Its locale policy version: bumped by every change to its languages (D-170).
+    pub locale_policy: i64,
+    /// The tags it lists, in display order (at most 50); empty when it lists none, and then any
+    /// well-formed tag may be asked for.
+    pub locales: Vec<String>,
+    /// Its default language's tag, if it lists languages: what an untagged entry is written in.
+    pub default_locale: Option<String>,
+    /// The requested tag as the list spells it — `None` when nothing was requested or the list
+    /// doesn't have it.
+    pub listed_locale: Option<String>,
+    /// The listed tag's fallbacks, in order (empty when it has none or isn't listed).
+    pub chain: Vec<String>,
 }
 
 /// One published entry.
@@ -55,23 +67,64 @@ pub struct Published {
     /// Who may read it: `public`, `authenticated` or `role:<name>` — what the transaction's
     /// audience already proved it may see (D-137).
     pub visibility: String,
+    /// The tag its revision was written in, `None` for the default language (D-170).
+    pub locale: Option<String>,
+    /// Its translation group: the entry's `localization_id`, or its own id when it has none.
+    pub group_key: Uuid,
+}
+
+/// A published member of a translation group, without its content: what resolution and an
+/// entry's `alternates` need (D-171).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Sibling {
+    /// The entry.
+    pub entry_id: Uuid,
+    /// Its tag, `None` for the default language.
+    pub locale: Option<String>,
+    /// Its slug.
+    pub slug: Option<String>,
+}
+
+/// How a `?locale=` read picks rows (D-171).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Resolution {
+    /// The tags to try, best first: the requested tag, then its fallbacks — as the
+    /// environment's list spells them, which is how writes store them once there is a list.
+    pub chain: Vec<String>,
+    /// The default language's tag, which an untagged entry counts as; `None` when the
+    /// environment has no default, and untagged entries match nothing.
+    pub default: Option<String>,
 }
 
 /// The environment `slug` of `project` with its latest generation, in one statement: the delivery
-/// cache asks this on every request (`delivery_environment`, migrations 0011 and 0012, which runs
-/// as `colophon_delivery` in the project's context and returns nothing else).
+/// cache asks this on every request (`delivery_environment`, migrations 0011, 0012 and 0065,
+/// which runs as `colophon_delivery` in the project's context and returns nothing else).
 pub async fn environment(
     pool: &PgPool,
     project: Uuid,
     slug: &str,
 ) -> Result<Option<Environment>, DbError> {
+    environment_in(pool, project, slug, None).await
+}
+
+/// [`environment`], also answering the locale policy for `requested` (D-171): the tag as the
+/// list spells it and its fallback chain — still one statement.
+pub async fn environment_in(
+    pool: &PgPool,
+    project: Uuid,
+    slug: &str,
+    requested: Option<&str>,
+) -> Result<Option<Environment>, DbError> {
     sqlx::query_as!(
         Environment,
         r#"SELECT id AS "id!", epoch AS "epoch!", generation AS "generation!",
-                  last_unpublish AS "last_unpublish!"
-           FROM delivery_environment($1, $2)"#,
+                  last_unpublish AS "last_unpublish!", locale_policy AS "locale_policy!",
+                  locales AS "locales!", default_locale, listed_locale,
+                  coalesce(chain, '{}') AS "chain!"
+           FROM delivery_environment($1, $2, $3)"#,
         project,
-        slug
+        slug,
+        requested
     )
     .fetch_optional(pool)
     .await
@@ -176,7 +229,14 @@ impl DeliveryTransaction {
     pub async fn environment(&mut self, slug: &str) -> Result<Option<Environment>, DbError> {
         sqlx::query_as!(
             Environment,
-            "SELECT id, epoch, generation, last_unpublish FROM environments WHERE project_id = nullif(current_setting('app.project_id', true), '')::uuid AND slug = $1",
+            r#"SELECT id, epoch, generation, last_unpublish, locale_policy_version AS locale_policy,
+                      coalesce((SELECT array_agg(l.tag ORDER BY l.position) FROM environment_locales l
+                                WHERE l.project_id = e.project_id AND l.environment_id = e.id), '{}') AS "locales!",
+                      (SELECT l.tag FROM environment_locales l
+                       WHERE l.project_id = e.project_id AND l.environment_id = e.id AND l.is_default) AS default_locale,
+                      NULL::text AS listed_locale, '{}'::text[] AS "chain!"
+               FROM environments e
+               WHERE project_id = nullif(current_setting('app.project_id', true), '')::uuid AND slug = $1"#,
             slug
         )
         .fetch_optional(&mut *self.transaction)
@@ -196,7 +256,8 @@ impl DeliveryTransaction {
     ) -> Result<Vec<Published>, DbError> {
         sqlx::query_as!(
             Published,
-            "SELECT entry_id, revision_id, collection, title, slug, content, content_hash, valid_from, visibility
+            "SELECT entry_id, revision_id, collection, title, slug, content, content_hash, valid_from, visibility,
+                    locale, group_key
              FROM publications
              WHERE project_id = nullif(current_setting('app.project_id', true), '')::uuid
                AND environment_id = $1 AND collection = $2
@@ -225,7 +286,8 @@ impl DeliveryTransaction {
     ) -> Result<Option<Published>, DbError> {
         sqlx::query_as!(
             Published,
-            "SELECT entry_id, revision_id, collection, title, slug, content, content_hash, valid_from, visibility
+            "SELECT entry_id, revision_id, collection, title, slug, content, content_hash, valid_from, visibility,
+                    locale, group_key
              FROM publications
              WHERE project_id = nullif(current_setting('app.project_id', true), '')::uuid
                AND environment_id = $1 AND collection = $2 AND entry_id = $3
@@ -272,6 +334,134 @@ impl DeliveryTransaction {
             generation
         )
         .fetch_one(&mut *self.transaction)
+        .await
+        .map_err(DbError::from_query)
+    }
+
+    /// A page of the collection as one row per translation group, at `generation` (D-171):
+    /// each group's best published member for `resolution` — the earliest tag in its chain
+    /// that the group publishes, an untagged member counting as the default — in group order,
+    /// newest first, after the group `before` when given; at most `limit` (capped like
+    /// [`Self::list`]). A group with no member in the chain is left out. Row-level security
+    /// runs first, so a member the audience can't read is never anyone's fallback.
+    ///
+    /// The page reads at most `limit` rows per tag in the chain, each tag's straight off its
+    /// own range of `publications_by_locale` (and the untagged range, when the default is in
+    /// the chain): the first `limit` groups overall are among the first `limit` of each tag
+    /// they publish, so the per-tag pages hold every group the page needs and every member
+    /// those groups have in the chain. A page costs `chain × limit` index rows however large
+    /// the collection is and however rare the tags. Tags compare exactly — with
+    /// `colophon_delivery`'s row security in force only leakproof comparisons can use an index,
+    /// and the list's spelling is what writes store and requests are respelled to.
+    pub async fn list_in_locale(
+        &mut self,
+        environment: Uuid,
+        collection: &str,
+        generation: i64,
+        resolution: &Resolution,
+        before: Option<Uuid>,
+        limit: i64,
+    ) -> Result<Vec<Published>, DbError> {
+        sqlx::query_as!(
+            Published,
+            r#"SELECT DISTINCT ON (c.group_key)
+                      c.entry_id AS "entry_id!", c.revision_id AS "revision_id!",
+                      c.collection AS "collection!", c.title AS "title!", c.slug,
+                      c.content AS "content!", c.content_hash AS "content_hash!",
+                      c.valid_from AS "valid_from!", c.visibility AS "visibility!", c.locale,
+                      c.group_key AS "group_key!"
+               FROM (
+                   SELECT p.*, t.rank
+                   FROM unnest($5::text[]) WITH ORDINALITY AS t (tag, rank)
+                   CROSS JOIN LATERAL (
+                       SELECT p.* FROM publications p
+                       WHERE p.project_id = nullif(current_setting('app.project_id', true), '')::uuid
+                         AND p.environment_id = $1 AND p.collection = $2 AND p.locale = t.tag
+                         AND p.group_key < $6
+                         AND p.valid_from <= $3 AND (p.valid_to IS NULL OR p.valid_to > $3)
+                         AND p.revoked_in IS NULL
+                       ORDER BY p.locale, p.group_key DESC
+                       LIMIT $7
+                   ) p
+                   UNION ALL
+                   SELECT p.*, array_position($5::text[], $4) AS rank
+                   FROM (
+                       SELECT p.* FROM publications p
+                       WHERE p.project_id = nullif(current_setting('app.project_id', true), '')::uuid
+                         AND p.environment_id = $1 AND p.collection = $2 AND p.locale IS NULL
+                         AND $4 = ANY ($5::text[])
+                         AND p.group_key < $6
+                         AND p.valid_from <= $3 AND (p.valid_to IS NULL OR p.valid_to > $3)
+                         AND p.revoked_in IS NULL
+                       ORDER BY p.locale, p.group_key DESC
+                       LIMIT $7
+                   ) p
+               ) c
+               ORDER BY c.group_key DESC, c.rank, c.entry_id DESC
+               LIMIT $7"#,
+            environment,
+            collection,
+            generation,
+            resolution.default.as_deref(),
+            &resolution.chain,
+            // The first page is "before" the greatest uuid: a bound the index can take, where
+            // `$6 IS NULL OR …` would leave every page walking from the top.
+            before.unwrap_or_else(Uuid::max),
+            limit.clamp(1, MAX_PAGE + 1)
+        )
+        .fetch_all(&mut *self.transaction)
+        .await
+        .map_err(DbError::from_query)
+    }
+
+    /// The translation group of `entry` in `collection`, from any of its publications (an
+    /// entry's group never changes) that the audience may read; `None` when it has none.
+    pub async fn group_of(
+        &mut self,
+        environment: Uuid,
+        collection: &str,
+        entry: Uuid,
+    ) -> Result<Option<Uuid>, DbError> {
+        sqlx::query_scalar!(
+            "SELECT group_key FROM publications
+             WHERE project_id = nullif(current_setting('app.project_id', true), '')::uuid
+               AND environment_id = $1 AND collection = $2 AND entry_id = $3
+             LIMIT 1",
+            environment,
+            collection,
+            entry
+        )
+        .fetch_optional(&mut *self.transaction)
+        .await
+        .map_err(DbError::from_query)
+    }
+
+    /// The members of translation group `group` published at `generation` and not revoked,
+    /// that the audience may read — tag and slug only, by entry id — for resolution and an
+    /// entry's `alternates`. A group holds one live entry per tag, so this is bounded by the
+    /// environment's languages.
+    pub async fn siblings(
+        &mut self,
+        environment: Uuid,
+        collection: &str,
+        group: Uuid,
+        generation: i64,
+    ) -> Result<Vec<Sibling>, DbError> {
+        sqlx::query_as!(
+            Sibling,
+            "SELECT entry_id, locale, slug
+             FROM publications
+             WHERE project_id = nullif(current_setting('app.project_id', true), '')::uuid
+               AND environment_id = $1 AND collection = $2 AND group_key = $3
+               AND valid_from <= $4 AND (valid_to IS NULL OR valid_to > $4) AND revoked_in IS NULL
+             ORDER BY entry_id DESC
+             LIMIT 200",
+            environment,
+            collection,
+            group,
+            generation
+        )
+        .fetch_all(&mut *self.transaction)
         .await
         .map_err(DbError::from_query)
     }

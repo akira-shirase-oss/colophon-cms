@@ -3,11 +3,17 @@
 //! name an answer the same way.
 //!
 //! A key names everything an answer depends on: the project, the environment, the recovery epoch,
-//! the release generation, the render version and the normalized query. Nothing else in a request
-//! changes the answer: unknown query parameters are ignored, and a cursor is reduced to the
-//! generation and position it carries. A generation's published content never changes, so an
-//! entry under one of these keys can't go stale; a new release is a new generation and so new
-//! keys. Locales arrive later; until then every answer is in the one default locale.
+//! the release generation, the render version, the locale and the normalized query. Nothing else
+//! in a request changes the answer: unknown query parameters are ignored, and a cursor is reduced
+//! to the generation and position it carries. A generation's published content never changes, so
+//! an entry under one of these keys can't go stale; a new release is a new generation and so new
+//! keys.
+//!
+//! Locales (D-171): a request with `?locale=` resolves through a chain of tags — the requested
+//! one, then its fallbacks — and its key names that chain's digest, so `fr` and `fr` falling back
+//! to `en` are two answers. Every key also names the environment's locale policy version: which
+//! tag an untagged entry reads as, and which fallbacks a tag has, are the policy's, so a changed
+//! policy never serves a resolution cached under the old one.
 //!
 //! There is one exception: unpublishing (D-049) takes content out of every earlier generation's
 //! answers too. So a key also names the environment's latest unpublish, and each unpublish
@@ -21,7 +27,7 @@ use sha2::{Digest, Sha256};
 
 /// Changes whenever the shape of a delivery answer does, so an entry cached for the old shape is
 /// never served as the new one.
-pub const RENDER_VERSION: u32 = 1;
+pub const RENDER_VERSION: u32 = 2;
 
 /// The most tags one purge names. A run of releases that changed more purges the whole
 /// environment instead: coarser, and still bounded.
@@ -39,6 +45,8 @@ pub fn purge_tags(project: u128, environment: u128, entries: &[(String, u128)]) 
         epoch: 0,
         generation: 0,
         unpublished: 0,
+        locale_policy: 0,
+        locale: None,
     };
     let mut tags: Vec<String> = Vec::new();
     for (collection, entry) in entries {
@@ -72,13 +80,26 @@ pub struct Scope {
     /// The generation of the environment's latest release that unpublished something (0 if none
     /// has).
     pub unpublished: i64,
+    /// The environment's locale policy version: bumped by every change to its languages.
+    pub locale_policy: i64,
+    /// For a `?locale=` read, the digest of the chain it resolves through
+    /// ([`crate::locale::chain_digest`]); `None` for a read of every language.
+    pub locale: Option<u128>,
 }
 
 impl Scope {
     fn prefix(&self) -> String {
+        let locale = self
+            .locale
+            .map_or_else(|| "-".to_owned(), |chain| format!("{chain:032x}"));
         format!(
-            "colophon:delivery:r{RENDER_VERSION}:p{:032x}:e{:032x}:x{}:g{}:u{}",
-            self.project, self.environment, self.epoch, self.generation, self.unpublished
+            "colophon:delivery:r{RENDER_VERSION}:p{:032x}:e{:032x}:x{}:g{}:u{}:l{}:{locale}",
+            self.project,
+            self.environment,
+            self.epoch,
+            self.generation,
+            self.unpublished,
+            self.locale_policy
         )
     }
 
@@ -169,6 +190,8 @@ mod tests {
             epoch: 1,
             generation,
             unpublished: 0,
+            locale_policy: 0,
+            locale: None,
         }
     }
 
@@ -179,7 +202,7 @@ mod tests {
         assert_eq!(
             first,
             format!(
-                "colophon:delivery:r1:p{:032x}:e{:032x}:x1:g3:u0:list:20:-:articles",
+                "colophon:delivery:r2:p{:032x}:e{:032x}:x1:g3:u0:l0:-:list:20:-:articles",
                 1, 14
             )
         );
@@ -215,6 +238,66 @@ mod tests {
         assert_ne!(
             at_3.entry_key("articles", 7),
             at_3.list_key("articles", 20, Some(7))
+        );
+    }
+
+    /// Spec §27's "locale and query-key collisions": a read of every language, a tag, the same
+    /// tag through another chain, and any of them under another policy version are four
+    /// different answers, for lists, entries and queries alike.
+    #[test]
+    fn a_key_names_the_locale_chain_and_the_policy_version() {
+        use crate::locale::{Fallback, chain, chain_digest};
+        let every = scope(3);
+        let policy = ["pt".to_owned(), "en".to_owned()];
+        let exact = Scope {
+            locale: Some(chain_digest(&chain("pt-BR", &Fallback::None, &policy))),
+            ..every
+        };
+        let falling = Scope {
+            locale: Some(chain_digest(&chain("pt-BR", &Fallback::Policy, &policy))),
+            ..every
+        };
+        let other_tag = Scope {
+            locale: Some(chain_digest(&chain("pt", &Fallback::None, &policy))),
+            ..every
+        };
+        let next_policy = Scope {
+            locale_policy: 1,
+            ..falling
+        };
+        let scopes = [every, exact, falling, other_tag, next_policy];
+        let query = [0x5a; 32];
+        for (a, left) in scopes.iter().enumerate() {
+            for right in &scopes[a + 1..] {
+                assert_ne!(
+                    left.list_key("articles", 20, None),
+                    right.list_key("articles", 20, None)
+                );
+                assert_ne!(
+                    left.entry_key("articles", 7),
+                    right.entry_key("articles", 7)
+                );
+                assert_ne!(
+                    left.query_key("articles", &query, None),
+                    right.query_key("articles", &query, None)
+                );
+            }
+        }
+        // Delivery matches tags as spelled, so another spelling is another answer (the API
+        // respells requests as the list has them first, so with a list they share one key).
+        let shouted = Scope {
+            locale: Some(chain_digest(&chain("PT-br", &Fallback::None, &policy))),
+            ..every
+        };
+        assert_ne!(
+            shouted.list_key("articles", 20, None),
+            exact.list_key("articles", 20, None)
+        );
+        // Tags don't name the locale: a purge of the entry or collection reaches every
+        // language's answers.
+        assert_eq!(
+            falling.entry_tags("articles", 7),
+            every.entry_tags("articles", 7)
         );
     }
 

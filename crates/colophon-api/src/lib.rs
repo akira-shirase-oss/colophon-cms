@@ -25,6 +25,7 @@ pub mod events;
 mod fault;
 mod graphql;
 pub mod health;
+mod locales;
 pub mod mail;
 pub mod mcp;
 mod members;
