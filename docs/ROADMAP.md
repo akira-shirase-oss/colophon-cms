@@ -236,8 +236,12 @@ expired-approval scheduling).
   (`GET`/`PUT {P}/locales`); `/content/v1` takes `?locale=` and `?fallback=` on lists, entry reads and queries,
   resolves one row per group inside the reader's own row security, labels what it served, lists `alternates`,
   and keys the cache by the chain and the policy version. Without `?locale=` every language comes back as before.
-  Still open: the Studio's language settings and locale select (C2, on the same branch until its journey is
-  green), `depth` population and GraphQL reads in a language, and the committed 1M-request
+  The Studio side is built too: Settings → Languages (add, order, default, fallbacks by keyboard, every
+  refusal in place), the editor's language select, a language filter on lists, What readers get in one
+  language, and each publish request item's language (`languages.spec.ts`, `readers.spec.ts`,
+  `changeset-languages.spec.ts`; screenshots in `docs/screens/`). Still open: `depth` population, GraphQL
+  and preview reads in a language, a query in one language over a large collection (resolved in full,
+  about 0.9 s cold for 50,000 groups on the laptop: module 06), and the committed 1M-request
   `delivery-locales` run and its large-collection cold-path run (a 20,109-request smoke passed on the
   laptop: 2,923 a second, p99 16 ms, nothing failed — laptop numbers, not capacity).
 - Scheduled publishing and unpublishing, with time zones and missed schedules shown as delayed (spec §06, §14). Built
