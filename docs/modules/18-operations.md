@@ -92,10 +92,18 @@ on clean infrastructure and an independent install, so operations are a module w
   counts alone, so a cluster of N admits up to N times the rate until it is back. `scripts/load.sh` and
   `scripts/cluster.sh` raise the limits so far that they never refuse (one machine sends everything), and still
   pay for every check.
-- Database TLS (D-156): `COLOPHON_DATABASE_URL` and `COLOPHON_MIGRATION_DATABASE_URL` take libpq's `sslmode`
-  (`require`, `verify-ca`, `verify-full`, plus `sslrootcert` for a private CA); the driver speaks TLS through rustls
-  with the Mozilla roots built in. The local stack's Postgres has no TLS and its URLs say nothing, so they stay
-  plaintext on loopback. A managed database (Neon) needs `verify-full`.
+- Database TLS (D-156): a database on another machine is reached only with `sslmode=verify-full` in
+  `COLOPHON_DATABASE_URL` and `COLOPHON_MIGRATION_DATABASE_URL` (plus `sslrootcert=<CA file>` when a private CA
+  signs its certificate); the driver speaks TLS through rustls with the Mozilla roots built in. The server refuses
+  to start, and the admin commands exit 2, on any other mode for a non-loopback host, naming the fix and never the
+  URL: `disable`, `allow` and `prefer` (the default) may talk in plain text, `require` takes any certificate, and
+  `verify-ca` skips the name check while sqlx trusts the public roots as well as `sslrootcert` — any publicly
+  trusted certificate passes it. `channel_binding=require` is refused on every host: sqlx doesn't implement
+  channel binding and would drop it. Neon's copied URL (`sslmode=require&channel_binding=require`) becomes
+  `sslmode=verify-full`. A loopback host (`localhost`, `127.0.0.1`, `::1`) or a Unix socket needs no
+  certificate — `postgres://app:pw@/colophon?host=/var/run/postgresql` included — so the local stack's
+  plaintext URLs are unchanged. `scripts/db-tls-check.sh` (CI and `check.sh`) proves it against a TLS-only
+  Postgres with a private CA: verify-full connects; a wrong name, an unknown issuer and plain text fail.
 - Magic-link bounds (D-161): `COLOPHON_MAGIC_LINKS_PER_ADDRESS` (default 5 per client address per project per ten
   minutes) and `COLOPHON_MAGIC_LINKS_PER_PROJECT` (default 300 per project per minute). Behind a proxy that isn't in
   `COLOPHON_TRUSTED_PROXIES` every client is the proxy, so the per-address share would become one bucket again.
