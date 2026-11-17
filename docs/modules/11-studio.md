@@ -578,7 +578,7 @@ Internal job terminology stays behind a technical detail drawer for developers.
    receipt: each destination's part and every probe look, oldest first. Probes are added with the other
    destinations, optionally pinned to a location. Step 3.5 (D-053): the redesign above, with the formatting toolbar,
    search, entry states, revision comparison and review diffs. Step 3.6: the content-type designer.
-5. **P4:** history, time-travel slider, media picker, preview. Gap 3 (D-173, D-175): the library panel
+5. **P4:** history, time-travel slider, media picker, preview. Gap 3 (D-177, D-179): the library panel
    (`MediaLibraryPanel.svelte`: search, "Load more" over the cursor, upload inside the panel, every state) serves
    asset fields and rich text alike. "Insert an image" picks or uploads, then asks for alt text — required,
    prefilled from the upload's default alt, with a warning when it reads like a file name — and inserts the real
@@ -588,7 +588,7 @@ Internal job terminology stays behind a technical detail drawer for developers.
    is unchanged (D-022's round trip holds). A save refused `asset_not_found` or `too_many_images` says so in place,
    in plain words, with the code under Technical details. Journeys: `tests/server/rich-text-images.spec.ts`;
    screenshots `docs/screens/editor-image-*`.
-   The Media page (D-175) pages the library 48 at a time over the cursor (Load more or scrolling, capped at 480
+   The Media page (D-179) pages the library 48 at a time over the cursor (Load more or scrolling, capped at 480
    cards with a note), searches with a 250 ms debounce, filters by state and tag, uploads by button or drop through
    a queue of three at a time (each file ends Ready, Rejected with the checker's reason, or Couldn't upload), and
    opens a details sheet: the large preview, the metadata form under If-Match ("Keep mine" on a conflict re-sends

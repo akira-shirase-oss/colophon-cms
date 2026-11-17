@@ -872,7 +872,7 @@ fn shown(
         row.title = String::new();
     }
     // The uploads the shown content still names: a field the role hides, or `fields` leaves
-    // out, takes its images' versions with it (D-174). A draft row's are the current
+    // out, takes its images' versions with it (D-178). A draft row's are the current
     // versions, as drafts show them.
     row.media = media_named(&row.media, &serde_json::Map::new(), &row.content)?;
     Ok(Some(PreviewRow {

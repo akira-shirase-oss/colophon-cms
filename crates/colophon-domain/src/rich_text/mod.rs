@@ -30,7 +30,7 @@ pub const MAX_NODES: usize = 10_000;
 pub const MAX_ALT_CHARS: usize = 300;
 /// The longest link, in Unicode code points.
 pub const MAX_HREF_CHARS: usize = 2048;
-/// The most distinct images one document may name (D-173): each is an asset reference the
+/// The most distinct images one document may name (D-177): each is an asset reference the
 /// database keeps, checks at publish and pins against deletion.
 pub const MAX_IMAGES: usize = 200;
 
@@ -121,7 +121,7 @@ pub struct RichText {
     images: Vec<Image>,
 }
 
-/// One upload a document's `image` nodes name (D-173): the asset, and where it is first named.
+/// One upload a document's `image` nodes name (D-177): the asset, and where it is first named.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Image {
     /// The asset's id, a lowercase UUID.
@@ -153,7 +153,7 @@ impl RichText {
     }
 
     /// The distinct uploads the document's images name, in the order each is first named:
-    /// what the database records as the field's asset references (D-173).
+    /// what the database records as the field's asset references (D-177).
     pub fn images(&self) -> &[Image] {
         &self.images
     }

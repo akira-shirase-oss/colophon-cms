@@ -10,12 +10,12 @@ through `--version` and `GET /version`.
 
 ### Changed — read before upgrading
 
-- **Images inside rich text must name real uploads** (D-173). A rich-text `image` whose
+- **Images inside rich text must name real uploads** (D-177). A rich-text `image` whose
   `assetId` isn't an upload of the environment is refused `422 asset_not_found` at that
   image's pointer. Drafts made with the old Studio dialog hold random placeholder ids, so they
   are refused at their next save until each image is replaced or removed; the Studio marks the
   image in place and offers Replace and Remove. Revisions saved before migration 0066 record no rich-text references until saved again.
-- **A replaced image reaches published pages at the next publish** (D-174). Delivery rows now
+- **A replaced image reaches published pages at the next publish** (D-178). Delivery rows now
   carry `media`: the versioned, immutable URL of each upload the release recorded, with its
   size and renditions. A site using `url` keeps showing the released bytes after a replace
   until the entries using it are published again; `current_url` follows the newest bytes.
@@ -39,7 +39,7 @@ through `--version` and `GET /version`.
   indexed, re-checked against the issuer on every read, revocable. Set the address with
   `PUT {P}/preview-target`; the Studio pane and the SDK's site helpers follow.
 - Images inside rich text are tracked like every upload: publish-checked, kept from deletion,
-  listed under "Used in"; at most 200 distinct images per document (D-173).
+  listed under "Used in"; at most 200 distinct images per document (D-177).
 - The Studio inserts images into rich text from the media library (pick, search or upload,
   then alt text, required), shows each image as itself with its state, and edits its alt text,
   replaces or removes it from the keyboard; a pasted or dropped image is uploaded and inserted.
@@ -53,7 +53,7 @@ through `--version` and `GET /version`.
 - `COLOPHON_MEDIA_URL`: the origin delivery's media URLs name (default the public origin).
 - The media library pages past 100 uploads (`cursor`, `next_cursor`), searches (`q`), filters
   by `state` and `tag`, and keeps alt text, title, credit and tags via
-  `PATCH …/assets/{asset}` under `If-Match` (D-175).
+  `PATCH …/assets/{asset}` under `If-Match` (D-179).
 
 ### Security
 

@@ -275,7 +275,7 @@ const CURSOR: Param = query(
 const LIMIT: Param = query("limit", Kind::Int, "page size: 1–100, default 20");
 /// The releases list's page size: by default the whole of what it answered before it paged.
 const RELEASES_LIMIT: Param = query("limit", Kind::Int, "page size: 1–100, default 100");
-/// The media library's page size: by default the 100 it listed before it paged (D-175).
+/// The media library's page size: by default the 100 it listed before it paged (D-179).
 const LIBRARY_LIMIT: Param = query("limit", Kind::Int, "page size: 1–100, default 100");
 const GENERATION: Param = query(
     "generation",
@@ -6375,7 +6375,7 @@ fn publishing_parts() -> Value {
     })
 }
 
-/// The library's metadata and the media a release recorded (D-174, D-175).
+/// The library's metadata and the media a release recorded (D-178, D-179).
 fn media_parts() -> Value {
     json!({
         "AssetMetadata": {
@@ -6420,7 +6420,7 @@ fn delivery_parts() -> Value {
                 "rejected_reason": { "type": ["string", "null"] },
                 "derivatives": { "type": "array", "items": { "type": "string" }, "description": "the renditions the worker wrote" },
                 "created_at": { "type": "string", "format": "date-time" },
-                "alt": { "type": ["string", "null"], "description": "the library's default alt text (D-175)" },
+                "alt": { "type": ["string", "null"], "description": "the library's default alt text (D-179)" },
                 "title": { "type": ["string", "null"] },
                 "credit": { "type": ["string", "null"] },
                 "tags": { "type": "array", "items": { "type": "string" } },
@@ -6476,7 +6476,7 @@ fn delivery_parts() -> Value {
                 "published_in": { "type": "integer", "description": "the generation this revision went live in" },
                 "media": {
                     "type": "object",
-                    "description": "the uploads it names (asset fields and rich-text images) at the versions its release recorded, by asset id; absent when it names none (D-174)",
+                    "description": "the uploads it names (asset fields and rich-text images) at the versions its release recorded, by asset id; absent when it names none (D-178)",
                     "additionalProperties": { "$ref": "#/components/schemas/PublishedMedia" },
                 },
             },

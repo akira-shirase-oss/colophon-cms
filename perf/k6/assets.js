@@ -2,7 +2,7 @@
 // signs in, makes a project and verifies one warm asset; each iteration uploads a real or a
 // fake PNG into quarantine (the object's write to the store plus the asset and job rows in one
 // transaction), lists the environment's assets a page and its next at a time, searches them,
-// changes the warm asset's metadata under If-Match (D-175), reads one back, or runs the delete arm — upload,
+// changes the warm asset's metadata under If-Match (D-179), reads one back, or runs the delete arm — upload,
 // wait for the worker's verdict, then DELETE, where 202 is requested, not gone. Verification
 // and removal run off the request path, so the measured latency is the request's own.
 // RATE counts iterations here (about 1.5 requests each, the delete arm more); scripts/load.sh
@@ -144,7 +144,7 @@ export default function (data) {
       });
     }
   } else if (roll === 5) {
-    // D-175: the first page and, through its cursor, the next — keyset, so neither shifts.
+    // D-179: the first page and, through its cursor, the next — keyset, so neither shifts.
     const res = http.get(`${data.assets}?limit=50`, Object.assign({ tags: { endpoint: 'list', name: 'assets' } }, read));
     check(res, { 'list 200': (r) => r.status === 200 });
     const next = res.json('next_cursor');
@@ -153,12 +153,12 @@ export default function (data) {
       check(page, { 'next page 200': (r) => r.status === 200 && Array.isArray(r.json('data')) });
     }
   } else if (roll === 6) {
-    // D-175: search over the trigram index — a common term and a rare one.
+    // D-179: search over the trigram index — a common term and a rare one.
     const q = __ITER % 20 === 6 ? 'warm' : 'dot';
     const res = http.get(`${data.assets}?q=${q}&limit=50`, Object.assign({ tags: { endpoint: 'search', name: 'assets?q' } }, read));
     check(res, { 'search 200': (r) => r.status === 200 && Array.isArray(r.json('data')) });
   } else if (roll === 7) {
-    // D-175: metadata under If-Match on the warm asset every VU shares — a lost race is the
+    // D-179: metadata under If-Match on the warm asset every VU shares — a lost race is the
     // honest 409 stale_version, never a silent overwrite.
     const one = http.get(`${data.assets}/${data.mediaId}`, Object.assign({ tags: { endpoint: 'read', name: 'assets/{asset}' } }, read));
     const etag = one.headers.Etag;

@@ -1,4 +1,4 @@
-// Load scenario for images inside rich text (gap 3; D-173, D-174): the save that records a
+// Load scenario for images inside rich text (gap 3; D-177, D-178): the save that records a
 // document's images as asset references, and the delivery reads that carry the versions a
 // release recorded. setup() signs in, makes a project with a `posts` type (a title and a
 // rich-text body), uploads IMAGES real PNGs and waits for the worker to verify them, then

@@ -128,12 +128,12 @@ pub(crate) struct PublishedView {
     /// member-only even before it signs anyone in.
     visibility: String,
     /// The uploads it names — asset fields and rich-text images — at the versions its release
-    /// recorded (D-174), by asset id. Left out when it names none.
+    /// recorded (D-178), by asset id. Left out when it names none.
     #[serde(skip_serializing_if = "BTreeMap::is_empty")]
     media: BTreeMap<String, MediaView>,
 }
 
-/// What a release recorded of one upload, as `publications.media` holds it (D-174).
+/// What a release recorded of one upload, as `publications.media` holds it (D-178).
 /// Every field is optional on the way in: a stamp missing one is left out of the answer rather
 /// than failing the whole row.
 #[derive(Deserialize)]
@@ -147,7 +147,7 @@ struct Stamp {
     renditions: Vec<String>,
 }
 
-/// One upload as a site sees it (D-174): `url` and the renditions name the exact bytes the
+/// One upload as a site sees it (D-178): `url` and the renditions name the exact bytes the
 /// release published and never change (cached a year, D-157); `current_url` follows
 /// replacements, for a site that wants the newest bytes without publishing again.
 #[derive(Serialize)]
@@ -220,7 +220,7 @@ impl MediaBase {
     }
 }
 
-/// A query row's `media` (D-174): its own recorded versions plus those of the publications
+/// A query row's `media` (D-178): its own recorded versions plus those of the publications
 /// `depth` populated into it, kept to the uploads its answered `content` still names — so
 /// `fields` narrowing drops the stamps of the fields it left out, and a populated reference's
 /// images carry the versions its release recorded. An asset id is a UUID, so finding it in the

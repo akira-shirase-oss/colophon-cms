@@ -184,7 +184,7 @@ case "$endpoint" in
   # An upload's write is a body-bound check, an S3 PUT and two inserts — transfer's arm: an
   # external call on every write, so half the entries rate and the editorial write budget.
   assets) RATE="${RATE:-250}" P99_MS="${P99_MS:-700}" ;;
-  # Gap 3 (D-173, D-174): half cached image-heavy delivery reads, a fifth saves naming 20
+  # Gap 3 (D-177, D-178): half cached image-heavy delivery reads, a fifth saves naming 20
   # images each (the reference writes), a tenth refused saves — the entries arm's rate and,
   # for the save arm, the editorial write budget.
   rich-text-media) RATE="${RATE:-500}" P99_MS="${P99_MS:-700}" ;;

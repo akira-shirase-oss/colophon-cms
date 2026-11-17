@@ -170,7 +170,7 @@
       "AssetView": {
         "properties": {
           "alt": {
-            "description": "the library's default alt text (D-175)",
+            "description": "the library's default alt text (D-179)",
             "type": [
               "string",
               "null"
@@ -3095,7 +3095,7 @@
             "additionalProperties": {
               "$ref": "#/components/schemas/PublishedMedia"
             },
-            "description": "the uploads it names (asset fields and rich-text images) at the versions its release recorded, by asset id; absent when it names none (D-174)",
+            "description": "the uploads it names (asset fields and rich-text images) at the versions its release recorded, by asset id; absent when it names none (D-178)",
             "type": "object"
           },
           "published_in": {

@@ -220,7 +220,7 @@ pub(crate) async fn resolve_drafts(
 /// `generation` — the pin the page's own rows answer under — fetched inside the
 /// delivery transaction. Nothing narrows: published content is public. A publication
 /// revoked or unpublished since resolves to nothing, at any generation. Beside the
-/// resolutions, the upload versions every resolved publication's release recorded (D-174),
+/// resolutions, the upload versions every resolved publication's release recorded (D-178),
 /// by asset id, so a populated reference's images carry their versions too.
 pub(crate) async fn resolve_publications(
     services: &Services,

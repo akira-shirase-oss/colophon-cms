@@ -218,8 +218,8 @@ M.1 to M.3, single types and patterns (branch `studio/dashboard`).
 - `media`: upload intents, quarantine, signature and decoder checks, derivatives, reference tracking, cleanup —
   built through staged deletion with tombstones and the retention sweep (D-098, D-099); the CDN purge path for
   deleted bytes is the remaining gap. Gap 3 (2026-11-17): images inside rich text are tracked asset references
-  (D-173), releases record the upload versions they publish and delivery hands sites versioned URLs with sizes and
-  renditions (D-174), and the library pages, searches and keeps alt text, titles, credits and tags (D-175). Still
+  (D-177), releases record the upload versions they publish and delivery hands sites versioned URLs with sizes and
+  renditions (D-178), and the library pages, searches and keeps alt text, titles, credits and tags (D-179). Still
   open there: media `Cache-Tag` and CDN purge, the full 1M load runs.
 - Preview capabilities on a separate origin; sitemaps and feeds from one generation; scheduled publishing with time
   zones and daylight-saving handling.

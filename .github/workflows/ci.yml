@@ -271,7 +271,7 @@ jobs:
           # a second back to back on the laptop (1,284 requests), so about 300 on a 7763; half
           # is 150.
           RATE=150 P99_MS=500 scripts/load.sh deletion steady
-          # Images inside rich text (D-173, D-174): cached image-heavy reads, saves naming 20
+          # Images inside rich text (D-177, D-178): cached image-heavy reads, saves naming 20
           # images, refused saves. A first smoke; its rate is set from a runner's run.
           RATE=100 P99_MS=700 scripts/load.sh rich-text-media steady
           TOTAL=50000 P99_MS=50 scripts/load.sh studio throughput

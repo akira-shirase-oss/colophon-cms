@@ -1,4 +1,4 @@
-//! Images inside rich text and the media library (D-173 to D-175), end to end against the real
+//! Images inside rich text and the media library (D-177 to D-179), end to end against the real
 //! binary and the stack: a rich-text image names a real upload or the save is refused where it
 //! names it; a release can't publish an image that isn't usable, and records the version it
 //! did publish; delivery hands sites that version's immutable URL with its size and

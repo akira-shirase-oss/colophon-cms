@@ -1,8 +1,8 @@
 -- Gap 3: images inside rich text, releases that record the image versions they published, and
 -- a library that pages, searches and carries its own words. docs/modules/07-media.md,
--- D-173 to D-175.
+-- D-177 to D-179.
 
--- 1. A rich-text field's images are asset references (D-173): one row per distinct upload the
+-- 1. A rich-text field's images are asset references (D-177): one row per distinct upload the
 --    document names, at the place it first names it — up to 200 per document, where an asset
 --    list holds at most 100. Everything that reads asset_references (the publish check, the
 --    retention keep-rule, the delete refusal, "Used in", 0039's race trigger) covers them as
@@ -11,7 +11,7 @@ ALTER TABLE asset_references DROP CONSTRAINT asset_references_position_check;
 ALTER TABLE asset_references ADD CONSTRAINT asset_references_position_check
     CHECK (position BETWEEN 0 AND 199);
 
--- 2. What a release published of each upload its entries name (D-174): the version current
+-- 2. What a release published of each upload its entries name (D-178): the version current
 --    when it was released — digest, verified type, dimensions, renditions — keyed by asset id.
 --    Delivery turns it into versioned, immutable URLs, so a site shows exactly the bytes that
 --    were released and a replaced image reaches it at the next publish. Only usable assets
@@ -97,7 +97,7 @@ ALTER TABLE publications FORCE ROW LEVEL SECURITY;
 ALTER TABLE asset_references FORCE ROW LEVEL SECURITY;
 ALTER TABLE assets FORCE ROW LEVEL SECURITY;
 
--- 3. The library's own words for an upload (D-175): a default alt text the editor's image
+-- 3. The library's own words for an upload (D-179): a default alt text the editor's image
 --    dialog starts from, a title, a credit and up to ten slug-shaped tags, changed through
 --    PATCH under If-Match on metadata_version. `search` is what `?q=` matches. Its trigram
 --    index (pg_trgm, migration 0015) serves the table owner; under colophon_api's row security

@@ -44,7 +44,7 @@ pub struct Asset {
     pub derivatives: Vec<String>,
     /// When it was uploaded.
     pub created_at: OffsetDateTime,
-    /// The library's default alt text for it (D-175).
+    /// The library's default alt text for it (D-179).
     pub alt: Option<String>,
     /// Its title in the library.
     pub title: Option<String>,
@@ -59,7 +59,7 @@ pub struct Asset {
 /// The most assets one library page holds.
 pub const MAX_PAGE: i64 = 100;
 
-/// What a library page narrows to (D-175). `q` is matched as a case-insensitive substring of the
+/// What a library page narrows to (D-179). `q` is matched as a case-insensitive substring of the
 /// file name, title and alt text; `after` is the last row of the previous page.
 #[derive(Debug, Clone, Default)]
 pub struct Filter<'a> {
@@ -151,7 +151,7 @@ pub async fn page(
     .map_err(DbError::from_query)
 }
 
-/// A metadata change (D-175): `None` leaves a field as it is; `Some(None)` clears it.
+/// A metadata change (D-179): `None` leaves a field as it is; `Some(None)` clears it.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Metadata {
     /// The default alt text.

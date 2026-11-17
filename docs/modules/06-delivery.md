@@ -85,7 +85,7 @@ L10, L11, L13, the spec §27 cache-isolation tests and the mixed-release checker
   document and its `query_hash`, and publications carry no locale, so every answer is in the stored one until
   locale lands on the projection.
 
-- Gap 3 (D-174) adds `media` to every row (list, get and query), left out when the published revision names no
+- Gap 3 (D-178) adds `media` to every row (list, get and query), left out when the published revision names no
   uploads: by asset id, the version of each upload — asset fields and rich-text images alike — that the row's
   release recorded in `publications.media`. Each carries `url` (the versioned address
   `{COLOPHON_MEDIA_URL}/media/v1/{project}/{env}/{asset}/{sha}`, immutable and cached a year, D-157),
@@ -133,7 +133,7 @@ L10, L11, L13, the spec §27 cache-isolation tests and the mixed-release checker
   resolves its generation from Postgres in one statement, before and apart from the cache: `delivery_environment`
   (migration 0011) runs as `colophon_delivery` in the project's context and returns only the environment's id, epoch
   and generation. As a delivery transaction (five round trips) the lookup cost as much as the cache saved.
-- Gap 3 (D-174): `RENDER_VERSION` is 2 (rows carry `media`), and the key's prefix names the media origin's
+- Gap 3 (D-178): `RENDER_VERSION` is 2 (rows carry `media`), and the key's prefix names the media origin's
   digest (`m{16 hex}`), since answers carry absolute media URLs: an answer cached while media pointed at one
   origin is never served after `COLOPHON_MEDIA_URL` moves.
 - DX.4 (D-105): a query page keys on `Scope::query_key` — the normalized query's own `query_hash` and the page
@@ -209,7 +209,7 @@ These are policies to test, not a global 30-second consistency guarantee.
 the latest release. It deviates from spec §06's separate preview origin: Colophon serves JSON, not pages — the page
 sandbox is the customer's own site — so preview is a path family on the content origin, which an operator may still
 route to its own host.
-Preview rows carry `media` like delivery's (D-174): a published row the versions its release recorded, a draft row
+Preview rows carry `media` like delivery's (D-178): a published row the versions its release recorded, a draft row
 the current versions of the uploads it names (as drafts show them), kept to what the issuer's role may see.
 
 - `POST /preview/v1/{project}/{environment}/exchange {code}` → the bearer token;

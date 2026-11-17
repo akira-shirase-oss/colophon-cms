@@ -397,7 +397,7 @@ pub struct ContentReference {
 }
 
 /// One asset the content names, at its place in the field (M.1): an asset field's upload, or
-/// an upload a rich-text field's images name (D-173).
+/// an upload a rich-text field's images name (D-177).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ContentAsset {
     /// The field's id, or its path inside objects, lists and blocks (`sections/2/body`).
@@ -1370,7 +1370,7 @@ fn collect_asset(many: bool, value: &Value, pointer: &Pointer, found: &mut Found
     }
 }
 
-/// Notes the uploads a valid rich-text value's images name (D-173): one asset reference per
+/// Notes the uploads a valid rich-text value's images name (D-177): one asset reference per
 /// distinct image, at the place the document first names it, pointing at that `assetId`.
 fn collect_images(document: &rich_text::RichText, pointer: &Pointer, found: &mut Found) {
     let field = pointer.as_str().trim_start_matches('/');
