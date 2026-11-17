@@ -12,7 +12,7 @@
 // - A backgrounded tab can lose its connection quietly: becoming visible re-opens a dead
 //   stream and resyncs either way.
 
-import type { QueryClient } from '@tanstack/svelte-query';
+import type { QueryClient, QueryFilters } from '@tanstack/svelte-query';
 
 /** A `change` event's data: `{"k":"<kind>","c":"<collection>"?,"e":"<environment>"?}`. */
 interface Hint {
@@ -88,9 +88,17 @@ const KIND_KEYS: Record<string, (project: string, collection?: string) => string
 export function watchProject(project: string, env: string, queryClient: QueryClient): () => void {
 	const url = `/api/v1/projects/${project}/environments/${env}/events`;
 
+	/** Marks what `filters` match stale and reads it again — a read already on its way back
+	 *  included, since the server may have made it before the commit this hint announces. An
+	 *  invalidation alone doesn't do that while a query has no data yet: TanStack joins the read
+	 *  in flight, and its stale answer then stood until a reload (a release stuck on "pending").
+	 *  Cancelling first sends a read of its own. */
+	const refresh = (filters: QueryFilters) =>
+		void queryClient.cancelQueries(filters).then(() => queryClient.invalidateQueries(filters));
+
 	/** Every key scoped to this project: `['*', project, …]` — the resync answer. */
 	const resync = () =>
-		void queryClient.invalidateQueries({
+		refresh({
 			predicate: (query) => Array.isArray(query.queryKey) && query.queryKey[1] === project
 		});
 
@@ -99,7 +107,7 @@ export function watchProject(project: string, env: string, queryClient: QueryCli
 	 *  one as the person starts editing would remount the builder under them. */
 	const BUILDERS = new Set(['type', 'component']);
 	const catchUp = () =>
-		void queryClient.invalidateQueries({
+		refresh({
 			predicate: (query) =>
 				Array.isArray(query.queryKey) && query.queryKey[1] === project && !BUILDERS.has(String(query.queryKey[0]))
 		});
@@ -115,7 +123,7 @@ export function watchProject(project: string, env: string, queryClient: QueryCli
 			return; // A frame that doesn't read is not a reason to distrust the state.
 		}
 		for (const key of KIND_KEYS[hint.k ?? '']?.(project, hint.c) ?? []) {
-			void queryClient.invalidateQueries({ queryKey: key });
+			refresh({ queryKey: key });
 		}
 	}
 
