@@ -143,6 +143,15 @@ epochs. Spec §10's deprecation window for contract changes applies when the SDK
 - The compatibility table from `compat.rs`, SemVer precedence, and the client's lazy check in each
   mode (`test/compat.test.ts`).
 - The packaging gate above, on every push; README examples compile in CI from the packed tarballs.
+- Load (D-018's equivalent for a client): `perf/node/sdk-delivery.mjs` drives delivery `list`/`get`
+  calls through the packed SDK and the same requests through bare `fetch`, against a stub in its own
+  process or a real server (`ORIGIN`, `PROJECT`, `COLLECTION`, `ENTRY`), and records the client's
+  p50/p99 overhead (budget: p99 within 1 ms of bare fetch) and heap growth once every call's
+  15-second deadline timer has fired (budget 20 MB). `scripts/frontend.sh` runs a 20,000-call smoke
+  with the overhead budget loosened to 25 ms for shared runners. On 2026-11-17 a smoke on a busy
+  laptop (other builds running) had 0 failures and no heap growth (−0.6 MB) while its overhead swung
+  from −0.9 to +11.5 ms between runs: noise, not evidence. The full 1,000,000-call run on a quiet
+  machine is owed.
 - A pinned-read test with a publish landing mid-sequence — pending, with the adoption milestone.
 
 ## Build order
