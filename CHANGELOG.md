@@ -31,6 +31,8 @@ through `--version` and `GET /version`.
   will publish.
 - `/preview/v1` answers CORS for the environment's preview origin, so a static site can read
   previews from the browser (never with credentials).
+- `colophon preview ENTRY` (or `--changeset ID`) prints a one-time preview address for your
+  site.
 - `@colophon-cms/sdk` preview helpers for your site (D-173): `previewClient`,
   `createPreviewHandler`, `previewTokenFromRequest`, `previewHeaders`, `exitPreviewHandler` and
   `listenForDraftUpdates`, with a guide for SvelteKit, Astro and Next.js

@@ -270,9 +270,9 @@ expired-approval scheduling).
   Preview menu shows the saved draft on the site side by side or in a new tab, refreshed after each acknowledged
   save, with every state designed; a publish request previews on the site too, bound to its hash. The SDK's site
   helpers are built, with a SvelteKit example site in the testbed and a guide (`docs/guides/preview.md`), and
-  browsers on the preview origin may read previews directly (CORS, never with credentials). Still to come: the full
-  k6 runs (1M, stress, mixed with delivery), per-collection addresses, The Draft demo site's preview route, the
-  CLI's `colophon preview`, `depth` over the overlay, and click-to-edit.
+  browsers on the preview origin may read previews directly (CORS, never with credentials), and
+  `colophon preview` prints a one-time address from the terminal. Still to come: the full
+  k6 runs (1M, stress, mixed with delivery), per-collection addresses, The Draft demo site's preview route, `depth` over the overlay, and click-to-edit.
 
 **Proof gate:** two editors editing at once never lose an acknowledged edit; a schedule missed during downtime is
 reported as delayed, never on time; locale variants publish independently; comments and tasks follow permissions.
