@@ -99,4 +99,22 @@ grep -qx 'scripts/stack.sh check' <<<"$plan_own" || fail "the owner's plan lacks
 grep -q 'load.sh cache-down ' <<<"$plan_own" || fail "the owner's plan lacks the cache-down smoke: $plan_own"
 ! grep -q -- '--skip ' <<<"$plan_own" || fail "the owner's plan skips tests: $plan_own"
 
+# The testbed's outage spec stops Postgres and Valkey: it asks the same question in TypeScript
+# (apps/testbed/tests/stack-owner.ts) and must answer as stack_is_ours does, case by case.
+[[ -f apps/testbed/tests/stack-owner.ts ]] || fail "the testbed's outage spec has no stack-owner rule (apps/testbed/tests/stack-owner.ts)"
+grep -q "stackIsOurs" apps/testbed/tests/outage.spec.ts || fail "outage.spec.ts doesn't ask stackIsOurs before stopping services"
+verdicts() {
+  local ts sh
+  ts=$(env -u CI -u COMPOSE_PROJECT_NAME -u COLOPHON_STACK_OWNER "$@" node --input-type=module \
+    -e "const { stackIsOurs } = await import('./apps/testbed/tests/stack-owner.ts'); console.log(stackIsOurs() ? 'ours' : 'shared')" 2>/dev/null)
+  sh=$(env -u CI -u COMPOSE_PROJECT_NAME -u COLOPHON_STACK_OWNER "$@" bash -c '. scripts/stack-guard.sh; stack_is_ours && echo ours || echo shared')
+  [[ "$ts" == "$sh" ]] || fail "for '$*' the testbed says '$ts', the guard says '$sh'"
+}
+verdicts true
+verdicts CI=true
+verdicts COMPOSE_PROJECT_NAME=colophon
+verdicts COMPOSE_PROJECT_NAME=colophon-ci
+verdicts COLOPHON_STACK_OWNER=1
+verdicts COLOPHON_STACK_OWNER=0
+
 echo "stack guard: every refusal and plan as specified"
