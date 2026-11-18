@@ -5,7 +5,8 @@
 // so any read sent after the `open` event either sees a commit or hears its hint, and nothing needs re-reading.
 //
 // The wait is bounded: if the stream isn't open within OPEN_WAIT_MS (a slow network, a stream refused at its
-// cap), reads go ahead and are marked early, and the stream's first open re-reads as before. Once a project's
+// cap), reads go ahead and are marked early, and the stream's first open re-reads as before; once one read
+// has gone early, the rest don't wait at all. Once a project's
 // stream has opened, its reads never wait again; a reconnect after the stream's lifetime resyncs in `live.ts`.
 
 /** How long a project read waits for the stream to open before going ahead (and being re-read at the open). */
@@ -36,7 +37,10 @@ function gateFor(project: string): Gate {
  *  `OPEN_WAIT_MS`, whichever comes first (then the read is early, and the first open re-reads). */
 export async function readsMayStart(project: string, waitMs = OPEN_WAIT_MS): Promise<void> {
 	const gate = gateFor(project);
-	if (gate.opened) return;
+	// Open, or already given up on: once one read has gone ahead, the first open re-reads everything
+	// anyway, so a later read gains nothing by waiting (a stream that never opens — blocked by a proxy,
+	// refused at its cap, offline — would otherwise cost every read 400 ms, on every navigation).
+	if (gate.opened || gate.early) return;
 	let timer: ReturnType<typeof setTimeout> | undefined;
 	await Promise.race([gate.ready, new Promise<void>((resolve) => (timer = setTimeout(resolve, waitMs)))]);
 	clearTimeout(timer);
@@ -59,9 +63,14 @@ export function streamClosed(project: string): void {
 	gates.delete(project);
 }
 
+/** A project environment's live stream: `GET /api/v1/projects/{p}/environments/{env}/events`. */
+const STREAM = /^\/api\/v1\/projects\/[^/?#]+\/environments\/[^/?#]+\/events(?:$|\?)/;
+
 /** The project a read belongs to, from its path, or null for reads outside a project (or the stream itself). */
 export function projectOf(path: string): string | null {
 	const match = /^\/api\/v1\/projects\/([^/?#]+)\//.exec(path);
-	if (match === null || /\/events(?:$|\?)/.test(path)) return null;
+	// The stream itself, exactly (`live.ts`): never a read that merely ends in "events", such as a
+	// content type or collection called that.
+	if (match === null || STREAM.test(path)) return null;
 	return decodeURIComponent(match[1]!);
 }

@@ -56,9 +56,30 @@ test('projects are separate, and leaving a project means the next visit waits fo
 test('which requests are project reads that wait', () => {
 	expect(projectOf('/api/v1/projects/abc/environments/production/releases')).toBe('abc');
 	expect(projectOf('/api/v1/projects/abc')).toBe(null);
-	expect(projectOf('/api/v1/projects/abc/environments/production/events')).toBe(null);
 	expect(projectOf('/api/v1/me')).toBe(null);
 	expect(projectOf('/content/v1/abc/production/articles')).toBe(null);
+	// The stream itself, exactly, never waits for itself…
+	expect(projectOf('/api/v1/projects/abc/environments/production/events')).toBe(null);
+	expect(projectOf('/api/v1/projects/abc/environments/production/events?x=1')).toBe(null);
+	// …but a read that only ends in "events" (a type or collection named so) is a read like any other.
+	expect(projectOf('/api/v1/projects/abc/environments/production/content-types/events')).toBe('abc');
+	expect(projectOf('/api/v1/projects/abc/environments/production/collections/events/entries')).toBe('abc');
+	expect(projectOf('/api/v1/projects/abc/environments/production/collections/events')).toBe('abc');
+	expect(projectOf('/api/v1/projects/abc/environments/production/entries?collection=events')).toBe('abc');
+});
+
+test('a stream that never opens costs one wait, not one per read, and its late open still catches up once', async () => {
+	const time = async (run: () => Promise<void>) => {
+		const started = Date.now();
+		await run();
+		return Date.now() - started;
+	};
+	expect(await time(() => readsMayStart('p-never', 120)), 'the first read waits').toBeGreaterThanOrEqual(110);
+	expect(await time(() => readsMayStart('p-never', 120)), 'the second goes at once').toBeLessThan(20);
+	expect(await time(() => readsMayStart('p-never', 120)), 'so does the third').toBeLessThan(20);
+	expect(streamOpened('p-never'), 'a late open re-reads what went ahead').toEqual({ early: true });
+	expect(streamOpened('p-never')).toEqual({ early: false });
+	streamClosed('p-never');
 });
 
 test('the fetch layer holds a project read until the stream opens, and never holds a write', async () => {
