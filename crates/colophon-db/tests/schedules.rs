@@ -446,18 +446,9 @@ async fn changesets_read(tx: &mut ProjectTransaction) -> i64 {
     .expect("counters")
 }
 
-/// A list of an environment's schedules reads one changeset row per schedule it returns,
-/// however many schedules and changesets the environment has had: the bounded rows are chosen
-/// from `schedules` first. (Joining first read every changeset of the environment on each list,
-/// and under a misjudged plan paired every schedule with every changeset — the load smoke's
-/// three-second lists.)
-#[tokio::test]
-#[ignore = "needs the local stack: scripts/stack.sh up"]
-async fn a_list_reads_only_the_changesets_it_shows_however_many_the_environment_had() {
-    const MANY: usize = 300;
-    let db = TestDb::new().await;
-    let ready = ready(&db).await;
-    for n in 0..MANY {
+/// `many` changesets pinning `ready`'s entry, each scheduled, every other one then cancelled.
+async fn seed(db: &TestDb, ready: &Ready, many: usize) {
+    for n in 0..many {
         // One transaction each, so every schedule has its own times.
         let mut tx = enter(&db.app, ready.alice, ready.project).await;
         let pins = changesets::pins(&mut tx, &[ready.entry])
@@ -509,6 +500,20 @@ async fn a_list_reads_only_the_changesets_it_shows_however_many_the_environment_
         }
         tx.commit().await.expect("commit");
     }
+}
+
+/// A list of an environment's schedules reads one changeset row per schedule it returns,
+/// however many schedules and changesets the environment has had: the bounded rows are chosen
+/// from `schedules` first. So does the list of changesets that stop an entry's deletion. (Joining first read every changeset of the environment on each list,
+/// and under a misjudged plan paired every schedule with every changeset — the load smoke's
+/// three-second lists.)
+#[tokio::test]
+#[ignore = "needs the local stack: scripts/stack.sh up"]
+async fn lists_read_only_the_changesets_they_show_however_many_the_environment_had() {
+    const MANY: usize = 300;
+    let db = TestDb::new().await;
+    let ready = ready(&db).await;
+    seed(&db, &ready, MANY).await;
 
     // As the server runs it after a few calls: one generic plan for every project, from
     // estimates that can't know this project's size.
@@ -541,6 +546,27 @@ async fn a_list_reads_only_the_changesets_it_shows_however_many_the_environment_
         read <= shown,
         "a list of {shown} schedules read {read} changeset rows (the environment has {})",
         MANY + 1
+    );
+
+    // Every one of those changesets pins the entry: deleting it lists the newest few.
+    let before = changesets_read(&mut tx).await;
+    let refused = entries::delete(&mut tx, "articles", ready.entry, ready.revision)
+        .await
+        .expect("delete");
+    let read = changesets_read(&mut tx).await - before;
+    let entries::Deleted::InChangeset(pending) = refused else {
+        panic!("pinned changesets stop the deletion: {refused:?}");
+    };
+    let shown = i64::try_from(pending.len()).expect("small");
+    assert_eq!(shown, entries::MAX_PENDING);
+    assert_eq!(
+        pending[0].title,
+        format!("Menu {}", MANY - 1),
+        "newest first"
+    );
+    assert!(
+        read <= shown,
+        "the {shown} changesets stopping a deletion read {read} changeset rows"
     );
     drop(tx);
     db.drop().await;

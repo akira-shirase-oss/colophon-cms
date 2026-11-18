@@ -29,9 +29,10 @@ through `--version` and `GET /version`.
 - Watched writes no longer take PostgreSQL's NOTIFY lock (D-180): their live-list hints are
   queued in an unlogged table and sent by a pump every 100 ms, so concurrent saves commit in
   groups again instead of one at a time. A live list may hear a change up to 100 ms later.
-- Listing schedules reads only the rows it returns: their changeset titles and scheduler names are looked up
-  after the limit, so a plan that misjudged a project's size can no longer pair every schedule with every
-  changeset (a 120-row list read 16,203 changeset rows; the load smoke's lists took three seconds).
+- Lists of schedules and releases, and the changesets that stop an entry's deletion, read only the rows they
+  return: titles and names are looked up after the limit, so a plan that misjudged a project's size can no
+  longer pair every row with every changeset (a 120-row schedule list read 16,203 changeset rows, a 100-release
+  page 10,150; the schedules load smoke's lists took three seconds).
 
 ### Added
 
