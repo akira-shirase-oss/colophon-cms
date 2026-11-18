@@ -39,7 +39,9 @@ test('stages are ordered in Settings, and publishing waits on every one', async 
 	await expect(stages.getByTestId('stage').nth(0)).toContainText('Editorial');
 	await expect(stages.getByTestId('stage').nth(0)).toHaveAttribute('data-state', 'pending');
 	await expect(stages.getByTestId('stage').nth(1)).toContainText('Legal');
-	await expect(stages).toContainText(/needs someone other than (you|whoever sent it)/);
+	// The sender reads the rule about themselves; everyone else reads it neutrally (below).
+	await expect(stages).toContainText('needs someone other than you');
+	await expect(stages).not.toContainText('whoever sent it');
 	await expect(page.getByTestId('review-stage')).toHaveValue('editorial');
 
 	// Approving names the stage; with Legal still waiting there's no Publish button, and a
@@ -69,6 +71,7 @@ test('stages are ordered in Settings, and publishing waits on every one', async 
 	await other.goto(`/studio/projects/${project}/changesets/${id}`);
 	await expect(other.getByTestId('review-stage')).toHaveValue('legal');
 	await expect(other.getByTestId('review-stages')).toContainText('needs someone other than whoever sent it');
+	await expect(other.getByTestId('review-stages')).not.toContainText('other than you');
 	await other.getByRole('button', { name: 'Approve', exact: true }).click();
 	await expect(other.getByTestId('changeset-status')).toHaveAttribute('data-state', 'approved');
 	await expect(other.getByTestId('review-stages').getByTestId('stage').nth(1)).toContainText('by Dev Editor');

@@ -199,6 +199,9 @@ for (const viewport of [
 		// F5: the footer's Create and Cancel are on screen, and the dialog inside the viewport.
 		await expect(dialog.getByRole('button', { name: /Create publish request/ })).toBeInViewport({ ratio: 1 });
 		await expect(dialog.getByRole('button', { name: 'Cancel' })).toBeInViewport({ ratio: 1 });
+		// Nothing picked yet: Create is disabled, and says why.
+		await expect(dialog.getByTestId('create-request')).toBeDisabled();
+		await expect(dialog.getByTestId('pick-hint')).toHaveText('Pick at least one entry.');
 		const box = await dialog.boundingBox();
 		expect(box).not.toBeNull();
 		expect((box?.x ?? 0) >= 0 && (box?.x ?? 0) + (box?.width ?? 0) <= viewport.width).toBe(true);
@@ -255,12 +258,17 @@ async function primaries(page: Page): Promise<string[]> {
 test('the request page leads with one primary per state and does each thing once', async ({ page }) => {
 	await signIn(page);
 	const project = await newProject(page);
-	const entry = await newEntry(page, project, 'One thing');
+	const entry = await newEntry(page, project, LONG);
 	const made = await api(page, 'POST', `${env(project)}/changesets`, { title: 'Once', entries: [entry] }, { 'Idempotency-Key': key() });
 	const id = made.body?.['data'].id as string;
 	const hash = made.body?.['data'].hash as string;
 	await page.goto(`/studio/projects/${project}/changesets/${id}`);
 	await expect(page.getByTestId('changeset-status')).toHaveAttribute('data-state', 'open');
+	// Nothing on the request page runs past a phone's edge, long titles included.
+	await page.setViewportSize({ width: 390, height: 844 });
+	expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+	expect(await page.locator('main').evaluate((main) => [...main.querySelectorAll('*')].filter((node) => node.getBoundingClientRect().right > window.innerWidth + 1).length)).toBe(0);
+	await page.setViewportSize({ width: 1280, height: 800 });
 	expect(await primaries(page)).toEqual(['Ask for review']);
 
 	// Sent for review: the owner may approve their own (self review), so Approve leads.
@@ -327,6 +335,13 @@ async function counted(page: Page, path: string): Promise<{ load: string[]; catc
 	return { load, catchUp };
 }
 
+/** Reads a screen makes more than twice today (load plus the stream's catch-up), by screen. F9,
+ *  workstream 4: the Releases page reads the release list under two keys — the sidebar's
+ *  `['releases', p]` and its own paged `['releases', p, 'pages']` — on origin/main too. */
+const KNOWN_DUPLICATES: Record<string, string[]> = {
+	releases: ['/api/v1/projects/:p/environments/production/releases']
+};
+
 test('each publishing screen asks the API once for each thing it needs', async ({ page }) => {
 	await signIn(page);
 	const project = await newProject(page);
@@ -349,11 +364,10 @@ test('each publishing screen asks the API once for each thing it needs', async (
 		report[name] = { load: load.length, catchUp: catchUp.length };
 		// Read once by the screen, and at most once more by the stream's catch-up: never three times.
 		const all = [...load, ...catchUp];
-		// The Releases page reads the release list under two keys (the sidebar's and its own paged
-		// one), on origin/main too: F9, workstream 4's, so it is reported, not failed here.
-		const shared = name === 'releases' ? [`/api/v1/projects/${project}/environments/production/releases`] : [];
-		const thrice = [...new Set(all.filter((url) => !shared.includes(url) && all.filter((one) => one === url).length > 2))];
-		expect(thrice, `${name} read these more than twice`).toEqual([]);
+		const thrice = [...new Set(all.filter((url) => all.filter((one) => one === url).length > 2))].map((url) => url.replace(project, ':p'));
+		// Exactly the known duplicates, no more and no fewer: a new one fails, and so does one
+		// that disappears without its allowance being removed.
+		expect(thrice, `${name} read these more than twice`).toEqual(KNOWN_DUPLICATES[name] ?? []);
 	}
 	console.log(`REQUESTS ${JSON.stringify(report)}`);
 });

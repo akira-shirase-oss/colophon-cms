@@ -223,9 +223,11 @@
 				</div>
 			{/if}
 			{#if error}<p role="alert" class="text-sm text-destructive">{error}</p>{/if}
-			<Dialog.Footer>
+			<Dialog.Footer class="sm:items-center">
+				<!-- A disabled button says why (the audit's P3-6 pattern). -->
+				{#if picked.length === 0}<p id="pick-hint" class="text-sm text-muted-foreground sm:mr-auto" data-testid="pick-hint">Pick at least one entry.</p>{/if}
 				<Button variant="outline" type="button" onclick={() => (creating = false)}>Cancel</Button>
-				<Button type="submit" disabled={busy || picked.length === 0} data-testid="create-request">Create publish request</Button>
+				<Button type="submit" disabled={busy || picked.length === 0} aria-describedby={picked.length === 0 ? 'pick-hint' : undefined} data-testid="create-request">Create publish request</Button>
 			</Dialog.Footer>
 		</form>
 	</Dialog.Content>

@@ -377,7 +377,7 @@
 		</div>
 	{/if}
 
-	<div class="grid gap-10 lg:grid-cols-[minmax(0,1fr)_20rem]">
+	<div class="grid grid-cols-[minmax(0,1fr)] gap-10 lg:grid-cols-[minmax(0,1fr)_20rem]">
 		<section aria-labelledby="items-heading">
 			<h2 id="items-heading" class="mb-3 text-base font-semibold">Entries <span class="font-normal text-muted-foreground tabular">{shown.items.length + shown.hidden_items}</span></h2>
 			{#if shown.hidden_items > 0}
