@@ -1191,6 +1191,100 @@ pub(crate) async fn query(
     )
 }
 
+// ---------------------------------------------------------------------------
+// Browsers on the site's own origin (CORS)
+
+/// The project and environment a `/preview/v1/{project}/{environment}/…` path names.
+fn preview_scope_of(path: &str) -> Option<(Uuid, &str)> {
+    let mut parts = path.strip_prefix("/preview/v1/")?.split('/');
+    let project = Uuid::try_parse(parts.next()?).ok()?;
+    let environment = parts.next().filter(|slug| !slug.is_empty())?;
+    Some((project, environment))
+}
+
+/// Whether `origin` is the origin of the environment's preview address — the one origin a
+/// browser may read preview answers from (D-172). Asked only for requests that carry `Origin`:
+/// a site's server fetches without one and pays nothing.
+async fn allowed_origin(state: &AppState, path: &str, origin: &str) -> bool {
+    let Some((project, environment)) = preview_scope_of(path) else {
+        return false;
+    };
+    let Ok(services) = services(state) else {
+        return false;
+    };
+    match previews::target_of(&services.pool, project, environment).await {
+        Ok(Some(template)) => Template::parse(&template, services.allow_private_destinations)
+            .is_ok_and(|parsed| parsed.origin() == origin),
+        Ok(None) => false,
+        Err(error) => {
+            tracing::warn!(%error, "could not read the preview address for a cross-origin request");
+            false
+        }
+    }
+}
+
+/// CORS for `/preview/v1` (D-172): a browser on the environment's preview origin — a static or
+/// client-rendered site — may exchange a code and read with a bearer token; any other origin
+/// gets no `Access-Control-Allow-Origin`, so the browser keeps the answer from its page. Never
+/// `Allow-Credentials`: preview reads are bearer, never cookie. A preflight is answered here,
+/// before the router (whose routes don't take `OPTIONS`).
+pub(crate) async fn cors(
+    State(state): State<AppState>,
+    request: axum::extract::Request,
+    next: axum::middleware::Next,
+) -> Response {
+    let path = request.uri().path().to_owned();
+    if !path.starts_with("/preview/v1/") {
+        return next.run(request).await;
+    }
+    let origin = request
+        .headers()
+        .get(header::ORIGIN)
+        .and_then(|value| value.to_str().ok())
+        .map(str::to_owned);
+    let preflight = request.method() == axum::http::Method::OPTIONS;
+    let allowed = match &origin {
+        Some(origin) => allowed_origin(&state, &path, origin).await,
+        None => false,
+    };
+    let mut response = if preflight {
+        StatusCode::NO_CONTENT.into_response()
+    } else {
+        next.run(request).await
+    };
+    let headers = response.headers_mut();
+    headers.append(header::VARY, HeaderValue::from_static("Origin"));
+    if let (true, Some(origin)) = (allowed, origin)
+        && let Ok(value) = HeaderValue::from_str(&origin)
+    {
+        headers.insert(header::ACCESS_CONTROL_ALLOW_ORIGIN, value);
+        if preflight {
+            headers.insert(
+                header::ACCESS_CONTROL_ALLOW_METHODS,
+                HeaderValue::from_static("GET, POST"),
+            );
+            headers.insert(
+                header::ACCESS_CONTROL_ALLOW_HEADERS,
+                HeaderValue::from_static("Authorization, Content-Type"),
+            );
+            headers.insert(
+                header::ACCESS_CONTROL_MAX_AGE,
+                HeaderValue::from_static("600"),
+            );
+        } else {
+            headers.insert(
+                header::ACCESS_CONTROL_EXPOSE_HEADERS,
+                HeaderValue::from_static("Colophon-Preview, Colophon-Generation"),
+            );
+        }
+    }
+    if preflight {
+        // A preflight's own answer is no more cacheable than what it guards.
+        headers.insert(header::CACHE_CONTROL, HeaderValue::from_static(NO_STORE));
+    }
+    response
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1288,6 +1382,25 @@ mod tests {
             refused.headers()[header::WWW_AUTHENTICATE],
             "Bearer error=\"invalid_token\""
         );
+    }
+
+    #[test]
+    fn cors_reads_the_project_and_environment_from_the_path_alone() {
+        let project = Uuid::now_v7();
+        assert_eq!(
+            preview_scope_of(&format!("/preview/v1/{project}/production/articles")),
+            Some((project, "production"))
+        );
+        assert_eq!(
+            preview_scope_of(&format!("/preview/v1/{project}/production/exchange")),
+            Some((project, "production"))
+        );
+        assert_eq!(
+            preview_scope_of("/preview/v1/not-a-uuid/production/x"),
+            None
+        );
+        assert_eq!(preview_scope_of(&format!("/preview/v1/{project}/")), None);
+        assert_eq!(preview_scope_of("/content/v1/x/y"), None);
     }
 
     #[test]

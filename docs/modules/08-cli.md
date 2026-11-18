@@ -94,6 +94,10 @@ colophon export --env production --out export-directory
     ran; the API's cursor stays bound to that hash, so a mismatched pair is refused, not silently re-queried.
   - `release list [--cursor]` and `release show GENERATION` read publication history and a release's receipt:
     what was probed, where, and what each probe answered.
+  - `preview [ENTRY | --changeset ID] [--minutes 1-60]` (D-171) opens a private preview of an entry's saved draft,
+    or of exactly what a publish request will publish, on the project's own site, and prints the one-time address
+    (it works once, within a minute). A person's act: an API token is refused (`api_token_not_allowed`, exit 3); a
+    project without a preview address is refused with the server's plain `preview_not_configured`.
   - `migration list [--collection C] [--state S]`, `migration show PLAN`, `migration items PLAN [--outcome O]
     [--cursor] [--limit N]` read plans and their items; `migration plan COLLECTION (--data JSON | --file PATH)
     [--operations PATH]` computes one (`schema.change` required, `Idempotency-Key`); `migration approve|apply

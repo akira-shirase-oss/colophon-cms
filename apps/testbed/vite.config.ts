@@ -1,3 +1,4 @@
+import { fileURLToPath } from 'node:url';
 import adapter from '@sveltejs/adapter-static';
 import { sveltekit } from '@sveltejs/kit/vite';
 import { defineConfig, type ProxyOptions } from 'vite';
@@ -21,10 +22,15 @@ export default defineConfig({
 				runes: ({ filename }) =>
 					filename.split(/[/\\]/).includes('node_modules') ? undefined : true
 			},
-			// A static single-page app: the testbed has no server code of its own.
+			// A static single-page app: the testbed has no server code of its own — except
+			// `src/routes/preview/**`, which plays a customer's site for draft preview and runs
+			// under `vite dev`/`vite preview` (the suite's server), not in the static build.
 			adapter: adapter({ fallback: '200.html' })
 		})
 	],
+	// The SDK from source (tsconfig.json's `paths` says the same to TypeScript), so the preview
+	// site's pages need no SDK build first.
+	resolve: { alias: [{ find: /^@colophon-cms\/sdk$/, replacement: fileURLToPath(new URL('../../packages/sdk/src/index.ts', import.meta.url)) }] },
 	server: { host: '127.0.0.1', port: 58100, strictPort: true, proxy },
 	preview: { host: '127.0.0.1', port: 58100, strictPort: true, proxy }
 });

@@ -27,6 +27,7 @@
 	import { getEntry, may, mayAny, SETTINGS_ACTIONS } from '#lib/api.ts';
 	import { rememberProject } from '#lib/lastProject.ts';
 	import { watchProject } from '#lib/live.ts';
+	import { pageWidth } from '#lib/pageWidth.svelte.ts';
 	import { ago, changesetsQuery, entriesQuery, meQuery, projectQuery, releasesQuery, rolesQuery, typesQuery } from '#lib/queries.ts';
 	import AccountMenu from '#lib/shell/AccountMenu.svelte';
 	import ThemeToggle from '#lib/shell/ThemeToggle.svelte';
@@ -402,7 +403,8 @@
 			</div>
 		</header>
 		{#key page.url.pathname}
-			<div class="page-enter mx-auto w-full max-w-6xl flex-1 px-5 py-8 sm:px-8 lg:px-10">
+			<!-- The entry editor beside its site preview takes the whole width (pageWidth). -->
+			<div class="page-enter mx-auto w-full {pageWidth.wide ? 'max-w-none' : 'max-w-6xl'} flex-1 px-5 py-8 sm:px-8 lg:px-10">
 				{@render children()}
 			</div>
 		{/key}
