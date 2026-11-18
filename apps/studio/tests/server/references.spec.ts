@@ -227,6 +227,13 @@ test('an entry lists what links to it, and warns before a take-down that would b
 	await expect(linked).toContainText('Notes on the engine');
 	await expect(linked).toContainText('Stories, in Author');
 	await expect(linked).toContainText('In a draft');
+	// It belongs with the content, so the other tabs don't repeat it above their own panels.
+	await page.getByRole('tab', { name: /History/ }).click();
+	await expect(page.getByTestId('linked-from')).toBeHidden();
+	await page.getByRole('tab', { name: /Comments/ }).click();
+	await expect(page.getByTestId('linked-from')).toBeHidden();
+	await page.getByRole('tab', { name: /Content/ }).click();
+	await expect(linked).toBeVisible();
 
 	// Once both are published, readers see the link: the take-down warns before it's tried.
 	await publishThroughApi(page, project, 'Story and author', [story, ada]);

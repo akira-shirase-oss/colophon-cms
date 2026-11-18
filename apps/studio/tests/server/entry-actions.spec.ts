@@ -77,6 +77,36 @@ test('unpublishing in one click takes an entry off the public API, and publishin
 	expect(await delivered(page, project, entry)).toEqual({ ids: [entry], status: 200 });
 });
 
+test('a change made after publishing can be published too: the button comes back once it is saved', async ({ page }) => {
+	// Regression: the "Live as Release N" message stayed for the page's life and hid the publish
+	// button, so an edit after publishing showed "Changed" with only Unpublish on offer.
+	await signIn(page);
+	const project = await newProject(page);
+	await page.goto(`/studio/projects/${project}/articles?new=1`);
+	await page.getByLabel('Title', { exact: true }).fill('First words');
+	await page.getByRole('button', { name: 'Create', exact: true }).click();
+	await expect(page.getByTestId('save-status')).toHaveAttribute('data-status', 'saved');
+	const entry = new URL(page.url()).pathname.split('/').at(-1) ?? '';
+	await page.getByTestId('publish-button').click();
+	await expect(page.getByTestId('publish-outcome')).toContainText('Live as Release 1');
+	await expect(page.getByTestId('publish-button')).toHaveCount(0);
+
+	await page.getByLabel('Title', { exact: true }).fill('Second words');
+	await expect(page.getByTestId('save-status')).toHaveAttribute('data-status', 'saved');
+	await expect(page.getByTestId('entry-state').first()).toHaveAttribute('data-state', 'changed');
+	await expect(page.getByTestId('publish-outcome')).toHaveCount(0);
+	await expect(page.getByTestId('publish-button')).toHaveText('Publish changes');
+	await page.getByTestId('publish-button').click();
+	await expect(page.getByTestId('publish-outcome')).toContainText('Live as Release 2');
+	await expect(page.getByTestId('entry-state').first()).toHaveAttribute('data-state', 'live');
+	const listed = await page.evaluate(
+		async (list) => ((await (await fetch(list, { credentials: 'omit', cache: 'no-store' })).json()) as { data: { id: string; title: string }[] }).data,
+		`/content/v1/${project}/production/articles`
+	);
+	expect(listed).toEqual([expect.objectContaining({ id: entry, title: 'Second words' })]);
+	expect(await violations(page)).toEqual([]);
+});
+
 test('a collection of 101 entries loads more, and the oldest, published, shows as live in its editor', async ({ page }) => {
 	test.setTimeout(120_000);
 	await signIn(page);
