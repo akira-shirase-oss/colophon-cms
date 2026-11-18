@@ -45,6 +45,14 @@ through `--version` and `GET /version`.
 - **`@colophon-cms/rich-text` (D-170):** the content renderer as its own zero-dependency
   package, built from the one renderer the Studio uses, so a site reading the delivery API
   renders rich text exactly as the Studio previews it.
+- **The release workflow packs both (D-170):** `npm-pack` checks the SDK and rich-text
+  tarballs and writes `npm publish --dry-run` of every package into the job summary;
+  `npm-publish` publishes them after the CLI. It also no longer reads `npm-dist/x.tgz` as a
+  GitHub repository, which would have failed the first tag's publish.
+- **SDK replies name their generation:** `response.generation` is the `Colophon-Generation` a
+  read answered from, so a page can pin the rest of its reads to it (`atGeneration`). A
+  public-API report per package makes export changes visible in review, and
+  `perf/node/sdk-delivery.mjs` measures the client's overhead and heap beside bare `fetch`.
 - Draft preview on your own site, the backend (D-171, D-172): a person opens a preview of an
   entry (with its translations) or a publish request; the site exchanges the address's
   one-time code for a 15-minute bearer token and reads `/preview/v1`, which answers
