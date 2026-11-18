@@ -21,6 +21,12 @@ through `--version` and `GET /version`.
   until the entries using it are published again; `current_url` follows the newest bytes.
   `RENDER_VERSION` is 2, so cached delivery answers are refetched once.
 
+### Performance
+
+- Watched writes no longer take PostgreSQL's NOTIFY lock (D-180): their live-list hints are
+  queued in an unlogged table and sent by a pump every 100 ms, so concurrent saves commit in
+  groups again instead of one at a time. A live list may hear a change up to 100 ms later.
+
 ### Added
 
 - **The TypeScript SDK is ready for npm (D-170):** `@colophon-cms/sdk` gains
