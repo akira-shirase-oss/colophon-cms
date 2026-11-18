@@ -1,6 +1,6 @@
 <!--
   A project's shell: the warm-grey sidebar (where things are, how many, what's waiting) around one
-  white page, with breadcrumbs, the command palette (⌘K) and the appearance menu above it. The
+  white page, with breadcrumbs, the command palette (⌘K, or the search button) and the theme toggle above it. The
   sidebar's foot always says what readers have now: the live release and its label.
 -->
 <script lang="ts">
@@ -29,7 +29,7 @@
 	import { watchProject } from '#lib/live.ts';
 	import { ago, changesetsQuery, entriesQuery, meQuery, projectQuery, releasesQuery, rolesQuery, typesQuery } from '#lib/queries.ts';
 	import AccountMenu from '#lib/shell/AccountMenu.svelte';
-	import AppearanceMenu from '#lib/shell/AppearanceMenu.svelte';
+	import ThemeToggle from '#lib/shell/ThemeToggle.svelte';
 	import CollectionCount from '#lib/shell/CollectionCount.svelte';
 	import CommandPalette from '#lib/shell/CommandPalette.svelte';
 	import Mark from '#lib/shell/Mark.svelte';
@@ -217,12 +217,6 @@
 							{/snippet}
 						</Sidebar.MenuButton>
 					</Sidebar.MenuItem>
-					<Sidebar.MenuItem>
-						<Sidebar.MenuButton onclick={() => (searching = true)} tooltipContent="Search">
-							<SearchIcon /><span>Search</span>
-							<kbd class="ml-auto rounded border border-sidebar-border bg-background px-1.5 font-sans text-sm text-muted-foreground">⌘K</kbd>
-						</Sidebar.MenuButton>
-					</Sidebar.MenuItem>
 				</Sidebar.Menu>
 			</Sidebar.Group>
 
@@ -399,7 +393,11 @@
 				<Button variant="outline" size="sm" class="hidden w-56 justify-start text-muted-foreground sm:flex" onclick={() => (searching = true)}>
 					<SearchIcon />Search<kbd class="ml-auto font-sans text-sm">⌘K</kbd>
 				</Button>
-				<AppearanceMenu />
+				<!-- On a phone the wide button doesn't fit and there is no ⌘K: search is this icon. -->
+				<Button variant="ghost" size="icon-sm" class="sm:hidden" aria-label="Search" onclick={() => (searching = true)}>
+					<SearchIcon aria-hidden="true" />
+				</Button>
+				<ThemeToggle />
 				<AccountMenu />
 			</div>
 		</header>

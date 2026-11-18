@@ -19,7 +19,7 @@
 	import { goto } from '$app/navigation';
 	import { resolve } from '$app/paths';
 	import { createQuery } from '@tanstack/svelte-query';
-	import { toggleMode } from 'mode-watcher';
+	import { toggleTheme } from './theme';
 	import * as Command from '@colophon/ui/ui/command';
 	import { type ContentType, entryState, searchEntries } from '#lib/api.ts';
 	import { shownTitle } from '#lib/words.ts';
@@ -148,7 +148,7 @@
 		{/if}
 		{#if 'switch theme'.includes(needle) || 'dark light'.includes(needle)}
 			<Command.Group heading="Actions">
-				<Command.Item value="theme" onSelect={() => { toggleMode(); open = false; }}><MoonIcon class="text-muted-foreground" />Switch light / dark</Command.Item>
+				<Command.Item value="theme" onSelect={() => { toggleTheme(); open = false; }}><MoonIcon class="text-muted-foreground" />Switch light / dark</Command.Item>
 			</Command.Group>
 		{/if}
 	</Command.List>

@@ -598,6 +598,40 @@
 					</div>
 				{/if}
 			{/each}
+			<!-- What links here belongs with the content: it is not repeated on the other tabs. -->
+			{#if linkedFrom.length > 0}
+				<section class="mt-8" aria-labelledby="linked-from-heading" data-testid="linked-from">
+					<h2 id="linked-from-heading" class="mb-1 text-sm font-semibold">Linked from</h2>
+					<p class="mb-3 text-xs text-muted-foreground">Entries whose fields link to this one.</p>
+					<ul class="overflow-hidden rounded-xl border border-border bg-card">
+						{#each linkedFrom as item (`${item.link.entry_id}-${item.link.field}`)}
+							<li class="rule-dotted flex flex-wrap items-center gap-x-3 gap-y-1 px-4 py-2.5 text-sm last:border-b-0" data-testid="linked-from-entry">
+								<LinkIcon class="size-3.5 shrink-0 text-muted-foreground" aria-hidden="true" />
+								<span class="min-w-0 flex-1">
+									{#if item.read === undefined}
+										<span class="text-muted-foreground">Loading…</span>
+									{:else if item.read.seen}
+										<a
+											class="font-medium hover:underline"
+											data-user-content
+											href={resolve('/projects/[project]/[collection]/[entry]', { project, collection: item.link.collection, entry: item.link.entry_id })}
+											>{shownTitle(item.read.title)}</a
+										>
+									{:else}
+										<span class="text-muted-foreground">An entry you can’t see</span>
+									{/if}
+									<span class="block text-xs text-muted-foreground" data-user-content>{item.collectionName}, in {item.fieldLabel}</span>
+								</span>
+								{#if item.link.published}
+									<Badge variant="live">Readers see this link</Badge>
+								{:else}
+									<Badge variant="draft">In a draft</Badge>
+								{/if}
+							</li>
+						{/each}
+					</ul>
+				</section>
+			{/if}
 		</div>
 
 		{#if sitePage || siteTheme}
@@ -608,40 +642,6 @@
 					<SiteCanvas {project} content={canvasContent ?? {}} onsection={editSection} />
 				{/if}
 			</div>
-		{/if}
-
-		{#if linkedFrom.length > 0}
-			<section class="mt-8" aria-labelledby="linked-from-heading" data-testid="linked-from">
-				<h2 id="linked-from-heading" class="mb-1 text-sm font-semibold">Linked from</h2>
-				<p class="mb-3 text-xs text-muted-foreground">Entries whose fields link to this one.</p>
-				<ul class="overflow-hidden rounded-xl border border-border bg-card">
-					{#each linkedFrom as item (`${item.link.entry_id}-${item.link.field}`)}
-						<li class="rule-dotted flex flex-wrap items-center gap-x-3 gap-y-1 px-4 py-2.5 text-sm last:border-b-0" data-testid="linked-from-entry">
-							<LinkIcon class="size-3.5 shrink-0 text-muted-foreground" aria-hidden="true" />
-							<span class="min-w-0 flex-1">
-								{#if item.read === undefined}
-									<span class="text-muted-foreground">Loading…</span>
-								{:else if item.read.seen}
-									<a
-										class="font-medium hover:underline"
-										data-user-content
-										href={resolve('/projects/[project]/[collection]/[entry]', { project, collection: item.link.collection, entry: item.link.entry_id })}
-										>{shownTitle(item.read.title)}</a
-									>
-								{:else}
-									<span class="text-muted-foreground">An entry you can’t see</span>
-								{/if}
-								<span class="block text-xs text-muted-foreground" data-user-content>{item.collectionName}, in {item.fieldLabel}</span>
-							</span>
-							{#if item.link.published}
-								<Badge variant="live">Readers see this link</Badge>
-							{:else}
-								<Badge variant="draft">In a draft</Badge>
-							{/if}
-						</li>
-					{/each}
-				</ul>
-			</section>
 		{/if}
 
 		<div role="tabpanel" id="panel-comments" aria-labelledby="tab-comments" hidden={tab !== 'comments'}>
@@ -772,6 +772,7 @@
 					{collection}
 					{entry}
 					title={latest.revision.title}
+					revision={latest.revision.id}
 					mine={mine.data}
 					{standing}
 					saved={saver.status === 'saved'}

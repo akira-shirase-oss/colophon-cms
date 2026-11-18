@@ -7,7 +7,7 @@
 	import { resolve } from '$app/paths';
 	import { page } from '$app/state';
 	import AccountMenu from './AccountMenu.svelte';
-	import AppearanceMenu from './AppearanceMenu.svelte';
+	import ThemeToggle from './ThemeToggle.svelte';
 	import Mark from './Mark.svelte';
 
 	let { children }: { children: Snippet } = $props();
@@ -20,7 +20,7 @@
 			<span>Colophon Studio</span>
 		</a>
 		<span class="rounded-full border border-border bg-card px-2 py-0.5 text-xs text-muted-foreground" title="Colophon is not released yet">preview</span>
-		<div class="ml-auto flex items-center gap-1"><AppearanceMenu /><AccountMenu /></div>
+		<div class="ml-auto flex items-center gap-1"><ThemeToggle /><AccountMenu /></div>
 	</header>
 	<main class="mx-2 mb-2 flex-1 rounded-2xl border border-sidebar-border bg-background shadow-xs">
 		{#key page.url.pathname}

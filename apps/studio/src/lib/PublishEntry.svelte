@@ -23,6 +23,7 @@
 		collection,
 		entry,
 		title,
+		revision,
 		mine,
 		standing,
 		saved,
@@ -35,6 +36,8 @@
 		entry: string;
 		/** The saved title, which names the request. */
 		title: string;
+		/** The saved version on screen. What happened to a version is said until a newer one is saved. */
+		revision: string;
 		mine: Project | undefined;
 		standing: EntryState;
 		/** Whether the editor's content is saved: only a saved version can be published. */
@@ -56,16 +59,21 @@
 	const asks = $derived(mayOn(mine, 'content.update', collection, own));
 
 	let step = $state('');
-	let outcome = $state<Outcome | null>(null);
+	let result = $state<{ outcome: Outcome; revision: string } | null>(null);
+	// What pressing did is about the version that was on screen then. Once a newer version is
+	// saved it no longer applies: the buttons return, so a change made after publishing can be
+	// published too. (Kept for the page's life, the message hid "Publish changes" until a reload.)
+	const outcome = $derived(result !== null && result.revision === revision ? result.outcome : null);
 	// Pressing again after a lost answer is safe: the same keys until the attempt ends.
 	let keys = newKeys();
 
 	/** Publishes the saved version, or with `unpublish`, takes the live one down: the same path,
 	 *  a request whose one item unpublishes (D-049). Publishing it again puts it back. */
 	async function go(unpublish = false) {
-		outcome = null;
+		result = null;
 		const named = title || 'Untitled';
-		outcome = await publishInOneClick({
+		const acting = revision;
+		const outcome = await publishInOneClick({
 			project,
 			title: unpublish ? `Unpublish: ${named}` : named,
 			entries: unpublish ? [] : [entry],
@@ -76,6 +84,7 @@
 			step: (words) => (step = words),
 			doing: oneClick ? (unpublish ? 'unpublish this' : 'publish this') : 'ask for review here'
 		});
+		result = { outcome, revision: acting };
 		step = '';
 		keys = newKeys();
 		await Promise.all([
