@@ -16,8 +16,8 @@ use std::time::{Duration, Instant};
 const SETTLE: Duration = Duration::from_millis(400);
 
 use common::{
-    PORT, Receiver, Server, Session, app, call, create_article, destination, finished_job, join,
-    key, project, publish_article, sign_in,
+    PORT, Receiver, Server, Session, app, call, create_article, destination, join, key, project,
+    publish_article, sign_in,
 };
 use reqwest::{Method, StatusCode, header};
 
@@ -314,22 +314,74 @@ async fn publishing_and_the_workers_job_updates_reach_the_stream() {
         _ => panic!("hello comes first"),
     }
 
-    // The publish's own commit and every worker-side job update are `releases` hints.
+    // The publish's own commit and every worker-side job update queue `releases` hints, and
+    // the pump folds whatever lands inside one pass into one (D-180): how many arrive depends
+    // on timing. What D-180 promises is that the *last* commit is always heard — a `releases`
+    // hint arrives after the job's final status commit. Read the stream from before the
+    // publish, timing each hint, while polling the job closely enough to know a moment the
+    // final commit had not happened yet.
+    let stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let reader = {
+        let stop = std::sync::Arc::clone(&stop);
+        tokio::spawn(async move {
+            let mut heard = Vec::new();
+            let deadline = Instant::now() + Duration::from_secs(30);
+            while Instant::now() < deadline && !stop.load(std::sync::atomic::Ordering::Relaxed) {
+                match stream.next(Duration::from_millis(100)).await {
+                    Next::Frame(frame) if frame.contains(r#""k":"releases""#) => {
+                        heard.push(Instant::now());
+                    }
+                    Next::Ended => panic!("the stream ended"),
+                    _ => {}
+                }
+            }
+            heard
+        })
+    };
+    let published_at = Instant::now();
     let generation = publish_article(&owner, &project, "Live").await;
-    let job = finished_job(&owner, &project, generation, 15).await;
-    assert_eq!(job["status"].as_str(), Some("succeeded"));
-    let mut releases = 0;
-    let deadline = Instant::now() + Duration::from_secs(2);
-    while Instant::now() < deadline && releases < 2 {
-        match stream.next(Duration::from_millis(300)).await {
-            Next::Frame(frame) if frame.contains(r#""k":"releases""#) => releases += 1,
-            Next::Ended => panic!("the stream ended"),
-            _ => {}
+    let jobs =
+        format!("/api/v1/projects/{project}/environments/production/jobs?generation={generation}");
+    // The last moment the job was seen unfinished: its final commit came after it.
+    let mut unfinished_at = published_at;
+    let deadline = Instant::now() + Duration::from_secs(15);
+    let status = loop {
+        let asked = Instant::now();
+        let reply = call(&owner, Method::GET, &jobs, None, &[])
+            .await
+            .expect("request");
+        let status = reply.body["data"][0]["status"].as_str().map(str::to_owned);
+        if matches!(
+            status.as_deref(),
+            Some("succeeded" | "failed" | "superseded")
+        ) {
+            break status;
         }
-    }
+        unfinished_at = asked;
+        assert!(
+            Instant::now() < deadline,
+            "the job never finished: {}",
+            reply.body
+        );
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    };
+    assert_eq!(status.as_deref(), Some("succeeded"));
+    // A couple of pump intervals (100 ms each) and the hint must be here; wait well past them.
+    tokio::time::sleep(Duration::from_secs(1)).await;
+    stop.store(true, std::sync::atomic::Ordering::Relaxed);
+    let heard = reader.await.expect("the reader finishes");
     assert!(
-        releases >= 2,
-        "the insert plus the worker's updates each hinted: {releases}"
+        !heard.is_empty(),
+        "the publish and its job were never heard"
+    );
+    assert!(
+        heard.iter().any(|at| *at > unfinished_at),
+        "no `releases` hint followed the job's final commit: {} heard, the last {:?} before \
+         the job was last seen unfinished",
+        heard.len(),
+        heard
+            .last()
+            .map(|at| unfinished_at.saturating_duration_since(*at))
     );
 }
 

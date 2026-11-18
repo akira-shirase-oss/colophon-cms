@@ -434,19 +434,24 @@ pub async fn delete(
 async fn pending(tx: &mut ProjectTransaction, entry: Uuid) -> Result<Vec<Pending>, DbError> {
     sqlx::query_as!(
         Pending,
-        r#"SELECT c.id, c.title,
+        // The entry's items first, bounded, then each changeset's title by primary key: joined
+        // first, a misjudged plan paired the items with every changeset of the environment.
+        r#"SELECT i.changeset_id AS "id!",
+                  (SELECT c.title FROM changesets c
+                   WHERE c.project_id = i.project_id AND c.environment_id = i.environment_id
+                     AND c.id = i.changeset_id) AS "title!",
                   EXISTS (SELECT 1 FROM schedules s
-                          WHERE s.project_id = c.project_id AND s.environment_id = c.environment_id
-                            AND s.changeset_id = c.id AND s.state = 'scheduled') AS "scheduled!"
-           FROM changeset_items i
-           JOIN changesets c ON c.project_id = i.project_id AND c.environment_id = i.environment_id
-                            AND c.id = i.changeset_id
-           WHERE i.project_id = $1 AND i.environment_id = $2 AND i.entry_id = $3
-             AND NOT EXISTS (SELECT 1 FROM releases r
-                             WHERE r.project_id = c.project_id AND r.environment_id = c.environment_id
-                               AND r.changeset_id = c.id)
-           ORDER BY c.id DESC
-           LIMIT $4"#,
+                          WHERE s.project_id = i.project_id AND s.environment_id = i.environment_id
+                            AND s.changeset_id = i.changeset_id AND s.state = 'scheduled') AS "scheduled!"
+           FROM (SELECT project_id, environment_id, changeset_id FROM changeset_items
+                 WHERE project_id = $1 AND environment_id = $2 AND entry_id = $3
+                   AND NOT EXISTS (SELECT 1 FROM releases r
+                                   WHERE r.project_id = changeset_items.project_id
+                                     AND r.environment_id = changeset_items.environment_id
+                                     AND r.changeset_id = changeset_items.changeset_id)
+                 ORDER BY changeset_id DESC
+                 LIMIT $4) i
+           ORDER BY i.changeset_id DESC"#,
         tx.project,
         tx.environment,
         entry,

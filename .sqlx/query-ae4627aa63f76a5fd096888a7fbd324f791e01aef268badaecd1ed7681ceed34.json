@@ -1,0 +1,45 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT i.changeset_id AS \"id!\",\n                  (SELECT c.title FROM changesets c\n                   WHERE c.project_id = i.project_id AND c.environment_id = i.environment_id\n                     AND c.id = i.changeset_id) AS \"title!\",\n                  EXISTS (SELECT 1 FROM schedules s\n                          WHERE s.project_id = i.project_id AND s.environment_id = i.environment_id\n                            AND s.changeset_id = i.changeset_id AND s.state = 'scheduled') AS \"scheduled!\"\n           FROM (SELECT project_id, environment_id, changeset_id FROM changeset_items\n                 WHERE project_id = $1 AND environment_id = $2 AND entry_id = $3\n                   AND NOT EXISTS (SELECT 1 FROM releases r\n                                   WHERE r.project_id = changeset_items.project_id\n                                     AND r.environment_id = changeset_items.environment_id\n                                     AND r.changeset_id = changeset_items.changeset_id)\n                 ORDER BY changeset_id DESC\n                 LIMIT $4) i\n           ORDER BY i.changeset_id DESC",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id!",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "changeset_items",
+            "name": "changeset_id"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "title!",
+        "type_info": "Text",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 2,
+        "name": "scheduled!",
+        "type_info": "Bool",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid",
+        "Uuid",
+        "Int8"
+      ]
+    },
+    "nullable": [
+      false,
+      null,
+      null
+    ]
+  },
+  "hash": "ae4627aa63f76a5fd096888a7fbd324f791e01aef268badaecd1ed7681ceed34"
+}
