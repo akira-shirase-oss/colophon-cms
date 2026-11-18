@@ -95,39 +95,48 @@ pub const FINISHED_LIMIT: i64 = 20;
 
 /// Pending schedules in time order, then the most recently finished; of one changeset, or of the
 /// whole environment. Each half reads its own partial index and is bounded, however many
-/// schedules the environment ever had.
+/// schedules the environment ever had: the bounded rows are chosen from `schedules` alone, and
+/// only then is each one's changeset title and scheduler name looked up by primary key. Joining
+/// first let the planner, misjudging how many rows a project has (a tenant that grew since the
+/// last ANALYZE), pair every schedule with every changeset of the environment before the limit.
 async fn read(
     tx: &mut ProjectTransaction,
     changeset: Option<Uuid>,
 ) -> Result<Vec<Schedule>, DbError> {
     sqlx::query_as!(
         Schedule,
-        r#"(SELECT s.id AS "id!", s.changeset_id AS "changeset_id!", c.title AS "title!",
+        r#"(SELECT s.id AS "id!", s.changeset_id AS "changeset_id!",
+                   (SELECT c.title FROM changesets c
+                    WHERE c.project_id = s.project_id AND c.environment_id = s.environment_id
+                      AND c.id = s.changeset_id) AS "title!",
                    s.changeset_hash AS "changeset_hash!", s.local_time AS "local_time!",
                    s.time_zone AS "time_zone!", s.choice, s.run_at AS "run_at!", s.state AS "state!",
                    s.reason, s.generation, s.started_at, s.finished_at,
-                   s.scheduled_by AS "scheduled_by!", i.display_name AS scheduled_by_name,
+                   s.scheduled_by AS "scheduled_by!",
+                   (SELECT i.display_name FROM identities i WHERE i.id = s.scheduled_by)
+                       AS scheduled_by_name,
                    s.created_at AS "created_at!"
-            FROM schedules s
-            JOIN changesets c ON c.project_id = s.project_id AND c.environment_id = s.environment_id
-                             AND c.id = s.changeset_id
-            JOIN identities i ON i.id = s.scheduled_by
-            WHERE s.project_id = $1 AND s.environment_id = $2 AND s.state = 'scheduled'
-              AND ($3::uuid IS NULL OR s.changeset_id = $3)
-            ORDER BY s.run_at, s.id
-            LIMIT $4)
+            FROM (SELECT * FROM schedules
+                  WHERE project_id = $1 AND environment_id = $2 AND state = 'scheduled'
+                    AND ($3::uuid IS NULL OR changeset_id = $3)
+                  ORDER BY run_at, id
+                  LIMIT $4) s
+            ORDER BY s.run_at, s.id)
            UNION ALL
-           (SELECT s.id, s.changeset_id, c.title, s.changeset_hash, s.local_time, s.time_zone,
-                   s.choice, s.run_at, s.state, s.reason, s.generation, s.started_at,
-                   s.finished_at, s.scheduled_by, i.display_name, s.created_at
-            FROM schedules s
-            JOIN changesets c ON c.project_id = s.project_id AND c.environment_id = s.environment_id
-                             AND c.id = s.changeset_id
-            JOIN identities i ON i.id = s.scheduled_by
-            WHERE s.project_id = $1 AND s.environment_id = $2 AND s.state <> 'scheduled'
-              AND ($3::uuid IS NULL OR s.changeset_id = $3)
-            ORDER BY s.finished_at DESC, s.id
-            LIMIT $5)"#,
+           (SELECT s.id, s.changeset_id,
+                   (SELECT c.title FROM changesets c
+                    WHERE c.project_id = s.project_id AND c.environment_id = s.environment_id
+                      AND c.id = s.changeset_id),
+                   s.changeset_hash, s.local_time, s.time_zone, s.choice, s.run_at, s.state,
+                   s.reason, s.generation, s.started_at, s.finished_at, s.scheduled_by,
+                   (SELECT i.display_name FROM identities i WHERE i.id = s.scheduled_by),
+                   s.created_at
+            FROM (SELECT * FROM schedules
+                  WHERE project_id = $1 AND environment_id = $2 AND state <> 'scheduled'
+                    AND ($3::uuid IS NULL OR changeset_id = $3)
+                  ORDER BY finished_at DESC, id
+                  LIMIT $5) s
+            ORDER BY s.finished_at DESC, s.id)"#,
         tx.project,
         tx.environment,
         changeset,
@@ -144,17 +153,20 @@ pub async fn list(tx: &mut ProjectTransaction) -> Result<Vec<Schedule>, DbError>
     read(tx, None).await
 }
 
-/// One schedule.
+/// One schedule; its changeset title and scheduler name looked up by primary key, as a list does.
 pub async fn get(tx: &mut ProjectTransaction, id: Uuid) -> Result<Option<Schedule>, DbError> {
     sqlx::query_as!(
         Schedule,
-        r#"SELECT s.id, s.changeset_id, c.title, s.changeset_hash, s.local_time, s.time_zone,
-                  s.choice, s.run_at, s.state, s.reason, s.generation, s.started_at, s.finished_at,
-                  s.scheduled_by, i.display_name AS scheduled_by_name, s.created_at
+        r#"SELECT s.id, s.changeset_id,
+                  (SELECT c.title FROM changesets c
+                   WHERE c.project_id = s.project_id AND c.environment_id = s.environment_id
+                     AND c.id = s.changeset_id) AS "title!",
+                  s.changeset_hash, s.local_time, s.time_zone, s.choice, s.run_at, s.state,
+                  s.reason, s.generation, s.started_at, s.finished_at, s.scheduled_by,
+                  (SELECT i.display_name FROM identities i WHERE i.id = s.scheduled_by)
+                      AS scheduled_by_name,
+                  s.created_at
            FROM schedules s
-           JOIN changesets c ON c.project_id = s.project_id AND c.environment_id = s.environment_id
-                            AND c.id = s.changeset_id
-           JOIN identities i ON i.id = s.scheduled_by
            WHERE s.project_id = $1 AND s.environment_id = $2 AND s.id = $3"#,
         tx.project,
         tx.environment,
