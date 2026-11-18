@@ -45,6 +45,9 @@ export interface ReplyMeta {
 	readonly replayed: boolean;
 	/** `x-request-id`, to quote in support or match against server logs. */
 	readonly requestId: string | null;
+	/** `Colophon-Generation` — the release a delivery read answered from; `null` on routes that
+	 *  don't say. Pass it to `delivery(p).atGeneration(g)` so a page's other reads match it (K1). */
+	readonly generation: number | null;
 }
 
 /** A call's answer: the parsed body, in its exact wire shape, plus the response's metadata. */
@@ -145,6 +148,12 @@ function retryAfterMs(header: string | null, now = Date.now()): number | null {
 			? null
 			: Date.parse(text) - now;
 	return wait === null ? null : Math.min(Math.max(wait, 0), 60_000);
+}
+
+/** `Colophon-Generation` as a number; `null` when absent or not a non-negative integer. */
+function generationOf(header: string | null): number | null {
+	const text = header?.trim() ?? '';
+	return /^\d{1,15}$/.test(text) ? Number(text) : null;
 }
 
 /** The session cookie's name (the OpenAPI `sessionCookie` scheme). */
@@ -278,7 +287,8 @@ export class Client {
 				status: response.status,
 				etag: response.headers.get('etag'),
 				replayed: response.headers.get('idempotent-replayed') === 'true',
-				requestId: response.headers.get('x-request-id')
+				requestId: response.headers.get('x-request-id'),
+				generation: generationOf(response.headers.get('colophon-generation'))
 			};
 			const text = await readBounded(response, maxBodyBytes, meta);
 			let body: unknown = null;
