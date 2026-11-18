@@ -360,7 +360,7 @@ jobs:
           systemd-analyze verify deploy/droplet/colophon-ledger-export.service deploy/droplet/colophon-ledger-export.timer \
             deploy/droplet/colophon-backup-logical.service deploy/droplet/colophon-backup-logical.timer
           caddy_dir=$(mktemp -d)
-          cp deploy/droplet/Caddyfile "$caddy_dir/"
+          cp deploy/droplet/Caddyfile deploy/droplet/cloudflare-origin-pull-ca.pem "$caddy_dir/"
           openssl req -x509 -newkey rsa:2048 -nodes -subj /CN=app.colophon.404human.dev -days 1 \
             -keyout "$caddy_dir/origin.key" -out "$caddy_dir/origin.pem" 2>/dev/null
           echo 'trusted_proxies static 173.245.48.0/20 2400:cb00::/32' >"$caddy_dir/cloudflare-trusted.caddy"

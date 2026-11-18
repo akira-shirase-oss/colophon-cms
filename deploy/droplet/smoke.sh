@@ -37,6 +37,10 @@ jq -e '.version' <<<"$version" >/dev/null 2>&1 && ok "/version: $(jq -r '.versio
 echo "through Cloudflare"
 code=$(curl -sS -o /dev/null -w '%{http_code} %{ssl_verify_result}' --max-time 10 "$public/livez" || echo "000 x")
 [[ "$code" == "200 0" ]] && ok "$public/livez answers 200 over valid TLS" || bad "$public/livez: HTTP/verify $code"
+# Authenticated Origin Pulls: straight to the origin, without Cloudflare's client certificate, the
+# TLS handshake is refused (Caddy requires the certificate; only Cloudflare holds it).
+direct=$(curl -sS -o /dev/null -w '%{http_code}' --max-time 5 -k --resolve "$domain:443:127.0.0.1" "$public/livez" 2>/dev/null || true)
+[[ "$direct" != 200 ]] && ok "the origin refuses a connection without Cloudflare's client certificate" || bad "the origin served a connection without Cloudflare's client certificate"
 headers=$(curl -sSI --max-time 10 "$public/studio/" || true)
 grep -qi '^server: cloudflare' <<<"$headers" && ok "served through Cloudflare" || bad "not through Cloudflare (no server: cloudflare header)"
 grep -qi '^content-security-policy:' <<<"$headers" && ok "the Studio has a content security policy" || bad "no content-security-policy on /studio/"
