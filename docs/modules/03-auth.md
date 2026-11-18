@@ -288,7 +288,10 @@ Built in step 1.7 (D-042), for people:
   so a leaked token can't raise anyone's power or read what it did. The database refuses them too (migration 0023).
 - Made, listed and revoked at `/api/v1/projects/{project}/tokens` by people whose role holds `tokens.manage` (owners,
   by default), checked against their role as it is now; nobody makes a token with a power they lack (`cannot_grant`).
-  Expires after 1 to 366 days. At most 100 active per project, counted under the owner-role row lock.
+  Expires after 1 to 366 days. At most 100 active per project, counted under the owner-role row lock: the lock
+  is its own statement, then the count and every insert are one statement whose snapshot starts after the lock
+  is held, so the cap is exact under any race (`tests/tokens.rs`: twenty creators, one slot, one token) and the
+  lock is held for two statements and the commit, not eight round trips.
 - The secret is `colophon_api_` and 43 random characters, shown once in the answer that makes it; only its SHA-256
   hash is stored. The prefix keeps it apart from personal tokens and lets secret scanners spot one that leaked.
 - A token acts as an identity of its own (issuer `urn:colophon:api-token`, which no provider uses, so it can never sign

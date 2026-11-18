@@ -205,3 +205,80 @@ async fn a_token_is_invisible_outside_its_project() {
     drop(own);
     db.drop().await;
 }
+
+/// The cap is exact under a race: with one slot left, twenty concurrent creators queue on the
+/// owner-role lock and exactly one gets the slot — each counts in a statement that starts after
+/// it holds the lock, so it sees the token the creator before it committed.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[ignore = "needs the local stack: scripts/stack.sh up"]
+async fn twenty_creators_racing_for_the_last_slot_make_exactly_one_token() {
+    let db = TestDb::new().await;
+    let owner = db.administrator("owner").await;
+    let project = projects::create(&db.app, owner, "alpha", "Alpha")
+        .await
+        .expect("created")
+        .id;
+    let filled = usize::try_from(tokens::MAX_TOKENS - 1).expect("a count");
+    for n in 0..filled {
+        let mut hash = [0_u8; 32];
+        hash[..8].copy_from_slice(&u64::try_from(n).expect("n").to_be_bytes());
+        read_only(&db.app, owner, project, hash).await;
+    }
+    // Twenty connections, so the racers really run at once (the test pool has one).
+    let pool = sqlx::postgres::PgPoolOptions::new()
+        .max_connections(20)
+        .min_connections(20)
+        .connect(&format!(
+            "postgres://colophon_app:colophon-dev@{}/{}",
+            common::host(),
+            db.name
+        ))
+        .await
+        .expect("a wider pool");
+    // Every racer opens its transaction, then all start creating at once.
+    let start = std::sync::Arc::new(tokio::sync::Barrier::new(20));
+    let racers: Vec<_> = (0..20_u8)
+        .map(|n| {
+            let pool = pool.clone();
+            let start = std::sync::Arc::clone(&start);
+            tokio::spawn(async move {
+                let policy = TokenKind::ReadOnly.policy(Vec::new()).expect("read-only");
+                let mut tx = as_member(&pool, owner, project).await;
+                start.wait().await;
+                let mut hash = [0xff_u8; 32];
+                hash[0] = n;
+                let token = NewToken {
+                    id: Uuid::now_v7(),
+                    identity_id: Uuid::now_v7(),
+                    name: "Racer",
+                    description: "",
+                    kind: TokenKind::ReadOnly,
+                    policy: &policy,
+                    hash,
+                    expires_at: OffsetDateTime::now_utc() + time::Duration::days(30),
+                    limits: None,
+                };
+                let made = tokens::create(&mut tx, &token).await.expect("create");
+                tx.commit().await.expect("commit");
+                matches!(made, Created::Done(_))
+            })
+        })
+        .collect();
+    let mut made = 0;
+    for racer in racers {
+        if racer.await.expect("joined") {
+            made += 1;
+        }
+    }
+    assert_eq!(made, 1, "exactly one racer takes the last slot");
+    let active: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM api_tokens WHERE project_id = $1 AND revoked_at IS NULL",
+    )
+    .bind(project)
+    .fetch_one(&db.owner().await)
+    .await
+    .expect("count");
+    assert_eq!(active, tokens::MAX_TOKENS);
+    pool.close().await;
+    db.drop().await;
+}
