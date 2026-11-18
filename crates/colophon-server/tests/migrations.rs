@@ -846,6 +846,39 @@ async fn malformed_operations_are_refused_at_plan_time() {
     }
 }
 
+/// The status of an anonymous read of `id` in production, or a visitor's with `bearer`.
+async fn read(project: &str, id: &str, bearer: Option<&str>) -> StatusCode {
+    let mut request = common::app().get(format!(
+        "{}/content/v1/{project}/production/articles/{id}",
+        common::ORIGIN
+    ));
+    if let Some(token) = bearer {
+        request = request.header("authorization", format!("Bearer {token}"));
+    }
+    request.send().await.expect("request").status()
+}
+
+/// Signs a new visitor up, which takes the project's open role, and returns their session token.
+async fn member_token(project: &str) -> String {
+    let signup = common::app()
+        .post(format!("{}/audience/v1/{project}/signup", common::ORIGIN))
+        .json(&json!({
+            "email": format!("member-{}@example.test", key()),
+            "password": "a-long-enough-password",
+            "display_name": "Member",
+        }))
+        .send()
+        .await
+        .expect("request");
+    assert_eq!(signup.status(), StatusCode::CREATED);
+    let body: Value = signup.json().await.expect("json");
+    assert_eq!(body["data"]["user"]["role"].as_str(), Some("member"));
+    body["data"]["session"]
+        .as_str()
+        .expect("a token")
+        .to_owned()
+}
+
 /// A content-migration run keeps a gated entry gated (D-183). The run writes its revision in
 /// SQL (0041's `colophon_migration_apply_item`), which named no `visibility`, so every migrated
 /// draft became `public` and the next publish put a member-only entry in front of anonymous
@@ -920,49 +953,21 @@ async fn a_migration_run_keeps_a_gated_entry_gated() {
         &json!({"title": "Out", "entries": [entry, public]}),
     )
     .await;
-    let project_ref = project.as_str();
-    let read = |id: String, bearer: Option<String>| async move {
-        let project = project_ref;
-        let mut request = common::app().get(format!(
-            "{}/content/v1/{project}/production/articles/{id}",
-            common::ORIGIN
-        ));
-        if let Some(token) = bearer {
-            request = request.header("authorization", format!("Bearer {token}"));
-        }
-        request.send().await.expect("request").status()
-    };
     assert_eq!(
-        read(public.clone(), None).await,
+        read(&project, &public, None).await,
         StatusCode::OK,
         "the public entry migrated alongside didn't reach an anonymous reader: over-gated, or the release didn't publish"
     );
     assert_eq!(
-        read(entry.clone(), None).await,
+        read(&project, &entry, None).await,
         StatusCode::NOT_FOUND,
         "a member-only entry reached an anonymous reader after a migration run"
     );
 
     // A member (signup takes the project's open role) reads the gated entry.
-    let signup = common::app()
-        .post(format!("{}/audience/v1/{project}/signup", common::ORIGIN))
-        .json(&json!({
-            "email": format!("member-{}@example.test", key()),
-            "password": "a-long-enough-password",
-            "display_name": "Member",
-        }))
-        .send()
-        .await
-        .expect("request");
-    assert_eq!(signup.status(), StatusCode::CREATED);
-    let signed_up: Value = signup.json().await.expect("json");
-    assert_eq!(signed_up["data"]["user"]["role"].as_str(), Some("member"));
-    let token = signed_up["data"]["session"]
-        .as_str()
-        .expect("a token")
-        .to_owned();
+    let token = member_token(&project).await;
     assert_eq!(
-        read(entry.clone(), Some(token)).await,
+        read(&project, &entry, Some(&token)).await,
         StatusCode::OK,
         "a member couldn't read the member-only entry after a migration run"
     );
