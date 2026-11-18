@@ -76,7 +76,9 @@ test('every everyday screen speaks plainly; the Technical details drawer keeps t
 	// check sees them there, so it would see them anywhere.
 	await page.goto(`${base}/settings/connections`);
 	await expect(page.getByRole('heading', { name: 'Website connections' })).toBeVisible();
-	expect((await internalTerms(page)).join('\n')).toMatch(/webhook/i);
+	// The intro renders after the heading: wait for it rather than read once (a race the full
+	// suite hit twice, with the intro on screen in the failure's snapshot).
+	await expect.poll(async () => (await internalTerms(page)).join('\n')).toMatch(/webhook/i);
 });
 
 // Refusals in plain words (D-059, rule 3). The server's messages for these two say "changeset"
