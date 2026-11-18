@@ -10,7 +10,6 @@
 	import FileTextIcon from '@lucide/svelte/icons/file-text';
 	import { resolve } from '$app/paths';
 	import { createQueries, createQuery } from '@tanstack/svelte-query';
-	import { Badge } from '@colophon/ui/ui/badge';
 	import { Button } from '@colophon/ui/ui/button';
 	import { Skeleton } from '@colophon/ui/ui/skeleton';
 	import { entryState, listSchedules, may, mayAny, searchEntries, type Summary } from './api.ts';
@@ -154,7 +153,7 @@
 								<span class="block truncate text-sm font-medium" data-user-content>{item.title}</span>
 								<span class="text-xs text-muted-foreground">Publishes {when(item.run_at)}</span>
 							</span>
-							<Badge variant="pending">scheduled</Badge>
+							<StatusBadge state="scheduled" />
 						</a>
 					</li>
 				{/each}
@@ -166,7 +165,7 @@
 								<span class="block truncate text-sm font-medium" data-user-content>{item.title}</span>
 								<span class="block text-xs text-attention-ink">Not published: {item.reason ?? 'it was refused'}</span>
 							</span>
-							<Badge variant="attention">not published</Badge>
+							<StatusBadge state="not_published" />
 						</a>
 					</li>
 				{/each}
@@ -207,11 +206,12 @@
 </p>
 
 <style>
+	/* The design system's card (D-182): its padding and radius tokens, a hairline, no shadow. */
 	.card {
 		min-width: 0;
-		padding: 1rem 1.125rem;
+		padding: var(--card-padding);
 		border: 1px solid var(--border);
-		border-radius: var(--radius-xl);
+		border-radius: var(--radius-card);
 		background: var(--card);
 	}
 	.card-title {
@@ -223,17 +223,21 @@
 		font-size: 0.875rem;
 		color: var(--muted-foreground);
 	}
+	/* Rows reach out by their own padding, so their text lines up with the card's heading; one
+	 * shrinkable column, so a long title truncates instead of widening the card. */
 	.rows {
 		display: grid;
+		grid-template-columns: minmax(0, 1fr);
 		gap: 0.25rem;
+		margin-inline: -0.5rem;
 	}
 	.row {
 		display: flex;
 		align-items: center;
 		gap: 0.75rem;
 		min-width: 0;
-		padding: 0.5rem 0.5rem;
-		border-radius: var(--radius-lg);
+		padding: 0.5rem;
+		border-radius: var(--radius-control);
 	}
 	.row:hover {
 		background: var(--muted);

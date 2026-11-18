@@ -130,9 +130,9 @@
 			<span class="stat-label">Entries</span>
 			<span class="stat-value tabular" data-testid="entry-count">{all.length}{more ? '+' : ''}</span>
 			<span class="flex flex-wrap gap-x-3 gap-y-1 text-xs text-muted-foreground">
-				<span><span class="mr-1 inline-block size-1.5 rounded-full bg-live align-middle"></span>{tally.live} live</span>
-				<span><span class="mr-1 inline-block size-1.5 rounded-full bg-pending align-middle"></span>{tally.changed} changed</span>
-				<span><span class="mr-1 inline-block size-1.5 rounded-full bg-draft align-middle"></span>{tally.draft} draft</span>
+				<span><span class="tally-dot bg-live ring-live-ring" aria-hidden="true"></span>{tally.live} live</span>
+				<span><span class="tally-dot bg-changed ring-changed-ring" aria-hidden="true"></span>{tally.changed} changed</span>
+				<span><span class="tally-dot bg-draft ring-draft-ring" aria-hidden="true"></span>{tally.draft} draft</span>
 			</span>
 		</div>
 		<div class="stat" style="--i: 3">
@@ -239,29 +239,41 @@
 {/if}
 
 <style>
+	/* The design system's card (D-182): its padding and radius tokens, a hairline, flat. */
 	.stat {
 		display: flex;
 		flex-direction: column;
 		gap: 0.375rem;
-		padding: 1rem 1.125rem;
+		padding: var(--card-padding-sm) var(--card-padding);
 		border: 1px solid var(--border);
-		border-radius: var(--radius-xl);
+		border-radius: var(--radius-card);
 		background: var(--card);
-		box-shadow: 0 1px 2px 0 rgb(0 0 0 / 0.04);
 		align-items: flex-start;
 	}
 	a.stat:hover {
 		border-color: color-mix(in oklch, var(--foreground) 20%, transparent);
+	}
+	/* A status mark as on Colophon's site: a dot in a soft ring of its own colour. */
+	.tally-dot {
+		display: inline-block;
+		width: 0.5rem;
+		height: 0.5rem;
+		margin-right: 0.5rem;
+		border-radius: 9999px;
+		vertical-align: middle;
+		/* The ring's colour comes from the `ring-*-ring` class beside it. */
+		box-shadow: 0 0 0 3px var(--tw-ring-color);
 	}
 	.stat-label {
 		font-size: 0.875rem;
 		color: var(--muted-foreground);
 	}
 	.stat-value {
+		font-family: var(--font-display);
 		font-size: 1.75rem;
 		line-height: 2.25rem;
-		font-weight: 600;
-		letter-spacing: -0.02em;
+		font-weight: 560;
+		letter-spacing: -0.015em;
 		font-variant-numeric: tabular-nums;
 	}
 </style>

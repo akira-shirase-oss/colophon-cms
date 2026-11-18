@@ -85,7 +85,7 @@
 		return groups;
 	});
 	const select =
-		'h-9 w-full rounded-md border border-input bg-card px-3 text-sm shadow-xs outline-none focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/40 sm:w-60';
+		'h-9 w-full rounded-md border border-input bg-popover px-3 text-sm outline-none focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/40 sm:w-60';
 </script>
 
 <svelte:head><title>Activity · Colophon Studio</title></svelte:head>

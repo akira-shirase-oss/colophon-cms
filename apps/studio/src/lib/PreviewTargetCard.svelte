@@ -125,7 +125,7 @@
 			{/if}
 		</p>
 	{:else}
-		<form class="rounded-xl border border-border bg-card p-5 shadow-xs" onsubmit={save} aria-labelledby="preview-target-heading" novalidate>
+		<form class="rounded-xl border border-border bg-card p-5" onsubmit={save} aria-labelledby="preview-target-heading" novalidate>
 			<div class="grid gap-1.5">
 				<label class="text-sm font-medium" for="preview-address">Preview address</label>
 				<Input

@@ -13,7 +13,6 @@
 	import { createInfiniteQuery, createQuery } from '@tanstack/svelte-query';
 	import { Button } from '@colophon/ui/ui/button';
 	import { Skeleton } from '@colophon/ui/ui/skeleton';
-	import { Badge } from '@colophon/ui/ui/badge';
 	import { deliveryUrl, type Job, listJobs, listReleases, listSchedules, type Release, type Schedule } from '#lib/api.ts';
 	import { ago, typesQuery } from '#lib/queries.ts';
 	import EmptyState from '#lib/shell/EmptyState.svelte';
@@ -21,6 +20,8 @@
 	import Problem from '#lib/shell/Problem.svelte';
 	import { failureText } from '#lib/receipts.ts';
 	import ReleaseLabel from '#lib/shell/ReleaseLabel.svelte';
+	import StatusBadge from '#lib/shell/StatusBadge.svelte';
+	import { releaseName, STATUS_WORDS } from '#lib/words.ts';
 	import TechnicalDetails from '#lib/shell/TechnicalDetails.svelte';
 
 	const project = $derived(page.params.project ?? '');
@@ -94,8 +95,7 @@
 
 <PageHeader title="Releases">
 	{#snippet description()}
-		Every publish is a numbered release. Its label says what is proven: published in Colophon, on its way to your website, or checked on the live
-		site.
+		Every publish becomes a numbered release, with a receipt of what reached your website.
 	{/snippet}
 </PageHeader>
 
@@ -108,7 +108,7 @@
 		{#if generation === 0}
 			Nothing is published yet.
 		{:else}
-			<span>Live: release {generation}.</span>
+			<span class="font-medium tabular">Live: {releaseName(generation)}</span>
 			<span class="text-muted-foreground">Your website reads it from Colophon's public address, with no sign-in.</span>
 		{/if}
 	</p>
@@ -136,14 +136,18 @@
 						>
 						<span class="text-muted-foreground">{reads(item)} <span class="text-xs">({item.time_zone})</span></span>
 						{#if item.state === 'scheduled'}
-							<Badge variant="pending">scheduled</Badge>
+							<StatusBadge state="scheduled" />
 						{:else if item.state === 'published'}
-							<Badge variant={item.delayed ? 'attention' : 'live'}>{item.delayed ? 'published late' : 'published'} · No. {item.generation}</Badge>
+							<StatusBadge
+								state={item.delayed ? 'published_late' : 'published'}
+								text="{item.delayed ? STATUS_WORDS.published_late : STATUS_WORDS.published} · {releaseName(item.generation ?? 0)}"
+								class="tabular"
+							/>
 						{:else if item.state === 'blocked'}
-							<Badge variant="attention" title={item.reason}>not published</Badge>
+							<StatusBadge state="not_published" title={item.reason} />
 							<span class="basis-full text-xs text-muted-foreground">{item.reason}</span>
 						{:else}
-							<Badge variant="secondary">cancelled</Badge>
+							<StatusBadge state="cancelled" />
 						{/if}
 					</li>
 				{/each}
@@ -163,10 +167,8 @@
 			{#each shown as release, index (release.generation)}
 				<li class="rounded-xl border border-border bg-card p-4" style="--i: {index}" data-generation={release.generation}>
 					<div class="flex flex-wrap items-start gap-x-4 gap-y-2">
-						<span class="text-2xl leading-none font-semibold tracking-tight tabular">
-							<span aria-hidden="true" class="text-muted-foreground">No.&nbsp;</span><span class="sr-only">Release </span>{release.generation}
-						</span>
 						<div class="min-w-0 flex-1">
+							<p class="text-sm font-medium text-muted-foreground tabular">{releaseName(release.generation)}</p>
 							<a class="font-medium hover:underline" href={resolve('/projects/[project]/changesets/[changeset]', { project, changeset: release.changeset_id })}>{release.title}</a>
 							<p class="mt-0.5 text-sm text-muted-foreground">
 								{release.entries}

@@ -58,7 +58,7 @@
 </script>
 
 {#if !published || problem !== null}
-	<section class="mb-8 rounded-xl border border-border bg-card px-4 py-3.5 shadow-xs" aria-label="Preview on your site" data-testid="changeset-preview">
+	<section class="mb-8 rounded-xl border border-border bg-card px-4 py-3.5" aria-label="Preview on your site" data-testid="changeset-preview">
 		<div class="flex flex-wrap items-center gap-x-4 gap-y-2">
 			{#if !published}
 				{#if target.isSuccess && ready && !unset}

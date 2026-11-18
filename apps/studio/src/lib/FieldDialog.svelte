@@ -74,7 +74,7 @@
 	const target = $derived(collections.find((item) => item.slug !== self)?.slug ?? self);
 	const Icon = $derived(iconOf(field));
 	const select =
-		'h-9 rounded-xl border border-input bg-card px-3 text-sm shadow-xs outline-none focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/40 disabled:opacity-60';
+		'h-9 rounded-xl border border-input bg-popover px-3 text-sm outline-none focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/40 disabled:opacity-60';
 
 	// Where the last save's refusal lands on this field, if it does: its tab opens first.
 	// svelte-ignore state_referenced_locally

@@ -51,11 +51,28 @@ export const CONNECTION_KIND: Record<Destination['kind'], { name: string; does: 
 	probe: { name: 'Site check', does: 'Check the site', detail: 'Reads your live site after each release to confirm readers see it.' }
 };
 
+/** Where something stands, in the words its StatusBadge shows (D-182): an entry for readers,
+ *  what a release did to an entry, and a schedule. One word per state, on every screen. */
+export const STATUS_WORDS = {
+	live: 'Live',
+	changed: 'Live with changes',
+	draft: 'Draft',
+	scheduled: 'Scheduled',
+	review: 'In review',
+	taken_down: 'Taken down',
+	new: 'New',
+	updated: 'Updated',
+	published: 'Published',
+	published_late: 'Published late',
+	not_published: 'Not published',
+	cancelled: 'Cancelled'
+} as const;
+
 /** A publish request's state, in words (D-044's states). */
 export const REQUEST_STATE: Record<ChangesetState, string> = {
 	open: 'Not sent for review',
 	stale: 'Edited since: update it',
-	awaiting_review: 'Waiting for review',
+	awaiting_review: STATUS_WORDS.review,
 	changes_requested: 'Changes asked for',
 	approved: 'Approved',
 	approval_expired: 'Approval expired',

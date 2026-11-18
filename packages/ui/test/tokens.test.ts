@@ -1,6 +1,8 @@
-// The design system's colours (D-056) keep their promises: every text colour reads on every
-// ground it is used on, at WCAG AA, and at AAA when the system asks for more contrast; focus
-// rings stand out; and the stylesheet stays self-contained (no fonts or files from elsewhere).
+// The design system's colours (D-182) keep their promises: every text colour reads on every
+// ground it is used on, at WCAG AA, and at AAA when the system asks for more contrast; the
+// accent's fill carries its label; status tags read in ink and in plain text; focus rings and
+// the edges of checkboxes and radios stand out (3:1); and the stylesheet stays self-contained (no
+// fonts or files from elsewhere).
 
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -34,19 +36,27 @@ function colour(tokens: Record<string, string>, name: string): Oklch {
 
 const WHITE: Oklch = { l: 1, c: 0, h: 0 };
 const GROUNDS = ['background', 'card', 'popover', 'muted', 'secondary', 'accent', 'sidebar', 'sidebar-accent'];
+/** The status tones (D-182): each has a mark, a ring, a soft ground and an ink. */
+const STATUSES = ['live', 'changed', 'pending', 'attention', 'draft'];
 /** Each text colour and the grounds it is drawn on. */
 const TEXT: [string, string[]][] = [
-	['foreground', GROUNDS],
+	// Status tags set their word in the plain ink, as the public site's tags do.
+	['foreground', [...GROUNDS, 'brand-soft', ...STATUSES.map((status) => `${status}-soft`)]],
 	['muted-foreground', ['background', 'card', 'popover', 'muted', 'sidebar']],
 	['sidebar-foreground', ['sidebar', 'sidebar-accent']],
-	['primary-foreground', ['primary']],
-	['live-ink', ['live-soft', 'card']],
-	['pending-ink', ['pending-soft', 'card']],
-	['attention-ink', ['attention-soft', 'card']],
-	['draft-ink', ['draft-soft', 'card']],
-	// The accent as text (links, figures in the accent): never the bright --brand itself.
-	['brand-ink', ['background', 'card', 'brand-soft']],
-	['destructive', ['card', 'background']]
+	// The one primary button, at rest and under the pointer.
+	['primary-foreground', ['primary', 'primary-hover']],
+	...STATUSES.map((status): [string, string[]] => [`${status}-ink`, [`${status}-soft`, 'card', 'background']]),
+	// The accent as text (links, the selection's label): never the brighter --brand itself.
+	['brand-ink', ['background', 'card', 'popover', 'sidebar', 'brand-soft']],
+	['destructive', ['card', 'background']],
+	['destructive-foreground', ['destructive']]
+];
+/** Marks that aren't text but must be seen (WCAG 1.4.11, 3:1): the focus ring and the edge of an
+ *  unchecked checkbox or radio, on every ground they sit on. */
+const EDGES: [string, string[]][] = [
+	['ring', ['background', 'card', 'popover', 'sidebar']],
+	['control', ['background', 'card', 'popover']]
 ];
 
 const SCHEMES = [
@@ -65,8 +75,9 @@ test('the high-contrast blocks exist and override what they should', () => {
 for (const { name, tokens, minimum } of SCHEMES) {
 	describe(`${name}: text reads on its grounds (at least ${minimum}:1)`, () => {
 		for (const [text, grounds] of TEXT) {
-			// The destructive colour marks errors beside words; it needs AA in every scheme.
-			const needed = text === 'destructive' ? 4.5 : minimum;
+			// The destructive colour marks errors beside words, and fills only a confirmation's
+			// last button; it needs AA in every scheme.
+			const needed = text.startsWith('destructive') ? 4.5 : minimum;
 			for (const ground of grounds) {
 				test(`--${text} on --${ground}`, () => {
 					expect(contrast(colour(tokens, text), colour(tokens, ground))).toBeGreaterThanOrEqual(needed);
@@ -74,15 +85,42 @@ for (const { name, tokens, minimum } of SCHEMES) {
 			}
 		}
 	});
-	test(`${name}: the focus ring stands out from the page (3:1)`, () => {
-		for (const ground of ['background', 'card', 'sidebar']) {
-			expect(contrast(colour(tokens, 'ring'), colour(tokens, ground)), ground).toBeGreaterThanOrEqual(3);
-		}
-	});
+	for (const [edge, grounds] of EDGES) {
+		test(`${name}: --${edge} stands out from what it sits on (3:1)`, () => {
+			for (const ground of grounds) {
+				expect(contrast(colour(tokens, edge), colour(tokens, ground)), ground).toBeGreaterThanOrEqual(3);
+			}
+		});
+	}
 }
 
 test('a destructive button keeps white text readable', () => {
 	expect(contrast(WHITE, colour(light, 'destructive'))).toBeGreaterThanOrEqual(4.5);
+});
+
+test('every status tone has its four tokens, in light and dark', () => {
+	for (const status of STATUSES) {
+		for (const part of ['', '-ring', '-soft', '-ink']) {
+			expect(light[`${status}${part}`], `--${status}${part}`).toBeDefined();
+			expect(block('.dark')[`${status}${part}`], `dark --${status}${part}`).toBeDefined();
+		}
+	}
+});
+
+test('the accent is one hue: its fill, mark, ink and ground agree', () => {
+	for (const tokens of [light, dark, lightMore, darkMore]) {
+		const hues = ['primary', 'brand', 'brand-ink', 'brand-soft'].map((name) => colour(tokens, name).h);
+		expect(new Set(hues).size).toBe(1);
+	}
+});
+
+test('the accent is no status: its hue stays clear of every status hue', () => {
+	const accent = colour(light, 'brand').h;
+	for (const status of ['live', 'changed', 'pending', 'attention']) {
+		const hue = colour(light, status).h;
+		const apart = Math.min(Math.abs(accent - hue), 360 - Math.abs(accent - hue));
+		expect(apart, status).toBeGreaterThanOrEqual(30);
+	}
 });
 
 test('the stylesheet loads nothing from another origin', () => {

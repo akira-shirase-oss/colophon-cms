@@ -183,7 +183,7 @@
 		{ value: 'deleted', label: 'Deleted' }
 	];
 	const select =
-		'h-9 w-full rounded-md border border-input bg-card px-3 text-sm shadow-xs outline-none focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/40 sm:w-44';
+		'h-9 w-full rounded-md border border-input bg-popover px-3 text-sm outline-none focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/40 sm:w-44';
 </script>
 
 <svelte:head><title>Media · Colophon Studio</title></svelte:head>
@@ -297,7 +297,7 @@
 			Upload images here, or drop them onto this page. Each one is checked, measured and resized, then it's ready to pick from any entry's
 			image field or to put into rich text.
 			{#snippet action()}
-				{#if uploads}<Button onclick={() => fileInput?.click()} data-testid="media-empty-upload"><UploadIcon data-icon="inline-start" />Upload images</Button>{/if}
+				{#if uploads}<Button variant="outline" onclick={() => fileInput?.click()} data-testid="media-empty-upload"><UploadIcon data-icon="inline-start" />Upload images</Button>{/if}
 			{/snippet}
 		</EmptyState>
 	{:else}
@@ -305,7 +305,7 @@
 			{#each loaded as asset (asset.id)}
 				{@const thumb = thumbnailUrl(project, asset)}
 				<li
-					class="relative flex flex-col overflow-hidden rounded-xl border border-border bg-card shadow-xs transition-colors hover:border-foreground/20 has-[.open:focus-visible]:ring-[3px] has-[.open:focus-visible]:ring-ring/40"
+					class="relative flex flex-col overflow-hidden rounded-xl border border-border bg-card transition-colors hover:border-foreground/20 has-[.open:focus-visible]:ring-[3px] has-[.open:focus-visible]:ring-ring/40"
 					data-testid="media-card"
 					data-state={asset.state}
 				>

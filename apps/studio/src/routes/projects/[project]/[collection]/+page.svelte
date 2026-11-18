@@ -396,12 +396,12 @@
 		<EmptyState icon={FileTextIcon} title="No {type.data.definition.name.toLowerCase()} yet" testid="entries-empty">
 			Write the first {oneOf(type.data.definition.name)}. Nobody outside the project sees it until it is published.
 			{#snippet action()}
-				{#if writes}<Button onclick={() => (creating = true)}><PlusIcon data-icon="inline-start" />Write the first {oneOf(type.data.definition.name)}</Button>{/if}
+				{#if writes}<Button variant="outline" onclick={() => (creating = true)}><PlusIcon data-icon="inline-start" />Write the first {oneOf(type.data.definition.name)}</Button>{/if}
 			{/snippet}
 		</EmptyState>
 	{:else}
 		{#if picked.length > 0}
-			<div class="mb-3 flex flex-wrap items-center gap-x-3 gap-y-2 rounded-xl border border-border bg-card px-4 py-2.5 shadow-xs" role="region" aria-label="Picked entries" data-testid="bulk-bar">
+			<div class="mb-3 flex flex-wrap items-center gap-x-3 gap-y-2 rounded-xl border border-border bg-card px-4 py-2.5" role="region" aria-label="Picked entries" data-testid="bulk-bar">
 				<span class="text-sm font-medium tabular">{picked.length} picked</span>
 				<Button size="sm" onclick={publishPicked} disabled={bulkStep !== '' || publishable.length === 0 || publishable.length > MAX_BULK || notMine.length > 0} data-testid="bulk-publish">
 					{bulkStep !== '' ? bulkStep : oneClick ? `Publish ${publishable.length}` : `Ask for review of ${publishable.length}`}
@@ -487,7 +487,7 @@
 							</Table.Cell>
 							<Table.Cell><StatusBadge state={entryState(entry)} generation={entry.published?.generation ?? null} /></Table.Cell>
 							<Table.Cell class="hidden text-sm text-muted-foreground tabular md:table-cell">
-								{entry.published ? `No. ${entry.published.generation}` : '—'}
+								{entry.published ? releaseName(entry.published.generation) : '—'}
 							</Table.Cell>
 							<Table.Cell class="text-right text-sm text-muted-foreground {writes ? '' : 'pr-4'}" title={new Date(entry.updated_at).toLocaleString()}>{ago(entry.updated_at)}</Table.Cell>
 							{#if writes}

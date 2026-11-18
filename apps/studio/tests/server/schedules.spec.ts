@@ -98,7 +98,7 @@ test('the worker publishes a schedule when its time comes, and Releases shows it
 	const row = page.getByTestId('schedules').getByRole('listitem').first();
 	await expect(row).toContainText('Spring menu');
 	await expect(row).toHaveAttribute('data-state', 'published', { timeout: 20_000 });
-	await expect(row).toContainText('published · No. 1');
+	await expect(row).toContainText('Published · Release 1');
 	await expect(page.getByTestId('releases').locator('[data-generation="1"]')).toBeVisible();
 	expect(await violations(page)).toEqual([]);
 });

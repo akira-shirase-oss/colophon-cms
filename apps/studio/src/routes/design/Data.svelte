@@ -9,7 +9,7 @@
 	import * as Alert from '@colophon/ui/ui/alert';
 	import { AspectRatio } from '@colophon/ui/ui/aspect-ratio';
 	import * as Avatar from '@colophon/ui/ui/avatar';
-	import { Badge } from '@colophon/ui/ui/badge';
+	import StatusBadge from '#lib/shell/StatusBadge.svelte';
 	import * as Breadcrumb from '@colophon/ui/ui/breadcrumb';
 	import { Button } from '@colophon/ui/ui/button';
 	import { Calendar } from '@colophon/ui/ui/calendar';
@@ -35,7 +35,6 @@
 		{ title: 'Notes on release generations', state: 'draft', updated: 'Yesterday', release: null },
 		{ title: 'The outbox, explained', state: 'live', updated: '3 days ago', release: 38 }
 	] as const;
-	const STATE = { live: 'live', changed: 'pending', draft: 'draft' } as const;
 	let date = $state(today(getLocalTimeZone()));
 	const releases = Array.from({ length: 24 }, (_, index) => 42 - index);
 </script>
@@ -49,7 +48,7 @@
 				<Tabs.Trigger value="releases">Releases</Tabs.Trigger>
 			</Tabs.List>
 			<Tabs.Content value="entries" class="pt-4">
-				<div class="overflow-hidden rounded-3xl border border-border bg-card shadow-hairline">
+				<div class="overflow-hidden rounded-card border border-border bg-card">
 					<Table.Root>
 						<Table.Header>
 							<Table.Row>
@@ -64,7 +63,7 @@
 								<Table.Row>
 									<Table.Cell class="pl-6 font-medium">{row.title}</Table.Cell>
 									<Table.Cell>
-										<Badge variant={STATE[row.state]}>{row.state[0]?.toUpperCase() + row.state.slice(1)}</Badge>
+										<StatusBadge state={row.state} testid="table-{row.state}" />
 									</Table.Cell>
 									<Table.Cell class="text-muted-foreground">{row.updated}</Table.Cell>
 									<Table.Cell class="tabular pr-6 text-right">{row.release ?? '—'}</Table.Cell>
@@ -91,7 +90,7 @@
 			<Card.Header>
 				<Card.Description>Live release</Card.Description>
 				<Card.Title class="figure text-4xl font-normal">42</Card.Title>
-				<Card.Action><Badge variant="live"><span class="size-1.5 rounded-full bg-live"></span>Verified</Badge></Card.Action>
+				<Card.Action><StatusBadge state="release_verified" text="Verified" testid="card-verified" /></Card.Action>
 			</Card.Header>
 			<Card.Content class="text-sm text-muted-foreground">At 1 location, 4 seconds after commit.</Card.Content>
 		</Card.Root>
@@ -107,7 +106,7 @@
 	<div class="grid gap-10 lg:grid-cols-2">
 		<Specimen label="Items">
 			<Item.Group class="gap-3">
-				<Item.Root variant="outline">
+				<Item.Root variant="outline" role="listitem">
 					<Item.Media variant="icon"><FileTextIcon /></Item.Media>
 					<Item.Content>
 						<Item.Title>Hello, world</Item.Title>
@@ -115,7 +114,7 @@
 					</Item.Content>
 					<Item.Actions><Button size="sm" variant="outline">Compare</Button></Item.Actions>
 				</Item.Root>
-				<Item.Root variant="outline">
+				<Item.Root variant="outline" role="listitem">
 					<Item.Media>
 						<Avatar.Group>
 							<Avatar.Root><Avatar.Fallback>AL</Avatar.Fallback></Avatar.Root>
@@ -160,7 +159,7 @@
 			<div class="grid gap-5">
 				<div class="grid gap-2">
 					<p class="flex justify-between text-sm"><span>Delivering release 42</span><span class="tabular text-muted-foreground">2 of 3</span></p>
-					<Progress value={66} />
+					<Progress value={66} aria-label="Delivered" />
 				</div>
 				<p class="flex items-center gap-2 text-sm text-muted-foreground"><Spinner />Waiting for the probe…</p>
 				<div class="flex items-center gap-3">
@@ -231,7 +230,7 @@
 
 	<div class="grid gap-10 lg:grid-cols-3">
 		<Specimen label="Calendar: schedule a release">
-			<Calendar type="single" bind:value={date} class="w-fit rounded-3xl border border-border bg-card shadow-hairline" />
+			<Calendar type="single" bind:value={date} class="w-fit rounded-card border border-border bg-card" />
 		</Specimen>
 
 		<Specimen label="Carousel">
@@ -239,7 +238,7 @@
 				<Carousel.Content>
 					{#each [40, 41, 42] as release (release)}
 						<Carousel.Item>
-							<div class="glow grid aspect-[4/3] place-items-center rounded-3xl">
+							<div class="grid aspect-[4/3] place-items-center rounded-card bg-brand-soft text-brand-ink">
 								<span class="figure text-5xl">{release}</span>
 							</div>
 						</Carousel.Item>
@@ -251,12 +250,12 @@
 		</Specimen>
 
 		<Specimen label="Scroll area and separators">
-			<ScrollArea class="h-64 rounded-3xl border border-border bg-card shadow-hairline">
+			<ScrollArea class="h-64 rounded-card border border-border bg-card">
 				<div class="p-4">
 					<p class="mb-3 text-sm font-medium">Releases</p>
 					{#each releases as release, index (release)}
 						{#if index > 0}<Separator class="my-2" />{/if}
-						<p class="flex justify-between text-sm"><span>Release {release}</span><span class="tabular text-muted-foreground">gen {release}</span></p>
+						<a class="flex justify-between rounded-sm text-sm hover:underline focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none" href="#data"><span>Release {release}</span><span class="tabular text-muted-foreground">gen {release}</span></a>
 					{/each}
 				</div>
 			</ScrollArea>
@@ -265,7 +264,7 @@
 
 	<div class="grid gap-10 lg:grid-cols-2">
 		<Specimen label="Resizable: the editor and its preview">
-			<Resizable.PaneGroup direction="horizontal" class="min-h-48 rounded-3xl border border-border bg-card shadow-hairline">
+			<Resizable.PaneGroup direction="horizontal" class="min-h-48 rounded-card border border-border bg-card">
 				<Resizable.Pane defaultSize={55}><div class="grid h-full place-items-center p-6 text-sm">Editor</div></Resizable.Pane>
 				<Resizable.Handle withHandle />
 				<Resizable.Pane defaultSize={45}><div class="grid h-full place-items-center p-6 text-sm text-muted-foreground">Preview</div></Resizable.Pane>
@@ -274,7 +273,7 @@
 
 		<Specimen label="Aspect ratio">
 			<div class="max-w-sm">
-				<AspectRatio ratio={16 / 9} class="glow overflow-hidden rounded-3xl">
+				<AspectRatio ratio={16 / 9} class="overflow-hidden rounded-card bg-muted">
 					<div class="grid h-full place-items-center text-sm font-medium">16 : 9 cover</div>
 				</AspectRatio>
 			</div>

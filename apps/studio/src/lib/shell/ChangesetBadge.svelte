@@ -1,19 +1,10 @@
+<!-- A publish request's state (D-044) as its StatusBadge; `data-state` keeps the API's name. -->
 <script lang="ts">
-	import { Badge } from '@colophon/ui/ui/badge';
 	import type { ChangesetState } from '#lib/api.ts';
-	import { REQUEST_STATE } from '#lib/words.ts';
+	import { requestStatus } from '#lib/status.ts';
+	import StatusBadge from './StatusBadge.svelte';
 
-	let { state }: { state: ChangesetState } = $props();
-
-	const VARIANT = {
-		open: 'draft',
-		stale: 'attention',
-		awaiting_review: 'pending',
-		changes_requested: 'attention',
-		approved: 'live',
-		approval_expired: 'attention',
-		published: 'outline'
-	} as const;
+	let { state, testid }: { state: ChangesetState; testid?: string } = $props();
 </script>
 
-<Badge variant={VARIANT[state]} data-state={state}>{REQUEST_STATE[state]}</Badge>
+<StatusBadge state={requestStatus(state)} {testid} data-state={state} />

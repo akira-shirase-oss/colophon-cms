@@ -135,7 +135,7 @@
 			/>
 			<div class="mt-2 flex items-center justify-between gap-3">
 				<p class="text-xs text-muted-foreground">It attaches to the version on screen and can’t be edited.</p>
-				<Button type="submit" size="sm" disabled={busy || body.trim() === ''} data-testid="comment-post">Comment</Button>
+				<Button type="submit" size="sm" variant="outline" disabled={busy || body.trim() === ''} data-testid="comment-post">Comment</Button>
 			</div>
 		</form>
 	{:else}

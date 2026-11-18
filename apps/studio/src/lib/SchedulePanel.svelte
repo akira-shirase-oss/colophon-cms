@@ -128,7 +128,7 @@
 	}
 </script>
 
-<section class="rounded-xl border border-border bg-card p-4 shadow-xs" aria-labelledby="schedule-heading" data-testid="schedule-panel">
+<section class="rounded-xl border border-border bg-card p-4" aria-labelledby="schedule-heading" data-testid="schedule-panel">
 	<h2 id="schedule-heading" class="flex items-center gap-2 text-base font-semibold"><CalendarClockIcon class="size-4" aria-hidden="true" />Schedule</h2>
 
 	{#if pending}
@@ -167,7 +167,7 @@
 				<Label for="schedule-zone">Time zone</Label>
 				<select
 					id="schedule-zone"
-					class="h-9 w-full rounded-md border border-input bg-card px-3 text-sm shadow-xs outline-none focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/40"
+					class="h-9 w-full rounded-md border border-input bg-popover px-3 text-sm outline-none focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/40"
 					bind:value={zone}
 					onchange={() => (ask = null)}
 				>
@@ -193,7 +193,8 @@
 				</fieldset>
 			{/if}
 			{#if error}<p role="alert" class="text-sm text-destructive">{error}</p>{/if}
-			<Button type="submit" disabled={busy}>{ask ? 'Schedule at this moment' : 'Schedule'}</Button>
+			<!-- Secondary: on an approved request, Publish is the page's one primary. -->
+			<Button type="submit" variant="outline" disabled={busy}>{ask ? 'Schedule at this moment' : 'Schedule'}</Button>
 		</form>
 	{:else}
 		<p class="mt-2 text-sm text-muted-foreground">
