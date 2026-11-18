@@ -41,6 +41,8 @@ colophon-version = { workspace = true, features = ["stamp"] }
 
 [dev-dependencies]
 serde_json.workspace = true
+# A port that refuses connections for as long as a test needs it (tests/doctor.rs, compat.rs).
+socket2.workspace = true
 
 [lints]
 workspace = true

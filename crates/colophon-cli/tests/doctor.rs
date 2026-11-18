@@ -105,14 +105,51 @@ fn degraded_and_not_ready_exit_with_the_unavailable_code() {
     }
 }
 
+/// A loopback port where every connection is reset as soon as it is accepted, held for the rest
+/// of the run: to a client, an unreachable server — on Linux and macOS alike — and no other
+/// test's listener can be given the port. Binding a listener and dropping it freed the port,
+/// and on Linux a parallel test's canned server was often given it next (doctor reached a
+/// `NOT_READY` server instead of nothing: CI run 44209708660). A socket bound but never
+/// listening refuses at once on Linux, but macOS silently drops the connection attempt, so the
+/// request would time out instead.
+fn refusing_port() -> u16 {
+    let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
+    let port = listener.local_addr().expect("address").port();
+    thread::spawn(move || {
+        for stream in listener.incoming().flatten() {
+            // A reset, not a goodbye: the client fails at once, as against a closed port.
+            let _ = socket2::SockRef::from(&stream).set_linger(Some(std::time::Duration::ZERO));
+            drop(stream);
+        }
+    });
+    port
+}
+
+#[test]
+fn a_refusing_port_stays_taken_and_fails_every_request_at_once() {
+    // What the unreachable tests rely on, checked wherever the tests run.
+    let port = refusing_port();
+    assert!(
+        TcpListener::bind(("127.0.0.1", port)).is_err(),
+        "no other listener can be given the port"
+    );
+    let started = std::time::Instant::now();
+    let out = doctor(&[
+        "--server",
+        &format!("http://127.0.0.1:{port}"),
+        "--timeout-ms",
+        "5000",
+    ]);
+    assert_eq!(out.status.code(), Some(5));
+    assert!(
+        started.elapsed() < std::time::Duration::from_secs(4),
+        "failed at once, not by timing out"
+    );
+}
+
 #[test]
 fn an_unreachable_server_exits_5_and_says_so() {
-    // Bind and drop: nothing listens on the port any more.
-    let port = TcpListener::bind("127.0.0.1:0")
-        .expect("bind")
-        .local_addr()
-        .expect("address")
-        .port();
+    let port = refusing_port();
     let server = format!("http://127.0.0.1:{port}");
     let out = doctor(&["--server", &server, "--json", "--timeout-ms", "2000"]);
     assert_eq!(out.status.code(), Some(5));

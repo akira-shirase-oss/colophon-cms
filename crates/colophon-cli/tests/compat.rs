@@ -264,13 +264,29 @@ fn signed_in_commands_check_too_and_never_send_the_token_to_version() {
     );
 }
 
+/// A loopback port where every connection is reset as soon as it is accepted, held for the rest
+/// of the run: to a client, an unreachable server — on Linux and macOS alike — and no other
+/// test's listener can be given the port. Binding a listener and dropping it freed the port,
+/// and on Linux a parallel test's canned server was often given it next (doctor reached a
+/// `NOT_READY` server instead of nothing: CI run 44209708660). A socket bound but never
+/// listening refuses at once on Linux, but macOS silently drops the connection attempt, so the
+/// request would time out instead.
+fn refusing_port() -> u16 {
+    let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
+    let port = listener.local_addr().expect("address").port();
+    thread::spawn(move || {
+        for stream in listener.incoming().flatten() {
+            // A reset, not a goodbye: the client fails at once, as against a closed port.
+            let _ = socket2::SockRef::from(&stream).set_linger(Some(std::time::Duration::ZERO));
+            drop(stream);
+        }
+    });
+    port
+}
+
 #[test]
 fn an_unreachable_server_is_a_transient_failure() {
-    let port = TcpListener::bind("127.0.0.1:0")
-        .expect("bind")
-        .local_addr()
-        .expect("address")
-        .port();
+    let port = refusing_port();
     let out = colophon(
         &config_dir("unreachable"),
         &["login", "--server", &format!("http://127.0.0.1:{port}")],
