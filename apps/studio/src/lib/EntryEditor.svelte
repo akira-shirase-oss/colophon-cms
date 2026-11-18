@@ -182,14 +182,21 @@
 	// acknowledged, which the pane tells the site about — never a keystroke.
 	let previewOpen = $state(false);
 	let acknowledged = $state.raw<{ revision: string; at: number } | null>(null);
+	// The version this tab's form is editing: the one it opened, then each it saved. When the live read brings
+	// a newer one from someone else, the page says so at once (the title is the form, so it keeps the words
+	// being edited): the next save then asks which version to keep.
+	// svelte-ignore state_referenced_locally
+	let editing = $state(initial.draft.revision.id);
 	// svelte-ignore state_referenced_locally
 	const saver = new Saver(project, collection, entry, definition, initial, (loaded) => {
 		latest = loaded.draft;
+		editing = loaded.draft.revision.id;
 		acknowledged = { revision: loaded.draft.revision.id, at: Date.now() };
 		queryClient.setQueryData(['draft', project, collection, entry], loaded);
 		void queryClient.invalidateQueries({ queryKey: ['entries', project, collection] });
 		void queryClient.invalidateQueries({ queryKey: ['history', project, collection, entry] });
 	});
+	const savedElsewhere = $derived(latest.revision.id !== editing && saver.conflict === null);
 	// What the role may do here, and the newest release this page has seen: publishing goes on top
 	// of that one (D-045).
 	const mine = createQuery(() => projectQuery(project));
@@ -303,6 +310,7 @@
 
 	function useTheirs() {
 		show(saver.useTheirs());
+		editing = latest.revision.id;
 		void queryClient.invalidateQueries({ queryKey: ['history', project, collection, entry] });
 	}
 
@@ -462,7 +470,7 @@
 		if (target === null) return;
 		const toggle = target.querySelector<HTMLButtonElement>('button[aria-expanded]');
 		if (toggle?.getAttribute('aria-expanded') === 'false') toggle.click();
-		target.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+		target.scrollIntoView({ block: 'nearest', behavior: smoothScroll() });
 		toggle?.focus({ preventScroll: true });
 	}
 
@@ -604,11 +612,13 @@
 	let detailsOpen = $state(false);
 	let technicalOpen = $state(false);
 	let detailsSummary = $state<HTMLElement | null>(null);
+	/** Smooth only for people who haven't asked their system for less motion. */
+	const smoothScroll = (): ScrollBehavior => (matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth');
 	async function showTechnical() {
 		detailsOpen = true;
 		technicalOpen = true;
 		await tick();
-		detailsSummary?.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+		detailsSummary?.scrollIntoView({ block: 'nearest', behavior: smoothScroll() });
 		detailsSummary?.focus({ preventScroll: true });
 	}
 
@@ -630,6 +640,11 @@
 				return 'Not saved';
 		}
 	});
+	/** The reason a save didn't go, said beside the status word: a refusal's or a hold's message, or how long a
+	 *  busy server asks to wait. Nothing while saving, saved or merely unsaved. */
+	const saveReason = $derived(
+		saver.status === 'refused' || saver.status === 'held' || (saver.status === 'retrying' && saver.busy) ? (saver.message ?? '') : ''
+	);
 	/** Whether the browser says it has no network: "Offline" is then the plain truth. */
 	let online = $state(typeof navigator === 'undefined' ? true : navigator.onLine);
 	/** What went wrong with saving, in full, for the banner above the fields; null when nothing did. */
@@ -719,6 +734,13 @@
 			/>
 		{:else}
 			<h1 class="page-title mb-6" data-user-content>{latest.revision.title || 'Untitled'}</h1>
+		{/if}
+
+		{#if savedElsewhere}
+			<p role="status" class="mb-6 rounded-lg bg-pending-soft px-4 py-3 text-sm text-pending-ink" data-testid="newer-version">
+				A newer version was saved {clock(latest.updated_at)}: <span class="font-medium" data-user-content>“{latest.revision.title || 'Untitled'}”</span>. Your words here are kept;
+				your next save asks which version to keep.
+			</p>
 		{/if}
 
 		{#if unopenable}
@@ -978,8 +1000,13 @@
 						{:else}
 							<CloudAlertIcon class="size-4 shrink-0 text-destructive" aria-hidden="true" />
 						{/if}
-						<span class={saver.status === 'conflict' || saver.status === 'refused' || saver.status === 'signed-out' || saver.status === 'held' ? 'text-destructive' : 'text-muted-foreground'}
-							>{saveWord}{#if saver.status === 'saved'}<span class="ml-1 tabular max-xl:hidden" title={new Date(latest.updated_at).toLocaleString()}>{clock(latest.updated_at)}</span>{/if}</span
+						<!-- Why it didn't save is in the status itself, not only in the banner above the fields: a refusal
+						     names its field and reason, a busy server says how long it waits. Cut to one line here; the
+						     banner and the hover say it in full. -->
+						<span
+							class="min-w-0 truncate {saver.status === 'conflict' || saver.status === 'refused' || saver.status === 'signed-out' || saver.status === 'held' ? 'text-destructive' : 'text-muted-foreground'}"
+							title={saveReason || undefined}
+							>{saveWord}{#if saveReason}<span class="text-muted-foreground" data-testid="save-reason">: {saveReason}</span>{/if}{#if saver.status === 'saved'}<span class="ml-1 tabular max-xl:hidden" title={new Date(latest.updated_at).toLocaleString()}>{clock(latest.updated_at)}</span>{/if}</span
 						>
 						{#if offersSave}
 							<Button
@@ -1071,7 +1098,9 @@
 				>
 					<ChevronRightIcon class="size-4 transition-transform group-open/details:rotate-90" aria-hidden="true" />Details
 				</summary>
-				<div class="mt-3 grid gap-3">
+				<!-- One column that may shrink: its long one-line values (the public address, ids) truncate
+				     instead of widening the page on a phone. -->
+				<div class="mt-3 grid grid-cols-[minmax(0,1fr)] gap-3">
 					<dl class="grid grid-cols-[auto_minmax(0,1fr)] gap-x-3 gap-y-1.5">
 						<dt class="text-muted-foreground">Created</dt>
 						<dd class="tabular" title={new Date(latest.created_at).toLocaleString()}>{clock(latest.created_at)}</dd>

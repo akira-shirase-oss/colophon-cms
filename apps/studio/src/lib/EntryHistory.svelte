@@ -146,6 +146,7 @@
 		<li
 			class="row relative rounded-lg py-3 pr-2 pl-4 transition-colors hover:bg-muted/60 focus-within:bg-muted/60"
 			data-testid="history-row"
+			data-saves={sitting.revisions.length}
 			data-live={live || undefined}
 		>
 			<!-- What readers have: the live rule on the left, as on the status card. -->
