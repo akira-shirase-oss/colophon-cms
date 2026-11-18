@@ -1198,7 +1198,15 @@ pub fn explain(tool: Tool, plan: &Plan, error: &ApiError) -> Outcome {
             };
             Outcome::failure(text, refusal_json(refusal))
         }
-        ApiError::TimedOut(_) | ApiError::Unreachable(_) if tool.writes() => {
+        // A write whose answer never came, or came but couldn't be used (too large, or not the
+        // JSON the API documents), may have happened: the server may have committed it before
+        // answering. Only a refusal, or a request that was never sent, says nothing changed.
+        ApiError::TimedOut(_)
+        | ApiError::Unreachable(_)
+        | ApiError::TooLarge { .. }
+        | ApiError::BadAnswer
+            if tool.writes() =>
+        {
             let retry = match &plan.key {
                 Some(key) => format!(
                     "Calling {} again with idempotency_key {key} is safe: it can't happen twice.",
@@ -1209,10 +1217,12 @@ pub fn explain(tool: Tool, plan: &Plan, error: &ApiError) -> Outcome {
                     tool.name()
                 ),
             };
+            let what = match error {
+                ApiError::TooLarge { .. } | ApiError::BadAnswer => "Colophon's answer couldn't be read",
+                _ => "Colophon didn't answer",
+            };
             Outcome::failure(
-                format!(
-                    "Colophon didn't answer ({error}), so this may or may not have happened. {retry}"
-                ),
+                format!("{what} ({error}), so this may or may not have happened. {retry}"),
                 json!({"code": "outcome_unknown", "message": error.to_string(), "idempotency_key": plan.key}),
             )
         }
