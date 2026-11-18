@@ -432,6 +432,21 @@ mod resolve_tests {
         assert_eq!(resolved(&server, &first.1).await, Ok(first.0.clone()), "the first, by URL name");
     }
 
+    /// A project renamed after it was made (its name no longer contains its URL name) is still
+    /// found by its URL name among more than 1,000: the search matches the URL name, not only the
+    /// name.
+    #[tokio::test]
+    async fn a_renamed_project_is_found_by_its_url_name() {
+        let mut server = Server::with(1500);
+        let renamed = server.projects.last().cloned().expect("invariant: 1,500 projects");
+        let (id, slug, _) = renamed.clone();
+        server.projects.retain(|project| project.0 != id);
+        server.projects.push((id.clone(), slug.clone(), "Zebra Quarterly".to_owned()));
+        server.projects.sort_by(|a, b| (&a.2, &a.0).cmp(&(&b.2, &b.0)));
+        assert!(!"zebra quarterly".contains(&slug), "invariant: the name no longer contains the URL name");
+        assert_eq!(resolved(&server, &slug).await, Ok(id), "by its old URL name, after the rename");
+    }
+
     /// A project the caller isn't in, or a name that can't be a URL name, is refused the same way.
     #[tokio::test]
     async fn a_project_the_caller_isnt_in_is_refused() {
