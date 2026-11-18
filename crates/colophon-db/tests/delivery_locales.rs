@@ -1,4 +1,4 @@
-//! Locales on the published projection against real PostgreSQL (D-180, D-181): revisions pin
+//! Locales on the published projection against real PostgreSQL (D-181, D-182): revisions pin
 //! the tag their entry had, releases copy it and the translation group into publications, the
 //! resolving read gives one row per group through a chain — inside the audience's own row
 //! security, so a member-only translation is never an anonymous reader's fallback — and the

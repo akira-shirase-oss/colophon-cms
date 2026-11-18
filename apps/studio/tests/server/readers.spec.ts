@@ -70,7 +70,7 @@ test('in one language, it says which translation readers get and when that is a 
 	await signIn(page);
 	const project = await newProject(page);
 	// English is the default; French readers get English where there is no French; German
-	// readers get German or nothing (D-181).
+	// readers get German or nothing (D-182).
 	const set = await api(
 		page,
 		'PUT',

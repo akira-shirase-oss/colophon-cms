@@ -846,10 +846,10 @@ async fn malformed_operations_are_refused_at_plan_time() {
     }
 }
 
-/// A content-migration run keeps a gated entry gated (D-182). The run writes its revision in
+/// A content-migration run keeps a gated entry gated (D-183). The run writes its revision in
 /// SQL (0041's `colophon_migration_apply_item`), which named no `visibility`, so every migrated
 /// draft became `public` and the next publish put a member-only entry in front of anonymous
-/// readers. Failed before migration 0069: the anonymous read answered 200.
+/// readers. Failed before migration 0070: the anonymous read answered 200.
 #[tokio::test]
 #[ignore = "needs the stack and scripts/migrate.sh"]
 async fn a_migration_run_keeps_a_gated_entry_gated() {

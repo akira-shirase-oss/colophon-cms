@@ -659,7 +659,7 @@ pub(crate) fn overlay_row(row: &sqlx::postgres::PgRow) -> Result<OverlayRow, DbE
             visibility: row.try_get("visibility").map_err(DbError::Query)?,
             media: row.try_get("media").map_err(DbError::Query)?,
             // A draft's language and group are its revision's and its entry's, as a release
-            // would copy them (D-180).
+            // would copy them (D-181).
             locale: row.try_get("locale").map_err(DbError::Query)?,
             group_key: row.try_get("group_key").map_err(DbError::Query)?,
         },

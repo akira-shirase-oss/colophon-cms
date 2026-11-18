@@ -251,7 +251,7 @@ jobs:
           RATE=500 P99_MS=200 scripts/load.sh projects steady
           RATE=400 P99_MS=200 scripts/load.sh changesets steady
           RATE=1500 P99_MS=200 scripts/load.sh delivery steady
-          # The same reads in one language through fallbacks, 20 languages listed (D-181): a
+          # The same reads in one language through fallbacks, 20 languages listed (D-182): a
           # smoke on the laptop did 2,923 a second back to back at p99 16 ms; a third of that.
           RATE=1000 P99_MS=200 scripts/load.sh delivery-locales steady
           # Draft preview reads (D-172): never cached, each re-checked as its issuer — the

@@ -234,7 +234,7 @@ expired-approval scheduling).
 
 - Localization: locale variants with their own slugs, drafts and publication history (spec §06), the locale switcher,
   fallbacks as explicit policy. Variants and groups are built (D-087, migration 0034). Delivery in one language is
-  built (D-180, D-181, branch `gap/locales`, migration 0068): revisions pin their tag and releases copy it with the
+  built (D-181, D-182, branch `gap/locales`, migration 0069): revisions pin their tag and releases copy it with the
   translation group; each environment may list its languages with a default and ordered fallbacks
   (`GET`/`PUT {P}/locales`); `/content/v1` takes `?locale=` and `?fallback=` on lists, entry reads and queries,
   resolves one row per group inside the reader's own row security, labels what it served, lists `alternates`,

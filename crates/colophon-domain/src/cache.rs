@@ -9,7 +9,7 @@
 //! an entry under one of these keys can't go stale; a new release is a new generation and so new
 //! keys.
 //!
-//! Locales (D-181): a request with `?locale=` resolves through a chain of tags — the requested
+//! Locales (D-182): a request with `?locale=` resolves through a chain of tags — the requested
 //! one, then its fallbacks — and its key names that chain's digest, so `fr` and `fr` falling back
 //! to `en` are two answers. Every key also names the environment's locale policy version: which
 //! tag an untagged entry reads as, and which fallbacks a tag has, are the policy's, so a changed
@@ -27,7 +27,7 @@ use sha2::{Digest, Sha256};
 
 /// Changes whenever the shape of a delivery answer does, so an entry cached for the old shape is
 /// never served as the new one. 2: rows carry the `media` their release recorded (D-178).
-/// 3: rows name their `locale`, and entry reads their `alternates` (D-181).
+/// 3: rows name their `locale`, and entry reads their `alternates` (D-182).
 pub const RENDER_VERSION: u32 = 3;
 
 /// The first 8 bytes of SHA-256 of `origin`, as a number: what [`Scope::media`] names, so an

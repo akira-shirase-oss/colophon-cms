@@ -31,7 +31,7 @@ pub struct Environment {
     pub generation: i64,
     /// The generation of its latest release that unpublished something (0 if none has).
     pub last_unpublish: i64,
-    /// Its locale policy version: bumped by every change to its languages (D-180).
+    /// Its locale policy version: bumped by every change to its languages (D-181).
     pub locale_policy: i64,
     /// The tags it lists, in display order (at most 50); empty when it lists none, and then any
     /// well-formed tag may be asked for.
@@ -70,14 +70,14 @@ pub struct Published {
     /// The upload versions its release recorded (D-178), as JSON: `{asset id: {sha, type,
     /// width, height, renditions}}` — `{}` when it names none.
     pub media: String,
-    /// The tag its revision was written in, `None` for the default language (D-180).
+    /// The tag its revision was written in, `None` for the default language (D-181).
     pub locale: Option<String>,
     /// Its translation group: the entry's `localization_id`, or its own id when it has none.
     pub group_key: Uuid,
 }
 
 /// A published member of a translation group, without its content: what resolution and an
-/// entry's `alternates` need (D-181).
+/// entry's `alternates` need (D-182).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Sibling {
     /// The entry.
@@ -88,7 +88,7 @@ pub struct Sibling {
     pub slug: Option<String>,
 }
 
-/// How a `?locale=` read picks rows (D-181).
+/// How a `?locale=` read picks rows (D-182).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Resolution {
     /// The tags to try, best first: the requested tag, then its fallbacks — as the
@@ -100,7 +100,7 @@ pub struct Resolution {
 }
 
 /// The environment `slug` of `project` with its latest generation, in one statement: the delivery
-/// cache asks this on every request (`delivery_environment`, migrations 0011, 0012 and 0068,
+/// cache asks this on every request (`delivery_environment`, migrations 0011, 0012 and 0069,
 /// which runs as `colophon_delivery` in the project's context and returns nothing else).
 pub async fn environment(
     pool: &PgPool,
@@ -110,7 +110,7 @@ pub async fn environment(
     environment_in(pool, project, slug, None).await
 }
 
-/// [`environment`], also answering the locale policy for `requested` (D-181): the tag as the
+/// [`environment`], also answering the locale policy for `requested` (D-182): the tag as the
 /// list spells it and its fallback chain — still one statement.
 pub async fn environment_in(
     pool: &PgPool,
@@ -341,7 +341,7 @@ impl DeliveryTransaction {
         .map_err(DbError::from_query)
     }
 
-    /// A page of the collection as one row per translation group, at `generation` (D-181):
+    /// A page of the collection as one row per translation group, at `generation` (D-182):
     /// each group's best published member for `resolution` — the earliest tag in its chain
     /// that the group publishes, an untagged member counting as the default — in group order,
     /// newest first, after the group `before` when given; at most `limit` (capped like

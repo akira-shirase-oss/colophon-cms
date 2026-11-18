@@ -1,4 +1,4 @@
-//! Languages end to end (D-180, D-181): the real binary, a real sign-in. `GET|PUT {P}/locales`
+//! Languages end to end (D-181, D-182): the real binary, a real sign-in. `GET|PUT {P}/locales`
 //! replaces an environment's language list under its version and guards what it drops; entry
 //! writes keep to the list; `/content/v1` answers in one language with `?locale=` and
 //! `?fallback=` — one row per translation group, labelled, paged by group, keyed apart in the

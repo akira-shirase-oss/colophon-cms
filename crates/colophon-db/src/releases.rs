@@ -206,7 +206,7 @@ pub async fn commit(
          JOIN revisions r ON r.project_id = i.project_id AND r.environment_id = i.environment_id
                          AND r.id = i.revision_id
          -- The locale is the revision's, pinned when it was written; the translation group is
-         -- the entry's, which never changes once set (D-180).
+         -- the entry's, which never changes once set (D-181).
          LEFT JOIN entries e ON e.project_id = i.project_id AND e.environment_id = i.environment_id
                             AND e.id = i.entry_id
          WHERE i.project_id = $1 AND i.environment_id = $2 AND i.changeset_id = $3 AND i.kind = 'publish'

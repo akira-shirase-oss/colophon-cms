@@ -30,7 +30,7 @@
 //! it out and a read of it is 410 `gone`, uncached. Cache keys name the environment's latest
 //! unpublish, so answers cached before it are never served again.
 //!
-//! Locales (D-180, D-181): every row names its `locale` — its own tag, or the default language's
+//! Locales (D-181, D-182): every row names its `locale` — its own tag, or the default language's
 //! for an untagged entry — and an entry read lists its published translations as `alternates`.
 //! `?locale=` (with `?fallback=policy|none|<tags>`) answers in one language: lists and queries
 //! give one row per translation group, the best published member through the chain, labelled
@@ -78,7 +78,7 @@ pub(crate) const GENERATION: HeaderName = HeaderName::from_static("colophon-gene
 pub(crate) const CACHE: HeaderName = HeaderName::from_static("colophon-cache");
 /// The tags a CDN purges by (Cloudflare's header name).
 pub(crate) const CACHE_TAG: HeaderName = HeaderName::from_static("cache-tag");
-/// The response header naming the locale policy version an answer resolved with (D-181).
+/// The response header naming the locale policy version an answer resolved with (D-182).
 pub(crate) const LOCALE_POLICY: HeaderName = HeaderName::from_static("colophon-locale-policy");
 
 /// Module 06: live public queries may be shared for 30 seconds; browsers revalidate every time.
@@ -117,7 +117,7 @@ pub(crate) struct ReadQuery {
 }
 
 /// The `?generation=`, `?cursor=`, `?locale=` and `?fallback=` a delivery query takes (DX.4,
-/// D-181): the release pin, the page boundary and the language travel outside the document,
+/// D-182): the release pin, the page boundary and the language travel outside the document,
 /// which the validator holds to its own keys — `limit` among them, the document's own, not a
 /// parameter's.
 #[derive(Deserialize)]
@@ -128,7 +128,7 @@ pub(crate) struct QueryParams {
     fallback: Option<String>,
 }
 
-/// A `?locale=` read, checked against the environment's policy (D-181).
+/// A `?locale=` read, checked against the environment's policy (D-182).
 struct Asked {
     /// The requested tag, as the environment's list spells it (or as asked, without a list).
     tag: String,
@@ -258,7 +258,7 @@ fn with_locale(
     response
 }
 
-/// How a `?locale=` row was resolved (D-181).
+/// How a `?locale=` row was resolved (D-182).
 #[derive(Serialize)]
 struct Localization {
     /// The tag asked for.
@@ -269,7 +269,7 @@ struct Localization {
     fallback: bool,
 }
 
-/// A published translation of an entry (D-181): what a site needs for `hreflang` links.
+/// A published translation of an entry (D-182): what a site needs for `hreflang` links.
 #[derive(Serialize)]
 struct Alternate {
     id: Uuid,
@@ -296,7 +296,7 @@ pub(crate) struct PublishedView {
     /// Who may read it (D-137): a site that caches pages needs to know which answers are
     /// member-only even before it signs anyone in.
     visibility: String,
-    /// Its language (D-181): its own tag, or the default language's for an untagged entry;
+    /// Its language (D-182): its own tag, or the default language's for an untagged entry;
     /// `null` when it has none and the environment lists no default.
     locale: Option<String>,
     /// On a `?locale=` read: what was asked for, what was served, and whether it fell back.
@@ -473,7 +473,7 @@ enum Read {
     Found(Answer),
     Missing,
     Gone,
-    /// Published, but not in the language asked for or its fallbacks: in these (D-181).
+    /// Published, but not in the language asked for or its fallbacks: in these (D-182).
     NotInLocale(Vec<String>),
 }
 
@@ -521,7 +521,7 @@ fn cursor(path: &CollectionPath, project: Uuid, generation: i64, last: Uuid) -> 
     ))
 }
 
-/// A `?locale=` list's cursor (D-181): `d2:` adds the chain's digest, so a page of one
+/// A `?locale=` list's cursor (D-182): `d2:` adds the chain's digest, so a page of one
 /// language never continues another's, and its position is the last row's translation group.
 fn locale_cursor(
     path: &CollectionPath,
@@ -873,7 +873,7 @@ pub(crate) async fn list(
 }
 
 /// `GET /content/v1/{project}/{environment}/{collection}/{entry}`. With `?locale=`, the entry's
-/// best published translation through the chain (D-181): `id` is the translation's,
+/// best published translation through the chain (D-182): `id` is the translation's,
 /// `requested_id` the one asked for; nothing in the chain is 404 `not_in_locale`, naming the
 /// languages that are published. Every answer lists the other published translations as
 /// `alternates`.

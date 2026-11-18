@@ -601,7 +601,7 @@
             "type": "string"
           },
           "locale": {
-            "description": "the pinned revision's language (D-180); absent for the default",
+            "description": "the pinned revision's language (D-181); absent for the default",
             "type": "string"
           },
           "published_revision_id": {
@@ -3185,7 +3185,7 @@
             "type": "string"
           },
           "locale": {
-            "description": "its language: its own tag, or the default language's for an untagged entry (D-181)",
+            "description": "its language: its own tag, or the default language's for an untagged entry (D-182)",
             "type": [
               "string",
               "null"
@@ -22260,7 +22260,7 @@
             }
           },
           {
-            "description": "answer in one language (D-181): one row per translation group, the best published member through the fallback chain; a listed tag when the environment lists languages",
+            "description": "answer in one language (D-182): one row per translation group, the best published member through the fallback chain; a listed tag when the environment lists languages",
             "in": "query",
             "name": "locale",
             "required": false,
@@ -22449,7 +22449,7 @@
             }
           },
           {
-            "description": "answer in one language (D-181): one row per translation group, the best published member through the fallback chain; a listed tag when the environment lists languages",
+            "description": "answer in one language (D-182): one row per translation group, the best published member through the fallback chain; a listed tag when the environment lists languages",
             "in": "query",
             "name": "locale",
             "required": false,
@@ -22620,7 +22620,7 @@
             }
           },
           {
-            "description": "answer in one language (D-181): one row per translation group, the best published member through the fallback chain; a listed tag when the environment lists languages",
+            "description": "answer in one language (D-182): one row per translation group, the best published member through the fallback chain; a listed tag when the environment lists languages",
             "in": "query",
             "name": "locale",
             "required": false,

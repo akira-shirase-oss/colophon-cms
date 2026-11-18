@@ -77,7 +77,7 @@ pub struct Item {
     /// Who created the entry: for roles that may change only their own (D-058). `None` once the
     /// entry is deleted (D-080), which only a published changeset can still show.
     pub created_by: Option<Uuid>,
-    /// The language the pinned revision is written in (D-180), `None` for the default.
+    /// The language the pinned revision is written in (D-181), `None` for the default.
     pub locale: Option<String>,
 }
 

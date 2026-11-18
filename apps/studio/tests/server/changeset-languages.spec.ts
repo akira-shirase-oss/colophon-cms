@@ -1,4 +1,4 @@
-// A publish request says which language each entry in it is written in (D-180): the language
+// A publish request says which language each entry in it is written in (D-181): the language
 // its pinned revision carries, by the name the project's list gives it — so a reviewer sees which
 // readers each change reaches. An entry in the default language says nothing extra.
 

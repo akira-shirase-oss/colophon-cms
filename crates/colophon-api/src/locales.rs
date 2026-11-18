@@ -1,4 +1,4 @@
-//! An environment's languages (D-180): `GET {P}/locales` and `PUT {P}/locales`. The list is
+//! An environment's languages (D-181): `GET {P}/locales` and `PUT {P}/locales`. The list is
 //! replaced whole, in the body's order, under `If-Match` with its policy version's `ETag` and
 //! an `Idempotency-Key`, by a role with `schema.change` — the same discipline as the review
 //! stages (D-104) — and every change is audited. Delivery names the policy version in its cache
@@ -144,7 +144,7 @@ pub(crate) async fn list(
     Ok(respond(StatusCode::OK, text, policy.version, false))
 }
 
-/// `PUT {P}/locales`: replaces the whole list in the body's order (D-180). Needs `If-Match`
+/// `PUT {P}/locales`: replaces the whole list in the body's order (D-181). Needs `If-Match`
 /// with the list's `ETag`, an `Idempotency-Key` and `schema.change`. The list must have one
 /// default (when it has any language) and fallbacks drawn from it, and a non-empty list must
 /// cover every tag live entries carry (`locale_in_use`, naming them). Audited

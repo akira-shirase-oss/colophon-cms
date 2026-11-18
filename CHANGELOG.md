@@ -21,6 +21,12 @@ through `--version` and `GET /version`.
   until the entries using it are published again; `current_url` follows the newest bytes.
   `RENDER_VERSION` is 2, so cached delivery answers are refetched once.
 
+### Performance
+
+- Watched writes no longer take PostgreSQL's NOTIFY lock (D-180): their live-list hints are
+  queued in an unlogged table and sent by a pump every 100 ms, so concurrent saves commit in
+  groups again instead of one at a time. A live list may hear a change up to 100 ms later.
+
 ### Added
 
 - **The TypeScript SDK is ready for npm (D-170):** `@colophon-cms/sdk` gains
@@ -70,7 +76,7 @@ through `--version` and `GET /version`.
 - The media library pages past 100 uploads (`cursor`, `next_cursor`), searches (`q`), filters
   by `state` and `tag`, and keeps alt text, title, credit and tags via
   `PATCH …/assets/{asset}` under `If-Match` (D-179).
-- Languages in delivery (D-180, D-181): each environment may list its languages with a
+- Languages in delivery (D-181, D-182): each environment may list its languages with a
   default and ordered fallbacks (`GET`/`PUT {P}/locales`), and `/content/v1` lists, entry
   reads and queries take `?locale=` and `?fallback=`, answering one row per translation
   group with what was served labelled, `alternates` on entry reads, and the cache keyed by
@@ -86,7 +92,7 @@ closes and carries a test that failed without it.
 - A content-migration run no longer un-gates an entry: the revision it wrote took the default
   `public` visibility, so publishing a migrated member-only entry served it to anonymous
   readers. The run's revision now keeps the gate of the draft it replaces, and revisions and
-  publications runs already wrote are corrected (D-182, migration 0069).
+  publications runs already wrote are corrected (D-183, migration 0070).
 - Magic links land only on an origin the project lists, and spending one retires its
   siblings (D-148); requests are bounded per client address first, then per recipient with
   an escalating cooldown, then per project (D-153, D-161).
@@ -138,7 +144,7 @@ closes and carries a test that failed without it.
   under the old shape are not served. Without `?locale=` every language still comes back.
   Once an environment lists languages, entry writes with an unlisted tag are refused
   (`locale_not_configured`). The database function `delivery_environment` takes a third
-  argument (migration 0068).
+  argument (migration 0069).
 - **Magic links stop until origins are listed:** `PUT {P}/audience/origins` must name each
   site a link may land on; until then a request is `422 return_to_not_allowed` (D-148).
 - **A database on another machine needs `sslmode=verify-full`:** the server and the admin
