@@ -131,10 +131,12 @@ integration_plan() {
       echo "error: this stack isn't this run's own (D-187): set COLOPHON_TEST_DATABASE to a database of your own (not colophon), or COLOPHON_STACK_OWNER=1 if the stack is yours" >&2
       return 2
     fi
-    echo "# CI only on a shared stack (D-187): scripts/stack.sh check; tests ${STOPS_SERVICES[*]}; smokes ${PAUSES_SERVICES[*]}"
+    echo "# CI only on a shared stack (D-187): scripts/stack.sh check; scripts/sweep-test-databases.sh; tests ${STOPS_SERVICES[*]}; smokes ${PAUSES_SERVICES[*]}"
     for test in "${STOPS_SERVICES[@]}"; do skips+=" --skip $test"; done
   else
     echo "scripts/stack.sh check"
+    # Leftover colophon_test_*/colophon_setup_* databases from runs that were killed (D-195).
+    echo "scripts/sweep-test-databases.sh"
   fi
   # A fresh database for everything below, as CI has. Every run adds projects and revisions, and a
   # database that keeps them grows until saves slow down (5 GB on 2026-10-27: entries p99 52 ms
