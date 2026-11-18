@@ -845,3 +845,79 @@ async fn malformed_operations_are_refused_at_plan_time() {
         );
     }
 }
+
+/// A content-migration run keeps a gated entry gated (D-183). The run writes its revision in
+/// SQL (0041's `colophon_migration_apply_item`), which named no `visibility`, so every migrated
+/// draft became `public` and the next publish put a member-only entry in front of anonymous
+/// readers. Failed before migration 0070: the anonymous read answered 200.
+#[tokio::test]
+#[ignore = "needs the stack and scripts/migrate.sh"]
+async fn a_migration_run_keeps_a_gated_entry_gated() {
+    let _server = Server::start_with(&FAST).await;
+    let owner = sign_in("dev-owner").await;
+    let project = project(&owner).await;
+    let role = call(
+        &owner,
+        Method::POST,
+        &format!("/api/v1/projects/{project}/audience/roles"),
+        Some(&json!({"name": "member", "self_assign": true})),
+        &[],
+    )
+    .await
+    .expect("request");
+    assert_eq!(role.status, StatusCode::CREATED, "{}", role.body);
+    let created = call(
+        &owner,
+        Method::POST,
+        &format!("{}?visibility=role:member", entries(&project)),
+        Some(&article("Members only", "for members")),
+        &[("idempotency-key", &key())],
+    )
+    .await
+    .expect("request");
+    assert_eq!(created.status, StatusCode::CREATED, "{}", created.body);
+    let entry = created.body["data"]["id"].as_str().expect("id").to_owned();
+
+    let (definition, _) = current_type(&owner, &project).await;
+    let planned = plan_ops(
+        &owner,
+        &project,
+        &with_required_subtitle(&definition),
+        &json!([{"op": "fill", "path": "subtitle", "value": "the short version"}]),
+    )
+    .await;
+    assert_eq!(planned.status, StatusCode::CREATED, "{}", planned.body);
+    let path = format!(
+        "{}/{}",
+        migrations(&project),
+        planned.body["data"]["id"].as_str().expect("id")
+    );
+    apply_plan(
+        &owner,
+        &path,
+        planned.body["data"]["hash"].as_str().expect("hash"),
+    )
+    .await;
+    assert_eq!(settled(&owner, &path).await["state"], "done");
+
+    // Published, the migrated revision keeps its gate: anonymous readers get nothing.
+    common::release(
+        &owner,
+        &project,
+        &json!({"title": "Out", "entries": [entry]}),
+    )
+    .await;
+    let anonymous = common::app()
+        .get(format!(
+            "{}/content/v1/{project}/production/articles/{entry}",
+            common::ORIGIN
+        ))
+        .send()
+        .await
+        .expect("request");
+    assert_eq!(
+        anonymous.status(),
+        StatusCode::NOT_FOUND,
+        "a member-only entry reached an anonymous reader after a migration run"
+    );
+}
