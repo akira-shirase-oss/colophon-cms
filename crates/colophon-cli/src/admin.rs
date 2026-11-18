@@ -482,7 +482,11 @@ fn s3_settings(lookup: impl Fn(&str) -> Option<String>) -> Result<S3Settings, St
             }
             true
         }
-        other => return Err(format!("COLOPHON_S3_ENDPOINT: unsupported scheme {other:?}")),
+        other => {
+            return Err(format!(
+                "COLOPHON_S3_ENDPOINT: unsupported scheme {other:?}"
+            ));
+        }
     };
     let secret_key = match (
         lookup("COLOPHON_S3_SECRET_KEY"),
@@ -1013,15 +1017,27 @@ mod s3_settings_tests {
     /// Plain HTTP only to a loopback address, as the server allows (hardening #6).
     #[test]
     fn plain_http_is_refused_off_loopback() {
-        for endpoint in ["http://minio.internal:9000", "http://10.0.0.5:3900", "http://s3.example.com"] {
+        for endpoint in [
+            "http://minio.internal:9000",
+            "http://10.0.0.5:3900",
+            "http://s3.example.com",
+        ] {
             let error = s3_settings(lookup(&with_endpoint(endpoint))).expect_err(endpoint);
-            assert!(error.contains("only for a loopback address"), "{endpoint}: {error}");
+            assert!(
+                error.contains("only for a loopback address"),
+                "{endpoint}: {error}"
+            );
         }
-        for endpoint in ["http://127.0.0.1:3900", "http://localhost:3900", "http://[::1]:3900"] {
+        for endpoint in [
+            "http://127.0.0.1:3900",
+            "http://localhost:3900",
+            "http://[::1]:3900",
+        ] {
             let settings = s3_settings(lookup(&with_endpoint(endpoint))).expect(endpoint);
             assert!(settings.allow_http, "{endpoint}");
         }
-        let settings = s3_settings(lookup(&with_endpoint("https://s3.example.com"))).expect("https");
+        let settings =
+            s3_settings(lookup(&with_endpoint("https://s3.example.com"))).expect("https");
         assert!(!settings.allow_http);
         let error = s3_settings(lookup(&with_endpoint("ftp://s3.example.com"))).expect_err("ftp");
         assert!(error.contains("unsupported scheme"), "{error}");
@@ -1045,7 +1061,10 @@ mod s3_settings_tests {
         pairs.push(("COLOPHON_S3_SECRET_KEY", "and-the-variable"));
         let error = s3_settings(lookup(&pairs)).expect_err("both set");
         assert!(error.contains("both set"), "{error}");
-        assert!(!error.contains("from-the-file") && !error.contains("and-the-variable"), "{error}");
+        assert!(
+            !error.contains("from-the-file") && !error.contains("and-the-variable"),
+            "{error}"
+        );
 
         std::fs::write(&file, "\n").expect("invariant: the temp dir is writable");
         pairs.pop();

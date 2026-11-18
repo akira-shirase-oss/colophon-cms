@@ -1218,7 +1218,9 @@ pub fn explain(tool: Tool, plan: &Plan, error: &ApiError) -> Outcome {
                 ),
             };
             let what = match error {
-                ApiError::TooLarge { .. } | ApiError::BadAnswer => "Colophon's answer couldn't be read",
+                ApiError::TooLarge { .. } | ApiError::BadAnswer => {
+                    "Colophon's answer couldn't be read"
+                }
                 _ => "Colophon didn't answer",
             };
             Outcome::failure(
@@ -1747,10 +1749,27 @@ mod tests {
         .expect("valid");
         for error in [ApiError::TooLarge { limit: 1024 }, ApiError::BadAnswer] {
             let outcome = explain(Tool::CreateDraft, &plan, &error);
-            assert_eq!(outcome.structured["error"]["code"], "outcome_unknown", "{error}");
-            assert!(outcome.text.contains("may or may not have happened"), "{}", outcome.text);
-            assert!(outcome.text.contains("idempotency_key agent-key-0000000001"), "{}", outcome.text);
-            assert!(!outcome.text.contains("Nothing was changed"), "{}", outcome.text);
+            assert_eq!(
+                outcome.structured["error"]["code"], "outcome_unknown",
+                "{error}"
+            );
+            assert!(
+                outcome.text.contains("may or may not have happened"),
+                "{}",
+                outcome.text
+            );
+            assert!(
+                outcome
+                    .text
+                    .contains("idempotency_key agent-key-0000000001"),
+                "{}",
+                outcome.text
+            );
+            assert!(
+                !outcome.text.contains("Nothing was changed"),
+                "{}",
+                outcome.text
+            );
         }
         // A read changes nothing, whatever its answer was.
         let outcome = explain(Tool::GetEntry, &plan_for_read(), &ApiError::BadAnswer);

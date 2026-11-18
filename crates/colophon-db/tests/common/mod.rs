@@ -69,7 +69,10 @@ impl Drop for DropGuard {
         })
         .join();
         if !matches!(dropped, Ok(Ok(()))) {
-            eprintln!("warning: couldn't drop the test database {}; the next run's sweep will", self.name);
+            eprintln!(
+                "warning: couldn't drop the test database {}; the next run's sweep will",
+                self.name
+            );
         }
     }
 }

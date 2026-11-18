@@ -1,5 +1,9 @@
 //! A test that fails leaves nothing on the stack: its database is dropped however it ends.
 //! Needs the stack (`cargo test -- --ignored`), like every other database test here.
+#![expect(
+    clippy::expect_used,
+    reason = "database tests: a failed connection or setup step is a test failure"
+)]
 
 mod common;
 
@@ -28,7 +32,9 @@ async fn a_panicking_test_leaves_no_database_behind() {
     })
     .join();
     assert!(outcome.is_err(), "the failing test panicked, as it should");
-    let name = made.recv().expect("the failing test made its database first");
+    let name = made
+        .recv()
+        .expect("the failing test made its database first");
 
     let admin = PgPool::connect(&format!(
         "postgres://colophon:colophon-dev@{}/postgres",
@@ -43,10 +49,15 @@ async fn a_panicking_test_leaves_no_database_behind() {
         .expect("read pg_database");
     if left.is_some() {
         // Don't add to the pile this test is about, then fail.
-        sqlx::query(AssertSqlSafe(format!("DROP DATABASE IF EXISTS {name} WITH (FORCE)")))
-            .execute(&admin)
-            .await
-            .expect("drop the leftover");
+        sqlx::query(AssertSqlSafe(format!(
+            "DROP DATABASE IF EXISTS {name} WITH (FORCE)"
+        )))
+        .execute(&admin)
+        .await
+        .expect("drop the leftover");
     }
-    assert!(left.is_none(), "{name} was left behind by a test that panicked");
+    assert!(
+        left.is_none(),
+        "{name} was left behind by a test that panicked"
+    );
 }

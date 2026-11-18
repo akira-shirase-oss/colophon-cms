@@ -124,12 +124,9 @@ mod tests {
 
     use super::{File, write_to};
 
+    /// The file's permission bits; 0 when it can't be read, which no assertion here accepts.
     fn mode(path: &std::path::Path) -> u32 {
-        std::fs::metadata(path)
-            .expect("invariant: the test just wrote this file")
-            .permissions()
-            .mode()
-            & 0o777
+        std::fs::metadata(path).map_or(0, |metadata| metadata.permissions().mode() & 0o777)
     }
 
     /// A credentials file that already exists with a wider mode is narrowed to 600 on the next
@@ -143,11 +140,19 @@ mod tests {
         std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644))
             .expect("invariant: we own the file");
 
-        write_to(&path, &File::default()).await.expect("the write succeeds");
-        assert_eq!(mode(&path), 0o600, "an existing 644 file is narrowed to 600");
+        write_to(&path, &File::default())
+            .await
+            .expect("the write succeeds");
+        assert_eq!(
+            mode(&path),
+            0o600,
+            "an existing 644 file is narrowed to 600"
+        );
 
         std::fs::remove_file(&path).expect("invariant: we own the file");
-        write_to(&path, &File::default()).await.expect("the write succeeds");
+        write_to(&path, &File::default())
+            .await
+            .expect("the write succeeds");
         assert_eq!(mode(&path), 0o600, "a new file is created 600");
         std::fs::remove_dir_all(&dir).expect("invariant: we own the dir");
     }

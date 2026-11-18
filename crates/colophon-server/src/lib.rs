@@ -108,6 +108,29 @@ struct Background {
     hints: Vec<tokio::task::JoinHandle<()>>,
 }
 
+/// Starts the worker, the setup code and the change hints, each under a child of `cancel`.
+fn start_background(
+    config: &Config,
+    pool: &colophon_db::PgPool,
+    bus: &Arc<colophon_api::events::EventBus>,
+    cancel: &CancellationToken,
+) -> anyhow::Result<Background> {
+    let worker_cancel = cancel.child_token();
+    let worker = start_worker(config, &worker_cancel)?;
+    let setup_cancel = cancel.child_token();
+    let setup = start_setup_code(config, pool, &setup_cancel);
+    let events_cancel = cancel.child_token();
+    let hints = start_events(config, pool, bus, &events_cancel);
+    Ok(Background {
+        worker_cancel,
+        worker,
+        setup_cancel,
+        setup,
+        events_cancel,
+        hints,
+    })
+}
+
 /// Stops the worker, the setup code and the change hints, in that order, and answers the
 /// deadline the rest of the cleanup (the probes, the pool) shares. Every step after the grace
 /// shares one [`CLEANUP_DEADLINE`], not one each, so the whole stop is at most the grace plus
@@ -380,27 +403,14 @@ pub async fn run(
         tracing::info!(signal = name, "shutdown signal received");
     };
 
-    let worker_cancel = cancel.child_token();
-    let worker = start_worker(&config, &worker_cancel)?;
-    let setup_cancel = cancel.child_token();
-    let setup = start_setup_code(&config, &pool, &setup_cancel);
-    let events_cancel = cancel.child_token();
-    let hints = start_events(&config, &pool, &event_bus, &events_cancel);
+    let background = start_background(&config, &pool, &event_bus, &cancel)?;
 
     let outcome = tokio::select! {
         outcome = shutdown::serve(listener, app, readiness, timing, trigger) => outcome.context("serving")?,
         never = supervisor.watch() => match never {},
     };
 
-    let deadline = stop_background(Background {
-        worker_cancel,
-        worker,
-        setup_cancel,
-        setup,
-        events_cancel,
-        hints,
-    })
-    .await;
+    let deadline = stop_background(background).await;
     supervisor
         .shutdown(deadline.saturating_duration_since(tokio::time::Instant::now()))
         .await;
@@ -437,7 +447,7 @@ mod stop_tests {
     #[test]
     fn the_default_stop_fits_inside_systemds_timeout() {
         assert!(
-            Duration::from_millis(25_000) + super::CLEANUP_DEADLINE < systemd_stop_timeout(),
+            Duration::from_secs(25) + super::CLEANUP_DEADLINE < systemd_stop_timeout(),
             "raise TimeoutStopSec with the grace or the cleanup budget"
         );
     }
@@ -452,7 +462,7 @@ mod stop_tests {
     /// time, so systemd never has to kill a process mid-cleanup.
     #[tokio::test(start_paused = true)]
     async fn stuck_background_tasks_are_abandoned_before_systemd_kills() {
-        let default_grace = Duration::from_millis(25_000);
+        let default_grace = Duration::from_secs(25);
         // The probes' and the pool's share, and a second's slack for the process to exit.
         let rest = Duration::from_secs(3);
         let allowed = systemd_stop_timeout()

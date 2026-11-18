@@ -38,7 +38,12 @@ pub(crate) async fn open(scope: &Scope<'_>) -> Result<(Client, String), Failure>
     let id = resolve(
         |path| {
             let client = &client;
-            async move { client.send(Method::GET, &path, None, &[]).await.map(|reply| reply.body) }
+            async move {
+                client
+                    .send(Method::GET, &path, None, &[])
+                    .await
+                    .map(|reply| reply.body)
+            }
         },
         scope.project,
     )
@@ -379,7 +384,10 @@ mod resolve_tests {
 
         fn get(&self, path: &str) -> Result<Value, Failure> {
             let (route, query) = path.split_once('?').unwrap_or((path, ""));
-            let params: HashMap<&str, &str> = query.split('&').filter_map(|pair| pair.split_once('=')).collect();
+            let params: HashMap<&str, &str> = query
+                .split('&')
+                .filter_map(|pair| pair.split_once('='))
+                .collect();
             if let Some(id) = route.strip_prefix("/api/v1/projects/") {
                 return self
                     .projects
@@ -397,18 +405,30 @@ mod resolve_tests {
                 let data: Vec<_> = self.projects.iter().take(1000).map(Self::view).collect();
                 return Ok(json!({"data": data, "next_cursor": null}));
             }
-            let limit: usize = params.get("limit").and_then(|value| value.parse().ok()).unwrap_or(20);
-            assert!((1..=100).contains(&limit), "limit {limit} is out of the API's range");
+            let limit: usize = params
+                .get("limit")
+                .and_then(|value| value.parse().ok())
+                .unwrap_or(20);
+            assert!(
+                (1..=100).contains(&limit),
+                "limit {limit} is out of the API's range"
+            );
             let search = params.get("q").copied().unwrap_or("");
             let after = params.get("cursor").copied();
             let matching: Vec<_> = self
                 .projects
                 .iter()
-                .filter(|project| project.1.contains(search) || project.2.to_lowercase().contains(search))
+                .filter(|project| {
+                    project.1.contains(search) || project.2.to_lowercase().contains(search)
+                })
                 .skip_while(|project| after.is_some_and(|cursor| project.0 != cursor))
                 .skip(usize::from(after.is_some()))
                 .collect();
-            let page: Vec<_> = matching.iter().take(limit).map(|project| Self::view(project)).collect();
+            let page: Vec<_> = matching
+                .iter()
+                .take(limit)
+                .map(|project| Self::view(project))
+                .collect();
             let next = (matching.len() > limit).then(|| matching[limit - 1].0.clone());
             Ok(json!({"data": page, "next_cursor": next}))
         }
@@ -425,11 +445,31 @@ mod resolve_tests {
     #[tokio::test]
     async fn a_member_of_more_than_a_thousand_projects_reaches_the_last_one() {
         let server = Server::with(1500);
-        let last = server.projects.last().cloned().expect("invariant: 1,500 projects");
-        assert_eq!(resolved(&server, &last.0).await, Ok(last.0.clone()), "by id");
-        assert_eq!(resolved(&server, &last.1).await, Ok(last.0.clone()), "by URL name");
-        let first = server.projects.first().cloned().expect("invariant: 1,500 projects");
-        assert_eq!(resolved(&server, &first.1).await, Ok(first.0.clone()), "the first, by URL name");
+        let last = server
+            .projects
+            .last()
+            .cloned()
+            .expect("invariant: 1,500 projects");
+        assert_eq!(
+            resolved(&server, &last.0).await,
+            Ok(last.0.clone()),
+            "by id"
+        );
+        assert_eq!(
+            resolved(&server, &last.1).await,
+            Ok(last.0.clone()),
+            "by URL name"
+        );
+        let first = server
+            .projects
+            .first()
+            .cloned()
+            .expect("invariant: 1,500 projects");
+        assert_eq!(
+            resolved(&server, &first.1).await,
+            Ok(first.0.clone()),
+            "the first, by URL name"
+        );
     }
 
     /// A project renamed after it was made (its name no longer contains its URL name) is still
@@ -438,22 +478,44 @@ mod resolve_tests {
     #[tokio::test]
     async fn a_renamed_project_is_found_by_its_url_name() {
         let mut server = Server::with(1500);
-        let renamed = server.projects.last().cloned().expect("invariant: 1,500 projects");
+        let renamed = server
+            .projects
+            .last()
+            .cloned()
+            .expect("invariant: 1,500 projects");
         let (id, slug, _) = renamed.clone();
         server.projects.retain(|project| project.0 != id);
-        server.projects.push((id.clone(), slug.clone(), "Zebra Quarterly".to_owned()));
-        server.projects.sort_by(|a, b| (&a.2, &a.0).cmp(&(&b.2, &b.0)));
-        assert!(!"zebra quarterly".contains(&slug), "invariant: the name no longer contains the URL name");
-        assert_eq!(resolved(&server, &slug).await, Ok(id), "by its old URL name, after the rename");
+        server
+            .projects
+            .push((id.clone(), slug.clone(), "Zebra Quarterly".to_owned()));
+        server
+            .projects
+            .sort_by(|a, b| (&a.2, &a.0).cmp(&(&b.2, &b.0)));
+        assert!(
+            !"zebra quarterly".contains(&slug),
+            "invariant: the name no longer contains the URL name"
+        );
+        assert_eq!(
+            resolved(&server, &slug).await,
+            Ok(id),
+            "by its old URL name, after the rename"
+        );
     }
 
     /// A project the caller isn't in, or a name that can't be a URL name, is refused the same way.
     #[tokio::test]
     async fn a_project_the_caller_isnt_in_is_refused() {
         let server = Server::with(3);
-        for project in ["01a1ee00-0000-7000-8000-999999999999", "nope", "Not A Slug!"] {
+        for project in [
+            "01a1ee00-0000-7000-8000-999999999999",
+            "nope",
+            "Not A Slug!",
+        ] {
             let refused = resolved(&server, project).await.expect_err(project);
-            assert!(refused.contains("that you're a member of"), "{project}: {refused}");
+            assert!(
+                refused.contains("that you're a member of"),
+                "{project}: {refused}"
+            );
         }
     }
 }

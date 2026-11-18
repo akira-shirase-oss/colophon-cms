@@ -51,16 +51,21 @@ impl Drop for FreshDatabase {
             runtime.block_on(async move {
                 let pool = sqlx::PgPool::connect(&admin).await?;
                 // Generated from a UUID by `new`, never input.
-                sqlx::query(AssertSqlSafe(format!("DROP DATABASE IF EXISTS {name} WITH (FORCE)")))
-                    .execute(&pool)
-                    .await?;
+                sqlx::query(AssertSqlSafe(format!(
+                    "DROP DATABASE IF EXISTS {name} WITH (FORCE)"
+                )))
+                .execute(&pool)
+                .await?;
                 pool.close().await;
                 Ok::<(), sqlx::Error>(())
             })
         })
         .join();
         if !matches!(dropped, Ok(Ok(()))) {
-            eprintln!("warning: couldn't drop {}; the next run's sweep will", self.name);
+            eprintln!(
+                "warning: couldn't drop {}; the next run's sweep will",
+                self.name
+            );
         }
     }
 }
