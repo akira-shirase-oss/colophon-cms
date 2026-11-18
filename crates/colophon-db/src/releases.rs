@@ -789,6 +789,7 @@ pub async fn changes(
     after: Option<&ChangesAfter>,
     limit: i64,
 ) -> Result<Vec<Change>, DbError> {
+    crate::changesets::plan_for_values(tx).await?;
     let limit = limit.clamp(1, MAX_CHANGES_PAGE + 1);
     let (kind, from) = after.map_or((None, None), |after| {
         (Some(after.kind.as_str()), Some(after.entry_id))

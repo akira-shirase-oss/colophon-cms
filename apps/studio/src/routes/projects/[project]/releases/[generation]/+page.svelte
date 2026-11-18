@@ -125,7 +125,10 @@
 
 	<section class="mb-10" aria-labelledby="went-live-heading" data-testid="went-live">
 		<h2 id="went-live-heading" class="mb-3 flex items-baseline gap-2 text-base font-semibold">
-			What went live <span class="text-sm font-normal text-muted-foreground tabular">{count(listed, 'entry', 'entries')}</span>
+			What went live
+			<span class="text-sm font-normal text-muted-foreground tabular" data-testid="receipt-counts"
+				>{#if shown.unpublished > 0}{[...(shown.entries > 0 ? [`${shown.entries} went live`] : []), `${shown.unpublished} taken down`].join(', ')}{:else}{count(listed, 'entry', 'entries')}{/if}</span
+			>
 		</h2>
 		{#if changes.isPending}
 			<div class="grid gap-2" aria-busy="true" data-testid="receipt-rows-loading">

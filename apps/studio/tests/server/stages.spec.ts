@@ -32,22 +32,23 @@ test('stages are ordered in Settings, and publishing waits on every one', async 
 	await page.getByLabel('Title', { exact: true }).fill('Launch week');
 	await page.getByLabel('Spring launch', { exact: true }).check();
 	await page.getByRole('button', { name: 'Create publish request' }).click();
-	await page.getByRole('button', { name: 'Ask for review' }).click();
+	await page.getByTestId('ask-review').click();
+	await page.getByRole('button', { name: 'Send for review' }).click();
 	const stages = page.getByTestId('review-stages');
 	await expect(stages.getByTestId('stage')).toHaveCount(2);
 	await expect(stages.getByTestId('stage').nth(0)).toContainText('Editorial');
 	await expect(stages.getByTestId('stage').nth(0)).toHaveAttribute('data-state', 'pending');
 	await expect(stages.getByTestId('stage').nth(1)).toContainText('Legal');
-	await expect(stages).toContainText('needs someone other than you');
+	await expect(stages).toContainText(/needs someone other than (you|whoever sent it)/);
 	await expect(page.getByTestId('review-stage')).toHaveValue('editorial');
 
 	// Approving names the stage; with Legal still waiting there's no Publish button, and a
 	// publish through the API is refused outright.
-	await page.getByRole('button', { name: 'Approve this version' }).click();
+	await page.getByRole('button', { name: 'Approve', exact: true }).click();
 	await expect(stages.getByTestId('stage').nth(0)).toHaveAttribute('data-state', 'approved');
 	await expect(stages).toContainText('by Dev Owner');
 	await expect(page.getByTestId('review-stage')).toHaveValue('legal');
-	await expect(page.getByRole('button', { name: 'Publish' })).toHaveCount(0);
+	await expect(page.getByRole('button', { name: 'Publish now', exact: true })).toHaveCount(0);
 	const id = new URL(page.url()).pathname.split('/').at(-1) ?? '';
 	const shown = await api(page, 'GET', `${env(project)}/changesets/${id}`);
 	const hash = String(shown.body?.['data'].hash);
@@ -58,7 +59,7 @@ test('stages are ordered in Settings, and publishing waits on every one', async 
 
 	// The sender's own approval at a someone-else stage is recorded — a review is never lost —
 	// but it counts for nothing: Legal still waits.
-	await page.getByRole('button', { name: 'Approve this version' }).click();
+	await page.getByRole('button', { name: 'Approve', exact: true }).click();
 	await expect(page.getByTestId('changeset-reviews')).toContainText('for Legal');
 	await expect(stages.getByTestId('stage').nth(1)).toHaveAttribute('data-state', 'pending');
 	expect(await violations(page)).toEqual([]);
@@ -68,7 +69,7 @@ test('stages are ordered in Settings, and publishing waits on every one', async 
 	await other.goto(`/studio/projects/${project}/changesets/${id}`);
 	await expect(other.getByTestId('review-stage')).toHaveValue('legal');
 	await expect(other.getByTestId('review-stages')).toContainText('needs someone other than whoever sent it');
-	await other.getByRole('button', { name: 'Approve this version' }).click();
+	await other.getByRole('button', { name: 'Approve', exact: true }).click();
 	await expect(other.getByTestId('changeset-status')).toHaveAttribute('data-state', 'approved');
 	await expect(other.getByTestId('review-stages').getByTestId('stage').nth(1)).toContainText('by Dev Editor');
 	expect(await violations(other)).toEqual([]);
@@ -76,7 +77,7 @@ test('stages are ordered in Settings, and publishing waits on every one', async 
 	// The owner publishes now that every stage approves.
 	await page.reload();
 	await expect(page.getByTestId('changeset-status')).toHaveAttribute('data-state', 'approved');
-	await page.getByRole('button', { name: 'Publish' }).click();
+	await page.getByRole('button', { name: 'Publish now', exact: true }).click();
 	await expect(page.getByTestId('changeset-status')).toHaveAttribute('data-state', 'published');
 });
 

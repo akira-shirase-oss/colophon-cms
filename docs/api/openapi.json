@@ -3925,7 +3925,7 @@
             "type": "integer"
           },
           "restore": {
-            "description": "the first 100 of the pins a rollback made now would carry, publishes first, each by entry id, less those your role can't read; empty when it would be refused `already_at`",
+            "description": "the first 100 of the pins a rollback made now would carry, publishes first, each by entry id, less those your role can't read; empty when it would be refused `already_at`, and when `too_large`",
             "items": {
               "$ref": "#/components/schemas/RollbackLineView"
             },
@@ -9591,7 +9591,7 @@
                 }
               }
             },
-            "description": "`missing_permission, agent_self_review` — the role can't review it, or a token tried to approve a token's changeset"
+            "description": "`missing_permission, agent_self_review, cannot_review_hidden` — the role can't review it, a token tried to approve a token's changeset, or an approval names a version the role can't read in full"
           },
           "404": {
             "content": {

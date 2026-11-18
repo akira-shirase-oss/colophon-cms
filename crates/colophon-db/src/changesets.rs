@@ -191,8 +191,10 @@ pub async fn published_pins(
 /// found by `valid_from`, a recent one by `valid_to` — and a cached generic plan, which Postgres
 /// switches to after five runs of a prepared statement, picks one half for every generation and
 /// scans half the history for the rest (measured: 8 ms custom, 126–260 ms generic, at 100k
-/// publications). Transaction-local, so it ends with the transaction.
-async fn plan_for_values(tx: &mut ProjectTransaction) -> Result<(), DbError> {
+/// publications). A release's changes page the same way: its cursor's `OR` folds away only in a
+/// plan for the values (0.9 ms custom, 300 ms generic). Transaction-local, so it ends with the
+/// transaction.
+pub(crate) async fn plan_for_values(tx: &mut ProjectTransaction) -> Result<(), DbError> {
     sqlx::query!("SET LOCAL plan_cache_mode = force_custom_plan")
         .execute(&mut *tx.transaction)
         .await

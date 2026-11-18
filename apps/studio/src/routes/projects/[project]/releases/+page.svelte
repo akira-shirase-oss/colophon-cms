@@ -24,6 +24,7 @@
 	import ReleaseLabel from '#lib/shell/ReleaseLabel.svelte';
 	import StatusBadge from '#lib/shell/StatusBadge.svelte';
 	import { releaseName, STATUS_WORDS } from '#lib/words.ts';
+	import { originText, releaseOrigin } from '#lib/releaseOrigin.ts';
 	import TechnicalDetails from '#lib/shell/TechnicalDetails.svelte';
 
 	const project = $derived(page.params.project ?? '');
@@ -173,7 +174,7 @@
 					<div class="min-w-0">
 						<a class="block truncate font-medium after:absolute after:inset-0 hover:underline" href={receiptHref} title={release.title} data-user-content>{release.title}</a>
 						<p class="mt-0.5 text-sm text-muted-foreground">
-							{wentLive(release)} · by {release.published_by_name ?? release.published_by} ·
+							{#if originText(releaseOrigin(release))}<span data-testid="release-origin">{originText(releaseOrigin(release))}</span> · {/if}{wentLive(release)} · by {release.published_by_name ?? release.published_by} ·
 							<span title={new Date(release.published_at).toLocaleString()}>{ago(release.published_at)}</span>
 						</p>
 						{#if release.purge !== 'none' || jobs.length > 0}

@@ -2874,8 +2874,8 @@ pub(crate) static TABLE: &[Route] = &[
                     NOT_FOUND,
                     refusal(
                         403,
-                        "missing_permission, agent_self_review",
-                        "the role can't review it, or a token tried to approve a token's changeset",
+                        "missing_permission, agent_self_review, cannot_review_hidden",
+                        "the role can't review it, a token tried to approve a token's changeset, or an approval names a version the role can't read in full",
                     ),
                     refusal(
                         409,

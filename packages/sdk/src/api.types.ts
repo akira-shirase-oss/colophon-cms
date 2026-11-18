@@ -3320,7 +3320,7 @@ export interface components {
             max_items: number;
             /** @description entries it would put back */
             publish_total: number;
-            /** @description the first 100 of the pins a rollback made now would carry, publishes first, each by entry id, less those your role can't read; empty when it would be refused `already_at` */
+            /** @description the first 100 of the pins a rollback made now would carry, publishes first, each by entry id, less those your role can't read; empty when it would be refused `already_at`, and when `too_large` */
             restore: components["schemas"]["RollbackLineView"][];
             /** @description it would change more than `max_items`, so `POST` refuses it `rollback_too_large`; roll back to a nearer release first */
             too_large: boolean;
@@ -6647,7 +6647,7 @@ export interface operations {
                     "application/json": components["schemas"]["Error"];
                 };
             };
-            /** @description `missing_permission, agent_self_review` — the role can't review it, or a token tried to approve a token's changeset */
+            /** @description `missing_permission, agent_self_review, cannot_review_hidden` — the role can't review it, a token tried to approve a token's changeset, or an approval names a version the role can't read in full */
             403: {
                 headers: {
                     [name: string]: unknown;
