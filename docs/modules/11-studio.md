@@ -476,7 +476,7 @@ screen-reader journeys pass, and no screen ever shows a success the server has n
 
 ### Publishing labels (spec §05)
 - **Saved**
-- **Published in CMS** (said *Published in Colophon* in the Studio, D-147)
+- **Published in CMS** (said *Published* in the Studio, D-182; *Published in Colophon* from D-147 until then)
 - **Website update pending**
 - **Verified at configured locations** (with the actual location count)
 - **Needs attention** (with a safe next action)

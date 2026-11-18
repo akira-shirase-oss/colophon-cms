@@ -638,9 +638,9 @@
 									<span class="block text-xs text-muted-foreground" data-user-content>{item.collectionName}, in {item.fieldLabel}</span>
 								</span>
 								{#if item.link.published}
-									<Badge variant="live">Readers see this link</Badge>
+									<StatusBadge state="live" text="Readers see this link" testid="link-state" />
 								{:else}
-									<Badge variant="draft">In a draft</Badge>
+									<StatusBadge state="draft" text="In a draft" testid="link-state" />
 								{/if}
 							</li>
 						{/each}
