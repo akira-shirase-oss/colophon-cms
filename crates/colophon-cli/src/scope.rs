@@ -35,24 +35,40 @@ pub(crate) async fn open(scope: &Scope<'_>) -> Result<(Client, String), Failure>
     let saved = credentials::profile(scope.profile).await?;
     let client = Client::new(&saved.server, Some(saved.token))?;
     client.check_server().await?;
-    let projects = client
-        .send(Method::GET, "/api/v1/projects", None, &[])
-        .await?
-        .body;
-    let id = projects["data"]
+    let id = resolve(
+        |path| {
+            let client = &client;
+            async move { client.send(Method::GET, &path, None, &[]).await.map(|reply| reply.body) }
+        },
+        scope.project,
+    )
+    .await?;
+    Ok((client, id))
+}
+
+/// The id of the project `project` names (an id or a URL name) among the caller's projects,
+/// reading the API through `fetch` (a GET of a path, answering its JSON body).
+pub(crate) async fn resolve<F, Fut>(fetch: F, project: &str) -> Result<String, Failure>
+where
+    F: Fn(String) -> Fut,
+    Fut: std::future::Future<Output = Result<Value, Failure>>,
+{
+    let projects = fetch("/api/v1/projects".to_owned()).await?;
+    projects["data"]
         .as_array()
         .into_iter()
         .flatten()
-        .find(|project| project["id"] == scope.project || project["slug"] == scope.project)
-        .and_then(|project| project["id"].as_str())
-        .ok_or_else(|| {
-            Failure::new(
-                Exit::Denied,
-                format!("no project {:?} that you're a member of", scope.project),
-            )
-        })?
-        .to_owned();
-    Ok((client, id))
+        .find(|candidate| candidate["id"] == project || candidate["slug"] == project)
+        .and_then(|candidate| candidate["id"].as_str())
+        .map(str::to_owned)
+        .ok_or_else(|| not_a_member(project))
+}
+
+fn not_a_member(project: &str) -> Failure {
+    Failure::new(
+        Exit::Denied,
+        format!("no project {project:?} that you're a member of"),
+    )
 }
 
 /// The `/api/v1/projects/{project}/environments/{environment}` the scoped routes are under.
@@ -262,6 +278,107 @@ where
                 ));
             }
             Err(failure) => return Err(failure),
+        }
+    }
+}
+
+#[cfg(test)]
+mod resolve_tests {
+    use std::collections::HashMap;
+
+    use serde_json::{Value, json};
+
+    use super::resolve;
+    use crate::client::Failure;
+
+    /// A server whose caller is a member of `count` projects named alike ("Site 0001" …), as the
+    /// API answers: the unpaged list is the first 1,000 by name, then id; `?q=` pages by name, at
+    /// most `limit` (≤ 100) a page, with a cursor; `/projects/{id}` answers a member's project.
+    struct Server {
+        projects: Vec<(String, String, String)>, // (id, slug, name), sorted by name then id
+    }
+
+    impl Server {
+        fn with(count: usize) -> Self {
+            let mut projects: Vec<_> = (1..=count)
+                .map(|n| {
+                    (
+                        format!("01a1ee00-0000-7000-8000-{n:012}"),
+                        format!("site-{n:04}"),
+                        format!("Site {n:04}"),
+                    )
+                })
+                .collect();
+            projects.sort_by(|a, b| (&a.2, &a.0).cmp(&(&b.2, &b.0)));
+            Self { projects }
+        }
+
+        fn view((id, slug, name): &(String, String, String)) -> Value {
+            json!({"id": id, "slug": slug, "name": name})
+        }
+
+        fn get(&self, path: &str) -> Result<Value, Failure> {
+            let (route, query) = path.split_once('?').unwrap_or((path, ""));
+            let params: HashMap<&str, &str> = query.split('&').filter_map(|pair| pair.split_once('=')).collect();
+            if let Some(id) = route.strip_prefix("/api/v1/projects/") {
+                return self
+                    .projects
+                    .iter()
+                    .find(|project| project.0 == id)
+                    .map(|project| json!({"data": Self::view(project)}))
+                    .ok_or_else(|| Failure {
+                        exit: crate::Exit::Denied,
+                        message: "no such resource [HTTP 404]".into(),
+                        refusal: Some(json!({"code": "not_found"})),
+                    });
+            }
+            assert_eq!(route, "/api/v1/projects", "unexpected request {path}");
+            if params.is_empty() {
+                let data: Vec<_> = self.projects.iter().take(1000).map(Self::view).collect();
+                return Ok(json!({"data": data, "next_cursor": null}));
+            }
+            let limit: usize = params.get("limit").and_then(|value| value.parse().ok()).unwrap_or(20);
+            assert!((1..=100).contains(&limit), "limit {limit} is out of the API's range");
+            let search = params.get("q").copied().unwrap_or("");
+            let after = params.get("cursor").copied();
+            let matching: Vec<_> = self
+                .projects
+                .iter()
+                .filter(|project| project.1.contains(search) || project.2.to_lowercase().contains(search))
+                .skip_while(|project| after.is_some_and(|cursor| project.0 != cursor))
+                .skip(usize::from(after.is_some()))
+                .collect();
+            let page: Vec<_> = matching.iter().take(limit).map(|project| Self::view(project)).collect();
+            let next = (matching.len() > limit).then(|| matching[limit - 1].0.clone());
+            Ok(json!({"data": page, "next_cursor": next}))
+        }
+    }
+
+    async fn resolved(server: &Server, project: &str) -> Result<String, String> {
+        resolve(|path| async move { server.get(&path) }, project)
+            .await
+            .map_err(|failure| failure.message)
+    }
+
+    /// A member of more than 1,000 projects reaches every one of them, by id and by URL name;
+    /// the 1,500th by name is past the unpaged list's 1,000.
+    #[tokio::test]
+    async fn a_member_of_more_than_a_thousand_projects_reaches_the_last_one() {
+        let server = Server::with(1500);
+        let last = server.projects.last().cloned().expect("invariant: 1,500 projects");
+        assert_eq!(resolved(&server, &last.0).await, Ok(last.0.clone()), "by id");
+        assert_eq!(resolved(&server, &last.1).await, Ok(last.0.clone()), "by URL name");
+        let first = server.projects.first().cloned().expect("invariant: 1,500 projects");
+        assert_eq!(resolved(&server, &first.1).await, Ok(first.0.clone()), "the first, by URL name");
+    }
+
+    /// A project the caller isn't in, or a name that can't be a URL name, is refused the same way.
+    #[tokio::test]
+    async fn a_project_the_caller_isnt_in_is_refused() {
+        let server = Server::with(3);
+        for project in ["01a1ee00-0000-7000-8000-999999999999", "nope", "Not A Slug!"] {
+            let refused = resolved(&server, project).await.expect_err(project);
+            assert!(refused.contains("that you're a member of"), "{project}: {refused}");
         }
     }
 }
