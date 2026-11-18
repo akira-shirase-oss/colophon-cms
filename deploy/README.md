@@ -85,6 +85,7 @@ Otherwise these refuse, before touching anything:
 | `scripts/load.sh cache-down`, `postgres-trouble` | Pause Valkey or Postgres mid-run |
 | `scripts/migrate.sh` (and `load.sh`, `testbed.sh`, `studio.sh`, which call it) | Migrate and add accounts to `colophon`; set `COLOPHON_TEST_DATABASE` to a database of your own instead |
 | The four outage tests (`admission::without_valkey…`, `quotas::without_valkey…`, `cache::answers_survive_valkey…`, `lifecycle::readiness_follows_real_outages…`) | Stop and start Postgres or Valkey |
+| The testbed's outage spec (`apps/testbed/tests/outage.spec.ts`) | Stops and starts Postgres and Valkey; skips itself on a shared stack (`tests/stack-owner.ts`) |
 | `scripts/check.sh` | On someone else's stack it runs everything except the steps above (it prints them; CI runs them), in your `COLOPHON_TEST_DATABASE`, and never drops `colophon_check` |
 
 `scripts/stack.sh up` is open to anyone: it is idempotent and destroys nothing.
