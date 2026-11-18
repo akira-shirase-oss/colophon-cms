@@ -132,12 +132,20 @@ evidence".
   verify with `sha256sum -c SHA256SUMS` and `gh attestation verify <file> --repo akira-shirase-oss/colophon-cms`.
 - **npm-pack** (both modes): runs `packages/cli-npm`'s tests, assembles the six npm packages from the archives
   (each checked against `SHA256SUMS`), packs them, installs the launcher and the Linux x64 package from those
-  tarballs into an empty project and checks that `npx colophon --version` reports this release and commit.
+  tarballs into an empty project and checks that `npx colophon --version` reports this release and commit. Then
+  it builds `@colophon-cms/sdk` and `@colophon-cms/rich-text` from the commit and runs their packaging gate on the
+  tarballs (`packages/sdk/scripts/pack-check.mjs --out npm-dist`, D-170: allowlist, budgets, release version, no
+  dependencies, publint, Are the Types Wrong, a consumer project in Node, TypeScript and a browser bundle), and
+  writes `npm publish --dry-run` of every tarball — what the publish job would send, under which dist-tag — into
+  the job summary. It needs no token.
 - **npm-publish** (tag runs only, after **release**): runs in the `npm` environment, so it waits for a maintainer's
   approval, and first refuses to go on if that environment has no required reviewers. With `NPM_TOKEN` from the
-  environment's secrets it publishes the five platform packages and then the launcher, each with `--provenance` and
+  environment's secrets it publishes the five platform packages, the launcher, then the SDK and the rich-text renderer, each with `--provenance` and
   `--access public`, under the dist-tag `next` for a pre-release (`latest` otherwise); a package version already on
-  npm is skipped, so a rerun after a partial failure finishes the job. Nothing is ever published from a laptop.
+  npm is skipped, so a rerun after a partial failure finishes the job. Nothing is ever published from a laptop (the
+  SDK's and the renderer's `publishConfig.provenance` makes npm refuse outside CI). Once the packages exist, move to
+  npm trusted publishing (GitHub OIDC) and drop the long-lived `NPM_TOKEN`; whether the very first publish can use it
+  must be checked on npmjs.com then, so assume a token for the first.
 - Every third-party action is pinned to a full commit SHA, as in `ci.yml`. The Studio ships beside the binaries
   (`colophon-studio-<version>.tar.gz`) and inside the container image (D-174). The Linux server is a musl build with
   mimalloc as its allocator, since musl's own ran allocation-heavy requests five times slower (D-176); the allocator

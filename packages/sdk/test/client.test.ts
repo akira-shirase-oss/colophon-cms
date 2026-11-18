@@ -59,7 +59,7 @@ describe('reads and replies', () => {
 		expect(calls[0]!.url).toBe('http://server.test/api/v1/projects/proj/environments/production/collections/articles/entries?limit=10');
 		expect(page.data).toEqual([{ id: 'e1' }]);
 		expect(page.next_cursor).toBe('d1:abc');
-		expect(page.response).toEqual({ status: 200, etag: '"v7"', replayed: false, requestId: REQUEST_ID });
+		expect(page.response).toEqual({ status: 200, etag: '"v7"', replayed: false, requestId: REQUEST_ID, generation: null });
 	});
 
 	it('keeps the wire field names (next_cursor), nothing renamed', async () => {
@@ -274,5 +274,15 @@ describe('delivery: published reads and the pinned scope', () => {
 		expect(calls[1]!.url).toContain('generation=42');
 		expect(() => pinned.get('articles', 'e1', { generation: 7 })).toThrow(TypeError);
 		expect(() => pinned.query('articles', {}, { generation: 7 })).toThrow(TypeError);
+	});
+
+	it('names the generation a read answered from, so the next reads can pin it', async () => {
+		const answers = ['12', ' 13 ', 'twelve', '-1', ''];
+		let at = 0;
+		const { fetch } = stubFetch(() => json({ data: [], next_cursor: null }, 200, { 'colophon-generation': answers[at++]! }));
+		const delivery = new Client({ baseUrl: 'http://server.test', fetch, compat: 'off' }).delivery('p');
+		expect((await delivery.list('articles')).response.generation).toBe(12);
+		expect((await delivery.list('articles')).response.generation).toBe(13);
+		for (let i = 0; i < 3; i++) expect((await delivery.list('articles')).response.generation).toBeNull();
 	});
 });
