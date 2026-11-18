@@ -134,6 +134,9 @@ test('the main screens read in light and dark, on a desktop and a phone', async 
 
 	for (const size of SIZES) {
 		const viewer = await phoneOrDesktop(browser, size);
+		// Home shows someone's work in the project they last opened in this browser: open it first.
+		await viewer.goto(`/studio/projects/${made.project}`);
+		await expect(viewer.getByRole('heading', { level: 1 })).toHaveText('Harbour Gazette');
 		for (const screen of SCREENS(made)) {
 			await viewer.goto(screen.path);
 			await viewer.waitForLoadState('networkidle');

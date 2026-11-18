@@ -168,6 +168,13 @@
 	--shadow-press: 0 1px 1px oklch(0 0 0 / 0.3);
 }
 
+/* On a phone a card gives its room to the content: padding follows density. */
+@media (max-width: 39.99rem) {
+	:root {
+		--card-padding: 1rem;
+	}
+}
+
 /* More contrast when the system asks for it: text, inks, rules and the accent move; grounds stay.
  * `:root` would also beat `.dark` here (same specificity, later), so light is `:root:not(.dark)`. */
 @media (prefers-contrast: more) {
