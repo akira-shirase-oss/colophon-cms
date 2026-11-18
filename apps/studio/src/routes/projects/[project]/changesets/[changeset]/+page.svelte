@@ -22,6 +22,7 @@
 	import { goto } from '$app/navigation';
 	import { explainLinks, type Named } from '#lib/references.ts';
 	import { plainError } from '#lib/errors.ts';
+	import ChangesetPreview from '#lib/ChangesetPreview.svelte';
 	import ItemDiff from '#lib/ItemDiff.svelte';
 	import SchedulePanel from '#lib/SchedulePanel.svelte';
 	import { ago, meQuery, projectQuery, releasesQuery, typesQuery } from '#lib/queries.ts';
@@ -234,6 +235,9 @@
 			</li>
 		{/each}
 	</ol>
+
+	<!-- Exactly these versions on the editor's own site, in a new tab (gap/preview). -->
+	<ChangesetPreview {project} changeset={shown.id} published={shown.status.state === 'published'} manages={may(mine.data, 'destinations.manage')} />
 
 	{#if notice}<p role="status" class="mb-4 rounded-lg bg-pending-soft px-4 py-3 text-sm text-pending-ink" data-testid="changeset-notice">{notice}</p>{/if}
 	{#if error}
