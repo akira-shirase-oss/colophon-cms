@@ -877,6 +877,19 @@ async fn a_migration_run_keeps_a_gated_entry_gated() {
     .expect("request");
     assert_eq!(created.status, StatusCode::CREATED, "{}", created.body);
     let entry = created.body["data"]["id"].as_str().expect("id").to_owned();
+    // A public entry migrated in the same run: the positive control that the run doesn't
+    // over-gate and that the release really published.
+    let open = call(
+        &owner,
+        Method::POST,
+        &format!("{}?visibility=public", entries(&project)),
+        Some(&article("For everyone", "for anyone")),
+        &[("idempotency-key", &key())],
+    )
+    .await
+    .expect("request");
+    assert_eq!(open.status, StatusCode::CREATED, "{}", open.body);
+    let public = open.body["data"]["id"].as_str().expect("id").to_owned();
 
     let (definition, _) = current_type(&owner, &project).await;
     let planned = plan_ops(
@@ -904,20 +917,53 @@ async fn a_migration_run_keeps_a_gated_entry_gated() {
     common::release(
         &owner,
         &project,
-        &json!({"title": "Out", "entries": [entry]}),
+        &json!({"title": "Out", "entries": [entry, public]}),
     )
     .await;
-    let anonymous = common::app()
-        .get(format!(
-            "{}/content/v1/{project}/production/articles/{entry}",
+    let project_ref = project.as_str();
+    let read = |id: String, bearer: Option<String>| async move {
+        let project = project_ref;
+        let mut request = common::app().get(format!(
+            "{}/content/v1/{project}/production/articles/{id}",
             common::ORIGIN
-        ))
+        ));
+        if let Some(token) = bearer {
+            request = request.header("authorization", format!("Bearer {token}"));
+        }
+        request.send().await.expect("request").status()
+    };
+    assert_eq!(
+        read(public.clone(), None).await,
+        StatusCode::OK,
+        "the public entry migrated alongside didn't reach an anonymous reader: over-gated, or the release didn't publish"
+    );
+    assert_eq!(
+        read(entry.clone(), None).await,
+        StatusCode::NOT_FOUND,
+        "a member-only entry reached an anonymous reader after a migration run"
+    );
+
+    // A member (signup takes the project's open role) reads the gated entry.
+    let signup = common::app()
+        .post(format!("{}/audience/v1/{project}/signup", common::ORIGIN))
+        .json(&json!({
+            "email": format!("member-{}@example.test", key()),
+            "password": "a-long-enough-password",
+            "display_name": "Member",
+        }))
         .send()
         .await
         .expect("request");
+    assert_eq!(signup.status(), StatusCode::CREATED);
+    let signed_up: Value = signup.json().await.expect("json");
+    assert_eq!(signed_up["data"]["user"]["role"].as_str(), Some("member"));
+    let token = signed_up["data"]["session"]
+        .as_str()
+        .expect("a token")
+        .to_owned();
     assert_eq!(
-        anonymous.status(),
-        StatusCode::NOT_FOUND,
-        "a member-only entry reached an anonymous reader after a migration run"
+        read(entry.clone(), Some(token)).await,
+        StatusCode::OK,
+        "a member couldn't read the member-only entry after a migration run"
     );
 }
