@@ -139,6 +139,8 @@ jobs:
         run: scripts/test-backup-key-mode.sh
       - name: Backups and restores leave no plaintext on failure or kill (scripts/test-backup-plaintext.sh)
         run: scripts/test-backup-plaintext.sh
+      - name: A restore whose payload fails its hash is blocked, with why (scripts/test-restore-blocked.sh, D-196)
+        run: scripts/test-restore-blocked.sh
 
   # The testing rule (D-018) from a clean clone: the real stack, the real binary, real outages,
   # the testbed in a browser, and a load smoke run.
