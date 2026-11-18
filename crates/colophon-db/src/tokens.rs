@@ -242,8 +242,16 @@ pub async fn get(tx: &mut MemberTransaction, id: Uuid) -> Result<Option<StoredTo
 }
 
 /// Creates a token, its identity and its permissions. The caller checked who may.
+///
+/// The project's owner-role row is the creation lock: tokens (and roles) are made one at a time
+/// per project, so the count of active tokens never races past [`MAX_TOKENS`]. The lock is
+/// held until commit, so everything under it is kept to two statements: the lock itself, alone
+/// — so the next statement's snapshot is taken after it is held, and sees the token the
+/// previous holder committed — then the count check and every insert in one statement. The
+/// answer is built from what was written, not read back. Before, eight round trips under the
+/// lock let creators queue, each holding a pooled connection, until reads starved.
 pub async fn create(tx: &mut MemberTransaction, token: &NewToken<'_>) -> Result<Created, DbError> {
-    // Queue behind any other creation of a role or token in the project.
+    // Statement 1: queue behind any other creation of a role or token in the project.
     sqlx::query_scalar!(
         "SELECT 1 AS locked FROM roles WHERE project_id = $1 AND key = 'owner' FOR NO KEY UPDATE",
         tx.project
@@ -252,44 +260,6 @@ pub async fn create(tx: &mut MemberTransaction, token: &NewToken<'_>) -> Result<
     .await
     .map_err(DbError::from_query)?
     .ok_or(DbError::Corrupt("a project has no owner role"))?;
-    let active = sqlx::query_scalar!(
-        r#"SELECT count(*) AS "count!" FROM api_tokens
-           WHERE project_id = $1 AND revoked_at IS NULL AND expires_at > now()"#,
-        tx.project
-    )
-    .fetch_one(&mut *tx.transaction)
-    .await
-    .map_err(DbError::from_query)?;
-    if active >= MAX_TOKENS {
-        return Ok(Created::TooMany);
-    }
-    sqlx::query!(
-        "INSERT INTO identities (id, issuer, subject, display_name) VALUES ($1, $2, $3, $4)",
-        token.identity_id,
-        IDENTITY_ISSUER,
-        token.id.to_string(),
-        token.name
-    )
-    .execute(&mut *tx.transaction)
-    .await
-    .map_err(DbError::from_write)?;
-    sqlx::query!(
-        "INSERT INTO api_tokens (id, project_id, identity_id, name, description, kind, token_hash,
-                                 created_by, expires_at)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)",
-        token.id,
-        tx.project,
-        token.identity_id,
-        token.name,
-        token.description,
-        token.kind.as_str(),
-        token.hash.as_slice(),
-        tx.identity,
-        token.expires_at
-    )
-    .execute(&mut *tx.transaction)
-    .await
-    .map_err(DbError::from_write)?;
     let permissions = token.policy.permissions();
     let actions: Vec<&str> = permissions.iter().map(|p| p.action.as_str()).collect();
     let subjects: Vec<&str> = permissions.iter().map(|p| p.subject.as_str()).collect();
@@ -302,28 +272,83 @@ pub async fn create(tx: &mut MemberTransaction, token: &NewToken<'_>) -> Result<
         .iter()
         .map(|p| p.condition.map(Condition::as_str))
         .collect();
-    sqlx::query!(
-        "INSERT INTO api_token_permissions (project_id, token_id, action, subject, fields, condition)
-         SELECT $1, $2, action, subject, string_to_array(fields, ','), condition
-         FROM unnest($3::text[], $4::text[], $5::text[], $6::text[])
-              AS t (action, subject, fields, condition)",
+    let subject = token.id.to_string();
+    // Statement 2: the cap and every insert, in one snapshot taken after the lock is held.
+    // Nothing is inserted when the project is at the cap: `ident` selects from `room`, and
+    // each later insert from the one before it.
+    let made = sqlx::query!(
+        r#"WITH active AS (
+               SELECT count(*) AS n FROM api_tokens
+               WHERE project_id = $1 AND revoked_at IS NULL AND expires_at > now()
+           ), room AS (
+               SELECT 1 FROM active WHERE n < $2
+           ), ident AS (
+               INSERT INTO identities (id, issuer, subject, display_name)
+               SELECT $3, $4, $5, $6 FROM room
+               RETURNING id
+           ), made AS (
+               INSERT INTO api_tokens (id, project_id, identity_id, name, description, kind,
+                                       token_hash, created_by, expires_at)
+               SELECT $7, $1, ident.id, $6, $8, $9, $10, $11, $12 FROM ident
+               RETURNING id, created_at
+           ), granted AS (
+               INSERT INTO api_token_permissions (project_id, token_id, action, subject, fields,
+                                                  condition)
+               SELECT $1, made.id, p.action, p.subject, string_to_array(p.fields, ','),
+                      p.condition
+               FROM made, unnest($13::text[], $14::text[], $15::text[], $16::text[])
+                    AS p (action, subject, fields, condition)
+               RETURNING 1
+           )
+           SELECT (SELECT created_at FROM made) AS created_at,
+                  (SELECT display_name FROM identities WHERE id = $11) AS created_by_name,
+                  (SELECT count(*) FROM granted) AS "granted!""#,
         tx.project,
+        MAX_TOKENS,
+        token.identity_id,
+        IDENTITY_ISSUER,
+        subject,
+        token.name,
         token.id,
+        token.description,
+        token.kind.as_str(),
+        token.hash.as_slice(),
+        tx.identity,
+        token.expires_at,
         &actions as &[&str],
         &subjects as &[&str],
         &fields as &[Option<String>],
         &conditions as &[Option<&str>]
     )
-    .execute(&mut *tx.transaction)
+    .fetch_one(&mut *tx.transaction)
     .await
     .map_err(DbError::from_write)?;
+    let Some(created_at) = made.created_at else {
+        return Ok(Created::TooMany);
+    };
+    if usize::try_from(made.granted).ok() != Some(permissions.len()) {
+        return Err(DbError::Corrupt(
+            "a token's permissions were not all stored",
+        ));
+    }
     if let Some(limits) = token.limits {
         crate::budgets::set_limits(tx, token.id, limits).await?;
     }
-    let stored = get(tx, token.id)
-        .await?
-        .ok_or(DbError::Corrupt("a token vanished while it was made"))?;
-    Ok(Created::Done(Box::new(stored)))
+    Ok(Created::Done(Box::new(StoredToken {
+        id: token.id,
+        identity_id: token.identity_id,
+        name: token.name.to_owned(),
+        description: token.description.to_owned(),
+        kind: token.kind,
+        policy: token.policy.clone(),
+        created_by: tx.identity,
+        created_by_name: made.created_by_name,
+        created_at,
+        expires_at: token.expires_at,
+        last_used_at: None,
+        revoked_at: None,
+        limits: token.limits.copied(),
+    })))
 }
 
 /// Revokes a token, by the transaction's identity. Waits for requests it is serving.
