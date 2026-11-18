@@ -1053,7 +1053,10 @@ async fn undo_of_everywhere(session: &Session, project: &str, changeset: &str) -
         .as_array()
         .and_then(|rows| rows.iter().find(|row| row["id"] == changeset))
         .expect("the changeset is listed");
-    [view.body["data"]["undo_of"].clone(), summary["undo_of"].clone()]
+    [
+        view.body["data"]["undo_of"].clone(),
+        summary["undo_of"].clone(),
+    ]
 }
 
 /// The release `generation`'s `undo_of`, from the releases list and from its receipt.
@@ -1081,7 +1084,10 @@ async fn release_undo_of(session: &Session, project: &str, generation: i64) -> [
     .await
     .expect("request");
     assert_eq!(receipt.status, StatusCode::OK, "{}", receipt.body);
-    [row["undo_of"].clone(), receipt.body["data"]["undo_of"].clone()]
+    [
+        row["undo_of"].clone(),
+        receipt.body["data"]["undo_of"].clone(),
+    ]
 }
 
 /// D-184's marker (migration 0071): `undo_of` names the release an undo reverses. It is null for
@@ -1118,7 +1124,10 @@ async fn an_undo_names_the_release_it_undoes_and_nothing_else_does() {
     .await
     .expect("request");
     assert_eq!(rollback.status, StatusCode::CREATED, "{}", rollback.body);
-    let rollback = rollback.body["data"]["id"].as_str().expect("an id").to_owned();
+    let rollback = rollback.body["data"]["id"]
+        .as_str()
+        .expect("an id")
+        .to_owned();
     let id = |path: &str| path.rsplit('/').next().expect("an id").to_owned();
     let (first, second, third) = (id(&first), id(&second), id(&third));
 
@@ -1158,7 +1167,7 @@ async fn an_undo_names_the_release_it_undoes_and_nothing_else_does() {
         .expect_err("the CHECK refuses it");
         let code = refused
             .as_database_error()
-            .and_then(|error| error.code().map(|code| code.into_owned()));
+            .and_then(|error| error.code().map(std::borrow::Cow::into_owned));
         assert_eq!(code.as_deref(), Some("23514"), "{undo_of}: {refused}");
     }
 

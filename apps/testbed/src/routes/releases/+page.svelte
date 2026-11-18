@@ -45,6 +45,9 @@
 	let restoreOf = $state('');
 	let restoreTitle = $state('');
 	let restored = $state('');
+	let undoOf = $state('');
+	let undoKey = $state('');
+	let undone = $state('');
 	let pageSize = $state('');
 	let pageCursor = $state<string | null>(null);
 	let paged = $state('');
@@ -124,6 +127,24 @@
 		await load();
 	}
 
+	// Undo of a takedown (D-184): one request, under a key this form keeps until it is changed, so
+	// sending it twice shows the replay.
+	async function undo(event: SubmitEvent) {
+		event.preventDefault();
+		if (undoKey.trim() === '') undoKey = crypto.randomUUID().replaceAll('-', '');
+		const reply = await call('POST', `${api}/releases/${undoOf.trim()}/undo`, {
+			headers: { 'X-CSRF-Token': csrfToken(), 'Idempotency-Key': undoKey.trim() }
+		});
+		if (reply.status !== 201) {
+			undone = describe(reply);
+			return;
+		}
+		const made = (reply.body as { data: { generation: number; undo_of: number; entries_restored: number } }).data;
+		const replayed = reply.headers.get('idempotent-replayed') === 'true';
+		undone = `undid ${made.undo_of} as generation ${made.generation}, ${made.entries_restored} back${replayed ? ' (replayed)' : ''}`;
+		await load();
+	}
+
 	async function readReceipt(event: SubmitEvent) {
 		event.preventDefault();
 		const reply = await call('GET', `${api}/releases/${receiptOf.trim()}`);
@@ -168,7 +189,8 @@
 	Publishing through the real API (D-045): commit an approved changeset as the release after a base generation, see a stale base
 	refused, and read <code>/content/v1</code> with no cookie, at the latest release or pinned to an earlier one. Rolling back to a
 	release builds an ordinary changeset restoring what that release published — it is reviewed and published like any other, and
-	the generation still moves forward (D-097). Each release has a label and a receipt (D-051): what its destinations did and what
+	the generation still moves forward (D-097). Undoing a takedown puts back exactly what it took down, in one request, while it is
+	the newest release and by its author (D-184). Each release has a label and a receipt (D-051): what its destinations did and what
 	its probes saw. The list pages newest first with <code>?limit=</code> and <code>?cursor=</code>.
 </p>
 
@@ -223,6 +245,13 @@
 		<button type="submit">Roll back to this release</button>
 	</form>
 	{#if restored}<p data-testid="restored">{restored}</p>{/if}
+
+	<form onsubmit={undo}>
+		<label class="field">Undo the takedown in generation <input bind:value={undoOf} name="undo-of" /></label>
+		<label class="field">Idempotency key (empty for a new one; kept for a resend) <input bind:value={undoKey} name="undo-key" /></label>
+		<button type="submit">Undo this takedown</button>
+	</form>
+	{#if undone}<p data-testid="undone">{undone}</p>{/if}
 
 	<form onsubmit={firstPage}>
 		<label class="field">Releases per page (empty for the default, 100) <input bind:value={pageSize} name="page-size" /></label>

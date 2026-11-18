@@ -14,6 +14,28 @@
 /// a stale tab or a replayed request can't bring content back minutes later.
 pub const WINDOW_SECS: i64 = 60;
 
+/// Who asks for an undo.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Asker<I> {
+    /// A person, by identity.
+    Person(I),
+    /// An API token (D-111).
+    Token,
+}
+
+/// What the database says about the release asked about.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Release<I> {
+    /// Who published it.
+    pub publisher: I,
+    /// Whether it is younger than [`WINDOW_SECS`], by the database's clock.
+    pub in_window: bool,
+    /// How many of its changeset's items publish something.
+    pub publishes: i64,
+    /// How many take an entry down.
+    pub takes_down: i64,
+}
+
 /// What deciding an undo of release `generation` looks at. `I` is an identity.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Facts<I> {
@@ -21,20 +43,10 @@ pub struct Facts<I> {
     pub generation: i64,
     /// The environment's newest release.
     pub latest: i64,
-    /// Whether the release exists (generation within `1..=latest` and its row read).
-    pub exists: bool,
-    /// Whether the caller is an API token rather than a person (D-111).
-    pub by_token: bool,
     /// Who asks.
-    pub caller: I,
-    /// Who published the release.
-    pub publisher: I,
-    /// Whether the release is younger than [`WINDOW_SECS`], by the database's clock.
-    pub in_window: bool,
-    /// How many of its changeset's items publish something.
-    pub publishes: i64,
-    /// How many take an entry down.
-    pub takes_down: i64,
+    pub asker: Asker<I>,
+    /// The release, when there is one at `generation`.
+    pub release: Option<Release<I>>,
     /// How many review stages the environment configures (D-104).
     pub stages: usize,
     /// Whether the project requires someone other than the submitter to approve.
@@ -81,26 +93,29 @@ pub enum Refusal {
 ///
 /// The first [`Refusal`] that applies.
 pub fn decide<I: PartialEq>(facts: &Facts<I>) -> Result<(), Refusal> {
-    if facts.by_token {
+    let Asker::Person(caller) = &facts.asker else {
         return Err(Refusal::ByToken);
-    }
-    if !facts.exists || facts.generation < 1 || facts.generation > facts.latest {
-        return Err(Refusal::NoSuchRelease {
-            generation: facts.generation,
-        });
-    }
+    };
+    let release = match &facts.release {
+        Some(release) if (1..=facts.latest).contains(&facts.generation) => release,
+        _ => {
+            return Err(Refusal::NoSuchRelease {
+                generation: facts.generation,
+            });
+        }
+    };
     if facts.generation != facts.latest {
         return Err(Refusal::ChangedSince {
             latest: facts.latest,
         });
     }
-    if facts.publishes > 0 || facts.takes_down == 0 {
+    if release.publishes > 0 || release.takes_down == 0 {
         return Err(Refusal::NotUndoable);
     }
-    if facts.caller != facts.publisher {
+    if *caller != release.publisher {
         return Err(Refusal::NotYours);
     }
-    if !facts.in_window {
+    if !release.in_window {
         return Err(Refusal::Expired);
     }
     if facts.stages > 0 || facts.different_reviewer {
@@ -118,43 +133,114 @@ mod tests {
         Facts {
             generation: 4,
             latest: 4,
-            exists: true,
-            by_token: false,
-            caller: "ana",
-            publisher: "ana",
-            in_window: true,
-            publishes: 0,
-            takes_down: 1,
+            asker: Asker::Person("ana"),
+            release: Some(Release {
+                publisher: "ana",
+                in_window: true,
+                publishes: 0,
+                takes_down: 1,
+            }),
             stages: 0,
             different_reviewer: false,
         }
     }
 
+    /// [`undoable`], with its release changed by `change`.
+    fn with_release(change: impl FnOnce(&mut Release<&'static str>)) -> Facts<&'static str> {
+        let mut facts = undoable();
+        if let Some(release) = facts.release.as_mut() {
+            change(release);
+        }
+        facts
+    }
+
     #[test]
     fn the_newest_takedown_by_its_author_within_the_window_is_undone() {
         assert_eq!(decide(&undoable()), Ok(()));
-        let several = Facts {
-            takes_down: 3,
-            ..undoable()
-        };
-        assert_eq!(decide(&several), Ok(()));
+        assert_eq!(
+            decide(&with_release(|release| release.takes_down = 3)),
+            Ok(())
+        );
     }
 
     #[test]
     fn each_rule_refuses_on_its_own() {
         let cases = [
-            (Facts { by_token: true, ..undoable() }, Refusal::ByToken),
-            (Facts { exists: false, ..undoable() }, Refusal::NoSuchRelease { generation: 4 }),
-            (Facts { generation: 0, ..undoable() }, Refusal::NoSuchRelease { generation: 0 }),
-            (Facts { generation: -1, ..undoable() }, Refusal::NoSuchRelease { generation: -1 }),
-            (Facts { generation: 5, ..undoable() }, Refusal::NoSuchRelease { generation: 5 }),
-            (Facts { latest: 5, ..undoable() }, Refusal::ChangedSince { latest: 5 }),
-            (Facts { publishes: 1, ..undoable() }, Refusal::NotUndoable),
-            (Facts { takes_down: 0, ..undoable() }, Refusal::NotUndoable),
-            (Facts { caller: "ben", ..undoable() }, Refusal::NotYours),
-            (Facts { in_window: false, ..undoable() }, Refusal::Expired),
-            (Facts { stages: 2, ..undoable() }, Refusal::NeedsReview),
-            (Facts { different_reviewer: true, ..undoable() }, Refusal::NeedsReview),
+            (
+                Facts {
+                    asker: Asker::Token,
+                    ..undoable()
+                },
+                Refusal::ByToken,
+            ),
+            (
+                Facts {
+                    release: None,
+                    ..undoable()
+                },
+                Refusal::NoSuchRelease { generation: 4 },
+            ),
+            (
+                Facts {
+                    generation: 0,
+                    ..undoable()
+                },
+                Refusal::NoSuchRelease { generation: 0 },
+            ),
+            (
+                Facts {
+                    generation: -1,
+                    ..undoable()
+                },
+                Refusal::NoSuchRelease { generation: -1 },
+            ),
+            (
+                Facts {
+                    generation: 5,
+                    ..undoable()
+                },
+                Refusal::NoSuchRelease { generation: 5 },
+            ),
+            (
+                Facts {
+                    latest: 5,
+                    ..undoable()
+                },
+                Refusal::ChangedSince { latest: 5 },
+            ),
+            (
+                with_release(|release| release.publishes = 1),
+                Refusal::NotUndoable,
+            ),
+            (
+                with_release(|release| release.takes_down = 0),
+                Refusal::NotUndoable,
+            ),
+            (
+                Facts {
+                    asker: Asker::Person("ben"),
+                    ..undoable()
+                },
+                Refusal::NotYours,
+            ),
+            (
+                with_release(|release| release.in_window = false),
+                Refusal::Expired,
+            ),
+            (
+                Facts {
+                    stages: 2,
+                    ..undoable()
+                },
+                Refusal::NeedsReview,
+            ),
+            (
+                Facts {
+                    different_reviewer: true,
+                    ..undoable()
+                },
+                Refusal::NeedsReview,
+            ),
         ];
         for (facts, refusal) in cases {
             assert_eq!(decide(&facts), Err(refusal), "{facts:?}");
@@ -163,30 +249,31 @@ mod tests {
 
     #[test]
     fn the_most_basic_reason_comes_first() {
-        // A token asking about an old release someone else published: the token is the answer.
+        // A token asking about an old release someone else published, too late, with stages.
         let everything = Facts {
-            by_token: true,
+            asker: Asker::Token,
             latest: 9,
-            caller: "ben",
-            in_window: false,
+            release: Some(Release {
+                publisher: "ben",
+                in_window: false,
+                publishes: 2,
+                takes_down: 1,
+            }),
             stages: 1,
-            publishes: 2,
             ..undoable()
         };
         assert_eq!(decide(&everything), Err(Refusal::ByToken));
-        // Not the newest beats not a takedown, not yours, too late and review.
+        // A person: not the newest beats not a takedown, not yours, too late and review.
         let person = Facts {
-            by_token: false,
+            asker: Asker::Person("ana"),
             ..everything.clone()
         };
         assert_eq!(decide(&person), Err(Refusal::ChangedSince { latest: 9 }));
         // Too late is said before review, so an expired undo never suggests a request instead.
         let late = Facts {
-            in_window: false,
             stages: 2,
-            ..undoable()
+            ..with_release(|release| release.in_window = false)
         };
         assert_eq!(decide(&late), Err(Refusal::Expired));
     }
-
 }

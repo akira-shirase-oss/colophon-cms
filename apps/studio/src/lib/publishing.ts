@@ -22,6 +22,8 @@ export interface InReview {
 	title: string;
 	/** It takes the entry down rather than publishing it. */
 	unpublish: boolean;
+	/** When it is approved and scheduled: when it publishes by itself (D-060). */
+	runAt?: string | null;
 }
 
 /** Whether one click publishes in `collections`, rather than asking for review. */

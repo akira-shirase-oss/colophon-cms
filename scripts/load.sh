@@ -52,6 +52,8 @@
 # collection lists with cursor paging, entries latest and pinned, and If-None-Match
 # revalidations; needs scripts/seed-demo-sites.sh's record or DEMO_PROJECT), publishing (whole publishes, five
 # requests each, with the worker announcing every release to a local receiver; needs node),
+# undo (D-184: take an article down, race two undos of that release — exactly one commits, the
+# other is refused changed_since — replay the winner's key and read the article back),
 # the load-matrix evidence runs (D-128): smoke (L01: one signed-in user's whole walk — reads,
 # saves, revision reads, publishes and the release IDs they land — at a one's pace, every
 # answer checked), warm-baseline (L02: the spec's 300/s warm read mix for DURATION — 30 min —
@@ -111,7 +113,7 @@ cd "$(dirname "$0")/.."
 endpoint="${1:-}"
 scenario="${2:-}"
 if [[ ! -f "perf/k6/$endpoint.js" ]] || [[ "$scenario" != throughput && "$scenario" != steady && "$scenario" != stress ]]; then
-  echo "usage: scripts/load.sh health|rich-text|openapi|session|accounts|cli|members|roles|tokens|quotas|noisy-agent|schedules|projects|setup|changesets|stages|collaboration|live|migrations|delivery|audience|audience-sites|publishing|cache-down|postgres-trouble|purge-trouble|smoke|warm-baseline|cold-cache|stampede|mixed|spike|import-scale|cdn-warm|media-load|entries|content-types|modelling|inverses|transfer|graphql|locales|deletion|collection-delete|site-starter|assets|rich-text-media|bulk|studio|site|preview throughput|steady|stress [--baseline]" >&2
+  echo "usage: scripts/load.sh health|rich-text|openapi|session|accounts|cli|members|roles|tokens|quotas|noisy-agent|schedules|projects|setup|changesets|stages|collaboration|live|migrations|delivery|audience|audience-sites|publishing|undo|cache-down|postgres-trouble|purge-trouble|smoke|warm-baseline|cold-cache|stampede|mixed|spike|import-scale|cdn-warm|media-load|entries|content-types|modelling|inverses|transfer|graphql|locales|deletion|collection-delete|site-starter|assets|rich-text-media|bulk|studio|site|preview throughput|steady|stress [--baseline]" >&2
   exit 2
 fi
 save_baseline=0
@@ -201,6 +203,9 @@ case "$endpoint" in
   # publishes (200 requests) a second; a run at 100 fell behind (the result is kept). The p99
   # threshold is END_GOAL's editorial write budget, 700 ms.
   publishing) RATE="${RATE:-40}" P99_MS="${P99_MS:-700}" ;;
+  # D-184: RATE counts undo iterations, eight requests each (a takedown's four, two racing undos,
+  # a replay and a read) and two releases committed: publishing's editorial write budget.
+  undo) RATE="${RATE:-25}" P99_MS="${P99_MS:-700}" ;;
   # L11 (D-127): delivery reads at a steady rate while Valkey is paused mid-run — the
   # reads keep their p99 budget because the Postgres fallback is the point, not the pain.
   cache-down) RATE="${RATE:-400}" P99_MS="${P99_MS:-250}" ;;

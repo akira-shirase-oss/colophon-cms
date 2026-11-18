@@ -276,3 +276,37 @@ test('the panel’s surfaces read on a phone in light and dark: More, the confir
 	expect(await phone.evaluate(() => document.documentElement.scrollWidth - window.innerWidth)).toBeLessThanOrEqual(0);
 	await phone.context().close();
 });
+
+test('when saves can’t reach the server, one amber banner says so plainly, and Retry now sends them', async ({ page, context }) => {
+	await signIn(page);
+	const project = await newProject(page);
+	const entry = await newEntry(page, project, '', 'articles', { title: 'Harbour webcam', body: body('Back online on Monday.') });
+	await page.goto(`/studio/projects/${project}/articles/${entry}`);
+	await expect(page.getByTestId('save-status')).toHaveAttribute('data-status', 'saved');
+
+	// The server stops answering: every API request is refused at the connection.
+	await page.route('**/api/v1/**', (route) => route.abort('connectionrefused'));
+	const title = page.getByRole('heading', { level: 1 }).getByRole('textbox', { name: 'Title' });
+	await title.fill('Harbour webcam is back');
+	const banner = page.getByTestId('save-problem');
+	await expect(banner).toBeVisible({ timeout: 30_000 });
+	await expect(banner).toHaveText(/Colophon isn’t answering — your changes are saved on this device and will sync\.\s*Retry now/);
+	// Said once, in the banner: no raw lowercase line under the save state.
+	await expect(page.getByTestId('save-message')).toHaveCount(0);
+	await expect(page.getByText('no answer from the server')).toHaveCount(0);
+	await bothSchemes(page, 'save banner');
+	await shot(page, 'editor-offline-1440-light');
+
+	// The browser loses its network too: the same banner says Offline.
+	await context.setOffline(true);
+	await expect(banner).toContainText('Offline — your changes are saved on this device and will sync.');
+
+	// Back: Retry now sends the kept change, and the banner goes.
+	await context.setOffline(false);
+	await page.unroute('**/api/v1/**');
+	await banner.getByRole('button', { name: 'Retry now' }).click();
+	await expect(page.getByTestId('save-status')).toHaveAttribute('data-status', 'saved', { timeout: 30_000 });
+	await expect(banner).toBeHidden();
+	const draft = await api(page, 'GET', `${env(project)}/collections/articles/entries/${entry}`);
+	expect(draft.body?.['data'].content.title).toBe('Harbour webcam is back');
+});

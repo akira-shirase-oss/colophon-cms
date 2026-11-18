@@ -241,6 +241,8 @@ export interface Revision {
 	created_at: string;
 	content_hash: string;
 	title: string;
+	/** Who may read it once published (D-137): `public`, `authenticated` or `role:<name>`. */
+	visibility?: string;
 }
 
 export interface Draft {
@@ -1136,6 +1138,9 @@ export interface Changeset {
 	updated_at: string;
 	/** The release it restores, when a rollback built it (D-097). */
 	rollback_generation: number | null;
+	/** The release it undoes, for an undo of a takedown (D-184): read it before
+	 *  `rollback_generation`, which an undo also sets, to the release before. */
+	undo_of: number | null;
 	items: ChangesetItem[];
 	reviews: ChangesetReview[];
 	/** Each configured review stage and where it stands, in order; empty when the environment
@@ -1158,6 +1163,8 @@ export interface ChangesetSummary {
 	updated_at: string;
 	/** The release it restores, when a rollback built it (D-097). */
 	rollback_generation: number | null;
+	/** The release it undoes, for an undo of a takedown (D-184). */
+	undo_of: number | null;
 }
 
 const changesets = (project: string) => `${base(project)}/changesets`;
@@ -1193,6 +1200,25 @@ export async function rollbackRelease(project: string, generation: number, title
 		.data;
 }
 
+/** What putting back a takedown made (D-184): the release, and the one it undid. */
+export interface Undone {
+	generation: number;
+	epoch: number;
+	undo_of: number;
+	changeset_id: string;
+	changeset_hash: string;
+	entries_restored: number;
+}
+
+/** Puts back exactly what release `generation` took down, as the next release, in one request
+ *  (D-184). The same key replays the one answer, so sending it again after a lost answer is safe.
+ *  Refused with `changed_since` (another release went out after it), `undo_expired`,
+ *  `not_undoable`, `not_your_release`, `needs_review` (publishing here goes through review) or
+ *  `entry_deleted`. */
+export async function undoRelease(project: string, generation: number, key: string): Promise<Undone> {
+	return ((await (await send('POST', `${base(project)}/releases/${generation}/undo`, undefined, { 'Idempotency-Key': key })).json()) as { data: Undone }).data;
+}
+
 /** Submits, refreshes or reviews the changeset whose hash the caller saw; a changed hash is refused
  *  with reason `stale_changeset`. A review names the `stage` it decides where the environment
  *  configures them — required then (`stage_required`), refused for any other key (`unknown_stage`,
@@ -1214,6 +1240,8 @@ export interface Release {
 	epoch: number;
 	changeset_id: string;
 	title: string;
+	/** The release this one undoes, for an undo of a takedown (D-184). */
+	undo_of: number | null;
 	changeset_hash: string;
 	published_by: string;
 	published_by_name: string | null;

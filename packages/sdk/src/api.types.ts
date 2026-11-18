@@ -1152,6 +1152,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/projects/{project}/environments/{environment}/releases/{generation}/undo": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Put back what the newest release took down, as the next release (D-184) */
+        post: operations["undoRelease"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/projects/{project}/environments/{environment}/review-stages": {
         parameters: {
             query?: never;
@@ -3455,6 +3472,18 @@ export interface components {
             definition_hash?: string;
             slug?: string;
             version?: number;
+        };
+        UndoneView: {
+            changeset_hash: string;
+            /** Format: uuid */
+            changeset_id: string;
+            /** @description how many entries readers get again */
+            entries_restored: number;
+            epoch: number;
+            /** @description the release that put things back */
+            generation: number;
+            /** @description the release it undid */
+            undo_of: number;
         };
         /**
          * Format: binary
@@ -11281,6 +11310,110 @@ export interface operations {
                 };
             };
             /** @description `invalid_field` — a rollback takes no `entries` or `unpublish` */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description `precondition_required` — a required `If-Match` or `Idempotency-Key` is missing */
+            428: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description `rate_limited` — over the per-credential or per-address limit; `Retry-After` */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description any other failure, in the one error envelope */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    undoRelease: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description 16–128 of `A-Z a-z 0-9 - _`, scoped to the actor, operation and environment */
+                "idempotency-key": string;
+            };
+            path: {
+                /** @description the project's id */
+                project: string;
+                /** @description the environment's slug, such as `production` */
+                environment: string;
+                /** @description the release's generation */
+                generation: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description created */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        data: components["schemas"]["UndoneView"];
+                    };
+                };
+            };
+            /** @description `unauthorized` — not signed in, the credential is invalid, or the token was revoked */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description `not_your_release, agent_self_review, missing_permission` — only the person who published the release may undo it, and never an API token */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description `not_found` — no such resource — or one the caller may not see, which looks the same */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description `changed_since` — another release went out after it, before or during this request; `not_undoable, undo_expired, needs_review` — it published something, its 60 seconds passed, or publishing here goes through review; `entry_deleted, revision_outdated, references_unpublished, asset_not_usable` — what it took down can't be put back as it was; `idempotency_key_reused` — this `Idempotency-Key` was used before for a different request */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description `invalid_generation` — there is no such release */
             422: {
                 headers: {
                     [name: string]: unknown;

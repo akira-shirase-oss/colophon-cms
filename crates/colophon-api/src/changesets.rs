@@ -152,7 +152,7 @@ fn domain_item(pin: &Pin) -> changeset::Item {
 }
 
 /// The changeset hash of `pins`.
-fn hash_of(pins: &[Pin]) -> [u8; 32] {
+pub(crate) fn hash_of(pins: &[Pin]) -> [u8; 32] {
     let items: Vec<changeset::Item> = pins.iter().map(domain_item).collect();
     sha256(changeset::canonical(&items).as_bytes())
 }
@@ -530,7 +530,10 @@ async fn may_write(tx: &mut ProjectTransaction, changeset: Uuid) -> Result<(), A
 
 /// Refuses unless the caller's role may change every one of `entries`: anyone's, or their own
 /// where that is what it allows (D-058, step R.3). Pinning an entry asks for it to be published.
-async fn may_change_entries(tx: &mut ProjectTransaction, entries: &[Uuid]) -> Result<(), ApiError> {
+pub(crate) async fn may_change_entries(
+    tx: &mut ProjectTransaction,
+    entries: &[Uuid],
+) -> Result<(), ApiError> {
     let creators = colophon_db::entries::creators(tx, entries)
         .await
         .map_err(ApiError::from_db)?;
@@ -1065,7 +1068,7 @@ pub(crate) fn hash_bytes(etag: &str) -> Vec<u8> {
 }
 
 /// What the API answers when publishing refused (D-045).
-fn refused(refusal: Refusal) -> ApiError {
+pub(crate) fn refused(refusal: Refusal) -> ApiError {
     match refusal {
         Refusal::NotFound => ApiError::NotFound,
         Refusal::HashMoved { current } => ApiError::StaleChangeset {

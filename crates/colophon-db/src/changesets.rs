@@ -296,16 +296,54 @@ pub async fn create(
     hash: &[u8; 32],
     rollback: Option<i64>,
 ) -> Result<(), DbError> {
+    insert(tx, id, title, pins, hash, rollback, None).await
+}
+
+/// [`create`] for the undo of release `generation` (D-184, migration 0071): its pins put back
+/// what that release took down, so it restores the release before (`rollback_generation =
+/// generation - 1`) and names the one it undoes. The mark is written with the row and never
+/// changed: the application may insert changesets but update only their hash and submission.
+pub async fn create_undo(
+    tx: &mut ProjectTransaction,
+    id: Uuid,
+    title: &str,
+    pins: &[Pin],
+    hash: &[u8; 32],
+    generation: i64,
+) -> Result<(), DbError> {
+    insert(
+        tx,
+        id,
+        title,
+        pins,
+        hash,
+        Some(generation - 1),
+        Some(generation),
+    )
+    .await
+}
+
+/// The row and its items, as [`create`] and [`create_undo`] write them.
+async fn insert(
+    tx: &mut ProjectTransaction,
+    id: Uuid,
+    title: &str,
+    pins: &[Pin],
+    hash: &[u8; 32],
+    rollback: Option<i64>,
+    undo_of: Option<i64>,
+) -> Result<(), DbError> {
     sqlx::query!(
-        "INSERT INTO changesets (project_id, environment_id, id, title, hash, created_by, rollback_generation)
-         VALUES ($1, $2, $3, $4, $5, $6, $7)",
+        "INSERT INTO changesets (project_id, environment_id, id, title, hash, created_by, rollback_generation, undo_of)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)",
         tx.project,
         tx.environment,
         id,
         title,
         &hash[..],
         tx.identity,
-        rollback
+        rollback,
+        undo_of
     )
     .execute(&mut *tx.transaction)
     .await

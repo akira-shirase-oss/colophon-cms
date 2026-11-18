@@ -3,7 +3,7 @@
 //!
 //! The undo itself is an ordinary changeset published by [`crate::publish::publish`] — the same
 //! locks, checks and outbox as any release — so this module only reads the facts the decision
-//! needs and writes `changesets.undo_of` (migration 0071).
+//! needs; `changesets::create_undo` writes the changeset with `undo_of` (migration 0071).
 
 use uuid::Uuid;
 
@@ -57,21 +57,4 @@ pub async fn facts(
     .fetch_optional(&mut *tx.transaction)
     .await
     .map_err(DbError::from_query)
-}
-
-/// Marks `changeset` as the undo of release `generation`. The changeset was created in this
-/// transaction with `rollback_generation = generation - 1`, which the CHECK on the pair requires.
-pub async fn mark(tx: &mut ProjectTransaction, changeset: Uuid, generation: i64) -> Result<(), DbError> {
-    sqlx::query!(
-        "UPDATE changesets SET undo_of = $4
-         WHERE project_id = $1 AND environment_id = $2 AND id = $3",
-        tx.project,
-        tx.environment,
-        changeset,
-        generation
-    )
-    .execute(&mut *tx.transaction)
-    .await
-    .map_err(DbError::from_write)?;
-    Ok(())
 }

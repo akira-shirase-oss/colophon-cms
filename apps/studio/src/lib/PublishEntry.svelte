@@ -188,10 +188,10 @@
 				</Button>
 			{:else if now === 'review' && requestId !== null}
 				<Button class="flex-1" href={resolve('/projects/[project]/changesets/[changeset]', { project, changeset: requestId })} data-testid="review-button"
-					>Review the request</Button
+					>{review?.runAt ? 'See the schedule' : 'Review the request'}</Button
 				>
 			{:else if now === 'waiting'}
-				<p class="flex h-10 flex-1 items-center text-sm text-muted-foreground max-xl:hidden" data-testid="waiting-for-review">Waiting for review</p>
+				<p class="flex h-10 flex-1 items-center text-sm text-muted-foreground max-xl:hidden" data-testid="waiting-for-review">{review?.runAt ? 'Scheduled' : 'Waiting for review'}</p>
 			{:else}
 				<p class="flex h-10 flex-1 items-center gap-1.5 text-sm text-muted-foreground max-xl:hidden" data-testid="nothing-to-publish">
 					<CheckIcon class="size-4 text-live" aria-hidden="true" />Nothing new to publish
@@ -229,6 +229,8 @@
 				Goes live at once, as {nextRelease}.
 			{:else if now === 'publish'}
 				Someone who can publish approves it, then it goes live.
+			{:else if now === 'review' && review?.runAt}
+				It publishes by itself then; change or cancel it there.
 			{:else if now === 'review'}
 				Approve it there to publish it.
 			{:else if now === 'waiting'}

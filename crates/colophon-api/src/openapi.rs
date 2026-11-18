@@ -27,7 +27,7 @@ use crate::{
     AppState, BuildInfo, assets, audience, audit, auth, bulk, changesets, collaboration,
     components, content_types, delivery, destinations, device, entries, graphql, health, mcp,
     members, migrations, preview, projects, receipts, rich_text, roles, schedules, setup, tokens,
-    version,
+    undo, version,
 };
 
 /// A verb Colophon's routes use. Naming them in a small enum keeps the table total: the
@@ -3125,6 +3125,48 @@ pub(crate) static TABLE: &[Route] = &[
         )],
     ),
     route(
+        (P, "/releases/{generation}/undo"),
+        &[op(
+            Verb::Post,
+            |f| on(f, undo::undo),
+            OpDoc {
+                id: "undoRelease",
+                summary: "Put back what the newest release took down, as the next release (D-184)",
+                tag: "publishing",
+                security: Security::Any,
+                headers: &[IDEMPOTENCY],
+                ok: created("UndoneView"),
+                extra: &[
+                    NOT_FOUND,
+                    refusal(
+                        403,
+                        "not_your_release, agent_self_review, missing_permission",
+                        "only the person who published the release may undo it, and never an API token",
+                    ),
+                    refusal(
+                        409,
+                        "changed_since",
+                        "another release went out after it, before or during this request",
+                    ),
+                    refusal(
+                        409,
+                        "not_undoable, undo_expired, needs_review",
+                        "it published something, its 60 seconds passed, or publishing here goes through review",
+                    ),
+                    refusal(
+                        409,
+                        "entry_deleted, revision_outdated, references_unpublished, asset_not_usable",
+                        "what it took down can't be put back as it was",
+                    ),
+                    refusal(422, "invalid_generation", "there is no such release"),
+                    P428,
+                    REUSED_KEY,
+                ],
+                ..MIN
+            },
+        )],
+    ),
+    route(
         (P, "/destinations"),
         &[
             op(
@@ -4914,6 +4956,7 @@ fn schema_table() -> Value {
         entry_parts(),
         collaboration_parts(),
         publishing_parts(),
+        undo_parts(),
         delivery_parts(),
         media_parts(),
         preview_parts(),
@@ -6070,6 +6113,25 @@ fn collaboration_parts() -> Value {
                 "created_at": { "type": "string", "format": "date-time" },
                 "updated_at": { "type": "string", "format": "date-time" },
                 "etag": { "type": "string" },
+            },
+        },
+    })
+}
+
+/// An undo's answer (D-184), apart from the publishing schemas, whose literal is at the macro's
+/// recursion limit.
+fn undo_parts() -> Value {
+    json!({
+        "UndoneView": {
+            "type": "object",
+            "required": ["generation", "epoch", "undo_of", "changeset_id", "changeset_hash", "entries_restored"],
+            "properties": {
+                "generation": { "type": "integer", "description": "the release that put things back" },
+                "epoch": { "type": "integer" },
+                "undo_of": { "type": "integer", "description": "the release it undid" },
+                "changeset_id": { "type": "string", "format": "uuid" },
+                "changeset_hash": { "type": "string" },
+                "entries_restored": { "type": "integer", "description": "how many entries readers get again" },
             },
         },
     })

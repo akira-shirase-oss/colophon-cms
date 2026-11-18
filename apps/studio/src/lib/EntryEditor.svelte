@@ -29,6 +29,7 @@
 	import { Button } from '@colophon/ui/ui/button';
 	import { goto } from '$app/navigation';
 	import {
+		ApiError,
 		assetUrl as mediaUrl,
 		type Content,
 		type ContentType,
@@ -38,14 +39,18 @@
 		getChangeset,
 		getRevision,
 		listRevisions,
+		listSchedules,
 		type Loaded,
 		may,
 		mayOn,
+		newKey,
 		readerAbsence,
 		type Referrer,
 		type Revision,
 		signInUrl,
-		type Summary
+		type Summary,
+		type Undone,
+		undoRelease
 	} from './api.ts';
 	import { linkedQuery, placeName } from './references.ts';
 	import { clearedNote, shownTitle } from './words.ts';
@@ -346,9 +351,13 @@
 	// (the sidebar counts them); the newest few waiting are read in full to find this entry, a
 	// bounded number, so an editor never fans out over every request.
 	const requests = createQuery(() => changesetsQuery(project));
+	// Scheduled ones (D-060) are approved requests with a pending schedule: the project's schedules
+	// are one more read, and they count against the same bound.
+	const schedules = createQuery(() => ({ queryKey: ['schedules', project], queryFn: () => listSchedules(project) }));
+	const pendingRuns = $derived(new Map((schedules.data ?? []).filter((one) => one.state === 'scheduled').map((one) => [one.changeset_id, one.run_at])));
 	const waiting = $derived(
 		(requests.data ?? [])
-			.filter((request) => request.status.state === 'awaiting_review')
+			.filter((request) => request.status.state === 'awaiting_review' || (request.status.state === 'approved' && pendingRuns.has(request.id)))
 			.sort((a, b) => b.updated_at.localeCompare(a.updated_at))
 			.slice(0, 10)
 	);
@@ -358,15 +367,21 @@
 	const review = $derived.by((): InReview | null => {
 		for (const read of waitingReads) {
 			const item = read.data?.items.find((pinned) => pinned.entry_id === entry);
-			if (read.data !== undefined && item !== undefined && read.data.status.state === 'awaiting_review') {
-				return { id: read.data.id, title: read.data.title, unpublish: item.kind === 'unpublish' };
+			if (read.data === undefined || item === undefined) continue;
+			const runAt = pendingRuns.get(read.data.id) ?? null;
+			if (read.data.status.state === 'awaiting_review' || (read.data.status.state === 'approved' && runAt !== null)) {
+				return { id: read.data.id, title: read.data.title, unpublish: item.kind === 'unpublish', runAt };
 			}
 		}
 		return null;
 	});
 
 	/** The badge: where it stands for readers, or that it waits for review. */
-	const shownState = $derived<Status>(review !== null ? 'review' : takenDown && standing === 'draft' ? 'taken_down' : standing);
+	const shownState = $derived<Status>(
+		review !== null ? (review.runAt ? 'scheduled' : 'review') : takenDown && standing === 'draft' ? 'taken_down' : standing
+	);
+	/** When a scheduled request publishes, in the reader's own clock. */
+	const runsAt = $derived(review?.runAt ? new Date(review.runAt).toLocaleString(undefined, { weekday: 'short', day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' }) : '');
 	/** The status card's rule, in the badge's tone: the editor's mark for "what readers have". */
 	const RULE: Record<Tone, string> = { live: 'bg-live', changed: 'bg-changed', pending: 'bg-pending', attention: 'bg-attention', draft: 'bg-draft' };
 	const rule = $derived(RULE[STATUS[shownState].tone]);
@@ -375,8 +390,26 @@
 		const live = published;
 		return live === null ? undefined : releases.data?.releases.find((release) => release.generation === live.generation);
 	});
-	/** Where anyone reads the published version, without signing in. */
+	/** Where readers get the published version: anyone, without signing in, when it is public. */
 	const publicAddress = $derived(`${window.location.origin}${deliveryUrl(project, collection)}/${entry}`);
+	/** Who may read the live version (D-137), once this page knows: its gate is pinned with it, so
+	 *  it is the live revision's, not the draft's. A gated entry's address is not a public link —
+	 *  anyone not signed in as a member gets "not found" — so it is never offered as one. */
+	const liveGate = $derived(
+		published === null
+			? null
+			: published.revision_id === latest.revision.id
+				? (latest.revision.visibility ?? null)
+				: (liveVersion.data?.revision.visibility ?? null)
+	);
+	const openToAnyone = $derived(liveGate === 'public');
+	const gateWords = $derived(
+		liveGate === 'authenticated'
+			? 'Only readers signed in on your site can read it.'
+			: liveGate?.startsWith('role:')
+				? `Only readers with the “${liveGate.slice('role:'.length)}” role can read it.`
+				: ''
+	);
 	async function copyAddress(text: string) {
 		try {
 			await navigator.clipboard.writeText(text);
@@ -475,59 +508,79 @@
 	);
 
 	// Taking it down asks first; afterwards, for ten seconds, Undo puts the version readers had back
-	// as a new release. When the draft had newer changes, they are kept: the old version is saved
-	// and published, then the newer one is saved on top again, as it was.
+	// as a new release: one request (D-184), which the server takes only while that takedown is the
+	// newest release, by the person who made it, and only where publishing needs no other review.
+	// The draft is never touched — newer changes stay in it, and the entry then reads "changed".
+	// One key per toast: a second press, or a resend after a lost answer, replays the one release.
 	let undoing = false;
 	function unpublished(generation: number) {
-		const was = published;
-		const draftWas = latest.revision;
+		const key = newKey();
 		toast.success(`Unpublished in ${releaseName(generation)}`, {
 			description: 'Readers no longer get it.',
 			duration: 10_000,
-			action: was === null ? undefined : { label: 'Undo', onClick: () => void undo(was.revision_id, draftWas, generation) }
+			action: { label: 'Undo', onClick: () => void undo(generation, key) }
 		});
 	}
-	async function undo(liveRevision: string, draftWas: Draft['revision'], base: number) {
+	/** How many times Undo sends the same request again when no answer came back. */
+	const UNDO_RESENDS = 2;
+	async function undo(generation: number, key: string) {
 		if (undoing) return;
 		undoing = true;
-		const stop = (why: string) => toast.error('Not undone', { description: why });
 		try {
-			if ((await saver.flush()) !== 'saved' || latest.revision.id !== draftWas.id) {
-				return stop('The entry changed meanwhile. Publish it again when it is ready.');
+			let done: Undone | null = null;
+			for (let attempt = 0; done === null; attempt += 1) {
+				try {
+					done = await undoRelease(project, generation, key);
+				} catch (failure) {
+					// No answer: it may have committed, so the same key asks again and gets that answer.
+					if (failure instanceof ApiError && failure.failure === 'retry' && failure.status === null && attempt < UNDO_RESENDS) {
+						await new Promise((wake) => setTimeout(wake, 400 * (attempt + 1)));
+						continue;
+					}
+					throw failure;
+				}
 			}
-			const old = await readVersion(liveRevision);
-			const newer = old.revision.content_hash === draftWas.content_hash ? null : current();
-			if (newer !== null) {
-				await putBack(old.content);
-				if (saver.status !== 'saved') return stop('Its earlier version couldn’t be saved. Publish it again from History.');
+			toast.success(`Back on your site in ${releaseName(done.generation)}`, { description: 'Readers get the version they had before.' });
+		} catch (failure) {
+			const reason = failure instanceof ApiError ? failure.reason : null;
+			const why: Record<string, string> = {
+				changed_since: 'Another release went out in the meantime, so this one can’t be undone. Publish it again when it’s ready.',
+				undo_expired: 'The moment to undo it has passed. Publish it again instead.',
+				not_your_release: 'Only the person who took it down can undo it. Publish it again instead.',
+				entry_deleted: 'It has been deleted since, so it can’t come back.'
+			};
+			if (reason === 'needs_review') {
+				toast.error('Not undone', {
+					description: 'Publishing here goes through review, so it needs a publish request.',
+					action: { label: 'Ask for review', onClick: () => void askToRepublish() }
+				});
+			} else {
+				toast.error('Not undone', { description: (reason !== null && why[reason]) || plainError(failure, 'publish this') });
 			}
-			const done = await publishInOneClick({
-				project,
-				title: latest.revision.title || 'Untitled',
-				entries: [entry],
-				oneClick: true,
-				seenGeneration: base,
-				keys: newKeys(),
-				step: () => {},
-				doing: 'publish this'
-			});
-			if (newer !== null) {
-				show(newer);
-				saver.edit(current());
-				await saver.flush();
-			}
+		} finally {
+			undoing = false;
 			await Promise.all([
 				queryClient.invalidateQueries({ queryKey: ['entries', project] }),
 				queryClient.invalidateQueries({ queryKey: ['changesets', project] }),
 				queryClient.invalidateQueries({ queryKey: ['releases', project] })
 			]);
-			if (done.kind === 'published') toast.success(`Back on your site in ${releaseName(done.generation)}`, { description: 'Readers get the version they had before.' });
-			else if (done.kind === 'stopped') stop(done.message);
-		} catch (failure) {
-			stop(plainError(failure, 'publish this'));
-		} finally {
-			undoing = false;
 		}
+	}
+	/** Where review is required: a publish request for the saved version, sent for review. */
+	async function askToRepublish() {
+		const done = await publishInOneClick({
+			project,
+			title: latest.revision.title || 'Untitled',
+			entries: [entry],
+			oneClick: false,
+			seenGeneration: undefined,
+			keys: newKeys(),
+			step: () => {},
+			doing: 'ask for review here'
+		});
+		if (done.kind === 'requested') toast.success('Sent for review', { description: 'Someone who can publish approves it.' });
+		else if (done.kind === 'stopped') toast.error('Not sent', { description: done.message });
+		await queryClient.invalidateQueries({ queryKey: ['changesets', project] });
 	}
 
 	// Duplicate (⋯ More): a copy of what the role reads, opened in its own editor.
@@ -950,10 +1003,10 @@
 						>{#if review !== null}<span class="text-muted-foreground">{' · '}</span><a
 								class="underline decoration-border underline-offset-4 hover:decoration-foreground"
 								href={resolve('/projects/[project]/changesets/[changeset]', { project, changeset: review.id })}
-								>{review.unpublish ? 'taking it down is in review' : 'changes in review'}</a
+								>{review.runAt ? `${review.unpublish ? 'comes down' : 'changes publish'} ${runsAt}` : review.unpublish ? 'taking it down is in review' : 'changes in review'}</a
 							>{:else if standing === 'changed'}<span class="text-muted-foreground">{' · edited since'}</span>{:else if liveRelease}<span class="text-muted-foreground" title={new Date(liveRelease.published_at).toLocaleString()}>{` · ${clock(liveRelease.published_at)}`}</span>{/if}
 					{:else if review !== null}
-						Waiting for review in <a
+						{review.runAt ? `Publishes ${runsAt}, in` : 'Waiting for review in'} <a
 							class="font-medium underline decoration-border underline-offset-4 hover:decoration-foreground"
 							href={resolve('/projects/[project]/changesets/[changeset]', { project, changeset: review.id })}
 							data-user-content>“{review.title}”</a
@@ -984,7 +1037,7 @@
 					seenGeneration={releases.data?.generation}
 					own={who.data != null && latest.created_by === who.data.id}
 					{linkedLive}
-					published={published !== null}
+					published={published !== null && openToAnyone}
 					{duplicates}
 					oncopy={() => copyAddress(publicAddress)}
 					onduplicate={duplicate}
@@ -1025,11 +1078,13 @@
 						<dt class="text-muted-foreground">Saved</dt>
 						<dd class="tabular" title={new Date(latest.updated_at).toLocaleString()}>{clock(latest.updated_at)}</dd>
 					</dl>
-					{#if published !== null}
+					{#if published !== null && openToAnyone}
 						<p class="flex flex-wrap items-center gap-x-2 gap-y-1">
 							<span class="text-muted-foreground">{standing === 'changed' ? 'Anyone can read the published version.' : 'Anyone can read it.'}</span>
 							<Button variant="secondary" size="xs" onclick={() => copyAddress(publicAddress)} data-testid="copy-public-link-details"><LinkIcon data-icon="inline-start" />Copy public link</Button>
 						</p>
+					{:else if published !== null && gateWords !== ''}
+						<p class="text-muted-foreground" data-testid="reader-gate">{gateWords}</p>
 					{/if}
 					<TechnicalDetails bind:open={technicalOpen}>
 						{#if published !== null}
@@ -1038,7 +1093,8 @@
 							<section class="space-y-1.5 border-b border-dashed border-border pb-2.5" aria-labelledby="public-address-heading" data-testid="public-address">
 								<h2 id="public-address-heading" class="font-medium text-foreground">Where readers get it</h2>
 								<p>
-									Anyone can read the published version at this address, without signing in{standing === 'changed'
+									{openToAnyone ? 'Anyone can read the published version at this address, without signing in' : 'Readers signed in on your site with access read the published version at this address; anyone else is told it isn’t there'}{standing ===
+									'changed'
 										? `: the one live in ${releaseName(published.generation)}, not your newer changes`
 										: ''}.
 								</p>
