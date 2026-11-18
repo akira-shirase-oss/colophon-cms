@@ -97,6 +97,23 @@ fn start_worker(
     })))
 }
 
+/// The tasks a serving process runs beside the listener, stopped once it has drained.
+struct Background {
+    worker_cancel: CancellationToken,
+    worker: Option<tokio::task::JoinHandle<()>>,
+    setup_cancel: CancellationToken,
+    setup: Option<tokio::task::JoinHandle<()>>,
+    events_cancel: CancellationToken,
+    hints: Vec<tokio::task::JoinHandle<()>>,
+}
+
+/// Stops the worker, the setup code and the change hints, in that order.
+async fn stop_background(tasks: Background) {
+    stop_worker(&tasks.worker_cancel, tasks.worker).await;
+    stop_setup_code(&tasks.setup_cancel, tasks.setup).await;
+    stop_events(&tasks.events_cancel, tasks.hints).await;
+}
+
 /// Stops the worker claiming, and lets attempts in flight finish within the cleanup deadline;
 /// any it abandons are claimed again once their leases run out.
 async fn stop_worker(cancel: &CancellationToken, worker: Option<tokio::task::JoinHandle<()>>) {
@@ -353,9 +370,15 @@ pub async fn run(
         never = supervisor.watch() => match never {},
     };
 
-    stop_worker(&worker_cancel, worker).await;
-    stop_setup_code(&setup_cancel, setup).await;
-    stop_events(&events_cancel, hints).await;
+    stop_background(Background {
+        worker_cancel,
+        worker,
+        setup_cancel,
+        setup,
+        events_cancel,
+        hints,
+    })
+    .await;
     supervisor.shutdown(CLEANUP_DEADLINE).await;
     if tokio::time::timeout(CLEANUP_DEADLINE, pool.close())
         .await
@@ -365,4 +388,58 @@ pub async fn run(
     }
     cancel.cancel();
     Ok(outcome)
+}
+
+#[cfg(test)]
+mod stop_tests {
+    use std::time::Duration;
+
+    use tokio_util::sync::CancellationToken;
+
+    use super::{Background, stop_background};
+
+    /// `TimeoutStopSec` in the production unit: systemd kills the process this long after SIGTERM.
+    fn systemd_stop_timeout() -> Duration {
+        let unit = include_str!("../../../deploy/production/colophon.service");
+        let seconds = unit
+            .lines()
+            .find_map(|line| line.strip_prefix("TimeoutStopSec="))
+            .and_then(|value| value.trim().parse().ok())
+            .expect("invariant: the unit sets TimeoutStopSec in whole seconds");
+        Duration::from_secs(seconds)
+    }
+
+    /// Tasks that never stop, however they're asked: the worst case a stop has to bound.
+    fn stuck() -> tokio::task::JoinHandle<()> {
+        tokio::spawn(std::future::pending())
+    }
+
+    /// The default grace (25 s) plus everything after it ends inside systemd's stop timeout, with
+    /// room left for the probes and the pool: background tasks that never stop are abandoned in
+    /// time, so systemd never has to kill a process mid-cleanup.
+    #[tokio::test(start_paused = true)]
+    async fn stuck_background_tasks_are_abandoned_before_systemd_kills() {
+        let default_grace = Duration::from_millis(25_000);
+        // The probes' and the pool's share, and a second's slack for the process to exit.
+        let rest = Duration::from_secs(3);
+        let allowed = systemd_stop_timeout()
+            .checked_sub(default_grace + rest)
+            .expect("invariant: the unit's timeout is longer than the default grace");
+        let started = tokio::time::Instant::now();
+        stop_background(Background {
+            worker_cancel: CancellationToken::new(),
+            worker: Some(stuck()),
+            setup_cancel: CancellationToken::new(),
+            setup: Some(stuck()),
+            events_cancel: CancellationToken::new(),
+            hints: vec![stuck(), stuck()],
+        })
+        .await;
+        let took = started.elapsed();
+        assert!(
+            took <= allowed,
+            "stopping stuck background tasks took {took:?}; after a 25 s grace only {allowed:?} is left before systemd's {:?}",
+            systemd_stop_timeout()
+        );
+    }
 }
