@@ -1975,6 +1975,8 @@ mod tests {
             submitted_at: Some("2026-11-18T00:00:00.000000000Z".to_owned()),
             updated_at: "2026-11-18T00:00:00.000000000Z".to_owned(),
             rollback_generation: Some(i64::MAX),
+            // The longest the marker can be (D-184), though a rollback never carries one.
+            undo_of: Some(i64::MAX),
             items: (0..items).map(|_| worst_item()).collect(),
             hidden_items: usize::MAX,
             reviews: Vec::new(),
