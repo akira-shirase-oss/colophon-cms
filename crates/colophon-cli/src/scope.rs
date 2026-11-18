@@ -48,20 +48,80 @@ pub(crate) async fn open(scope: &Scope<'_>) -> Result<(Client, String), Failure>
 
 /// The id of the project `project` names (an id or a URL name) among the caller's projects,
 /// reading the API through `fetch` (a GET of a path, answering its JSON body).
+///
+/// An id is read directly (`GET /api/v1/projects/{id}`, which answers only a member). A URL name
+/// is found through the bounded project search, a page of at most 100 at a time, the first exact
+/// match by name as before. Neither depends on how many projects the caller is in: the unpaged
+/// list stops at 1,000, so a member of more couldn't reach the rest (D-194).
 pub(crate) async fn resolve<F, Fut>(fetch: F, project: &str) -> Result<String, Failure>
 where
     F: Fn(String) -> Fut,
     Fut: std::future::Future<Output = Result<Value, Failure>>,
 {
-    let projects = fetch("/api/v1/projects".to_owned()).await?;
-    projects["data"]
-        .as_array()
-        .into_iter()
-        .flatten()
-        .find(|candidate| candidate["id"] == project || candidate["slug"] == project)
-        .and_then(|candidate| candidate["id"].as_str())
-        .map(str::to_owned)
-        .ok_or_else(|| not_a_member(project))
+    if let Ok(id) = uuid::Uuid::try_parse(project) {
+        return match fetch(format!("/api/v1/projects/{id}")).await {
+            Ok(body) => body["data"]["id"]
+                .as_str()
+                .map(str::to_owned)
+                .ok_or_else(|| Failure::new(Exit::Internal, "the project's answer has no id")),
+            Err(failure) if is_not_found(&failure) => Err(not_a_member(project)),
+            Err(failure) => Err(failure),
+        };
+    }
+    // A URL name is lowercase letters, digits and dashes (so it goes in the query as it is); anything
+    // else names no project.
+    let shaped = (1..=MAX_SLUG).contains(&project.len())
+        && project
+            .bytes()
+            .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'-');
+    if !shaped {
+        return Err(not_a_member(project));
+    }
+    let mut cursor: Option<String> = None;
+    for _ in 0..MAX_SEARCH_PAGES {
+        let mut path = format!("/api/v1/projects?q={project}&limit=100");
+        if let Some(after) = &cursor {
+            path.push_str("&cursor=");
+            path.push_str(after);
+        }
+        let page = fetch(path).await?;
+        if let Some(found) = page["data"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .find(|candidate| candidate["slug"] == project)
+            .and_then(|candidate| candidate["id"].as_str())
+        {
+            return Ok(found.to_owned());
+        }
+        match page["next_cursor"].as_str() {
+            Some(next) if is_cursor(next) => cursor = Some(next.to_owned()),
+            _ => break,
+        }
+    }
+    Err(not_a_member(project))
+}
+
+/// The longest URL name the search can carry (the API's search is at most 100 characters).
+const MAX_SLUG: usize = 100;
+/// Search pages read for one URL name before giving up: 1,000 pages of 100, far past any
+/// membership count, so a server that never ends its cursor can't hold a command forever.
+const MAX_SEARCH_PAGES: usize = 1_000;
+
+/// A cursor the API sent, before it goes back in a URL (base64url, as [`cursor`] checks).
+fn is_cursor(text: &str) -> bool {
+    (1..=16_384).contains(&text.len())
+        && text
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-' || byte == b'_')
+}
+
+/// Whether a failure is the API's "not found", which for a project means "not a member" too.
+fn is_not_found(failure: &Failure) -> bool {
+    failure
+        .refusal
+        .as_ref()
+        .is_some_and(|refusal| refusal["code"] == "not_found")
 }
 
 fn not_a_member(project: &str) -> Failure {
