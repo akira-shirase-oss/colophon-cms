@@ -53,7 +53,8 @@ through `--version` and `GET /version`.
   `deploy/quickstart/compose.yaml` — `docker compose up -d --wait` brings up Colophon with
   PostgreSQL, Valkey and Garage, secrets generated on first start, only `127.0.0.1:8080`
   published (D-174, D-175). The Studio's first-run screens say where a container's setup code
-  is. Operator guide: `deploy/runbooks/install.md`.
+  is. Operator guide: `deploy/runbooks/install.md`; without containers, `deploy/production/`
+  (a hardened systemd unit with secrets as credentials, a Caddyfile, the steps).
 - **Releases carry the image and the Studio:** the release workflow builds the image for amd64
   and arm64 from the release's own checked binaries, scans it (Trivy: no fixable critical CVE),
   and on a tag pushes it to `ghcr.io/akira-shirase-oss/colophon` with signed provenance; it

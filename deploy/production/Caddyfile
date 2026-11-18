@@ -1,0 +1,10 @@
+# Caddy in front of Colophon on one host (deploy/production/README.md): automatic HTTPS for
+# COLOPHON_DOMAIN, everything proxied to the server on loopback. Set COLOPHON_PUBLIC_URL to
+# https://$COLOPHON_DOMAIN and COLOPHON_TRUSTED_PROXIES to 127.0.0.1/32 (colophon.env).
+{$COLOPHON_DOMAIN} {
+	encode zstd gzip
+	reverse_proxy 127.0.0.1:58000 {
+		# Live updates are server-sent events: pass each event on as it is written.
+		flush_interval -1
+	}
+}
