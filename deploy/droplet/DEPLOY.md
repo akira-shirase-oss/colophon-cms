@@ -10,6 +10,57 @@ only on the droplet, into root-only files; nothing secret goes into chat, an iss
 **Exit gate (SAAS_PLAN S0):** health checks green (`smoke.sh`), a restore drill from Neon's
 point-in-time restore recorded (step 12), idle memory recorded (`smoke.sh` prints it).
 
+## The fast path
+
+Once [CREATE.md](CREATE.md)'s accounts exist, one script installs everything, and another upgrades,
+rolls back and follows the edge channel. Rehearsed on an Ubuntu 24.04 systemd container (Neon, R2
+and Cloudflare stood in for; see "What the rehearsal proved" below): **install 70 s** (target ≈ 15
+min including your pastes), **upgrade 7 s with no failed request** (target < 2 min, < 5 s
+unavailable), **rollback 5 s** (target < 1 min), and a release that fails its checks rolled itself
+back.
+
+```sh
+ssh root@<droplet-ip>
+git clone --depth 1 https://github.com/akira-shirase-oss/colophon-cms /opt/colophon-src
+/opt/colophon-src/deploy/droplet/install.sh
+```
+
+`install.sh` runs steps 1–11 below in order and is safe to run again: each step checks before it
+acts. It asks only for what can't be made on the machine — the Neon URL, the R2 secret and two ids,
+Cloudflare's origin certificate and key, your SSH address — each read without echo into a root-only
+file, and it fixes Neon's `sslmode=require&channel_binding=require` to `verify-full` itself. It
+ends with `smoke.sh`; the checks through Cloudflare pass once DNS and Authenticated Origin Pulls
+are on.
+
+### Upgrades, rollbacks and the two channels
+
+```sh
+/opt/colophon-src/deploy/droplet/upgrade.sh 0.1.0-alpha.2      # a tagged release
+/opt/colophon-src/deploy/droplet/upgrade.sh --channel edge     # the newest build of main
+/opt/colophon-src/deploy/droplet/upgrade.sh --rollback         # back to the release before
+/opt/colophon-src/deploy/droplet/upgrade.sh --status
+```
+
+An upgrade verifies the archives against `SHA256SUMS`, unpacks to
+`/opt/colophon/releases/<version>`, migrates with the new binary while the old one serves, flips
+the `current` symlink, restarts (Caddy holds requests meanwhile), waits for `/readyz`, runs the
+local smoke, and **rolls back by itself** if any of that fails. It refuses a database migrated by a
+newer build than the one it would switch to. Migrations are never undone: each release's
+migrations work with the previous release's binary, so `--rollback` swaps binaries only. The last
+three releases are kept.
+
+- **The release channel (default)** is for normal use: tagged, changelogged, the archives the
+  release workflow published.
+- **The edge channel** is for a fix you need before the next release: the newest build of `main`
+  (D-211). It installs only what it can prove: `SHA256SUMS`'s provenance (built by `edge.yml` on
+  `refs/heads/main` of this repository), every file against `SHA256SUMS`, and the build's commit
+  equal to the attested one; anything else is fetched again once, then refused. Go back to the
+  release channel at the next release.
+
+After a release that changes this repository's deploy files, `git -C /opt/colophon-src pull` first.
+
+## The steps the scripts take (and the manual fallback)
+
 The commands run on the droplet as root unless they say otherwise. `$CHECKOUT` is a copy of this
 repository on the droplet (step 2). **The version is in one place:**
 
@@ -65,6 +116,11 @@ run `smoke.sh`.
 Keep the DigitalOcean cloud firewall from CREATE.md as well: two layers, either one enough.
 
 ## 2. Colophon's binaries and the Studio
+
+`install.sh` does this through `upgrade.sh --fetch "$COLOPHON_VERSION"`, which unpacks into
+`/opt/colophon/releases/<version>` and points `/usr/local/bin/colophon-server`, `colophon` and the
+Studio through `/opt/colophon/current`. By hand, use that same command: the commands below are what
+it does, for reading.
 
 From a release, each file checked against `SHA256SUMS` (`deploy/production/README.md` step 1):
 
@@ -300,11 +356,27 @@ docker rm -f drill && rm colophon.dump
 The counts should match the Studio's at the dump's time. Record them, with the dump's name, in
 `deploy/runbooks/install-feedback.md`.
 
-## Upgrading
+## Upgrading by hand
 
-Install the new release's binaries and Studio (step 2), `colophon admin migrate` (step 3), then
-`systemctl restart colophon` and `smoke.sh`. Migrations run before the new server starts; read
-the release's CHANGELOG for anything marked Breaking first.
+`upgrade.sh` is the way (above). By hand, it is: install the new release's binaries and Studio
+(step 2) into a new directory, `colophon admin migrate` with them (step 3), point the symlinks at it,
+`systemctl restart colophon`, wait for `/readyz`, `smoke.sh`. Read the release's CHANGELOG for
+anything marked Breaking first.
+
+## What the rehearsal proved
+
+Rehearsed in a privileged Ubuntu 24.04 container booting systemd, with a TLS-only `postgres:18`
+behind a private CA standing in for Neon, a self-signed certificate for Cloudflare's origin
+certificate, and a test CA and client certificate for Authenticated Origin Pulls:
+
+| Proved there | Unproven until the real droplet |
+|---|---|
+| `install.sh` end to end (apt, PGDG's pg_dump 18, Caddy, ufw, sshd, redis, init-roles and migrations over `verify-full`, the unit, the setup code, the backup timers), 70 s | Neon itself (`verify-full` to its public CA, the direct endpoint, cold starts) |
+| `upgrade.sh`: 7 s, 0 of 375 requests failed during the switch | Cloudflare: DNS, Full (strict), the real origin-pull client certificate |
+| `--rollback`: 5 s; a failing release rolled back by itself | R2: uploads, the ledger export, the logical backup's upload |
+| Caddy: 200 with the origin-pull client certificate, refused without it | systemd credentials (`LoadCredential=`): Docker can't provide them, so the rehearsal read the files directly |
+| `smoke.sh`'s server checks, idle memory (24–38 MiB) | The release archives from `release.yml` and the edge channel's provenance on a real build |
+
 
 ## When something is wrong
 
