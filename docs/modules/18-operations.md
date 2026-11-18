@@ -124,7 +124,7 @@ on clean infrastructure and an independent install, so operations are a module w
 - Magic-link bounds (D-161): `COLOPHON_MAGIC_LINKS_PER_ADDRESS` (default 5 per client address per project per ten
   minutes) and `COLOPHON_MAGIC_LINKS_PER_PROJECT` (default 300 per project per minute). Behind a proxy that isn't in
   `COLOPHON_TRUSTED_PROXIES` every client is the proxy, so the per-address share would become one bucket again.
-- Password work (D-150): `COLOPHON_PASSWORD_CONCURRENCY` (default one a core, 1–256) bounds the Argon2id
+- Password work (D-150): `COLOPHON_PASSWORD_CONCURRENCY` (default one fewer than the cores, at least one, 1–256; D-213) bounds the Argon2id
   jobs that run at once — 19 MiB and tens of milliseconds each, and anyone can ask for one. A burst waits up to two
   seconds (at most 32 waiters a slot); past that sign-ins and sign-ups answer `503` with `Retry-After`, while
   delivery shares the cores and, since a verify never holds a database connection, keeps its pool.

@@ -211,8 +211,8 @@ pub struct Config {
     /// `COLOPHON_MCP_PER_PROJECT` (256) and `COLOPHON_MCP_MAX_SESSIONS` (2048) cap the
     /// sessions; `COLOPHON_MCP_IDLE_MS` (30 min) forgets one untouched for that long.
     pub mcp: colophon_api::mcp::Limits,
-    /// Argon2id jobs that may run at once (D-150): `COLOPHON_PASSWORD_CONCURRENCY`, one a
-    /// core by default (1–256). Past it a password job waits briefly, then the request is
+    /// Argon2id jobs that may run at once (D-150): `COLOPHON_PASSWORD_CONCURRENCY`, one
+    /// fewer than the cores by default, leaving one for everything else (D-213; 1–256). Past it a password job waits briefly, then the request is
     /// shed with `503` and `Retry-After`.
     pub password_concurrency: usize,
     /// Magic-link request bounds (D-161): `COLOPHON_MAGIC_LINKS_PER_ADDRESS` links one client
