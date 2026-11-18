@@ -158,6 +158,39 @@ fn an_unreachable_server_exits_5_and_says_so() {
     assert!(String::from_utf8_lossy(&out.stderr).contains("connection failed"));
 }
 
+/// The real "server is down": the connect itself is refused (ECONNREFUSED), with no handshake.
+/// Linux refuses a connection to a port that is bound but not listening, and the socket holds
+/// the port for the test, so no parallel test's server can be given it. macOS silently drops
+/// such a connection attempt instead, so there the reset variant above stands in.
+#[cfg(target_os = "linux")]
+#[test]
+fn a_refused_connection_exits_5_as_unreachable() {
+    let held =
+        socket2::Socket::new(socket2::Domain::IPV4, socket2::Type::STREAM, None).expect("a socket");
+    held.bind(&std::net::SocketAddr::from(([127, 0, 0, 1], 0)).into())
+        .expect("bind");
+    let port = held
+        .local_addr()
+        .expect("address")
+        .as_socket()
+        .expect("an IP address")
+        .port();
+    let refused = std::net::TcpStream::connect(("127.0.0.1", port))
+        .expect_err("nothing listens on the held port");
+    assert_eq!(refused.kind(), std::io::ErrorKind::ConnectionRefused);
+    let out = doctor(&[
+        "--server",
+        &format!("http://127.0.0.1:{port}"),
+        "--json",
+        "--timeout-ms",
+        "2000",
+    ]);
+    assert_eq!(out.status.code(), Some(5));
+    assert_eq!(stdout_json(&out)["error"]["code"], "unreachable");
+    assert!(String::from_utf8_lossy(&out.stderr).contains("connection failed"));
+    drop(held);
+}
+
 #[test]
 fn a_reply_that_is_not_a_readiness_report_is_an_internal_failure() {
     let server = canned_server("200 OK", r#"{"hello":"world"}"#);
