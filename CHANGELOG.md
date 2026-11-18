@@ -110,6 +110,14 @@ through `--version` and `GET /version`.
 The 2026-11-16 security fixes (D-148 to D-157, D-159 to D-169). Each names the attack it
 closes and carries a test that failed without it.
 
+- Password work is limited per client address: sign-in, sign-up, magic-link sign-in and creating a
+  site user allow 5 a second with a burst of 10 from one address (an IPv6 /64 counts as one),
+  refused with `429` and `Retry-After` before any hashing, on top of the general limits. Set it
+  with `COLOPHON_RATE_LIMIT_PASSWORD` (`off`, `<per second>` or `<per second>/<burst>`). Before,
+  one address could keep every password slot busy and lock everyone else out of signing in. A
+  paused sign-in is now refused without waiting for a slot, and password hashing leaves one core
+  free by default (D-213).
+
 - A content-migration run no longer un-gates an entry: the revision it wrote took the default
   `public` visibility, so publishing a migrated member-only entry served it to anonymous
   readers. The run's revision now keeps the gate of the draft it replaces, and revisions and
