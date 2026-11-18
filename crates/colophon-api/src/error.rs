@@ -567,6 +567,9 @@ impl ApiError {
                 "single_exists",
                 "this collection is a single type and already has its entry; edit that one",
             ),
+            DbError::LocaleTaken => {
+                Self::conflict("locale_taken", "a version in that locale already exists")
+            }
             // A pin or publication of an entry deleted meanwhile (D-080); callers that can say
             // more match it first.
             DbError::EntryDeleted { .. } => Self::conflict(
