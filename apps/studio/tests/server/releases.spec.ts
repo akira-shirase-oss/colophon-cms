@@ -48,7 +48,7 @@ test('an approved changeset is published as release 1, and a stale tab is told a
 	await page.getByTestId('release-link').click();
 	await expect(page.getByTestId('receipt-label')).toBeVisible();
 	await page.getByTestId('releases-link').click();
-	await expect(page.getByTestId('current-generation')).toContainText('Live: release 1');
+	await expect(page.getByTestId('current-generation')).toContainText('Live: Release 1');
 	await expect(page.getByTestId('releases')).toContainText('Opening day');
 	expect(await violations(page)).toEqual([]);
 	const delivered = await page.evaluate(async (path) => {
@@ -206,7 +206,7 @@ test('the Releases page shows the newest 100, and older releases a page at a tim
 	await manyReleases(page, project, 101);
 
 	await page.goto(`/studio/projects/${project}/releases`);
-	await expect(page.getByTestId('current-generation')).toContainText('Live: release 101');
+	await expect(page.getByTestId('current-generation')).toContainText('Live: Release 101');
 	const rows = page.getByTestId('releases').locator(':scope > li');
 	await expect(rows).toHaveCount(100);
 	await expect(rows.first()).toHaveAttribute('data-generation', '101');

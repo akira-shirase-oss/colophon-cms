@@ -138,7 +138,7 @@
 				You're signed out of Colophon.{#if providers.data?.sso !== false} The sign-in page may still remember you, so on a shared computer, close the browser.{/if}
 			</p>
 		{/if}
-		<h1 class="text-3xl font-semibold tracking-tight">Welcome to Colophon</h1>
+		<h1 class="page-title">Welcome to Colophon</h1>
 		{#if kept !== null || install.data?.has_administrator === false}
 			<!-- Nobody is an administrator yet, or opened from the setup link the server prints only then:
 				the card opens on creating an account, the first visitor's one job (D-147). -->
@@ -178,7 +178,7 @@
 		<div class="mb-6 flex size-10 items-center justify-center rounded-lg border border-border bg-card shadow-xs">
 			<KeyRoundIcon class="size-5 text-muted-foreground" aria-hidden="true" />
 		</div>
-		<h1 class="text-2xl font-semibold tracking-tight">Finish setting up Colophon</h1>
+		<h1 class="page-title">Finish setting up Colophon</h1>
 		<p class="mt-3 text-pretty text-muted-foreground">
 			Nobody runs this Colophon yet. When its server started, it printed a <strong class="font-medium text-foreground">setup code</strong> in
 			its {inContainer ? 'log' : 'terminal'}. Enter it here to become the administrator: you'll create projects and invite people.
@@ -257,7 +257,7 @@
 					<label class="flex items-center gap-2 text-sm">
 						<span class="text-muted-foreground">Show work in</span>
 						<select
-							class="h-9 max-w-56 rounded-md border border-input bg-card px-3 text-sm shadow-xs outline-none focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/40"
+							class="h-9 max-w-56 rounded-md border border-input bg-popover px-3 text-sm outline-none focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/40"
 							value={current.id}
 							onchange={(event) => (chosen = event.currentTarget.value)}
 							data-testid="work-picker"
@@ -292,7 +292,7 @@
 						<li style="--i: {index}">
 							<a
 								href={resolve('/projects/[project]', { project: project.id })}
-								class="lift group flex h-full items-center gap-3 rounded-xl border border-border bg-card p-3 shadow-xs outline-none hover:border-foreground/20 focus-visible:ring-[3px] focus-visible:ring-ring/40"
+								class="lift group flex h-full items-center gap-3 rounded-xl border border-border bg-card p-3 outline-none hover:border-foreground/20 focus-visible:ring-[3px] focus-visible:ring-ring/40"
 							>
 								<span class="flex size-9 shrink-0 items-center justify-center rounded-lg bg-secondary text-sm font-semibold">{project.name.slice(0, 1).toUpperCase()}</span>
 								<span class="min-w-0 flex-1" data-user-content>

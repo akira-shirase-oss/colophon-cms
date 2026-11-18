@@ -2,7 +2,7 @@
   "name": "@colophon/ui",
   "private": true,
   "version": "0.0.0",
-  "description": "Colophon's design system (D-056): Tailwind CSS v4 tokens in OKLCH and every shadcn-svelte component on Bits UI, in a warm, quiet look: paper and ink, black pill buttons, soft cards, one orange accent.",
+  "description": "Colophon's design system (D-182): Tailwind CSS v4 tokens in OKLCH and every shadcn-svelte component on Bits UI, in the look of Colophon's site: white paper, quiet flat cards, one dusk-lavender accent, statuses that each mean one thing.",
   "type": "module",
   "exports": {
     "./styles.css": "./src/lib/styles.css",
@@ -19,6 +19,7 @@
     "test": "vitest run"
   },
   "dependencies": {
+    "@fontsource-variable/dm-sans": "5.3.0",
     "@fontsource-variable/inter": "5.3.0",
     "@fontsource-variable/jetbrains-mono": "5.3.0",
     "@internationalized/date": "3.12.4",

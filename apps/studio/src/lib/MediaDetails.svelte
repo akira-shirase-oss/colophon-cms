@@ -17,6 +17,7 @@
 	import { toast } from 'svelte-sonner';
 	import * as Alert from '@colophon/ui/ui/alert';
 	import { Badge } from '@colophon/ui/ui/badge';
+	import StatusBadge from './shell/StatusBadge.svelte';
 	import { Button } from '@colophon/ui/ui/button';
 	import { Input } from '@colophon/ui/ui/input';
 	import { Label } from '@colophon/ui/ui/label';
@@ -480,8 +481,8 @@
 									>
 									<span class="flex shrink-0 items-center gap-1.5 text-xs text-muted-foreground">
 										{typeName(user.collection)}
-										{#if user.published}<Badge variant="live">Published</Badge>{/if}
-										{#if user.draft && !user.published}<Badge variant="draft">Draft</Badge>{/if}
+										{#if user.published}<StatusBadge state="live" testid="user-state" title="Its published version uses this upload" />{/if}
+										{#if user.draft && !user.published}<StatusBadge state="draft" testid="user-state" title="Only a draft uses this upload" />{/if}
 									</span>
 								</li>
 							{/each}

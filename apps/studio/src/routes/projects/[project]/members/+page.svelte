@@ -151,7 +151,7 @@
 	}
 
 	const select =
-		'h-8 rounded-md border border-input bg-card px-2 text-sm shadow-xs outline-none focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/40 disabled:opacity-50';
+		'h-8 rounded-md border border-input bg-popover px-2 text-sm outline-none focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/40 disabled:opacity-50';
 	const initials = (name: string) =>
 		name
 			.split(/\s+/)

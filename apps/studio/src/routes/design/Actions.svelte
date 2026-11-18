@@ -1,5 +1,6 @@
 <script lang="ts">
 	import BoldIcon from '@lucide/svelte/icons/bold';
+	import DownloadIcon from '@lucide/svelte/icons/download';
 	import ItalicIcon from '@lucide/svelte/icons/italic';
 	import UnderlineIcon from '@lucide/svelte/icons/underline';
 	import PlusIcon from '@lucide/svelte/icons/plus';
@@ -16,24 +17,37 @@
 	import * as Tooltip from '@colophon/ui/ui/tooltip';
 	import Specimen from './Specimen.svelte';
 
-	const VARIANTS = ['default', 'outline', 'secondary', 'ghost', 'destructive', 'link'] as const;
-	const BADGES = ['default', 'secondary', 'outline', 'brand', 'live', 'pending', 'attention', 'draft', 'destructive'] as const;
-	// Whole class names, so Tailwind finds them.
-	const DOT: Partial<Record<(typeof BADGES)[number], string>> = {
-		live: 'bg-live',
-		pending: 'bg-pending breathe',
-		attention: 'bg-attention',
-		draft: 'bg-draft'
-	};
+	/** The hierarchy (D-182): what each is for. `outline` is another name for secondary. */
+	const VARIANTS = [
+		{ variant: 'default', label: 'Publish', use: 'Primary: the one thing this screen is for' },
+		{ variant: 'secondary', label: 'Preview', use: 'Secondary: everything else' },
+		{ variant: 'ghost', label: 'Clear', use: 'Ghost: quiet, in toolbars and rows' },
+		{ variant: 'destructive', label: 'Unpublish', use: "Destructive: a confirmation's last step" },
+		{ variant: 'link', label: 'The publish request', use: 'Link: a place, inside a sentence' }
+	] as const;
+	const BADGES = ['secondary', 'outline', 'brand', 'live', 'changed', 'pending', 'attention', 'draft'] as const;
 	let mark = $state('bold');
 </script>
 
 <div class="grid gap-12">
-	<Specimen label="Button variants">
-		<div class="flex flex-wrap items-center gap-3">
-			{#each VARIANTS as variant (variant)}
-				<Button {variant}>{variant === 'default' ? 'Publish release' : variant[0]?.toUpperCase() + variant.slice(1)}</Button>
+	<Specimen label="The hierarchy">
+		<div class="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
+			{#each VARIANTS as { variant, label, use } (variant)}
+				<div class="grid content-start justify-items-start gap-2">
+					<Button {variant}>{label}</Button>
+					<p class="text-sm text-muted-foreground">{use}</p>
+				</div>
 			{/each}
+		</div>
+	</Specimen>
+
+	<Specimen label="One primary per screen: a list page's header">
+		<div class="flex flex-wrap items-center justify-between gap-3 rounded-card border border-border bg-card px-card py-4">
+			<p class="page-title text-2xl">Articles</p>
+			<div class="flex flex-wrap gap-2">
+				<Button variant="outline"><DownloadIcon data-icon="inline-start" />Export</Button>
+				<Button><PlusIcon data-icon="inline-start" />New entry</Button>
+			</div>
 		</div>
 	</Specimen>
 
@@ -50,21 +64,10 @@
 		</div>
 	</Specimen>
 
-	<Specimen label="Social sign-in, full width">
-		<div class="grid max-w-md grid-cols-2 gap-3">
-			<Button variant="outline" size="lg">Keycloak</Button>
-			<Button variant="outline" size="lg">GitHub</Button>
-			<Button size="lg" class="col-span-2">Continue</Button>
-		</div>
-	</Specimen>
-
-	<Specimen label="Badges and status pills">
+	<Specimen label="Badges for labels that aren't a state (a state is a StatusBadge)">
 		<div class="flex flex-wrap items-center gap-2">
 			{#each BADGES as variant (variant)}
-				<Badge {variant}>
-					{#if DOT[variant]}<span class="size-1.5 rounded-full {DOT[variant]}"></span>{/if}
-					{variant === 'default' ? 'Release 42' : variant[0]?.toUpperCase() + variant.slice(1)}
-				</Badge>
+				<Badge {variant}>{variant[0]?.toUpperCase() + variant.slice(1)}</Badge>
 			{/each}
 		</div>
 	</Specimen>

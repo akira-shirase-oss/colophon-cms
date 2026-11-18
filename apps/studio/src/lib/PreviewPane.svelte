@@ -303,7 +303,7 @@
 <section
 	bind:this={section}
 	tabindex="-1"
-	class="flex h-full min-h-0 flex-col overflow-hidden rounded-xl border border-border bg-card shadow-xs outline-none focus-visible:ring-[3px] focus-visible:ring-ring/40"
+	class="flex h-full min-h-0 flex-col overflow-hidden rounded-xl border border-border bg-card outline-none focus-visible:ring-[3px] focus-visible:ring-ring/40"
 	aria-label="Preview on your site"
 	data-testid="preview-pane"
 	data-state={pane.kind}
@@ -446,7 +446,7 @@
 					<HourglassIcon class="mx-auto mb-3 size-6 text-muted-foreground" aria-hidden="true" />
 					<h2 class="font-semibold">This preview ended</h2>
 					<p class="mt-1 text-sm text-muted-foreground">Previews last a short while and end when they’re closed, so their link can’t be passed around. Start again to keep looking.</p>
-					<Button class="mt-4" size="sm" onclick={open} data-testid="preview-start-again">Start again</Button>
+					<Button class="mt-4" size="sm" variant="outline" onclick={open} data-testid="preview-start-again">Start again</Button>
 				</div>
 			</div>
 		{:else if pane.kind === 'not-set-up'}
@@ -455,7 +455,7 @@
 					<h2 class="font-semibold">Preview on your site isn’t set up</h2>
 					{#if manages}
 						<p class="mt-1 text-sm text-muted-foreground">Add your site’s preview address in Settings, under Website connections.</p>
-						<Button class="mt-4" size="sm" href={settingsHref}>Set it up</Button>
+						<Button class="mt-4" size="sm" variant="outline" href={settingsHref}>Set it up</Button>
 					{:else}
 						<p class="mt-1 text-sm text-muted-foreground">Ask an owner of this project to add your site’s preview address.</p>
 					{/if}
@@ -467,7 +467,7 @@
 					<CircleAlertIcon class="mx-auto mb-3 size-6 text-attention" aria-hidden="true" />
 					<h2 class="font-semibold">{problem.title}</h2>
 					<p class="mt-1 text-sm text-muted-foreground">{problem.text}</p>
-					<Button class="mt-4" size="sm" onclick={retry} data-testid="preview-retry">Try again</Button>
+					<Button class="mt-4" size="sm" variant="outline" onclick={retry} data-testid="preview-retry">Try again</Button>
 					<TechnicalDetails class="mt-3 text-left"><p class="break-words">{problem.technical}</p></TechnicalDetails>
 				</div>
 			</div>

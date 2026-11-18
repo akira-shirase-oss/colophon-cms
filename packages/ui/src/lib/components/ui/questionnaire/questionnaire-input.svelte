@@ -17,7 +17,7 @@
 		bind:ref
 		data-slot="questionnaire-input"
 		class={cn(
-			"border-input bg-card focus-visible:border-ring focus-visible:ring-4 focus-visible:ring-ring/15 aria-invalid:border-destructive h-10 border px-0 py-1 text-base md:text-sm min-h-11 w-full min-w-0 transition-[color,box-shadow,background-color] outline-none disabled:pointer-events-none disabled:cursor-not-allowed disabled:opacity-50 sm:min-h-0",
+			"border-input bg-popover focus-visible:border-ring focus-visible:ring-4 focus-visible:ring-ring/15 aria-invalid:border-destructive h-10 border px-0 py-1 text-base md:text-sm min-h-11 w-full min-w-0 transition-[color,box-shadow,background-color] outline-none disabled:pointer-events-none disabled:cursor-not-allowed disabled:opacity-50 sm:min-h-0",
 			"selection:bg-primary selection:text-primary-foreground placeholder:text-muted-foreground",
 			className
 		)}

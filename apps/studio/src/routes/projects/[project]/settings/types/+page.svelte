@@ -70,7 +70,7 @@
 
 <BuilderFrame {project}>
 	<header class="mb-6 space-y-1.5">
-		<h1 class="text-2xl leading-tight font-semibold tracking-tight sm:text-[1.75rem]">Content types</h1>
+		<h1 class="page-title">Content types</h1>
 		<p class="max-w-2xl text-sm text-muted-foreground">
 			The kinds of content this project holds, and the fields each has. Pick one to change it. Changes that could break saved entries are checked
 			against them first.

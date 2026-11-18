@@ -57,7 +57,7 @@
 		This can't be opened in the editor without changing it: {unopenable}
 	</p>
 {/if}
-<div class="overflow-hidden rounded-xl border border-border bg-card shadow-xs focus-within:border-ring/60" role="group" aria-labelledby={labelledBy}>
+<div class="overflow-hidden rounded-xl border border-border bg-card focus-within:border-ring/60" role="group" aria-labelledby={labelledBy}>
 	<RichTextToolbar {editor} label="Formatting: {label}" {project} />
 	<div class="editor px-4 py-3" bind:this={host}></div>
 </div>

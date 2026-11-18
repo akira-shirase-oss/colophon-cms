@@ -288,7 +288,7 @@
 				<label class="font-medium" for="token-days">Works for</label>
 				<select
 					id="token-days"
-					class="h-9 w-full max-w-56 rounded-md border border-input bg-card px-3 text-sm shadow-xs outline-none focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/40"
+					class="h-9 w-full max-w-56 rounded-md border border-input bg-popover px-3 text-sm outline-none focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/40"
 					bind:value={days}
 					aria-describedby="token-days-hint"
 				>

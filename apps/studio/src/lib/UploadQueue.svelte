@@ -210,7 +210,7 @@
 <svelte:window onbeforeunload={guard} />
 
 {#if items.length > 0 || note !== ''}
-	<section class="mb-6 rounded-xl border border-border bg-card p-4 shadow-xs" aria-label="Uploads" data-testid="upload-queue">
+	<section class="mb-6 rounded-xl border border-border bg-card p-4" aria-label="Uploads" data-testid="upload-queue">
 		<div class="flex flex-wrap items-center justify-between gap-2">
 			<p class="text-sm font-medium" role="status" data-testid="upload-summary">{summary}</p>
 			{#if done > 0 || tally.slow > 0}

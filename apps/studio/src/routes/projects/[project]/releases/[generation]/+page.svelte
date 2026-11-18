@@ -101,7 +101,7 @@
 				max={latest}
 				value={generation}
 				aria-label="Release"
-				class="min-w-0 flex-1 accent-foreground"
+				class="min-w-0 flex-1 accent-primary"
 				onchange={(event) => goto(at(Number(event.currentTarget.value)))}
 				data-testid="slider"
 			/>

@@ -7,6 +7,7 @@
 		value = $bindable(),
 		orientation = "horizontal",
 		class: className,
+		"aria-label": label,
 		...restProps
 	}: WithoutChildrenOrChild<SliderPrimitive.RootProps> = $props();
 </script>
@@ -24,6 +25,7 @@ get along, so we shut typescript up by casting `value` to `never`.
 		"data-vertical:min-h-40 relative flex w-full touch-none items-center select-none data-disabled:opacity-50 data-vertical:h-full data-vertical:w-auto data-vertical:flex-col",
 		className
 	)}
+	aria-label={label}
 	{...restProps}
 >
 	{#snippet children({ thumbItems })}
@@ -45,7 +47,8 @@ get along, so we shut typescript up by casting `value` to `never`.
 			<SliderPrimitive.Thumb
 				data-slot="slider-thumb"
 				index={thumb.index}
-				class="size-5 rounded-full border border-border bg-card shadow-soft transition-[box-shadow] hover:ring-4 hover:ring-ring/15 focus-visible:ring-4 focus-visible:ring-ring/25 focus-visible:outline-hidden block shrink-0 select-none disabled:pointer-events-none disabled:opacity-50"
+				aria-label={label}
+				class="size-5 rounded-full border border-border bg-popover shadow-soft transition-[box-shadow] hover:ring-4 hover:ring-ring/15 focus-visible:ring-4 focus-visible:ring-ring/25 focus-visible:outline-hidden block shrink-0 select-none disabled:pointer-events-none disabled:opacity-50"
 			/>
 		{/each}
 	{/snippet}

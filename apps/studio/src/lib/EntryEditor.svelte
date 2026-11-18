@@ -600,7 +600,7 @@
 					{@const field = segment.field}
 					<div class="py-5" hidden={!appliesNow(field)} data-testid="rich-field" data-field={field.id}>
 						<p class="mb-2 text-sm font-medium">{field.label}{field.required ? '' : ' (optional)'}</p>
-						<div class="overflow-hidden rounded-xl border border-border bg-card shadow-xs focus-within:border-ring/60">
+						<div class="overflow-hidden rounded-xl border border-border bg-card focus-within:border-ring/60">
 							<RichTextToolbar editor={editors[field.id] ?? null} label="Formatting: {field.label}" {project} />
 							<div class="editor px-6 py-5 sm:px-8" bind:this={hosts[field.id]}></div>
 						</div>
@@ -677,7 +677,7 @@
 									<span class="text-xs text-muted-foreground" title={new Date(revision.created_at).toLocaleString()}>Saved {ago(revision.created_at)}</span>
 								</span>
 								{#if index === 0}<Badge variant="secondary">Current draft</Badge>{/if}
-								{#if published?.revision_id === revision.id}<Badge variant="live">Live in {releaseName(published.generation)}</Badge>{/if}
+								{#if published?.revision_id === revision.id}<StatusBadge state="live" text="Live in {releaseName(published.generation)}" testid="history-live" class="tabular" />{/if}
 								{#if index > 0}
 									<Button variant="ghost" size="xs" onclick={() => (comparing = comparing === revision.id ? null : revision.id)}>
 										{comparing === revision.id ? 'Hide' : 'Compare with draft'}
@@ -720,13 +720,15 @@
 	  made, and Technical details) close the card on wide screens and follow the fields on a phone:
 	  below xl the card's box is left out (`contents`), so the bar sticks within the whole page.
 	-->
-	<div class="min-w-0 max-xl:contents xl:sticky xl:top-20 xl:self-start xl:rounded-xl xl:border xl:border-border xl:bg-card xl:p-4 xl:shadow-xs" data-testid="entry-panel">
+	<div class="min-w-0 max-xl:contents xl:sticky xl:top-20 xl:self-start xl:rounded-xl xl:border xl:border-border xl:bg-card xl:p-4" data-testid="entry-panel">
 		<aside
 			class="sticky bottom-0 z-20 -mx-5 flex min-w-0 flex-wrap items-center gap-x-4 gap-y-2 border-t border-border bg-background/95 px-5 py-3 backdrop-blur sm:-mx-8 sm:px-8 lg:-mx-10 lg:px-10 xl:static xl:z-auto xl:m-0 xl:block xl:border-t-0 xl:bg-transparent xl:p-0 xl:backdrop-blur-none"
 			aria-label="Saving and publishing"
 			data-testid="entry-actions"
 		>
-			<div class="flex min-w-0 flex-1 flex-wrap items-center gap-x-2.5 gap-y-1 xl:block xl:space-y-2.5">
+			<!-- On a phone the status keeps its own width, so a long one ("Live with changes") moves the
+			     buttons to a second row instead of running under them. -->
+			<div class="flex min-w-0 flex-1 flex-wrap items-center gap-x-2.5 gap-y-1 max-xl:min-w-fit xl:block xl:space-y-2.5">
 				<!-- One line for where it stands with readers: a word with a mark, then, on wide screens, the sentence. -->
 				<p class="text-sm xl:leading-6" data-testid="entry-status">
 					<span class="inline-flex align-middle xl:mr-1.5 xl:align-[0.0625rem]"><StatusBadge state={standing} generation={published?.generation ?? null} /></span>

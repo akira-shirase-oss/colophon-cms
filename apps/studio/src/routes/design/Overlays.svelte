@@ -18,7 +18,17 @@
 	import * as NavigationMenu from '@colophon/ui/ui/navigation-menu';
 	import * as Popover from '@colophon/ui/ui/popover';
 	import * as Sheet from '@colophon/ui/ui/sheet';
+	import { Textarea } from '@colophon/ui/ui/textarea';
+	import FormRow from '#lib/shell/FormRow.svelte';
 	import Specimen from './Specimen.svelte';
+
+	/** Enough rows to outgrow a phone's screen: the body scrolls, the footer stays. */
+	const TASK_ROWS = [
+		{ id: 'l-what', label: 'What has to be done', hint: 'One sentence someone can act on.' },
+		{ id: 'l-who', label: 'Who is it for?', hint: 'A name, or leave it for anyone.' },
+		{ id: 'l-when', label: 'By when', hint: 'Optional.' },
+		{ id: 'l-where', label: 'On which entry', hint: 'Optional: the task links to it.' }
+	];
 </script>
 
 <div class="grid gap-12">
@@ -35,6 +45,28 @@
 					<Dialog.Footer>
 						<Dialog.Close class={buttonVariants({ variant: 'outline' })}>Cancel</Dialog.Close>
 						<Button>Create draft</Button>
+					</Dialog.Footer>
+				</Dialog.Content>
+			</Dialog.Root>
+		</Specimen>
+
+		<Specimen label="Dialog: a long form">
+			<Dialog.Root>
+				<Dialog.Trigger class={buttonVariants({ variant: 'outline' })} data-testid="long-dialog">New task</Dialog.Trigger>
+				<Dialog.Content data-testid="long-dialog-content">
+					<Dialog.Header>
+						<Dialog.Title>New task</Dialog.Title>
+						<Dialog.Description>Labels stack above their fields; the body scrolls and the footer stays in reach.</Dialog.Description>
+					</Dialog.Header>
+					<div>
+						{#each TASK_ROWS as row (row.id)}
+							<FormRow label={row.label} hint={row.hint} for={row.id}><Input id={row.id} /></FormRow>
+						{/each}
+						<FormRow label="Notes" hint="Anything that helps." for="l-notes"><Textarea id="l-notes" rows={6} /></FormRow>
+					</div>
+					<Dialog.Footer>
+						<Dialog.Close class={buttonVariants({ variant: 'outline' })}>Cancel</Dialog.Close>
+						<Button>Create task</Button>
 					</Dialog.Footer>
 				</Dialog.Content>
 			</Dialog.Root>
@@ -183,8 +215,8 @@
 
 		<Specimen label="Command palette">
 			<Command.Root class="rounded-2xl border border-border shadow-soft" disableInitialScroll>
-				<Command.Input placeholder="Search or jump to a page" />
-				<Command.List>
+				<Command.Input placeholder="Search or jump to a page" aria-controls="design-command-list" />
+				<Command.List id="design-command-list">
 					<Command.Empty>No results.</Command.Empty>
 					<Command.Group heading="Go to">
 						<Command.Item><FileTextIcon />Articles</Command.Item>

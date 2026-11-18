@@ -173,7 +173,7 @@
 						<DropdownMenu.Trigger>
 							{#snippet child({ props })}
 								<Sidebar.MenuButton size="lg" {...props} class="data-[state=open]:bg-sidebar-accent">
-									<span class="flex size-8 shrink-0 items-center justify-center rounded-lg border border-sidebar-border bg-background shadow-xs">
+									<span class="flex size-8 shrink-0 items-center justify-center rounded-lg border border-sidebar-border bg-background">
 										<Mark size={16} />
 									</span>
 									<span class="grid min-w-0 flex-1 text-left leading-tight">
@@ -292,7 +292,7 @@
 							{/snippet}
 						</Sidebar.MenuButton>
 						{#if releases.data && releases.data.generation > 0}
-							<Sidebar.MenuBadge class="tabular" title="Release {releases.data.generation} is live">No.&nbsp;{releases.data.generation}</Sidebar.MenuBadge>
+							<Sidebar.MenuBadge class="tabular" title="{releaseName(releases.data.generation)} is live">{releases.data.generation}</Sidebar.MenuBadge>
 						{/if}
 					</Sidebar.MenuItem>
 				</Sidebar.Menu>
@@ -355,7 +355,7 @@
 		</Sidebar.Content>
 
 		<Sidebar.Footer class="group-data-[collapsible=icon]:hidden">
-			<div class="rounded-xl border border-sidebar-border bg-background p-3 shadow-xs" data-testid="live-card">
+			<div class="rounded-xl border border-sidebar-border bg-background p-3" data-testid="live-card">
 				{#if releases.data === undefined}
 					<p class="text-xs text-muted-foreground">Checking what's live…</p>
 				{:else if live === undefined}
@@ -375,7 +375,7 @@
 		</nav>
 	</Sidebar.Root>
 
-	<Sidebar.Inset class="min-w-0 border border-sidebar-border md:peer-data-[variant=inset]:shadow-xs">
+	<Sidebar.Inset class="min-w-0 border border-sidebar-border">
 		<header class="sticky top-0 z-10 flex h-14 shrink-0 items-center gap-2 rounded-t-2xl border-b border-border bg-background/90 px-4 backdrop-blur">
 			<Sidebar.Trigger class="-ml-1 mr-1" aria-label="Toggle sidebar" />
 			<Breadcrumb.Root>

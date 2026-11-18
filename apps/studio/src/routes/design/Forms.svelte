@@ -35,7 +35,7 @@
 </script>
 
 <div class="grid gap-14 lg:grid-cols-[minmax(0,26rem)_minmax(0,1fr)]">
-	<div class="haze rounded-[2rem] border border-border p-8 shadow-hairline">
+	<div class="rounded-card border border-border bg-card p-8">
 		<div class="mb-10 flex items-center gap-2.5 font-semibold"><Mark size={24} />Colophon</div>
 		<h3 class="display-2">Sign in to the Studio</h3>
 		<p class="mt-2 text-[0.9375rem] text-muted-foreground">Write, review and publish, with proof it reached the site.</p>
@@ -57,7 +57,7 @@
 				</InputGroup.Root>
 				<div class="grid grid-cols-4 gap-1.5" aria-hidden="true">
 					{#each [1, 2, 3, 4] as bar (bar)}
-						<span class="h-1 rounded-full {bar <= strength ? 'bg-foreground' : 'bg-border'}"></span>
+						<span class="h-1 rounded-full {bar <= strength ? 'bg-brand' : 'bg-border'}"></span>
 					{/each}
 				</div>
 			</div>
@@ -92,7 +92,7 @@
 				</InputGroup.Root>
 			</Specimen>
 			<Specimen label="Disabled">
-				<Input disabled value="Published entries can't be edited here" />
+				<Input disabled aria-label="Published title" value="Published entries can't be edited here" />
 			</Specimen>
 			<Specimen label="Several lines" class="sm:col-span-2">
 				<Textarea placeholder="A short summary for lists and feeds." />
@@ -102,7 +102,7 @@
 		<div class="grid gap-8 sm:grid-cols-2">
 			<Specimen label="Select">
 				<Select.Root type="single" bind:value={role}>
-					<Select.Trigger class="w-full">{roleLabel}</Select.Trigger>
+					<Select.Trigger class="w-full" aria-label="Role">{roleLabel}</Select.Trigger>
 					<Select.Content>
 						{#each ROLES as option (option.value)}
 							<Select.Item value={option.value} label={option.label}>{option.label}</Select.Item>
@@ -111,7 +111,7 @@
 				</Select.Root>
 			</Specimen>
 			<Specimen label="Native select">
-				<NativeSelect.Root class="w-full">
+				<NativeSelect.Root class="w-full" aria-label="Collection">
 					<NativeSelect.Option value="news">News</NativeSelect.Option>
 					<NativeSelect.Option value="guides">Guides</NativeSelect.Option>
 				</NativeSelect.Root>
@@ -119,7 +119,17 @@
 			<Specimen label="Checkbox and switch">
 				<div class="grid gap-4">
 					<div class="flex items-center gap-3"><Checkbox id="c-featured" checked /><Label for="c-featured">Featured</Label></div>
+					<div class="flex items-center gap-3"><Checkbox id="c-pinned" /><Label for="c-pinned">Pinned</Label></div>
+					<div class="flex items-center gap-3"><Checkbox id="c-some" indeterminate /><Label for="c-some">Some picked</Label></div>
 					<div class="flex items-center gap-3"><Switch id="c-autosave" bind:checked={autosave} /><Label for="c-autosave">Autosave drafts</Label></div>
+				</div>
+			</Specimen>
+			<Specimen label="Native checkboxes and radios, themed alike">
+				<div class="grid gap-4">
+					<label class="flex items-center gap-3 text-sm"><input type="checkbox" checked />Pick every entry shown</label>
+					<label class="flex items-center gap-3 text-sm"><input type="checkbox" />Storm week</label>
+					<label class="flex items-center gap-3 text-sm"><input type="radio" name="n-holds" checked />Many entries</label>
+					<label class="flex items-center gap-3 text-sm"><input type="radio" name="n-holds" />Just one entry</label>
 				</div>
 			</Specimen>
 			<Specimen label="Radio group">
@@ -132,7 +142,7 @@
 				<Slider type="single" bind:value={width} min={45} max={90} step={1} aria-label="Measure" />
 			</Specimen>
 			<Specimen label="One-time code">
-				<InputOTP.Root maxlength={6}>
+				<InputOTP.Root maxlength={6} aria-label="One-time code">
 					{#snippet children({ cells })}
 						<InputOTP.Group>
 							{#each cells.slice(0, 3) as cell, index (index)}<InputOTP.Slot {cell} />{/each}

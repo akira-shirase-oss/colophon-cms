@@ -85,8 +85,8 @@
 
 <svelte:head><title>Join a project · Colophon Studio</title></svelte:head>
 
-<div class="mx-auto max-w-lg space-y-4 rounded-2xl border border-border bg-card p-8 shadow-xs">
-<h1 class="text-2xl font-semibold tracking-tight">Join a project</h1>
+<div class="mx-auto max-w-lg space-y-4 rounded-2xl border border-border bg-card p-8">
+<h1 class="page-title">Join a project</h1>
 {#if who.isPending}
 	<p class="text-sm text-muted-foreground">Loading…</p>
 {:else if token === '' && who.data}

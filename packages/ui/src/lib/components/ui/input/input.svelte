@@ -25,7 +25,7 @@
 		bind:this={ref}
 		data-slot={dataSlot}
 		class={cn(
-			"rounded-lg border border-input bg-card px-3.5 text-base transition-[color,box-shadow,border-color] outline-none md:text-sm placeholder:text-muted-foreground/80 focus-visible:border-ring focus-visible:ring-4 focus-visible:ring-ring/15 aria-invalid:border-destructive aria-invalid:ring-4 aria-invalid:ring-destructive/10 disabled:cursor-not-allowed disabled:opacity-50 h-11 w-full min-w-0 py-2 file:inline-flex file:h-7 file:border-0 file:bg-transparent file:text-sm file:font-medium file:text-foreground",
+			"rounded-lg border border-input bg-popover px-3.5 text-base transition-[color,box-shadow,border-color] outline-none md:text-sm placeholder:text-muted-foreground/80 focus-visible:border-ring focus-visible:ring-4 focus-visible:ring-ring/15 aria-invalid:border-destructive aria-invalid:ring-4 aria-invalid:ring-destructive/10 disabled:cursor-not-allowed disabled:opacity-50 h-11 w-full min-w-0 py-2 file:inline-flex file:h-7 file:border-0 file:bg-transparent file:text-sm file:font-medium file:text-foreground",
 			className
 		)}
 		type="file"
@@ -38,7 +38,7 @@
 		bind:this={ref}
 		data-slot={dataSlot}
 		class={cn(
-			"rounded-lg border border-input bg-card px-3.5 text-base transition-[color,box-shadow,border-color] outline-none md:text-sm placeholder:text-muted-foreground/80 focus-visible:border-ring focus-visible:ring-4 focus-visible:ring-ring/15 aria-invalid:border-destructive aria-invalid:ring-4 aria-invalid:ring-destructive/10 disabled:cursor-not-allowed disabled:opacity-50 h-11 w-full min-w-0 py-2 file:inline-flex file:h-7 file:border-0 file:bg-transparent file:text-sm file:font-medium file:text-foreground",
+			"rounded-lg border border-input bg-popover px-3.5 text-base transition-[color,box-shadow,border-color] outline-none md:text-sm placeholder:text-muted-foreground/80 focus-visible:border-ring focus-visible:ring-4 focus-visible:ring-ring/15 aria-invalid:border-destructive aria-invalid:ring-4 aria-invalid:ring-destructive/10 disabled:cursor-not-allowed disabled:opacity-50 h-11 w-full min-w-0 py-2 file:inline-flex file:h-7 file:border-0 file:bg-transparent file:text-sm file:font-medium file:text-foreground",
 			className
 		)}
 		{type}
