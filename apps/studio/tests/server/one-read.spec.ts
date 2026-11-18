@@ -93,7 +93,8 @@ test('a long release title stays on one line inside its home card (F11)', async 
 		await page.setViewportSize(viewport);
 		await page.goto('/studio/');
 		const list = page.getByTestId('my-releases-list');
-		await expect(list).toBeVisible();
+		// The release row itself, not the list's "nothing yet" line, which shows while releases load.
+		await expect(list.getByRole('link')).toHaveCount(1);
 		const fits = await list.evaluate((ul) => {
 			const card = ul.closest('section')!;
 			const row = ul.querySelector('a')!;
