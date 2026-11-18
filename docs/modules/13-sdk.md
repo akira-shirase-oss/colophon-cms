@@ -29,7 +29,7 @@ Built in DX.8 (D-112): `@colophon-cms/sdk`, versioned `0.1.0-alpha.1` with the s
 - **The client** is hand-written: `new Client({ baseUrl, token })`, `client.environment(project)` for
   the `{P}` content surface, `client.delivery(project)` for `/content/v1`. Methods carry the generated
   types verbatim — request bodies are the document's schemas, replies are the wire shapes plus a
-  `response` of `{status, etag, replayed, requestId}` — and required route guards are required
+  `response` of `{status, etag, replayed, requestId, generation}` — and required route guards are required
   parameters: `idempotencyKey` on every write, `ifMatch` wherever the route reads `If-Match`. Coverage
   is the core third of the operations (entries and their bounded query, content types, changesets and
   reviews, releases and receipts, comments and tasks, migrations read-only, assets list, health,
@@ -41,7 +41,9 @@ Built in DX.8 (D-112): `@colophon-cms/sdk`, versioned `0.1.0-alpha.1` with the s
 - **No second auth surface:** the client attaches a bearer token or a session descriptor
   (`{csrf, cookie?}`); it never signs in, refreshes or stores a credential.
 - **Pinned reads:** `client.delivery(p).atGeneration(g)` returns a scope whose reads all name `g`;
-  asking for a different generation on it throws.
+  asking for a different generation on it throws. Every reply's `response.generation` is the
+  `Colophon-Generation` it answered from (`null` where a route sends none), so a page pins the
+  generation of its first read.
 - **Bounds:** `timeoutMs` (15 s default, joined with the caller's `signal`) and `maxBodyBytes`
   (16 MiB default) on every call.
 - **Server-version check (D-170):** `client.compatibility()` reads `/version` and applies the CLI's
@@ -60,10 +62,14 @@ Built in DX.8 (D-112): `@colophon-cms/sdk`, versioned `0.1.0-alpha.1` with the s
   size budget (150 KB packed; rich-text 20 KB), the workspace version, no dependencies (so never a
   private `@colophon/*` name), `publint --strict`, Are the Types Wrong (`esm-only`), then a scratch
   project with only the tarballs installed: a Node ESM script against a stub server (livez, the
-  compatibility check, a delivery read rendered), every rich-text fixture against its reviewed
-  HTML, a type-check of a consumer file and of every `ts` block in both READMEs under `nodenext`
+  compatibility check, a delivery read rendered), the README's read-and-render example run as
+  written against the stub (its second read must carry the first's generation), every rich-text
+  fixture against its reviewed HTML, a type-check of a consumer file and of every `ts` block in both READMEs under `nodenext`
   and `bundler` resolution with TypeScript 5.9 and 6.0, and a browser bundle of `Client` and
-  `Delivery` held to 12 KB min+gzip (4.5 KB at 0.1.0-alpha.1).
+  `Delivery` held to 12 KB min+gzip (4.5 KB at 0.1.0-alpha.1). Last, each package's public API —
+  every export of the packed `dist/index.d.ts`, declarations as written, generated wire types by
+  name only — must equal its committed `api-report.txt` (`scripts/api-report.mjs … --update`
+  rewrites it), so a removed, renamed or re-typed export shows up in review.
 - **Rich text outside the monorepo (D-170):** `@colophon-cms/rich-text` (`packages/rich-text`) is
   the content renderer as a zero-dependency package: its build assembles
   `packages/content-renderer/src/render.ts` and `packages/editor/src/schema.ts` (plus the stored
@@ -168,7 +174,20 @@ epochs. Spec §10's deprecation window for contract changes applies when the SDK
 - The compatibility table from `compat.rs`, SemVer precedence, and the client's lazy check in each
   mode (`test/compat.test.ts`).
 - The packaging gate above, on every push; README examples compile in CI from the packed tarballs.
-- A pinned-read test with a publish landing mid-sequence — pending, with the adoption milestone.
+- Load (D-018's equivalent for a client): `perf/node/sdk-delivery.mjs` drives delivery `list`/`get`
+  calls through the packed SDK and the same requests through bare `fetch`, against a stub in its own
+  process or a real server (`ORIGIN`, `PROJECT`, `COLLECTION`, `ENTRY`), and records the client's
+  p50/p99 overhead (budget: p99 within 1 ms of bare fetch) and heap growth once every call's
+  15-second deadline timer has fired (budget 20 MB). `scripts/frontend.sh` runs a 20,000-call smoke
+  with the overhead budget loosened to 25 ms for shared runners. On 2026-11-17 a smoke on a busy
+  laptop (other builds running) had 0 failures and no heap growth (−0.6 MB) while its overhead swung
+  from −0.9 to +11.5 ms between runs: noise, not evidence. The full 1,000,000-call run on a quiet
+  machine is owed.
+- The packed packages against the real server (`apps/testbed/tests/sdk.spec.ts`, D-170): a person
+  publishes in the browser; the SDK and rich-text tarballs, installed in a scratch project, check
+  the server's version (`compat: 'throw'`), read the release anonymously, render its body, and pin
+  a page to generation 1 while generation 2 lands between its reads — the pinned list and get stay
+  at 1 (K1), the latest moves to 2.
 
 ## Build order
 
