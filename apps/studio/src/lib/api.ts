@@ -1455,6 +1455,20 @@ export async function readDelivered(
 	return { data: (JSON.parse(raw) as { data: Delivered }).data, release: Number.isInteger(release) ? release : null, raw };
 }
 
+/** Whether readers get an entry that has no live version: `gone` once a release took it down
+ *  (the public read's 410), `missing` when no release ever had it (404). An entry's own read says
+ *  only that nothing is live; this is how the editor tells "Taken down" from a new draft. */
+export async function readerAbsence(project: string, collection: string, entry: string): Promise<'gone' | 'missing' | 'live'> {
+	try {
+		await send('GET', `${deliveryUrl(project, collection)}/${entry}`);
+		return 'live';
+	} catch (failure) {
+		if (failure instanceof ApiError && failure.status === 410) return 'gone';
+		if (failure instanceof ApiError && failure.status === 404) return 'missing';
+		throw failure;
+	}
+}
+
 /** A fresh idempotency key: 32 hex characters. */
 export function newKey(): string {
 	return crypto.randomUUID().replaceAll('-', '');

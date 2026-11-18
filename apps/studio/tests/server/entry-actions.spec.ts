@@ -1,7 +1,7 @@
 // Finishing the editor: restore an older version (saved as a new one, so the history keeps
-// everything), unpublish in one click (and publish again to undo it), and a collection longer than
-// a page loads more with the server's cursor. An entry older than the newest 100 still shows that it
-// is live, from its own answer.
+// everything), unpublish after a confirmation (and publish again to undo it), and a collection
+// longer than a page loads more with the server's cursor. An entry older than the newest 100 still
+// shows that it is live, from its own answer.
 
 import { expect, type Page, test } from '@playwright/test';
 import { env, internalTerms, newEntry, newProject, publishThroughApi, signIn, violations } from './helpers.ts';
@@ -17,6 +17,9 @@ async function delivered(page: Page, project: string, entry: string): Promise<{ 
 		{ list: `/content/v1/${project}/production/articles`, one: `/content/v1/${project}/production/articles/${entry}` }
 	);
 }
+
+/** A toast that says `text`. */
+const toast = (page: Page, text: string) => page.locator('[data-sonner-toast]').filter({ hasText: text });
 
 /** The number on the History tab. */
 async function versions(page: Page): Promise<number> {
@@ -35,11 +38,16 @@ test('restoring an older version saves it as a new one, and the history keeps th
 	await expect(page.getByTestId('save-status')).toHaveAttribute('data-status', 'saved');
 	await expect.poll(() => versions(page)).toBe(2);
 
+	// Two saves a minute apart by one person are one sitting, opened to its single saves (D-183).
 	await page.getByRole('tab', { name: /History/ }).click();
-	await expect(page.getByTestId('history').getByRole('listitem')).toHaveCount(2);
+	await expect(page.getByTestId('history-row')).toHaveCount(1);
+	await expect(page.getByTestId('history-row')).toContainText('You');
+	await expect(page.getByTestId('history-row')).toContainText('Current draft');
+	await page.getByTestId('history-saves').click();
+	await expect(page.getByTestId('history-sitting').getByRole('listitem')).toHaveCount(2);
 	expect(await violations(page)).toEqual([]);
 	expect(await internalTerms(page)).toEqual([]);
-	await page.getByTestId('history').getByRole('listitem').last().getByRole('button', { name: 'Restore this version' }).click();
+	await page.getByTestId('history-sitting').getByRole('listitem').last().getByTestId('history-restore').click();
 
 	await expect(page.getByTestId('restore-note')).toContainText('as a new version');
 	await expect(page.getByLabel('Title', { exact: true })).toHaveValue('The first title');
@@ -48,11 +56,12 @@ test('restoring an older version saves it as a new one, and the history keeps th
 	await page.reload();
 	await expect(page.getByLabel('Title', { exact: true })).toHaveValue('The first title');
 	await page.getByRole('tab', { name: /History/ }).click();
-	await expect(page.getByTestId('history').getByRole('listitem')).toHaveCount(3);
-	await expect(page.getByTestId('history')).toContainText('A second title');
+	await expect(page.getByTestId('history-saves')).toHaveText('3 saves');
+	await page.getByTestId('history-saves').click();
+	await expect(page.getByTestId('history-sitting').getByRole('listitem')).toHaveCount(3);
 });
 
-test('unpublishing in one click takes an entry off the public API, and publishing again puts it back', async ({ page }) => {
+test('unpublishing, once confirmed, takes an entry off the public API, and publishing again puts it back', async ({ page }) => {
 	await signIn(page);
 	const project = await newProject(page);
 	await page.goto(`/studio/projects/${project}/articles?new=1`);
@@ -61,25 +70,31 @@ test('unpublishing in one click takes an entry off the public API, and publishin
 	await expect(page.getByTestId('save-status')).toHaveAttribute('data-status', 'saved');
 	const entry = new URL(page.url()).pathname.split('/').at(-1) ?? '';
 	await page.getByTestId('publish-button').click();
-	await expect(page.getByTestId('publish-outcome')).toContainText('Live as Release 1');
+	await expect(toast(page, 'Published in Release 1')).toBeVisible();
+	await expect(page.getByTestId('publish-state')).toContainText('Live in Release 1');
 	expect((await delivered(page, project, entry)).ids).toContain(entry);
 
+	await page.getByTestId('more-menu').click();
 	await page.getByTestId('unpublish-button').click();
-	await expect(page.getByTestId('publish-outcome')).toContainText('Taken down in Release 2');
-	await expect(page.getByTestId('publish-outcome')).toContainText('publish it again to put it back');
-	await expect(page.getByTestId('entry-state').first()).toHaveAttribute('data-state', 'draft');
+	await page.getByTestId('unpublish-confirm').click();
+	await expect(toast(page, 'Unpublished in Release 2')).toBeVisible();
+	await expect(page.getByTestId('entry-state').first()).toHaveAttribute('data-state', 'taken_down');
+	await expect(page.getByTestId('publish-state')).toHaveText('Readers no longer get it');
 	expect(await delivered(page, project, entry)).toEqual({ ids: [], status: 410 });
 	expect(await violations(page)).toEqual([]);
 	expect(await internalTerms(page)).toEqual([]);
 
+	await expect(page.getByTestId('publish-button')).toHaveText('Publish again');
 	await page.getByTestId('publish-button').click();
-	await expect(page.getByTestId('publish-outcome')).toContainText('Live as Release 3');
+	await expect(toast(page, 'Published in Release 3')).toBeVisible();
+	await expect(page.getByTestId('entry-state').first()).toHaveAttribute('data-state', 'live');
 	expect(await delivered(page, project, entry)).toEqual({ ids: [entry], status: 200 });
 });
 
 test('a change made after publishing can be published too: the button comes back once it is saved', async ({ page }) => {
 	// Regression: the "Live as Release N" message stayed for the page's life and hid the publish
-	// button, so an edit after publishing showed "Changed" with only Unpublish on offer.
+	// button, so an edit after publishing showed "Changed" with only Unpublish on offer. Now what
+	// pressing did is a toast and the status card, and the button returns with the next save.
 	await signIn(page);
 	const project = await newProject(page);
 	await page.goto(`/studio/projects/${project}/articles?new=1`);
@@ -88,16 +103,17 @@ test('a change made after publishing can be published too: the button comes back
 	await expect(page.getByTestId('save-status')).toHaveAttribute('data-status', 'saved');
 	const entry = new URL(page.url()).pathname.split('/').at(-1) ?? '';
 	await page.getByTestId('publish-button').click();
-	await expect(page.getByTestId('publish-outcome')).toContainText('Live as Release 1');
+	await expect(toast(page, 'Published in Release 1')).toBeVisible();
 	await expect(page.getByTestId('publish-button')).toHaveCount(0);
+	await expect(page.getByTestId('nothing-to-publish')).toBeVisible();
 
 	await page.getByLabel('Title', { exact: true }).fill('Second words');
 	await expect(page.getByTestId('save-status')).toHaveAttribute('data-status', 'saved');
 	await expect(page.getByTestId('entry-state').first()).toHaveAttribute('data-state', 'changed');
-	await expect(page.getByTestId('publish-outcome')).toHaveCount(0);
+	await expect(page.getByTestId('publish-state')).toHaveText('Live in Release 1 · edited since');
 	await expect(page.getByTestId('publish-button')).toHaveText('Publish changes');
 	await page.getByTestId('publish-button').click();
-	await expect(page.getByTestId('publish-outcome')).toContainText('Live as Release 2');
+	await expect(toast(page, 'Published in Release 2')).toBeVisible();
 	await expect(page.getByTestId('entry-state').first()).toHaveAttribute('data-state', 'live');
 	const listed = await page.evaluate(
 		async (list) => ((await (await fetch(list, { credentials: 'omit', cache: 'no-store' })).json()) as { data: { id: string; title: string }[] }).data,
@@ -148,6 +164,6 @@ test('a collection of 101 entries loads more, and the oldest, published, shows a
 
 	await row.getByRole('link').click();
 	await expect(page.getByTestId('save-status')).toHaveAttribute('data-status', 'saved');
-	await expect(page.getByTestId('publish-state')).toContainText('Readers see this version');
+	await expect(page.getByTestId('publish-state')).toContainText('Live in Release 1');
 	await expect(page.getByTestId('entry-state').first()).toHaveAttribute('data-state', 'live');
 });

@@ -1,7 +1,8 @@
 <!--
   Formatting for one rich-text editor: marks, blocks, callouts, links (only the kinds the format
   allows), images from the project's media library with required alt text, undo and redo. One tab
-  stop; arrows inside.
+  stop; arrows inside. Headings (H2–H4) and callouts (Note, Tip, Warning) are each one menu, led by
+  an icon (D-183), so the toolbar is icons only and wraps less.
   "Insert an image" (gap 3 D1): choose or upload in the library panel, then describe it — alt text
   is required, starts from the upload's own alt text, and is questioned when it reads like a file
   name — then insert the real asset id. The same dialog answers an image's Edit alt text and
@@ -10,7 +11,16 @@
 -->
 <script lang="ts">
 	import BoldIcon from '@lucide/svelte/icons/bold';
+	import ChevronDownIcon from '@lucide/svelte/icons/chevron-down';
 	import CodeIcon from '@lucide/svelte/icons/code';
+	import Heading2Icon from '@lucide/svelte/icons/heading-2';
+	import Heading3Icon from '@lucide/svelte/icons/heading-3';
+	import Heading4Icon from '@lucide/svelte/icons/heading-4';
+	import HeadingIcon from '@lucide/svelte/icons/heading';
+	import InfoIcon from '@lucide/svelte/icons/info';
+	import LightbulbIcon from '@lucide/svelte/icons/lightbulb';
+	import MessageSquareQuoteIcon from '@lucide/svelte/icons/message-square-quote';
+	import PilcrowIcon from '@lucide/svelte/icons/pilcrow';
 	import ImageIcon from '@lucide/svelte/icons/image';
 	import ItalicIcon from '@lucide/svelte/icons/italic';
 	import LinkIcon from '@lucide/svelte/icons/link';
@@ -29,6 +39,7 @@
 	import { type CalloutTone, IMAGE_ACTION, type ImageAction, isAllowedHref, isValidAlt, LIMITS } from '@colophon/editor';
 	import { Button } from '@colophon/ui/ui/button';
 	import * as Dialog from '@colophon/ui/ui/dialog';
+	import * as DropdownMenu from '@colophon/ui/ui/dropdown-menu';
 	import { Input } from '@colophon/ui/ui/input';
 	import { Label } from '@colophon/ui/ui/label';
 	import * as Toolbar from '@colophon/ui/ui/toolbar';
@@ -255,7 +266,31 @@
 	);
 	const imageAction = $derived(flow === null ? '' : flow.mode === 'insert' ? 'Insert image' : flow.mode === 'replace' ? 'Replace image' : 'Save alt text');
 
-	const tones: CalloutTone[] = ['note', 'tip', 'warning'];
+	const tones: { tone: CalloutTone; name: string; icon: typeof InfoIcon }[] = [
+		{ tone: 'note', name: 'Note', icon: InfoIcon },
+		{ tone: 'tip', name: 'Tip', icon: LightbulbIcon },
+		{ tone: 'warning', name: 'Warning', icon: TriangleAlertIcon }
+	];
+	const levels = [
+		{ level: 2, name: 'Heading 2', icon: Heading2Icon },
+		{ level: 3, name: 'Heading 3', icon: Heading3Icon },
+		{ level: 4, name: 'Heading 4', icon: Heading4Icon }
+	] as const;
+	const headingNow = $derived(levels.find(({ level }) => active('heading', { level })));
+	const calloutNow = $derived(tones.find(({ tone }) => active('callout', { tone })));
+	// A choice in a menu puts the cursor back in the text; Escape gives focus back to the button.
+	let fromMenu = false;
+	const pick = (command: (editor: Editor) => boolean) => () => {
+		fromMenu = true;
+		run(command)();
+	};
+	const afterMenu = (event: Event) => {
+		if (fromMenu) {
+			event.preventDefault();
+			editor?.commands.focus();
+		}
+		fromMenu = false;
+	};
 </script>
 
 <Toolbar.Root aria-label={label}>
@@ -265,21 +300,52 @@
 	<Toolbar.Button pressed={active('code')} onclick={run((e) => e.chain().focus().toggleCode().run())} title="Code" aria-label="Code"><CodeIcon /></Toolbar.Button>
 	<Toolbar.Button pressed={active('link')} onclick={toggleLink} aria-label="Link"><LinkIcon /></Toolbar.Button>
 	<Toolbar.Separator />
-	{#each [2, 3, 4] as const as level (level)}
-		<Toolbar.Button pressed={active('heading', { level })} onclick={run((e) => e.chain().focus().toggleHeading({ level }).run())} class="text-xs font-semibold">H{level}</Toolbar.Button>
-	{/each}
+	<DropdownMenu.Root>
+		<DropdownMenu.Trigger>
+			{#snippet child({ props })}
+				<Toolbar.Button {...props} pressed={headingNow !== undefined} aria-label="Heading" title="Heading" data-testid="heading-menu">
+					{#if headingNow}<headingNow.icon />{:else}<HeadingIcon />{/if}<ChevronDownIcon class="size-3! text-muted-foreground" />
+				</Toolbar.Button>
+			{/snippet}
+		</DropdownMenu.Trigger>
+		<DropdownMenu.Content align="start" class="w-48" onCloseAutoFocus={afterMenu}>
+			<DropdownMenu.Item onSelect={pick((e) => e.chain().focus().setParagraph().run())}><PilcrowIcon class="text-muted-foreground" />Normal text</DropdownMenu.Item>
+			{#each levels as { level, name, icon: Icon } (level)}
+				<DropdownMenu.Item onSelect={pick((e) => e.chain().focus().toggleHeading({ level }).run())} aria-current={headingNow?.level === level || undefined}>
+					<Icon class="text-muted-foreground" />{name}
+				</DropdownMenu.Item>
+			{/each}
+		</DropdownMenu.Content>
+	</DropdownMenu.Root>
 	<Toolbar.Button pressed={active('bulletList')} onclick={run((e) => e.chain().focus().toggleBulletList().run())} aria-label="Bulleted list"><ListIcon /></Toolbar.Button>
 	<Toolbar.Button pressed={active('orderedList')} onclick={run((e) => e.chain().focus().toggleOrderedList().run())} aria-label="Numbered list"><ListOrderedIcon /></Toolbar.Button>
 	<Toolbar.Button pressed={active('blockquote')} onclick={run((e) => e.chain().focus().toggleBlockquote().run())} aria-label="Quote"><QuoteIcon /></Toolbar.Button>
 	<Toolbar.Button pressed={active('codeBlock')} onclick={run((e) => e.chain().focus().toggleCodeBlock().run())} aria-label="Code block"><SquareCodeIcon /></Toolbar.Button>
 	<Toolbar.Separator />
-	{#each tones as tone (tone)}
-		<Toolbar.Button
-			pressed={active('callout', { tone })}
-			onclick={run((e) => (active('callout') ? e.chain().focus().unsetCallout().run() : e.chain().focus().setCallout(tone).run()))}
-			>{tone[0]?.toUpperCase()}{tone.slice(1)}</Toolbar.Button
-		>
-	{/each}
+	<DropdownMenu.Root>
+		<DropdownMenu.Trigger>
+			{#snippet child({ props })}
+				<Toolbar.Button {...props} pressed={calloutNow !== undefined} aria-label="Callout" title="Callout: a note, a tip or a warning" data-testid="callout-menu">
+					{#if calloutNow}<calloutNow.icon />{:else}<MessageSquareQuoteIcon />{/if}<ChevronDownIcon class="size-3! text-muted-foreground" />
+				</Toolbar.Button>
+			{/snippet}
+		</DropdownMenu.Trigger>
+		<DropdownMenu.Content align="start" class="w-48" onCloseAutoFocus={afterMenu}>
+			{#each tones as { tone, name, icon: Icon } (tone)}
+				<!-- The same tone again takes the callout away; another tone changes it. -->
+				<DropdownMenu.Item
+					onSelect={pick((e) => (calloutNow?.tone === tone ? e.chain().focus().unsetCallout().run() : active('callout') ? e.chain().focus().updateAttributes('callout', { tone }).run() : e.chain().focus().setCallout(tone).run()))}
+					aria-current={calloutNow?.tone === tone || undefined}
+				>
+					<Icon class="text-muted-foreground" />{name}
+				</DropdownMenu.Item>
+			{/each}
+			{#if calloutNow}
+				<DropdownMenu.Separator />
+				<DropdownMenu.Item onSelect={pick((e) => e.chain().focus().unsetCallout().run())}>Remove the callout</DropdownMenu.Item>
+			{/if}
+		</DropdownMenu.Content>
+	</DropdownMenu.Root>
 	{#if project !== null}
 		<Toolbar.Button onclick={() => openImage({ mode: 'insert' })} aria-label="Image" title="Insert an image from the media library"><ImageIcon /></Toolbar.Button>
 	{/if}
