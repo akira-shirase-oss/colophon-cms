@@ -133,6 +133,8 @@ jobs:
         run: scripts/test-homebrew-formula.sh
       - name: The droplet's logical backup (deploy/droplet/test-backup-logical.sh)
         run: deploy/droplet/test-backup-logical.sh
+      - name: The droplet's Neon URL fix (deploy/droplet/test-neon-url.sh)
+        run: deploy/droplet/test-neon-url.sh
       - name: The droplet's edge channel refuses what it can't prove (deploy/droplet/test-upgrade-edge.sh, D-211)
         run: deploy/droplet/test-upgrade-edge.sh
 

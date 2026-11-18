@@ -95,15 +95,21 @@ step "2. the release: v$COLOPHON_VERSION, checksums verified"
 "$here/upgrade.sh" --fetch "$COLOPHON_VERSION"
 
 step "3. Neon: the roles and the schema, over verify-full"
+# verify-full checks Neon's certificate against the system's public roots; without the bundle
+# every connection fails (as inside the postgres image, which has none).
+[[ -s /etc/ssl/certs/ca-certificates.crt ]] || { echo "refusing: /etc/ssl/certs/ca-certificates.crt is missing; verify-full to Neon needs it (apt-get install ca-certificates)" >&2; exit 1; }
 install -d -m 0700 "$CREDS"
-ask "$CREDS/migration_database_url" "Neon's DIRECT connection string for the owner role (no -pooler in the host)"
+ask "$CREDS/migration_database_url" "Neon's connection string for the owner role (as the dashboard gives it; the pooled host is made direct)"
 url=$(cat "$CREDS/migration_database_url")
-# Neon's dashboard copies ?sslmode=require&channel_binding=require: verify-full is the only mode
-# Colophon takes off this machine (D-156), and it refuses channel_binding rather than ignore it.
-fixed=$(sed -E 's/([?&])channel_binding=[^&]*&?/\1/; s/sslmode=[a-z-]+/sslmode=verify-full/; s/[?&]$//' <<<"$url")
-[[ "$fixed" == *sslmode=verify-full* ]] || fixed="$fixed$([[ "$fixed" == *\?* ]] && echo '&' || echo '?')sslmode=verify-full"
-[[ "$fixed" != *-pooler* ]] || { echo "error: that's Neon's pooled endpoint; use the direct one (no -pooler)" >&2; rm -f "$CREDS/migration_database_url"; exit 1; }
-if [[ "$fixed" != "$url" ]]; then (umask 077; chmod 0600 "$CREDS/migration_database_url"; printf '%s' "$fixed" >"$CREDS/migration_database_url"; chmod 0400 "$CREDS/migration_database_url"); say "set sslmode=verify-full"; fi
+# Neon's dashboard hands out the pooled host with ?sslmode=require&channel_binding=require:
+# neon-url.sh makes it the direct host over verify-full, and says what it changed.
+# shellcheck source=deploy/droplet/neon-url.sh
+. "$here/neon-url.sh"
+fixed=$(neon_url_fix "$url")
+if [[ "$fixed" != "$url" ]]; then
+  (umask 077; chmod 0600 "$CREDS/migration_database_url"; printf '%s' "$fixed" >"$CREDS/migration_database_url"; chmod 0400 "$CREDS/migration_database_url")
+  for note in "${NEON_URL_NOTES[@]}"; do say "Neon URL: $note"; done
+fi
 [[ -s "$CREDS/app_password" ]] || { (umask 077; head -c 32 /dev/urandom | base64 | tr '+/' '-_' | tr -d '=\n' >"$CREDS/app_password"); chmod 0400 "$CREDS/app_password"; say "generated the application's password"; }
 colophon admin init-roles --database-url-file "$CREDS/migration_database_url" --app-password-file "$CREDS/app_password" >/dev/null && say "roles ready"
 if [[ ! -s "$CREDS/database_url" ]]; then

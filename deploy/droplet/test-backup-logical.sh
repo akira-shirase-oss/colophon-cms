@@ -21,7 +21,16 @@ echo "rclone \$*" >>"$work/calls"
 case "\$1" in
   lsf) cat "$work/listing" 2>/dev/null ;;
   copyto) echo "\$2" >>"$work/uploaded"; basename "\$2" >>"$work/listing" ;;
-  deletefile) n=\$(basename "\$2"); grep -vx "\$n" "$work/listing" >"$work/listing.new" || true; mv "$work/listing.new" "$work/listing" ;;
+  deletefile)
+    n=\$(basename "\$2")
+    # The bucket lock (CREATE.md): a dump under LOCK_STUB_DAYS old can't be deleted. FAIL_DELETE names
+    # one dump whose deletion fails for another reason.
+    if [[ -n "\${FAIL_DELETE:-}" && "\$n" == "\$FAIL_DELETE" ]]; then echo "ERROR : AccessDenied: Access Denied" >&2; exit 1; fi
+    if [[ -n "\${LOCK_STUB_DAYS:-}" ]]; then
+      age=\$(( (\$(date -u +%s) - \$(jq -rn --arg s "\${n%.dump.age}" '\$s | strptime("%Y-%m-%dT%H%M%SZ") | mktime')) / 86400 ))
+      if (( age < LOCK_STUB_DAYS )); then echo "ERROR : ObjectLocked: The object is locked by the bucket's retention rule" >&2; exit 1; fi
+    fi
+    grep -vx "\$n" "$work/listing" >"$work/listing.new" || true; mv "$work/listing.new" "$work/listing" ;;
 esac
 STUB
 cat >"$work/bin/pg_dump" <<STUB
@@ -70,8 +79,32 @@ kept=$(sort "$work/listing")
 [[ "$kept" == "$expected" ]] || fail "retention kept $(wc -l <<<"$kept") dumps, wanted $(wc -l <<<"$expected"): $(diff <(echo "$kept") <(echo "$expected") | head)"
 (( $(wc -l <<<"$kept") >= 14 && $(wc -l <<<"$kept") <= 22 )) || fail "retention kept $(wc -l <<<"$kept")"
 
+# The bucket lock: pruning harder than the lock allows (2 days kept), the young dumps' refusals are
+# expected and logged, the old ones go, and the run passes.
+listing_for() { : >"$work/listing"; for i in $(seq 12 -1 0); do jq -rn --argjson i "$i" '(now - $i*86400 - 60) | strftime("%Y-%m-%dT%H%M%SZ.dump.age")' >>"$work/listing"; done; }
+listing_for
+out=$(env LOCK_STUB_DAYS=7 KEEP_DAILY=2 KEEP_WEEKLY=1 PATH="$work/bin:$PATH" CREDENTIALS_DIRECTORY="$work/creds" COLOPHON_ENV_FILE="$work/colophon.env" \
+  BACKUP_AGE_RECIPIENT_FILE="$work/recipient" deploy/droplet/backup-logical.sh prune) || fail "a lock refusal for a young dump failed the prune: $out"
+grep -q '^locked ' <<<"$out" || fail "no dump was reported locked: $out"
+grep -q '^pruned ' <<<"$out" || fail "the old dumps weren't pruned: $out"
+(( $(grep -c '^locked ' <<<"$out") <= 7 )) || fail "more than 7 days of dumps reported locked: $out"
+
+# Any other refusal fails the prune: an old dump the bucket won't delete for another reason.
+listing_for
+victim=$(head -1 "$work/listing")
+if env FAIL_DELETE="$victim" KEEP_DAILY=2 KEEP_WEEKLY=1 PATH="$work/bin:$PATH" CREDENTIALS_DIRECTORY="$work/creds" COLOPHON_ENV_FILE="$work/colophon.env" \
+  BACKUP_AGE_RECIPIENT_FILE="$work/recipient" deploy/droplet/backup-logical.sh prune >/dev/null 2>&1; then
+  fail "a delete refused for another reason (AccessDenied) didn't fail the prune"
+fi
+# And a lock refusal for a dump OLDER than the lock is an error too (the lock shouldn't hold it).
+listing_for
+if env LOCK_STUB_DAYS=30 LOCK_DAYS=7 KEEP_DAILY=2 KEEP_WEEKLY=1 PATH="$work/bin:$PATH" CREDENTIALS_DIRECTORY="$work/creds" COLOPHON_ENV_FILE="$work/colophon.env" \
+  BACKUP_AGE_RECIPIENT_FILE="$work/recipient" deploy/droplet/backup-logical.sh prune >/dev/null 2>&1; then
+  fail "a lock refusal for a dump older than the lock didn't fail the prune"
+fi
+
 # latest: the newest dump, and its age in hours.
 out=$(backup latest)
 [[ "$out" == "$(sort "$work/listing" | tail -1) "* ]] || fail "latest: $out"
 
-echo "backup-logical: password only in the environment, verify-full or nothing, encrypted upload, 14 daily + 8 weekly kept"
+echo "backup-logical: password only in the environment, verify-full or nothing, encrypted upload, 14 daily + 8 weekly kept, the bucket lock's refusals expected and any other failing"

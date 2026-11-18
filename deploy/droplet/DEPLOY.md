@@ -376,6 +376,8 @@ certificate, and a test CA and client certificate for Authenticated Origin Pulls
 | `--rollback`: 5 s; a failing release rolled back by itself | R2: uploads, the ledger export, the logical backup's upload |
 | Caddy: 200 with the origin-pull client certificate, refused without it | systemd credentials (`LoadCredential=`): Docker can't provide them, so the rehearsal read the files directly |
 | `smoke.sh`'s server checks, idle memory (24–38 MiB) | The release archives from `release.yml` and the edge channel's provenance on a real build |
+| The Neon URL fix (pooled host → direct, `require` → `verify-full`), tested | The database round trip, Toronto ↔ Neon us-east-2: `smoke.sh` prints p50/p95 of 20 × `SELECT 1` (warns over 20 ms); record the deploy-day number here: **p50 — ms, p95 — ms** (Neon's first query after idle was 367 ms, a cold start) |
+| Pruning under the backups bucket's 7-day lock, tested with a stub | The lock rule itself on R2 |
 
 
 ## When something is wrong

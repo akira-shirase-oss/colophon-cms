@@ -38,6 +38,39 @@ if jq -e '.status == "ready"' <<<"$ready" >/dev/null 2>&1; then ok "/readyz is r
 version=$(curl -fsS --max-time 5 "$local_url/version" || true)
 jq -e '.version' <<<"$version" >/dev/null 2>&1 && ok "/version: $(jq -r '.version + " " + (.commit // "")' <<<"$version")" || bad "/version: $version"
 
+# The runtime's role must not bypass row-level security: Neon's owner role has BYPASSRLS, so an
+# app URL that names it would quietly turn tenant isolation off (init-roles' colophon_app has none).
+creds="${SMOKE_CREDENTIALS:-/etc/colophon/credentials}"
+if command -v psql >/dev/null && [[ -r "$creds/database_url" ]]; then
+  role=$(PGCONNECT_TIMEOUT=10 psql "$(cat "$creds/database_url")" -XAtqc "select current_user || ' ' || rolbypassrls || ' ' || rolsuper from pg_roles where rolname = current_user" 2>/dev/null)
+  case "$role" in
+    *" false false") ok "the server's database role (${role%% *}) has neither BYPASSRLS nor superuser" ;;
+    "") bad "couldn't read the server's database role" ;;
+    *) bad "the server's database role ${role%% *} bypasses row-level security or is a superuser: use init-roles' colophon_app" ;;
+  esac
+fi
+
+# The database round trip from here (Toronto ↔ Neon's us-east-2): 20 × SELECT 1 in one session
+# over the server's own verify-full URL, so the TLS handshake is paid once. Reported, warned on
+# above 20 ms at p50; readiness above decides pass or fail.
+creds="${SMOKE_CREDENTIALS:-/etc/colophon/credentials}"
+if command -v psql >/dev/null && [[ -r "$creds/database_url" ]]; then
+  queries=(-c '\timing on'); for _ in $(seq 20); do queries+=(-c 'SELECT 1'); done
+  times=$(PGCONNECT_TIMEOUT=10 psql "$(cat "$creds/database_url")" -XAtq "${queries[@]}" 2>/dev/null \
+    | sed -n 's/^Time: \([0-9.]*\) ms.*/\1/p' | sort -n)
+  if [[ $(wc -l <<<"$times" | tr -d ' ') -ge 10 ]]; then
+    p50=$(awk '{a[NR]=$1} END {print a[int((NR+1)/2)]}' <<<"$times")
+    p95=$(awk '{a[NR]=$1} END {i=int(NR*0.95+0.5); if (i<1) i=1; print a[i]}' <<<"$times")
+    if awk -v p="$p50" 'BEGIN {exit !(p > 20)}'; then
+      printf '  warn  database round trip p50 %s ms, p95 %s ms (over 20 ms at p50: check the region and the direct endpoint)\n' "$p50" "$p95"
+    else
+      ok "database round trip p50 $p50 ms, p95 $p95 ms ($(wc -l <<<"$times" | tr -d ' ') × SELECT 1)"
+    fi
+  else
+    printf '  warn  database round trip not measured (psql got no timings)\n'
+  fi
+fi
+
 echo "the Studio and delivery, on loopback"
 headers=$(curl -sSI --max-time 5 "$local_url/studio/" || true)
 grep -qiE '^HTTP/[0-9.]+ 200' <<<"$headers" && ok "the Studio answers 200" || bad "the Studio: $(head -1 <<<"$headers")"

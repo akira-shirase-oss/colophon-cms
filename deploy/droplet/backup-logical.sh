@@ -19,6 +19,7 @@
 set -euo pipefail
 KEEP_DAILY="${KEEP_DAILY:-14}"
 KEEP_WEEKLY="${KEEP_WEEKLY:-8}"
+LOCK_DAYS="${LOCK_DAYS:-7}"   # the backups bucket's lock (CREATE.md row 5)
 bucket="${BACKUP_BUCKET:-colophon-backups}"
 creds="${CREDENTIALS_DIRECTORY:-/etc/colophon/credentials}"
 env_file="${COLOPHON_ENV_FILE:-/etc/colophon/colophon.env}"
@@ -55,17 +56,32 @@ prune() {
     if [[ -n "$why" ]]; then keep+=("$name"); else drop+=("$name"); fi
   done < <(dumps | sort -r)
   for name in ${keep[@]+"${keep[@]}"}; do echo "keep   $name"; done
+  # The backups bucket carries a 7-day lock (CREATE.md), so a stolen key can't wipe recent dumps:
+  # a refusal that names the lock, for a dump under LOCK_DAYS old, is expected and logged; any
+  # other failure fails the run, after every deletion has been tried.
+  local out failed=0 age
   for name in ${drop[@]+"${drop[@]}"}; do
-    if [[ "$mode" == dry ]]; then echo "prune  $name (dry run)"; else r2 deletefile "r2:$bucket/logical/$name"; echo "pruned $name"; fi
+    if [[ "$mode" == dry ]]; then echo "prune  $name (dry run)"; continue; fi
+    if out=$(r2 deletefile "r2:$bucket/logical/$name" 2>&1); then echo "pruned $name"; continue; fi
+    age=$(( ($(date -u +%s) - $(stamp_epoch "$name")) / 86400 ))
+    if (( age < LOCK_DAYS )) && grep -qiE 'object.?lock|locked|retention|WORM' <<<"$out"; then
+      echo "locked $name ($age d old; the bucket lock keeps it until $LOCK_DAYS d)"
+    else
+      echo "error: couldn't delete $name ($age d old): $(tail -1 <<<"$out")" >&2
+      failed=1
+    fi
   done
+  return $failed
 }
+
+# stamp_epoch <name>: the dump's UTC stamp as seconds.
+stamp_epoch() { local stamp=${1%.dump.age}; jq -rn --arg s "$stamp" '$s | strptime("%Y-%m-%dT%H%M%SZ") | mktime'; }
 
 latest() {
   local name stamp epoch
   name=$(dumps | tail -n 1)
   [[ -n "$name" ]] || { echo "none"; return 1; }
-  stamp=${name%.dump.age}
-  epoch=$(jq -rn --arg s "$stamp" '$s | strptime("%Y-%m-%dT%H%M%SZ") | mktime')
+  epoch=$(stamp_epoch "$name")
   echo "$name $(( ($(date -u +%s) - epoch) / 3600 ))"
 }
 
