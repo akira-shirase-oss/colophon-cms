@@ -1,5 +1,5 @@
-# Evidence only (builder E, fix/token-create-hold): the tokens and members load smokes, before
-# and after the fix, three runners each, on a fresh stack — every result recorded as it came
+# Evidence only (builder E): the schedules load smoke, before (main) and after
+# fix/schedules-list-bounded, three runners each, on a fresh stack — every result recorded as it came
 # out, with the runner's CPU, and PostgreSQL's wait events sampled every 200 ms during each run.
 # Never merged: it lives on evidence/tokens-smoke.
 name: evidence-tokens
@@ -20,12 +20,12 @@ jobs:
       fail-fast: false
       matrix:
         version: [before, after]
-        n: [1, 2, 3, 4, 5, 6]
+        n: [1, 2, 3, 4]
         include:
           - version: before
             ref: a7977304d0c26fb761f1a16d5d6b5bc3dec9c0e8
           - version: after
-            ref: 6be4bf5e4189ad13d8ac55241ec7568f4b5d0312
+            ref: 5c175b12e0547f465d4f45f88008731c32d56d53
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -51,16 +51,18 @@ jobs:
         run: |
           scripts/install-k6.sh "$RUNNER_TEMP/bin"
           export PATH="$RUNNER_TEMP/bin:$PATH" KEEP=0 DURATION=20s
-          for smoke in tokens members tokens; do
+          for smoke in members roles tokens schedules schedules; do
             ( while true; do
                 docker compose -f deploy/compose.yaml exec -T postgres psql -U colophon -d colophon -Atc \
-                  "SELECT coalesce(wait_event_type,'-') || '/' || coalesce(wait_event,'on-cpu') FROM pg_stat_activity WHERE datname = 'colophon' AND state = 'active' AND pid <> pg_backend_pid()" 2>/dev/null
+                  "SELECT coalesce(wait_event_type,'-') || '/' || coalesce(wait_event,'on-cpu') || CASE WHEN now() - query_start > interval '500 ms' THEN ' SLOW ' || left(regexp_replace(query, '\\s+', ' ', 'g'), 90) ELSE '' END FROM pg_stat_activity WHERE datname = 'colophon' AND state = 'active' AND pid <> pg_backend_pid()" 2>/dev/null
                 sleep 0.2
-              done ) > "$RUNNER_TEMP/waits-$smoke.txt" &
+              done ) >> "$RUNNER_TEMP/waits-$smoke.txt" &
             sampler=$!
-            if [[ "$smoke" == tokens ]]; then rate=200; else rate=500; fi
+            case "$smoke" in tokens) rate=200 ;; roles) rate=450 ;; *) rate=500 ;; esac
             RATE=$rate P99_MS=200 scripts/load.sh "$smoke" steady || echo "SMOKE FAILED: $smoke"
             kill "$sampler" 2>/dev/null || true
             echo "wait events during $smoke (samples of active backends):"
             sort "$RUNNER_TEMP/waits-$smoke.txt" | uniq -c | sort -rn | head -12
+            echo "server lines about the pool, timeouts or 503s:"
+            docker compose -f deploy/compose.yaml logs --no-color 2>/dev/null | grep -icE 'pool timed out|acquire|503|statement timeout' || true
           done
