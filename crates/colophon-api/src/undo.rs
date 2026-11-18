@@ -9,9 +9,7 @@
 //!
 //! 1. [`colophon_domain::undo::decide`] on facts the database reads: the release is the newest,
 //!    it only took entries down, the caller published it, it is younger than the window by the
-//!    database's own clock, a person asks (D-111), and the environment has no review stages and
-//!    doesn't require another reviewer (an undo approves its own request, so it must never be a
-//!    way around review).
+//!    database's own clock, and a person asks (D-111). Review is not re-judged here (U1): see 3.
 //! 2. The same permission checks the four one-click calls make: the caller may change every entry
 //!    (as `POST …/changesets` asks), review content in every collection (as `…/reviews` asks)
 //!    and publish it (as `…/publish` asks, which [`publish::publish`] checks again under its
@@ -20,7 +18,10 @@
 //!    the release before is the publication set it restores, so it is marked `rollback_generation
 //!    = N - 1` (D-097's history pins, which a newer draft can't make stale) and `undo_of = N`
 //!    (migration 0071), which is how receipts and lists say "Undo of release N". It is submitted,
-//!    approved as a recorded self-review, and published by [`publish::publish`] on base `N`: the
+//!    approved as a recorded self-review, and published by [`publish::publish`] on base `N`, which
+//!    judges it with the one review rule every publish uses (`changeset::status`, D-104): where
+//!    review stages or another reviewer are required, a self-review doesn't count, so it refuses
+//!    as `needs_review` and nothing is kept, and an undo is never a way around review. The
 //!    same locks, type checks (D-055), deleted-entry check (D-080), slug and unique-value checks,
 //!    asset gate and delivery outbox as every release. If another release committed first, the
 //!    environment's conditional update refuses it and nothing is kept (`changed_since`).
@@ -128,7 +129,6 @@ fn refusal(refused: undo::Refusal) -> ApiError {
             "undo_expired",
             "the time to undo this release has passed; publish the entries again instead",
         ),
-        undo::Refusal::NeedsReview => needs_review(),
     }
 }
 
@@ -166,9 +166,6 @@ async fn decided(
     } else {
         None
     };
-    // Read without a lock: the publish below re-reads the stages under its own (D-104), so a
-    // list changed in between is still caught there, as `needs_review`.
-    let stages = changesets::stages(tx).await.map_err(ApiError::from_db)?;
     let facts = Facts {
         generation,
         latest,
@@ -183,8 +180,6 @@ async fn decided(
             publishes: read.publishes,
             takes_down: read.takes_down,
         }),
-        stages: stages.len(),
-        different_reviewer: publish::REQUIRE_DIFFERENT_REVIEWER,
     };
     undo::decide(&facts).map_err(refusal)?;
     let Some(read) = read else {

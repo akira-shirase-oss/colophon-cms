@@ -47,10 +47,6 @@ pub struct Facts<I> {
     pub asker: Asker<I>,
     /// The release, when there is one at `generation`.
     pub release: Option<Release<I>>,
-    /// How many review stages the environment configures (D-104).
-    pub stages: usize,
-    /// Whether the project requires someone other than the submitter to approve.
-    pub different_reviewer: bool,
 }
 
 /// Why a release can't be undone, in the order the checks run: the first that applies is the
@@ -81,10 +77,6 @@ pub enum Refusal {
     /// The window passed.
     #[error("the time to undo it has passed")]
     Expired,
-    /// The environment's publishing goes through review stages, or needs someone else's approval:
-    /// an undo would approve its own request, so it would be a way around review.
-    #[error("putting it back needs a review here; make a publish request")]
-    NeedsReview,
 }
 
 /// Whether the release in `facts` may be undone by its caller.
@@ -118,9 +110,10 @@ pub fn decide<I: PartialEq>(facts: &Facts<I>) -> Result<(), Refusal> {
     if !release.in_window {
         return Err(Refusal::Expired);
     }
-    if facts.stages > 0 || facts.different_reviewer {
-        return Err(Refusal::NeedsReview);
-    }
+    // Review is not decided here: the undo's request is approved as a recorded self-review and
+    // then published by `publish::publish`, which judges it with the one rule every publish
+    // uses (`changeset::status`, D-104). Where review stages or another reviewer are required,
+    // that self-review doesn't count, so the publish refuses and nothing is kept (U1).
     Ok(())
 }
 
@@ -140,8 +133,6 @@ mod tests {
                 publishes: 0,
                 takes_down: 1,
             }),
-            stages: 0,
-            different_reviewer: false,
         }
     }
 
@@ -227,20 +218,6 @@ mod tests {
                 with_release(|release| release.in_window = false),
                 Refusal::Expired,
             ),
-            (
-                Facts {
-                    stages: 2,
-                    ..undoable()
-                },
-                Refusal::NeedsReview,
-            ),
-            (
-                Facts {
-                    different_reviewer: true,
-                    ..undoable()
-                },
-                Refusal::NeedsReview,
-            ),
         ];
         for (facts, refusal) in cases {
             assert_eq!(decide(&facts), Err(refusal), "{facts:?}");
@@ -249,7 +226,7 @@ mod tests {
 
     #[test]
     fn the_most_basic_reason_comes_first() {
-        // A token asking about an old release someone else published, too late, with stages.
+        // A token asking about an old release someone else published, too late.
         let everything = Facts {
             asker: Asker::Token,
             latest: 9,
@@ -259,21 +236,14 @@ mod tests {
                 publishes: 2,
                 takes_down: 1,
             }),
-            stages: 1,
             ..undoable()
         };
         assert_eq!(decide(&everything), Err(Refusal::ByToken));
-        // A person: not the newest beats not a takedown, not yours, too late and review.
+        // A person: not the newest beats not a takedown, not yours and too late.
         let person = Facts {
             asker: Asker::Person("ana"),
             ..everything.clone()
         };
         assert_eq!(decide(&person), Err(Refusal::ChangedSince { latest: 9 }));
-        // Too late is said before review, so an expired undo never suggests a request instead.
-        let late = Facts {
-            stages: 2,
-            ..with_release(|release| release.in_window = false)
-        };
-        assert_eq!(decide(&late), Err(Refusal::Expired));
     }
 }
