@@ -431,3 +431,117 @@ async fn two_workers_running_one_schedule_at_once_publish_it_once() {
     other.close().await;
     db.drop().await;
 }
+
+/// Changeset rows this transaction has read so far, by any kind of scan (an index scan's rows
+/// are counted against the index).
+async fn changesets_read(tx: &mut ProjectTransaction) -> i64 {
+    sqlx::query_scalar::<_, i64>(
+        "SELECT pg_stat_get_xact_tuples_fetched('changesets'::regclass)
+              + pg_stat_get_xact_tuples_returned('changesets'::regclass)
+              + (SELECT coalesce(sum(pg_stat_get_xact_tuples_fetched(indexrelid)), 0)::bigint
+                 FROM pg_index WHERE indrelid = 'changesets'::regclass)",
+    )
+    .fetch_one(&mut *tx.transaction)
+    .await
+    .expect("counters")
+}
+
+/// A list of an environment's schedules reads one changeset row per schedule it returns,
+/// however many schedules and changesets the environment has had: the bounded rows are chosen
+/// from `schedules` first. (Joining first read every changeset of the environment on each list,
+/// and under a misjudged plan paired every schedule with every changeset — the load smoke's
+/// three-second lists.)
+#[tokio::test]
+#[ignore = "needs the local stack: scripts/stack.sh up"]
+async fn a_list_reads_only_the_changesets_it_shows_however_many_the_environment_had() {
+    const MANY: usize = 300;
+    let db = TestDb::new().await;
+    let ready = ready(&db).await;
+    for n in 0..MANY {
+        // One transaction each, so every schedule has its own times.
+        let mut tx = enter(&db.app, ready.alice, ready.project).await;
+        let pins = changesets::pins(&mut tx, &[ready.entry])
+            .await
+            .expect("pins");
+        let changeset = Uuid::now_v7();
+        changesets::create(
+            &mut tx,
+            changeset,
+            &format!("Menu {n}"),
+            &pins,
+            &[5; 32],
+            None,
+        )
+        .await
+        .expect("created");
+        changesets::submit(&mut tx, changeset)
+            .await
+            .expect("submitted");
+        changesets::lock(&mut tx, changeset).await.expect("lock");
+        changesets::review(&mut tx, changeset, &[5; 32], "approve", "", None)
+            .await
+            .expect("approved");
+        let approval = changesets::reviews(&mut tx, changeset, None)
+            .await
+            .expect("reviews")
+            .remove(0);
+        let id = Uuid::now_v7();
+        let created = schedules::create(
+            &mut tx,
+            &NewSchedule {
+                id,
+                changeset,
+                hash: &[5; 32],
+                approval: approval.id,
+                local_time: "2027-11-03T09:00:00",
+                time_zone: "Europe/London",
+                choice: None,
+                run_at: approval.created_at + Duration::hours(1),
+            },
+        )
+        .await
+        .expect("create");
+        assert!(matches!(created, Created::Done(_)));
+        // Half stay pending, half are cancelled: both halves of a list have more than they show.
+        if n % 2 == 1 {
+            let cancelled = schedules::cancel(&mut tx, id).await.expect("cancel");
+            assert!(matches!(cancelled, Cancelled::Done(_)));
+        }
+        tx.commit().await.expect("commit");
+    }
+
+    // As the server runs it after a few calls: one generic plan for every project, from
+    // estimates that can't know this project's size.
+    let mut tx = enter(&db.app, ready.alice, ready.project).await;
+    sqlx::query("SET LOCAL plan_cache_mode = force_generic_plan")
+        .execute(&mut *tx.transaction)
+        .await
+        .expect("set");
+    let before = changesets_read(&mut tx).await;
+    let listed = schedules::list(&mut tx).await.expect("list");
+    let read = changesets_read(&mut tx).await - before;
+    eprintln!(
+        "read {read} changeset rows for {} schedules (before {before})",
+        listed.len()
+    );
+    let pending = listed.iter().filter(|s| s.state == "scheduled").count();
+    assert_eq!(
+        (pending, listed.len() - pending),
+        (100, 20),
+        "both halves are bounded"
+    );
+    assert_eq!(listed[0].title, "Menu 0", "pending, soonest first");
+    assert_eq!(
+        listed[100].title,
+        format!("Menu {}", MANY - 1),
+        "finished, newest first"
+    );
+    let shown = i64::try_from(listed.len()).expect("small");
+    assert!(
+        read <= shown,
+        "a list of {shown} schedules read {read} changeset rows (the environment has {})",
+        MANY + 1
+    );
+    drop(tx);
+    db.drop().await;
+}
