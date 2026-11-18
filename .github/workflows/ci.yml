@@ -334,6 +334,29 @@ jobs:
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
       - name: Migrate the stack's database
         run: scripts/migrate.sh
+      # Triage evidence (D-209): what a slow statement, a lock wait or a slow COMMIT looks like
+      # on this runner, so a failed smoke can be told apart as the code's or the runner's.
+      # Logging only; durability is untouched (never fsync off).
+      - name: Log slow statements and lock waits; measure commit latency
+        run: |
+          set -euo pipefail
+          pg() { docker compose -f deploy/compose.yaml exec -T postgres "$@"; }
+          pg psql -U colophon -d postgres -XAtq \
+            -c "ALTER SYSTEM SET log_min_duration_statement = '100ms'" \
+            -c "ALTER SYSTEM SET log_lock_waits = on" -c "ALTER SYSTEM SET deadlock_timeout = '200ms'" \
+            -c "SELECT pg_reload_conf()" >/dev/null
+          fsync=$(pg sh -c 'pg_test_fsync -s 2 -f "$PGDATA/pg_test_fsync.probe"; rm -f "$PGDATA/pg_test_fsync.probe"' \
+            | sed -n 's/^ *fdatasync *\([0-9.]*\) ops\/sec *\([0-9]*\) usecs\/op.*/\1 ops\/s, \2 µs\/op/p' | head -1)
+          pg psql -U colophon -d postgres -XAtqc "CREATE TABLE IF NOT EXISTS commit_probe (n int)" >/dev/null
+          printf 'INSERT INTO commit_probe VALUES (1);\n' | pg sh -c 'cat >/tmp/probe.sql'
+          commit=$(pg pgbench -U colophon -n -c 1 -t 500 -f /tmp/probe.sql postgres 2>&1 | sed -n 's/^latency average = \(.*\)$/\1/p')
+          pg psql -U colophon -d postgres -XAtqc "DROP TABLE commit_probe" >/dev/null
+          {
+            echo "### Storage, as Postgres sees it"
+            echo "| fdatasync (pg_test_fsync) | INSERT+COMMIT, one client (pgbench, 500) |"
+            echo "|---|---|"
+            echo "| ${fsync:-not measured} | ${commit:-not measured} |"
+          } | tee -a "$GITHUB_STEP_SUMMARY"
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 24
@@ -342,9 +365,18 @@ jobs:
       - name: Load smokes, check.sh's settings (each runs; the step fails at the end, naming every failure)
         run: |
           scripts/install-k6.sh "$RUNNER_TEMP/bin"
-          export PATH="$RUNNER_TEMP/bin:$PATH" KEEP=0
+          export PATH="$RUNNER_TEMP/bin:$PATH" KEEP=0 SAMPLE_RESOURCES=1 SAMPLE_SECONDS=1
+          logs="$RUNNER_TEMP/smoke-logs"; mkdir -p "$logs"
           failed=()
-          smoke() { echo "::group::$*"; if env "$@"; then echo "::endgroup::"; else echo "::endgroup::"; echo "::error::smoke failed: $*"; failed+=("${*: -2:1}"); fi; }
+          # Each scenario keeps its server log, and marks its window so the Postgres log (one
+          # for the job) can be cut by scenario.
+          smoke() {
+            local name="${*: -2:1}"
+            echo "$(date -u +%FT%TZ) start $name" >>"$logs/windows.txt"
+            echo "::group::$*"
+            if env SERVER_LOG="$logs/$name.server.log" "$@"; then echo "::endgroup::"; else echo "::endgroup::"; echo "::error::smoke failed: $*"; failed+=("$name"); fi
+            echo "$(date -u +%FT%TZ) end $name" >>"$logs/windows.txt"
+          }
           smoke TOTAL=10000 P99_MS=500 scripts/load.sh assets throughput
           smoke TOTAL=10000 USERS=64 P99_MS=700 scripts/load.sh audience throughput
           smoke TOTAL=10000 P99_MS=500 scripts/load.sh bulk throughput
@@ -376,6 +408,17 @@ jobs:
       - name: Service logs
         if: failure()
         run: docker compose -f deploy/compose.yaml logs --no-color --tail 300
+      - name: Keep the evidence (server logs per scenario, Postgres's slow statements and lock waits)
+        if: always()
+        run: |
+          mkdir -p "$RUNNER_TEMP/smoke-logs"
+          docker compose -f deploy/compose.yaml logs --no-color --timestamps postgres >"$RUNNER_TEMP/smoke-logs/postgres.log" 2>&1 || true
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: always()
+        with:
+          name: smoke-logs
+          path: ${{ runner.temp }}/smoke-logs
+          retention-days: 14
       - name: Tear down
         if: always()
         run: scripts/stack.sh reset

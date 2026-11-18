@@ -446,8 +446,13 @@ tx_before=$(db_transactions)
 # CPU from ps, and the connections Postgres sees this database hold — what the API's pool
 # plus a migrator connection amount to. SAMPLE_SECONDS apart; recorded into the result's
 # `resources`. One server, so skipped under CLUSTER=1 (the numbers would name nothing).
+# SAMPLE_RESOURCES=1 samples any scenario (CI's smokes job, for triage evidence).
+sample_resources=${SAMPLE_RESOURCES:-0}
 case "$endpoint" in
-  warm-baseline|cold-cache|stampede|mixed|spike|import-scale|cdn-warm|media-load|audience-sites)
+  warm-baseline|cold-cache|stampede|mixed|spike|import-scale|cdn-warm|media-load|audience-sites) sample_resources=1 ;;
+esac
+case "$sample_resources" in
+  1)
     if [[ "$cluster" != "1" ]]; then
       (
         while :; do
