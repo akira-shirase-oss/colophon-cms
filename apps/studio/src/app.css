@@ -126,7 +126,7 @@
 /* Motion: small, quick and purposeful. Everything here is switched off by the design system's
  * prefers-reduced-motion rule, which shortens every animation and transition to nothing. */
 @layer components {
-	/* The theme switch: the new theme is clipped in as a growing circle (AppearanceMenu). */
+	/* The theme switch: the new theme is clipped in as a growing circle (lib/shell/theme.ts). */
 	::view-transition-old(root),
 	::view-transition-new(root) {
 		animation: none;

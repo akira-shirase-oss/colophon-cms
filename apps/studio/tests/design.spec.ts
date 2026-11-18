@@ -6,10 +6,20 @@ import AxeBuilder from "@axe-core/playwright";
 import { expect, type Page, test } from "@playwright/test";
 import { openFixture } from "./helpers.ts";
 
-async function choose(page: Page, mode: "Light" | "Dark" | "System") {
-  await page.getByRole("button", { name: "Appearance" }).click();
-  await page.getByRole("menuitemradio", { name: mode }).click();
+/** The theme toggle: one button, named "Dark theme", pressed when dark is on. */
+const themeToggle = (page: Page) =>
+  page.getByRole("button", { name: "Dark theme" });
+
+/** Turns `mode` on with the toggle, pressing it only if the other theme is showing. */
+async function choose(page: Page, mode: "Light" | "Dark") {
+  const toggle = themeToggle(page);
+  const pressed = mode === "Dark" ? "true" : "false";
+  if ((await toggle.getAttribute("aria-pressed")) !== pressed) await toggle.click();
+  await expect(toggle).toHaveAttribute("aria-pressed", pressed);
 }
+
+const storedChoice = (page: Page) =>
+  page.evaluate(() => localStorage.getItem("mode-watcher-mode"));
 
 async function axe(page: Page) {
   const results = await new AxeBuilder({ page })
@@ -76,23 +86,44 @@ test("the formatting toolbar is one tab stop, with arrow keys inside it that wra
 
 test.describe("with motion", () => {
   test.use({ reducedMotion: "no-preference" });
-  test("the appearance choice changes the colours (through the view transition) and survives a reload", async ({
+  test("the theme follows the system until toggled, flips the colours (through the view transition), survives a reload, and goes back to the system when toggled onto its scheme", async ({
     page,
   }) => {
+    const html = page.locator("html");
+    await page.emulateMedia({ colorScheme: "light" });
     await page.goto("/studio/playground");
-    await choose(page, "Light");
+    // Nobody has chosen: the Studio follows the system, both ways.
+    await expect(html).not.toHaveClass(/\bdark\b/);
+    await expect(themeToggle(page)).toHaveAttribute("aria-pressed", "false");
     const light = await token(page, "--background");
-    await choose(page, "Dark");
-    await expect(page.locator("html")).toHaveClass(/\bdark\b/);
+    await page.emulateMedia({ colorScheme: "dark" });
+    await expect(html).toHaveClass(/\bdark\b/);
+    await expect(themeToggle(page)).toHaveAttribute("aria-pressed", "true");
+    await page.emulateMedia({ colorScheme: "light" });
+    await expect(html).not.toHaveClass(/\bdark\b/);
+
+    // One press turns dark on and keeps it, whatever the system says, across a reload.
+    await themeToggle(page).click();
+    await expect(html).toHaveClass(/\bdark\b/);
+    await expect(themeToggle(page)).toHaveAttribute("aria-pressed", "true");
     const dark = await token(page, "--background");
     expect(dark).not.toBe(light);
+    expect(await storedChoice(page)).toBe("dark");
     await page.reload();
-    await expect(page.locator("html")).toHaveClass(/\bdark\b/);
+    await expect(html).toHaveClass(/\bdark\b/);
     expect(await token(page, "--background")).toBe(dark);
-    // "System" follows the operating system's scheme.
-    await choose(page, "System");
-    await page.emulateMedia({ colorScheme: "light" });
-    await expect(page.locator("html")).not.toHaveClass(/\bdark\b/);
+
+    // Pressing it onto the system's own scheme goes back to following the system.
+    await themeToggle(page).click();
+    await expect(html).not.toHaveClass(/\bdark\b/);
+    expect(await storedChoice(page)).toBe("system");
+    await page.emulateMedia({ colorScheme: "dark" });
+    await expect(html).toHaveClass(/\bdark\b/);
+
+    // Against the system, a press is a choice of its own: dark system, light Studio.
+    await themeToggle(page).click();
+    await expect(html).not.toHaveClass(/\bdark\b/);
+    expect(await storedChoice(page)).toBe("light");
   });
 });
 
