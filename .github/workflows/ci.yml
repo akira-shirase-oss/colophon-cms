@@ -133,6 +133,8 @@ jobs:
         run: scripts/test-homebrew-formula.sh
       - name: The droplet's logical backup (deploy/droplet/test-backup-logical.sh)
         run: deploy/droplet/test-backup-logical.sh
+      - name: The droplet's edge channel refuses what it can't prove (deploy/droplet/test-upgrade-edge.sh, D-211)
+        run: deploy/droplet/test-upgrade-edge.sh
 
   # The testing rule (D-018) from a clean clone: the real stack, the real binary, real outages,
   # the testbed in a browser, and a load smoke run.
