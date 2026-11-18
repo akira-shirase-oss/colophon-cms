@@ -2,7 +2,7 @@
   Formatting for one rich-text editor: marks, blocks, callouts, links (only the kinds the format
   allows), images from the project's media library with required alt text, undo and redo. One tab
   stop; arrows inside. Headings (H2–H4) and callouts (Note, Tip, Warning) are each one menu, led by
-  an icon (D-183), so the toolbar is icons only and wraps less.
+  an icon (D-184), so the toolbar is icons only and wraps less.
   "Insert an image" (gap 3 D1): choose or upload in the library panel, then describe it — alt text
   is required, starts from the upload's own alt text, and is questioned when it reads like a file
   name — then insert the real asset id. The same dialog answers an image's Edit alt text and

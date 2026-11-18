@@ -140,7 +140,7 @@ export async function member(owner: Page, browser: Browser, project: string, rol
 	return page;
 }
 
-/** Opens an entry's Details in the editor's side panel (closed until asked, D-183). */
+/** Opens an entry's Details in the editor's side panel (closed until asked, D-184). */
 export async function openDetails(page: Page) {
 	const details = page.getByTestId('details');
 	if ((await details.getAttribute('open')) === null) await details.locator('> summary').click();

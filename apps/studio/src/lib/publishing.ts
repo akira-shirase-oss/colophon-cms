@@ -16,7 +16,7 @@ export type Outcome =
 	| { kind: 'requested'; request: string; unpublish: boolean }
 	| { kind: 'stopped'; message: string; request: string | null };
 
-/** A publish request an entry waits in for review, as the editor names it (D-183). */
+/** A publish request an entry waits in for review, as the editor names it (D-184). */
 export interface InReview {
 	id: string;
 	title: string;

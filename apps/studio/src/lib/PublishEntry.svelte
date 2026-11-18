@@ -1,5 +1,5 @@
 <!--
-  The editor's one next step and its More menu (D-183, after D-059 rule 2 and D-081). One primary
+  The editor's one next step and its More menu (D-184, after D-059 rule 2 and D-081). One primary
   per state: Publish, Publish again (taken down), Publish changes, or Ask for review when the role
   can't approve; Review the request while the entry waits in one; nothing when readers already
   have this version. `⋯ More` holds Copy public link, Duplicate, Technical details and, last and

@@ -2,8 +2,8 @@
   The entry editor (steps 1.3, 1.5 and 3.5): every field of the entry's content type as a row,
   rich text with its toolbar, autosave with a status anyone can read, and, when someone else
   saved first, a choice instead of an overwrite. History compares any version with this draft.
-  The title is the page's heading, edited in place (D-183). Beside the fields, three blocks
-  (D-183, after D-081): a status card (where it stands for readers, in one line, and the save
+  The title is the page's heading, edited in place (D-184). Beside the fields, three blocks
+  (D-184, after D-081): a status card (where it stands for readers, in one line, and the save
   state), the one next step with ⋯ More, and the entry's language and its Details, closed until
   asked. Comments open in a drawer beside the content, so the text stays in view.
 -->
@@ -150,7 +150,7 @@
 	const plain = visible.filter((field) => field.type !== 'rich_text');
 	const rich = visible.filter((field) => field.type === 'rich_text');
 	/** The title field, when it is one line of text the role reads: it is the page's heading,
-	 *  edited in place (D-183), rather than a field among the others. */
+	 *  edited in place (D-184), rather than a field among the others. */
 	const headingField = visible.find(
 		(field): field is Extract<FieldDefinition, { type: 'text' }> => field.id === definition.title_field && field.type === 'text' && !field.multiline
 	);
@@ -410,7 +410,7 @@
 	const commentWrite = $derived(mayOn(mine.data, 'content.update', collection, who.data != null && latest.created_by === who.data.id));
 	/** Open comments, for a count on the Comments button; the panel reports it as its list lands. */
 	let commentCount = $state(0);
-	// Comments are a drawer beside the content (D-183), not a tab instead of it: the text stays in
+	// Comments are a drawer beside the content (D-184), not a tab instead of it: the text stays in
 	// view while people talk about it. It doesn't trap focus; Escape closes it and gives focus back.
 	let commentsOpen = $state(false);
 	let commentsButton = $state<HTMLElement | null>(null);
@@ -655,7 +655,7 @@
 <PreviewSplit open={previewOpen} id="entry-{entry}">
 <div class="grid gap-x-10 gap-y-8 {previewOpen ? '' : 'xl:grid-cols-[minmax(0,1fr)_20rem]'}">
 	<div class="min-w-0">
-		<!-- The title is the page's heading, edited where it is read (D-183). -->
+		<!-- The title is the page's heading, edited where it is read (D-184). -->
 		{#if headingField}
 			<EntryTitle
 				field={headingField}
@@ -897,7 +897,7 @@
 	</div>
 
 	<!--
-	  The panel (D-183): a status card — where it stands for readers in one line, and the save state
+	  The panel (D-184): a status card — where it stands for readers in one line, and the save state
 	  — then the one next step with ⋯ More, then the entry's language and its Details. On wide
 	  screens a card beside the fields; below xl a bar that stays at the bottom of the screen while
 	  the fields scroll, with the status and the next step on one row, so Publish never sits under a
@@ -1080,7 +1080,7 @@
 	{/snippet}
 </PreviewSplit>
 
-<!-- Comments beside the content (D-183): a drawer that leaves the text in view. Kept mounted, so
+<!-- Comments beside the content (D-184): a drawer that leaves the text in view. Kept mounted, so
      the count on its button is right before it is opened. -->
 <div
 	id="comments-{entry}"

@@ -3,7 +3,7 @@
 	looked at, so it stays true as drafts move on; it is kept verbatim — never edited, never
 	deleted — only answered (resolved) or reopened. A deleted entry's comments stay readable while
 	nothing new can be added; the composer closes with a note instead of failing later. In the editor
-	it sits in a drawer beside the content (D-183), so the text stays in view while people talk
+	it sits in a drawer beside the content (D-184), so the text stays in view while people talk
 	about it.
 -->
 <script lang="ts">

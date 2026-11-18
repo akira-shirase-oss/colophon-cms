@@ -15,7 +15,7 @@ test('a published entry shows what readers get, as the website receives it, and 
 	await page.goto(`/studio/projects/${project}/articles/${entry}`);
 	await expect(page.getByTestId('save-status')).toHaveAttribute('data-status', 'saved');
 
-	// It waits in Details › Technical details, beside the public address (D-081, D-183).
+	// It waits in Details › Technical details, beside the public address (D-081, D-184).
 	await expect(page.getByTestId('see-what-readers-get')).toBeHidden();
 	await openTechnicalDetails(page);
 	await page.getByTestId('see-what-readers-get').click();

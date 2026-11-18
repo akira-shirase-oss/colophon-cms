@@ -1,4 +1,4 @@
-// Languages for an entry and its translations (D-087, D-183). The API keeps a language as a
+// Languages for an entry and its translations (D-087, D-184). The API keeps a language as a
 // BCP-47 tag and has no list of a project's languages on this line, so the editor offers the
 // common ones by name ("French — fr"), plus any tag already in the entry's group, plus a tag
 // typed under "Another language". A tag is checked here exactly as the server checks its shape

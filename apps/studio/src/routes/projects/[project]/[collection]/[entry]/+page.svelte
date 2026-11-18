@@ -44,7 +44,7 @@
 	<Skeleton class="mb-8 h-10 w-2/3" />
 	<Skeleton class="h-64 w-full rounded-xl" />
 {:else}
-	<!-- The editor draws the title itself, as the page's heading it edits in place (D-183); the
+	<!-- The editor draws the title itself, as the page's heading it edits in place (D-184); the
 	     trail above already names the collection, so there is no eyebrow repeating it. -->
 	{#key entry}
 		<EntryEditor {project} {collection} {entry} type={type.data} initial={draft.data} {published} {referencedBy} />

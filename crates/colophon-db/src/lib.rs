@@ -41,6 +41,7 @@ pub mod scope;
 pub mod setup;
 pub mod throttle;
 pub mod tokens;
+pub mod undo;
 pub mod work;
 
 use std::{str::FromStr, time::Duration};

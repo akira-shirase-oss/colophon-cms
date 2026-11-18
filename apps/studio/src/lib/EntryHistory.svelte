@@ -1,5 +1,5 @@
 <!--
-  An entry's history (D-183): one row per sitting — saves one person made within five minutes of
+  An entry's history (D-184): one row per sitting — saves one person made within five minutes of
   each other — with who, when and what it changed ("Title edited · Body: +2 paragraphs"), so rows
   read apart. The version readers have carries the live rule on its left and its release. A
   sitting opens to its single saves. Compare and Restore show on the row being pointed at or

@@ -12,7 +12,7 @@ test('comment on the version on screen, and a task through its life', async ({ p
 	const entry = await newEntry(page, project, 'Winter note');
 
 	// A comment on the entry's current version, written and answered in the Comments drawer, beside
-	// the content (D-183).
+	// the content (D-184).
 	await page.goto(`/studio/projects/${project}/articles/${entry}`);
 	await page.getByTestId('comments-button').click();
 	await page.getByTestId('comment-input').fill('Check the opening sentence');

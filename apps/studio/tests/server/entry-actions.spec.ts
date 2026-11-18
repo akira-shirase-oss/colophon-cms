@@ -38,7 +38,7 @@ test('restoring an older version saves it as a new one, and the history keeps th
 	await expect(page.getByTestId('save-status')).toHaveAttribute('data-status', 'saved');
 	await expect.poll(() => versions(page)).toBe(2);
 
-	// Two saves a minute apart by one person are one sitting, opened to its single saves (D-183).
+	// Two saves a minute apart by one person are one sitting, opened to its single saves (D-184).
 	await page.getByRole('tab', { name: /History/ }).click();
 	await expect(page.getByTestId('history-row')).toHaveCount(1);
 	await expect(page.getByTestId('history-row')).toContainText('You');

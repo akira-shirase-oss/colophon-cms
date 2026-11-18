@@ -59,7 +59,7 @@
 	);
 </script>
 
-<!-- The picture at its own shape, up to the column's width (D-183): no grey bars beside it. Its
+<!-- The picture at its own shape, up to the column's width (D-184): no grey bars beside it. Its
      actions float over its corner while it is pointed at, focused or selected (and always on a
      touch screen, which can't point); the alt text sits under it as a quiet caption. -->
 <figure

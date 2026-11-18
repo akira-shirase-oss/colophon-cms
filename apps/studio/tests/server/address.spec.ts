@@ -2,7 +2,7 @@
 // readers get it, the delivery read anyone can make without signing in, with a way to open and
 // copy it, in Technical details (D-081); while there are newer changes it says readers get the
 // version live in a release, not them; a draft that was never published shows no address. Copy
-// public link is in ⋯ More and in Details, above Technical details (D-183, after D-147).
+// public link is in ⋯ More and in Details, above Technical details (D-184, after D-147).
 
 import { expect, test } from '@playwright/test';
 import { internalTerms, newEntry, newProject, openDetails, openTechnicalDetails, publishThroughApi, signIn, violations } from './helpers.ts';
@@ -27,7 +27,7 @@ test('a published entry says where readers get it, and the address answers witho
 	await page.reload();
 	const address = `${baseURL}/content/v1/${project}/production/articles/${entry}`;
 	const shown = page.getByTestId('public-address');
-	// Copying the public link is in ⋯ More, and in Details above Technical details (D-183).
+	// Copying the public link is in ⋯ More, and in Details above Technical details (D-184).
 	await page.getByTestId('more-menu').click();
 	await page.getByTestId('copy-public-link').click();
 	await expect(page.getByText('Copied')).toBeVisible();

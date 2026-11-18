@@ -1,4 +1,4 @@
-// An entry's language and its translations (D-087, D-183): one Language row in the side panel,
+// An entry's language and its translations (D-087, D-184): one Language row in the side panel,
 // "Default language ▾ · Translate…". Translate… names this entry's own language first when it
 // has none and makes the translation in one step, which opens as its own entry; the collection
 // list badges the tags; no button the editor enables is refused with a 409 (F4) — languages the

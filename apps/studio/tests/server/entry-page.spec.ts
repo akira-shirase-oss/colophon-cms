@@ -1,4 +1,4 @@
-// The entry page, tidied like the builder (D-081) and then in three blocks (D-183): the trail names
+// The entry page, tidied like the builder (D-081) and then in three blocks (D-184): the trail names
 // the entry by its title, which is the page's heading, edited in place; the status card says where
 // it stands in one line beside the save state; "Save now" shows only with something to save; the
 // public address and "See what readers get" wait in Details › Technical details; and on a phone the

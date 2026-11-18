@@ -85,7 +85,7 @@
 	function hint(field: FieldDefinition): string {
 		const parts: string[] = [];
 		if (!field.required) parts.push('Optional.');
-		// The limit itself is said by a count that shows once the text nears it (D-183).
+		// The limit itself is said by a count that shows once the text nears it (D-184).
 		if (field.type === 'text' && field.min_chars !== undefined) parts.push(`At least ${field.min_chars.toLocaleString()} characters.`);
 		if (field.type === 'email') parts.push('An email address.');
 		if (field.type === 'url') parts.push('A web address starting with https://.');
@@ -122,7 +122,7 @@
 		if (suggestion(field) === form[field.id]) return `Already matches the ${from}`;
 		return '';
 	}
-	/** A text field's count, shown from 80% of its limit (D-183). */
+	/** A text field's count, shown from 80% of its limit (D-184). */
 	const nearLimit = (field: FieldDefinition) =>
 		field.type === 'text' && characters(String(form[field.id] ?? '')) >= Math.floor(field.max_chars * 0.8);
 	const select =

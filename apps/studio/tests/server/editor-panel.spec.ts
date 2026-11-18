@@ -1,4 +1,4 @@
-// The editor's side panel in three blocks (D-183), and what moved out of it: Unpublish asks first
+// The editor's side panel in three blocks (D-184), and what moved out of it: Unpublish asks first
 // and can be undone for ten seconds, putting back the version readers had; restoring the live
 // version from History reads Live with nothing to publish (F3); ⋯ More works from the keyboard;
 // History says who changed what in each sitting; the title is the page's heading; comments open

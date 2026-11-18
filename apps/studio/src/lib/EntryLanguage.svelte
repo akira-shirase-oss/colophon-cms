@@ -1,5 +1,5 @@
 <!--
-  The entry's language and its translations, as one row (D-183, replacing D-087's Locale input
+  The entry's language and its translations, as one row (D-184, replacing D-087's Locale input
   and Versions card): "French — fr ▾ · Translate…". The menu lists the entry's translations, each
   opening its own editor, and changes this entry's language. Translate… picks a language by name,
   names this entry's own language first when it has none (a group needs each member named), and
