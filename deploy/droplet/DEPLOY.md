@@ -37,9 +37,30 @@ echo '/swapfile none swap sw 0 0' >>/etc/fstab
 
 # Firewall: SSH from you, 443 from Cloudflare only (step 7 adds those), nothing else.
 ufw default deny incoming && ufw default allow outgoing
-ufw allow from <your-ip> to any port 22 proto tcp
+ufw allow from <your-ip> to any port 22 proto tcp comment 'ssh: maintainer'
 ufw --force enable
+
+# SSH: keys only. Checked before it's applied, so a typo can't lock you out.
+printf '%s\n' 'PasswordAuthentication no' 'KbdInteractiveAuthentication no' 'PermitRootLogin prohibit-password' \
+  >/etc/ssh/sshd_config.d/10-colophon.conf
+sshd -t && systemctl reload ssh
+
+# Security updates install themselves; the machine never reboots on its own (a reboot restarts
+# Colophon mid-request). The reminder below says when one is waiting.
+echo 'Unattended-Upgrade::Automatic-Reboot "false";' >/etc/apt/apt.conf.d/52colophon-no-auto-reboot
 ```
+
+**If your home address changes**, SSH is closed to you, but the DigitalOcean **Droplet Console**
+(the droplet's page → Access → Launch Droplet Console) reaches the machine regardless of ufw.
+From it, replace the rule, then change the DigitalOcean cloud firewall's SSH rule to match:
+
+```sh
+ufw delete allow from <old-ip> to any port 22 proto tcp; ufw allow from <new-ip> to any port 22 proto tcp comment 'ssh: maintainer'
+```
+
+**A reboot reminder:** `test -f /var/run/reboot-required && cat /var/run/reboot-required.pkgs`
+says when an installed update waits for one; reboot at a quiet moment (`systemctl reboot`), then
+run `smoke.sh`.
 
 Keep the DigitalOcean cloud firewall from CREATE.md as well: two layers, either one enough.
 
@@ -151,6 +172,7 @@ umask 077; cat >/etc/caddy/origin.pem; cat >/etc/caddy/origin.key
 chown root:caddy /etc/caddy/origin.pem /etc/caddy/origin.key && chmod 0640 /etc/caddy/origin.pem /etc/caddy/origin.key
 
 install -m 0644 $CHECKOUT/deploy/droplet/Caddyfile /etc/caddy/Caddyfile
+$CHECKOUT/deploy/droplet/origin-pull-ca.sh       # Cloudflare's origin-pull CA, its fingerprint checked
 $CHECKOUT/deploy/droplet/cloudflare-ips.sh       # Caddy's and Colophon's trusted ranges, ufw 443
 caddy validate --config /etc/caddy/Caddyfile && systemctl reload caddy
 systemctl restart colophon
@@ -290,6 +312,6 @@ the release's CHANGELOG for anything marked Breaking first.
 |---|---|
 | `colophon` won't start | `journalctl -u colophon -n 100`: a refused setting names itself |
 | `/readyz` says database down | Neon's status, the URL's `sslmode=verify-full`, the direct endpoint |
-| Cloudflare 52x errors | `systemctl status caddy`, the origin certificate files, `ufw status` (443 from Cloudflare) |
+| Cloudflare 52x errors | `systemctl status caddy`, the origin certificate files, `ufw status` (443 from Cloudflare), Authenticated Origin Pulls on in Cloudflare (Caddy refuses connections without its client certificate) |
 | Every visitor shares one rate limit | `COLOPHON_TRUSTED_PROXIES` lacks Cloudflare's ranges: rerun `cloudflare-ips.sh` |
 | Uploads refused 503 | the `COLOPHON_S3_*` settings and `credentials/s3_secret_key` |
