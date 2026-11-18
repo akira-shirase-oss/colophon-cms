@@ -191,7 +191,8 @@ test('a probe added in Settings verifies a release, and its receipt shows what i
 		const label = page.locator('[data-generation="1"]').getByTestId('label');
 		await expect(label).toHaveAttribute('data-label', 'verified', { timeout: 15_000 });
 		await expect(label).toHaveText('Verified at 1 location');
-		await label.click();
+		// The whole row is the receipt's link (its title stretched over the row); the label sits under it.
+		await page.locator('[data-generation="1"]').getByRole('link').first().click();
 		await expect(page.getByTestId('receipt-label')).toHaveText('Verified at 1 location');
 		await expect(page.getByTestId('deliveries')).toContainText('Home page');
 		await expect(page.getByTestId('deliveries')).toContainText('saw this release');
@@ -232,7 +233,8 @@ test('a website connection that refuses makes the release “Needs attention”,
 		await expect(label).toHaveAttribute('data-label', 'needs_attention', { timeout: 15_000 });
 		await expect(page.getByTestId('delivery')).toContainText('Site rebuild: failed (your website refused it (HTTP 404))');
 		expect(await internalTerms(page)).toEqual([]);
-		await label.click();
+		// The whole row is the receipt's link (its title stretched over the row); the label sits under it.
+		await page.locator('[data-generation="1"]').getByRole('link').first().click();
 
 		await expect(page.getByTestId('receipt-label')).toHaveText('Needs attention');
 		const attention = page.getByTestId('attention');

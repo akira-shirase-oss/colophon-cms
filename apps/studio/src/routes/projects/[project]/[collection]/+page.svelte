@@ -106,7 +106,7 @@
 		}
 	});
 	// Counted as the overview and the sidebar count (lib/entryState.ts): Live includes the entries
-	// live with unpublished changes, which "With changes" narrows to.
+	// live with unpublished changes, which "Changed" narrows to.
 	let filter = $state<EntryFilter>('all');
 	const rows = $derived(loaded.filter((entry) => shows(filter, entry)));
 	const tally = $derived(tallyOf(loaded));
@@ -353,7 +353,7 @@
 				<Tabs.List aria-label="Show">
 					<Tabs.Trigger value="all">All</Tabs.Trigger>
 					<Tabs.Trigger value="live">Live <span class="tabular text-muted-foreground">{tally.live}</span></Tabs.Trigger>
-					<Tabs.Trigger value="changes" title="Live, with changes not yet published">With changes <span class="tabular text-muted-foreground">{tally.withChanges}</span></Tabs.Trigger>
+					<Tabs.Trigger value="changes" title="Live, with changes not yet published">Changed <span class="tabular text-muted-foreground">{tally.withChanges}</span></Tabs.Trigger>
 					<Tabs.Trigger value="draft">Drafts <span class="tabular text-muted-foreground">{tally.drafts}</span></Tabs.Trigger>
 				</Tabs.List>
 			</Tabs.Root>
