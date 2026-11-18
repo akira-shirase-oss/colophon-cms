@@ -170,3 +170,64 @@ type RichTextDocument = components['schemas']['RichTextDocument'];
 type RichTextVerdict = components['schemas']['RichTextVerdict'];
 type PublishedEntryView = components['schemas']['PublishedEntryView'];
 type DeliveryQueryPage = components['schemas']['DeliveryQueryPage'];
+function previewClient(options: PreviewClientOptions): PreviewClient;
+function safePreviewPath(path: string | null | undefined, isAllowedPath?: (path: string) => boolean): string | null;
+function createPreviewHandler(options: PreviewHandlerOptions): (request: Request) => Promise<Response>;
+function previewTokenFromRequest(request: Request, cookieName?: string): string | null;
+function previewHeaders(options: { studioOrigin: string; }): Record<string, string>;
+function exitPreviewHandler(options?: ExitPreviewOptions): (request: Request) => Response;
+function listenForDraftUpdates(options: DraftUpdateOptions): () => void;
+interface PreviewScope
+  kind: 'entry' | 'changeset';
+  entry?: string;
+  changeset?: string;
+  collection?: string;
+interface PreviewExchange
+  token: string;
+  expiresAt: string;
+  scope: PreviewScope;
+interface PreviewSession
+  scope: PreviewScope;
+  expiresAt: string;
+type PreviewEntry = components['schemas']['PreviewEntryView'];
+type PreviewPage = ReplyJson<'previewList'>;
+type PreviewQueryPage = ReplyJson<'previewQuery'>;
+type PreviewQueryDocument = RequestJson<'previewQuery'>;
+interface PreviewMeta
+  readonly status: number;
+  readonly requestId: string | null;
+  readonly preview: string | null;
+  readonly generation: number | null;
+type PreviewReply<B> = B & { response: PreviewMeta; };
+interface PreviewClientOptions
+  baseUrl: string;
+  project: string;
+  environment?: string;
+  fetch?: typeof fetch;
+  timeoutMs?: number;
+  maxBodyBytes?: number;
+interface PreviewReader
+  list(collection: string, opts?: { limit?: number; cursor?: string; signal?: AbortSignal; }): Promise<PreviewReply<PreviewPage>>;
+  get(collection: string, id: string, opts?: { signal?: AbortSignal; }): Promise<PreviewReply<ReplyJson<'previewGet'>>>;
+  query(collection: string, document: PreviewQueryDocument, opts?: { cursor?: string; signal?: AbortSignal; }): Promise<PreviewReply<PreviewQueryPage>>;
+  session(opts?: { signal?: AbortSignal; }): Promise<PreviewSession>;
+interface PreviewClient
+  exchange(code: string, opts?: { signal?: AbortSignal; }): Promise<PreviewExchange>;
+  reader(token: string): PreviewReader;
+const PREVIEW_COOKIE = "colophon_preview"
+interface PreviewHandlerOptions extends PreviewClientOptions
+  cookieName?: string;
+  isAllowedPath?: (path: string) => boolean;
+  now?: () => number;
+interface ExitPreviewOptions
+  cookieName?: string;
+  redirectTo?: string;
+  isAllowedPath?: (path: string) => boolean;
+interface DraftSavedMessage
+  type: 'colophon:draft-saved';
+  entry: string;
+  revision: string;
+interface DraftUpdateOptions
+  studioOrigin: string;
+  previewing: boolean;
+  onUpdate?: (message: DraftSavedMessage) => void;
