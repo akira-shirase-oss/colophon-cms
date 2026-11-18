@@ -3098,31 +3098,53 @@ pub(crate) static TABLE: &[Route] = &[
     ),
     route(
         (P, "/releases/{generation}/rollback"),
-        &[op(
-            Verb::Post,
-            |f| on(f, changesets::rollback),
-            OpDoc {
-                id: "rollbackRelease",
-                summary: "Open a changeset restoring what that release published",
-                tag: "publishing",
-                security: Security::Any,
-                headers: &[IDEMPOTENCY],
-                body: Some(json("NewChangeset")),
-                ok: etagd(created("ChangesetView")),
-                extra: &[
-                    NOT_FOUND,
-                    refusal(
-                        422,
-                        "invalid_field",
-                        "a rollback takes no `entries` or `unpublish`",
-                    ),
-                    P428,
-                    BAD_MATCH,
-                    REUSED_KEY,
-                ],
-                ..MIN
-            },
-        )],
+        &[
+            op(
+                Verb::Get,
+                |f| on(f, changesets::rollback_preview),
+                OpDoc {
+                    id: "previewRollback",
+                    summary: "What a rollback to that release would restore and take down, without making it",
+                    tag: "publishing",
+                    security: Security::Any,
+                    ok: data("RollbackPreviewView"),
+                    extra: &[
+                        NOT_FOUND,
+                        refusal(
+                            422,
+                            "invalid_generation",
+                            "only an earlier release than the live one",
+                        ),
+                    ],
+                    ..MIN
+                },
+            ),
+            op(
+                Verb::Post,
+                |f| on(f, changesets::rollback),
+                OpDoc {
+                    id: "rollbackRelease",
+                    summary: "Open a changeset restoring what that release published",
+                    tag: "publishing",
+                    security: Security::Any,
+                    headers: &[IDEMPOTENCY],
+                    body: Some(json("NewChangeset")),
+                    ok: etagd(created("ChangesetView")),
+                    extra: &[
+                        NOT_FOUND,
+                        refusal(
+                            422,
+                            "invalid_field",
+                            "a rollback takes no `entries` or `unpublish`",
+                        ),
+                        P428,
+                        BAD_MATCH,
+                        REUSED_KEY,
+                    ],
+                    ..MIN
+                },
+            ),
+        ],
     ),
     route(
         (P, "/destinations"),
@@ -4914,6 +4936,7 @@ fn schema_table() -> Value {
         entry_parts(),
         collaboration_parts(),
         publishing_parts(),
+        release_change_parts(),
         delivery_parts(),
         media_parts(),
         preview_parts(),
@@ -6271,9 +6294,10 @@ fn publishing_parts() -> Value {
         },
         "ReceiptView": {
             "type": "object",
-            "description": "a release — every `ReleaseView` field, at the top level — plus its deliveries and observations: the publish receipt",
-            "required": ["deliveries", "observations"],
+            "description": "a release — every `ReleaseView` field, at the top level — plus what it changed for readers, its deliveries and observations: the publish receipt",
+            "required": ["changes", "deliveries", "observations"],
             "properties": {
+                "changes": { "type": "array", "items": { "$ref": "#/components/schemas/ChangeView" }, "description": "each entry it published or took down, what went live first, then by title; at most 500 (`entries` and `unpublished` count them all)" },
                 "deliveries": { "type": "array", "items": { "$ref": "#/components/schemas/DeliveryView" } },
                 "observations": { "type": "array", "items": { "$ref": "#/components/schemas/SeenView" } },
             },
@@ -6377,6 +6401,62 @@ fn publishing_parts() -> Value {
                 "last_error": { "type": ["string", "null"] },
                 "created_at": { "type": "string", "format": "date-time" },
                 "finished_at": { "type": ["string", "null"], "format": "date-time" },
+            },
+        },
+    })
+}
+
+/// What a release changed for readers (its receipt's `changes`) and what a rollback to it would do
+/// before it is made (D-097's preview).
+fn release_change_parts() -> Value {
+    json!({
+        "ChangeView": {
+            "type": "object",
+            "required": ["kind", "entry_id", "collection", "title", "revision_id", "previous_revision_id", "entry_deleted"],
+            "properties": {
+                "kind": { "type": "string", "enum": ["publish", "unpublish"] },
+                "entry_id": { "type": "string", "format": "uuid" },
+                "collection": { "type": "string" },
+                "title": { "type": "string", "description": "the title of the version it published, or took down" },
+                "revision_id": { "type": "string", "format": "uuid", "description": "the version it published, or took down" },
+                "previous_revision_id": { "type": ["string", "null"], "format": "uuid", "description": "what readers had just before: the version it replaced or took down; null when the entry was new to them" },
+                "entry_deleted": { "type": "boolean", "description": "the entry was deleted since (D-080)" },
+            },
+        },
+        "RollbackPreviewView": {
+            "type": "object",
+            "description": "what `POST` would build now (the same pins), and what it would leave down",
+            "required": ["generation", "latest", "restore", "kept_down", "kept_down_total"],
+            "properties": {
+                "generation": { "type": "integer", "description": "the release it restores" },
+                "latest": { "type": "integer", "description": "the environment's current generation" },
+                "restore": { "type": "array", "items": { "$ref": "#/components/schemas/RollbackLineView" }, "description": "exactly the pins a rollback made now would carry, by kind and title; empty when it would be refused `already_at`" },
+                "kept_down": { "type": "array", "items": { "$ref": "#/components/schemas/KeptDownView" }, "description": "up to 100 entries readers had at that release that it won't bring back, because they were taken down since (D-049), by title" },
+                "kept_down_total": { "type": "integer" },
+            },
+        },
+        "RollbackLineView": {
+            "type": "object",
+            "required": ["kind", "entry_id", "collection", "title", "revision_id", "live_revision_id"],
+            "properties": {
+                "kind": { "type": "string", "enum": ["publish", "unpublish"], "description": "`publish` puts back the version readers had then; `unpublish` takes down what they didn't have" },
+                "entry_id": { "type": "string", "format": "uuid" },
+                "collection": { "type": "string" },
+                "title": { "type": "string", "description": "the title of the version it pins" },
+                "revision_id": { "type": "string", "format": "uuid" },
+                "live_revision_id": { "type": ["string", "null"], "format": "uuid", "description": "what readers get of the entry now, if anything" },
+            },
+        },
+        "KeptDownView": {
+            "type": "object",
+            "required": ["entry_id", "collection", "title", "revision_id", "taken_down_in", "entry_deleted"],
+            "properties": {
+                "entry_id": { "type": "string", "format": "uuid" },
+                "collection": { "type": "string" },
+                "title": { "type": "string", "description": "the title readers had at that release" },
+                "revision_id": { "type": "string", "format": "uuid" },
+                "taken_down_in": { "type": "integer", "description": "the release that took it down" },
+                "entry_deleted": { "type": "boolean", "description": "deleted since (D-080), so it can't be published again" },
             },
         },
     })

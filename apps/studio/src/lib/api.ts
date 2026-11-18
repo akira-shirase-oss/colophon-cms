@@ -298,14 +298,10 @@ export interface Summary {
 	locale: string | null;
 }
 
-/** Where an entry stands for readers: never published (or taken down), live as drafted, or
- *  changed since it went live. */
-export type EntryState = 'draft' | 'live' | 'changed';
-
-export function entryState(summary: Pick<Summary, 'revision' | 'published'>): EntryState {
-	if (summary.published === null) return 'draft';
-	return summary.published.revision_id === summary.revision.id ? 'live' : 'changed';
-}
+/** Where an entry stands for readers, defined once in `entryState.ts` (live, and separately
+ *  whether it has unpublished changes); re-exported here for the screens that import it from the
+ *  API module. */
+export { type EntryState, entryState } from './entryState.ts';
 
 /** One page of a list, and the cursor for the next, if any. */
 export interface Page<T> {
@@ -1193,6 +1189,43 @@ export async function rollbackRelease(project: string, generation: number, title
 		.data;
 }
 
+/** What rolling back to `generation` would do, before anything is made: exactly the pins
+ *  `rollbackRelease` would build now (`restore`, empty when it would be refused `already_at`), and
+ *  the entries readers had then that it won't bring back, because they were taken down since — a
+ *  takedown survives a rollback (D-049, D-097). Refused `invalid_generation` like the rollback,
+ *  and 403 when the role can't change every entry it would pin. */
+export interface RollbackPreview {
+	generation: number;
+	/** The live release, which the rollback would follow. */
+	latest: number;
+	restore: {
+		/** `publish` puts back the version readers had then; `unpublish` takes down what they didn't have. */
+		kind: 'publish' | 'unpublish';
+		entry_id: string;
+		collection: string;
+		title: string;
+		revision_id: string;
+		/** What readers get of it now, if anything. */
+		live_revision_id: string | null;
+	}[];
+	/** Up to 100, by title. */
+	kept_down: {
+		entry_id: string;
+		collection: string;
+		title: string;
+		revision_id: string;
+		/** The release that took it down. */
+		taken_down_in: number;
+		/** Deleted since, so it can't be published again. */
+		entry_deleted: boolean;
+	}[];
+	kept_down_total: number;
+}
+
+export async function previewRollback(project: string, generation: number): Promise<RollbackPreview> {
+	return ((await (await send('GET', `${base(project)}/releases/${generation}/rollback`)).json()) as { data: RollbackPreview }).data;
+}
+
 /** Submits, refreshes or reviews the changeset whose hash the caller saw; a changed hash is refused
  *  with reason `stale_changeset`. A review names the `stage` it decides where the environment
  *  configures them — required then (`stage_required`), refused for any other key (`unknown_stage`,
@@ -1259,8 +1292,26 @@ export interface Observation {
 	observed_at: string;
 }
 
-/** A release's receipt: its label, each destination's part and every probe look, oldest first. */
+/** One entry a release changed for readers: it went live (new, or as a newer version) or was
+ *  taken down. */
+export interface ReleaseChange {
+	kind: 'publish' | 'unpublish';
+	entry_id: string;
+	collection: string;
+	/** The title of the version it published, or took down. */
+	title: string;
+	revision_id: string;
+	/** What readers had just before: the version it replaced or took down; null when the entry
+	 *  was new to them. */
+	previous_revision_id: string | null;
+	/** Deleted since (D-080): its versions can't be opened any more. */
+	entry_deleted: boolean;
+}
+
+/** A release's receipt: its label, what it changed for readers (at most 500; `entries` and
+ *  `unpublished` count them all), each destination's part and every probe look, oldest first. */
 export interface Receipt extends Release {
+	changes: ReleaseChange[];
 	deliveries: Delivery[];
 	observations: Observation[];
 }

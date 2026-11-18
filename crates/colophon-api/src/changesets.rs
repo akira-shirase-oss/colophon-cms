@@ -814,6 +814,130 @@ pub(crate) async fn rollback(
     Ok(respond(StatusCode::CREATED, text, &created.hash, false))
 }
 
+/// One pin a rollback would carry, as its preview names it.
+#[derive(Serialize)]
+pub(crate) struct RollbackLineView {
+    /// `publish` (puts back the version readers had then) or `unpublish` (takes down what
+    /// readers didn't have then).
+    kind: String,
+    entry_id: Uuid,
+    collection: String,
+    /// The title of the version it pins.
+    title: String,
+    revision_id: Uuid,
+    /// What readers get of the entry now, if anything.
+    live_revision_id: Option<Uuid>,
+}
+
+/// An entry readers had then that the rollback won't bring back: taken down since (D-049).
+#[derive(Serialize)]
+pub(crate) struct KeptDownView {
+    entry_id: Uuid,
+    collection: String,
+    title: String,
+    revision_id: Uuid,
+    /// The release that took it down.
+    taken_down_in: i64,
+    /// Deleted since (D-080): it can't be published again.
+    entry_deleted: bool,
+}
+
+#[derive(Serialize)]
+pub(crate) struct RollbackPreviewView {
+    generation: i64,
+    /// The environment's current generation, which the rollback would follow.
+    latest: i64,
+    /// Exactly the pins `POST` would build now; empty when it would be refused `already_at`.
+    restore: Vec<RollbackLineView>,
+    /// Up to 100 entries the rollback leaves down, by title.
+    kept_down: Vec<KeptDownView>,
+    /// How many it leaves down in all.
+    kept_down_total: i64,
+}
+
+/// `GET {P}/releases/{generation}/rollback`: what `POST` would build now, without building it —
+/// the same pins from the same query, with their titles — and the entries readers had at that
+/// release that it won't bring back, because they were taken down since (a takedown survives a
+/// rollback, D-049). Refused like `POST`: `invalid_generation` outside `1..latest`, and a role
+/// that can't change every entry it pins is told so before it asks. Read in one snapshot.
+pub(crate) async fn rollback_preview(
+    State(state): State<AppState>,
+    caller: SignedIn,
+    Path(path): Path<RollbackPath>,
+) -> Result<Json<Data<RollbackPreviewView>>, ApiError> {
+    let mut tx = crate::entries::open_isolated(
+        &state,
+        caller,
+        &path.project,
+        &path.environment,
+        colophon_db::scope::Isolation::Snapshot,
+    )
+    .await?;
+    let (_, latest) = releases::generation(&mut tx)
+        .await
+        .map_err(ApiError::from_db)?;
+    if !(1..latest).contains(&path.generation) {
+        return Err(ApiError::InvalidField {
+            reason: "invalid_generation",
+            pointer: "/generation",
+            message: format!("this environment's releases are generations 1 to {latest}"),
+        });
+    }
+    let pins = changesets::rollback_pins(&mut tx, path.generation)
+        .await
+        .map_err(ApiError::from_db)?;
+    let pinned: Vec<Uuid> = pins.iter().map(|pin| pin.entry_id).collect();
+    may_change_entries(&mut tx, &pinned).await?;
+    let revisions: Vec<Uuid> = pins.iter().map(|pin| pin.revision_id).collect();
+    let titles: HashMap<Uuid, changesets::PinTitle> = changesets::pin_titles(&mut tx, &revisions)
+        .await
+        .map_err(ApiError::from_db)?
+        .into_iter()
+        .map(|title| (title.revision_id, title))
+        .collect();
+    let kept = changesets::kept_down(&mut tx, path.generation)
+        .await
+        .map_err(ApiError::from_db)?;
+    tx.commit().await.map_err(ApiError::from_db)?;
+    let mut restore: Vec<RollbackLineView> = pins
+        .into_iter()
+        .map(|pin| {
+            let named = titles.get(&pin.revision_id);
+            RollbackLineView {
+                kind: pin.kind,
+                entry_id: pin.entry_id,
+                collection: pin.collection,
+                title: named.map(|named| named.title.clone()).unwrap_or_default(),
+                revision_id: pin.revision_id,
+                live_revision_id: named.and_then(|named| named.live_revision_id),
+            }
+        })
+        .collect();
+    restore.sort_by(|one, other| {
+        (&one.kind, &one.title, one.entry_id).cmp(&(&other.kind, &other.title, other.entry_id))
+    });
+    let kept_down_total = kept.first().map_or(0, |row| row.total);
+    Ok(Json(Data {
+        data: RollbackPreviewView {
+            generation: path.generation,
+            latest,
+            restore,
+            kept_down: kept
+                .into_iter()
+                .map(|row| KeptDownView {
+                    entry_id: row.entry_id,
+                    collection: row.collection,
+                    title: row.title,
+                    revision_id: row.revision_id,
+                    taken_down_in: row.taken_down_in,
+                    entry_deleted: row.entry_deleted,
+                })
+                .collect(),
+            kept_down_total,
+        },
+    }))
+}
+
 /// `GET {P}/changesets/{changeset}`.
 pub(crate) async fn get(
     State(state): State<AppState>,

@@ -1142,7 +1142,8 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        get?: never;
+        /** What a rollback to that release would restore and take down, without making it */
+        get: operations["previewRollback"];
         put?: never;
         /** Open a changeset restoring what that release published */
         post: operations["rollbackRelease"];
@@ -2160,6 +2161,27 @@ export interface components {
             /** Format: date-time */
             updated_at?: string;
         };
+        ChangeView: {
+            collection: string;
+            /** @description the entry was deleted since (D-080) */
+            entry_deleted: boolean;
+            /** Format: uuid */
+            entry_id: string;
+            /** @enum {string} */
+            kind: "publish" | "unpublish";
+            /**
+             * Format: uuid
+             * @description what readers had just before: the version it replaced or took down; null when the entry was new to them
+             */
+            previous_revision_id: string | null;
+            /**
+             * Format: uuid
+             * @description the version it published, or took down
+             */
+            revision_id: string;
+            /** @description the title of the version it published, or took down */
+            title: string;
+        };
         ChangesetItemView: {
             collection?: string;
             content_hash?: string;
@@ -2544,6 +2566,19 @@ export interface components {
         };
         /** @description one JSON object per line, each an entry's content document */
         JsonLines: string;
+        KeptDownView: {
+            collection: string;
+            /** @description deleted since (D-080), so it can't be published again */
+            entry_deleted: boolean;
+            /** Format: uuid */
+            entry_id: string;
+            /** Format: uuid */
+            revision_id: string;
+            /** @description the release that took it down */
+            taken_down_in: number;
+            /** @description the title readers had at that release */
+            title: string;
+        };
         LiveView: {
             generation?: number;
             /** Format: uuid */
@@ -3077,8 +3112,10 @@ export interface components {
             /** @enum {string} */
             status: "starting" | "ready" | "degraded" | "not_ready" | "draining";
         };
-        /** @description a release — every `ReleaseView` field, at the top level — plus its deliveries and observations: the publish receipt */
+        /** @description a release — every `ReleaseView` field, at the top level — plus what it changed for readers, its deliveries and observations: the publish receipt */
         ReceiptView: {
+            /** @description each entry it published or took down, what went live first, then by title; at most 500 (`entries` and `unpublished` count them all) */
+            changes: components["schemas"]["ChangeView"][];
             /** @description the approved hash it published */
             changeset_hash: string;
             /** Format: uuid */
@@ -3222,6 +3259,37 @@ export interface components {
             /** Format: date-time */
             updated_at: string;
             version: number;
+        };
+        RollbackLineView: {
+            collection: string;
+            /** Format: uuid */
+            entry_id: string;
+            /**
+             * @description `publish` puts back the version readers had then; `unpublish` takes down what they didn't have
+             * @enum {string}
+             */
+            kind: "publish" | "unpublish";
+            /**
+             * Format: uuid
+             * @description what readers get of the entry now, if anything
+             */
+            live_revision_id: string | null;
+            /** Format: uuid */
+            revision_id: string;
+            /** @description the title of the version it pins */
+            title: string;
+        };
+        /** @description what `POST` would build now (the same pins), and what it would leave down */
+        RollbackPreviewView: {
+            /** @description the release it restores */
+            generation: number;
+            /** @description up to 100 entries readers had at that release that it won't bring back, because they were taken down since (D-049), by title */
+            kept_down: components["schemas"]["KeptDownView"][];
+            kept_down_total: number;
+            /** @description the environment's current generation */
+            latest: number;
+            /** @description exactly the pins a rollback made now would carry, by kind and title; empty when it would be refused `already_at` */
+            restore: components["schemas"]["RollbackLineView"][];
         };
         ScheduleView: {
             changeset_hash?: string;
@@ -11174,6 +11242,80 @@ export interface operations {
             };
             /** @description `not_found` — no such resource — or one the caller may not see, which looks the same */
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description `rate_limited` — over the per-credential or per-address limit; `Retry-After` */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description any other failure, in the one error envelope */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    previewRollback: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description the project's id */
+                project: string;
+                /** @description the environment's slug, such as `production` */
+                environment: string;
+                /** @description the release's generation */
+                generation: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description ok */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        data: components["schemas"]["RollbackPreviewView"];
+                    };
+                };
+            };
+            /** @description `unauthorized` — not signed in, the credential is invalid, or the token was revoked */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description `not_found` — no such resource — or one the caller may not see, which looks the same */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description `invalid_generation` — only an earlier release than the live one */
+            422: {
                 headers: {
                     [name: string]: unknown;
                 };

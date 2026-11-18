@@ -743,3 +743,68 @@ pub async fn receipt(
     .map_err(DbError::from_query)?;
     Ok((deliveries, seen))
 }
+
+/// One entry a release changed for readers, as its receipt lists it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Change {
+    /// `publish` (it went live, for the first time or as a newer version) or `unpublish` (it was
+    /// taken down).
+    pub kind: String,
+    /// The entry.
+    pub entry_id: Uuid,
+    /// Its collection.
+    pub collection: String,
+    /// The title of the version it published, or took down.
+    pub title: String,
+    /// The version it published, or took down.
+    pub revision_id: Uuid,
+    /// What readers had of the entry just before this release: the version it replaced, the one
+    /// it took down, or `None` when the entry was new to them.
+    pub previous_revision_id: Option<Uuid>,
+    /// The entry was deleted since (D-080): its history stays, its draft is gone.
+    pub entry_deleted: bool,
+}
+
+/// The most changes a receipt lists; its release's `entries` and `unpublished` count them all.
+pub const MAX_CHANGES: i64 = 500;
+
+/// What the release at `generation` changed for readers, from the publication history itself:
+/// each publication it opened (with the one it closed, if any) and each tombstone it left,
+/// what went live first, then what was taken down, each by title. Read in the receipt's own
+/// snapshot, so it agrees with the release row's counts.
+pub async fn changes(tx: &mut ProjectTransaction, generation: i64) -> Result<Vec<Change>, DbError> {
+    sqlx::query_as!(
+        Change,
+        r#"SELECT kind AS "kind!", entry_id AS "entry_id!", collection AS "collection!", title AS "title!",
+                  revision_id AS "revision_id!", previous_revision_id, entry_deleted AS "entry_deleted!"
+           FROM (
+               SELECT 'publish' AS kind, p.entry_id, p.collection, p.title, p.revision_id,
+                      prev.revision_id AS previous_revision_id,
+                      NOT EXISTS (SELECT 1 FROM entries e
+                                  WHERE e.project_id = p.project_id AND e.environment_id = p.environment_id
+                                    AND e.id = p.entry_id) AS entry_deleted
+               FROM publications p
+               LEFT JOIN publications prev ON prev.project_id = p.project_id AND prev.environment_id = p.environment_id
+                                          AND prev.entry_id = p.entry_id AND prev.valid_to = p.valid_from
+               WHERE p.project_id = $1 AND p.environment_id = $2 AND p.valid_from = $3
+               UNION ALL
+               SELECT 'unpublish', t.entry_id, t.collection, r.title, t.revision_id, t.revision_id,
+                      NOT EXISTS (SELECT 1 FROM entries e
+                                  WHERE e.project_id = t.project_id AND e.environment_id = t.environment_id
+                                    AND e.id = t.entry_id)
+               FROM tombstones t
+               JOIN revisions r ON r.project_id = t.project_id AND r.environment_id = t.environment_id
+                               AND r.id = t.revision_id
+               WHERE t.project_id = $1 AND t.environment_id = $2 AND t.generation = $3
+           ) changed
+           ORDER BY kind, title, entry_id
+           LIMIT $4"#,
+        tx.project,
+        tx.environment,
+        generation,
+        MAX_CHANGES
+    )
+    .fetch_all(&mut *tx.transaction)
+    .await
+    .map_err(DbError::from_query)
+}

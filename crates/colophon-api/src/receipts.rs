@@ -1,7 +1,8 @@
 //! Delivery receipts (docs/modules/06-delivery.md, "Evidence probes"; D-051). Under `{P}`:
 //!
-//! - `GET {P}/releases/{generation}`: one release with its label, each destination's part in
-//!   delivering it, and every probe attempt made for it, oldest first.
+//! - `GET {P}/releases/{generation}`: one release with its label, what it changed for readers
+//!   (each entry it published or took down, with what readers had before), each destination's
+//!   part in delivering it, and every probe attempt made for it, oldest first.
 //!
 //! A release's label comes from `colophon_domain::receipt::label`: a destination counts as done
 //! for a release once one of its jobs at that release or later succeeded, and only probes can
@@ -85,10 +86,29 @@ pub(crate) struct SeenView {
     observed_at: String,
 }
 
+/// One entry the release changed for readers.
+#[derive(Serialize)]
+pub(crate) struct ChangeView {
+    /// `publish` or `unpublish`.
+    kind: String,
+    entry_id: Uuid,
+    collection: String,
+    /// The title of the version it published, or took down.
+    title: String,
+    revision_id: Uuid,
+    /// What readers had just before: the version it replaced or took down; `null` when the
+    /// entry was new to them.
+    previous_revision_id: Option<Uuid>,
+    /// Deleted since (D-080).
+    entry_deleted: bool,
+}
+
 #[derive(Serialize)]
 pub(crate) struct ReceiptView {
     #[serde(flatten)]
     release: ReleaseView,
+    /// What went live and what was taken down, up to 500.
+    changes: Vec<ChangeView>,
     deliveries: Vec<DeliveryView>,
     observations: Vec<SeenView>,
 }
@@ -99,9 +119,9 @@ pub(crate) async fn get(
     caller: SignedIn,
     Path(path): Path<OnePath>,
 ) -> Result<Json<Data<ReceiptView>>, ApiError> {
-    // One snapshot: the release row (which counts the locations that saw it) and the
-    // deliveries are separate statements, and a probe finishing between them would show a
-    // delivery done with no location that saw it.
+    // One snapshot: the release row (which counts the locations that saw it and the entries it
+    // changed), its changes and the deliveries are separate statements, and a probe finishing
+    // between them would show a delivery done with no location that saw it.
     let mut tx = open_isolated(
         &state,
         caller,
@@ -117,6 +137,9 @@ pub(crate) async fn get(
         .next()
         .ok_or(ApiError::NotFound)?;
     let (deliveries, seen) = releases::receipt(&mut tx, path.generation)
+        .await
+        .map_err(ApiError::from_db)?;
+    let changes = releases::changes(&mut tx, path.generation)
         .await
         .map_err(ApiError::from_db)?;
     tx.commit().await.map_err(ApiError::from_db)?;
@@ -161,6 +184,18 @@ pub(crate) async fn get(
     Ok(Json(Data {
         data: ReceiptView {
             release: ReleaseView::new(release)?,
+            changes: changes
+                .into_iter()
+                .map(|change| ChangeView {
+                    kind: change.kind,
+                    entry_id: change.entry_id,
+                    collection: change.collection,
+                    title: change.title,
+                    revision_id: change.revision_id,
+                    previous_revision_id: change.previous_revision_id,
+                    entry_deleted: change.entry_deleted,
+                })
+                .collect(),
             deliveries,
             observations,
         },

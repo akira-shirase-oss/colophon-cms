@@ -564,6 +564,55 @@
         },
         "type": "object"
       },
+      "ChangeView": {
+        "properties": {
+          "collection": {
+            "type": "string"
+          },
+          "entry_deleted": {
+            "description": "the entry was deleted since (D-080)",
+            "type": "boolean"
+          },
+          "entry_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "kind": {
+            "enum": [
+              "publish",
+              "unpublish"
+            ],
+            "type": "string"
+          },
+          "previous_revision_id": {
+            "description": "what readers had just before: the version it replaced or took down; null when the entry was new to them",
+            "format": "uuid",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "revision_id": {
+            "description": "the version it published, or took down",
+            "format": "uuid",
+            "type": "string"
+          },
+          "title": {
+            "description": "the title of the version it published, or took down",
+            "type": "string"
+          }
+        },
+        "required": [
+          "kind",
+          "entry_id",
+          "collection",
+          "title",
+          "revision_id",
+          "previous_revision_id",
+          "entry_deleted"
+        ],
+        "type": "object"
+      },
       "ChangesetItemView": {
         "properties": {
           "collection": {
@@ -1673,6 +1722,42 @@
       "JsonLines": {
         "description": "one JSON object per line, each an entry's content document",
         "type": "string"
+      },
+      "KeptDownView": {
+        "properties": {
+          "collection": {
+            "type": "string"
+          },
+          "entry_deleted": {
+            "description": "deleted since (D-080), so it can't be published again",
+            "type": "boolean"
+          },
+          "entry_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "revision_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "taken_down_in": {
+            "description": "the release that took it down",
+            "type": "integer"
+          },
+          "title": {
+            "description": "the title readers had at that release",
+            "type": "string"
+          }
+        },
+        "required": [
+          "entry_id",
+          "collection",
+          "title",
+          "revision_id",
+          "taken_down_in",
+          "entry_deleted"
+        ],
+        "type": "object"
       },
       "LiveView": {
         "properties": {
@@ -3322,8 +3407,15 @@
         "type": "object"
       },
       "ReceiptView": {
-        "description": "a release — every `ReleaseView` field, at the top level — plus its deliveries and observations: the publish receipt",
+        "description": "a release — every `ReleaseView` field, at the top level — plus what it changed for readers, its deliveries and observations: the publish receipt",
         "properties": {
+          "changes": {
+            "description": "each entry it published or took down, what went live first, then by title; at most 500 (`entries` and `unpublished` count them all)",
+            "items": {
+              "$ref": "#/components/schemas/ChangeView"
+            },
+            "type": "array"
+          },
           "changeset_hash": {
             "description": "the approved hash it published",
             "type": "string"
@@ -3404,6 +3496,7 @@
           }
         },
         "required": [
+          "changes",
           "deliveries",
           "observations",
           "generation",
@@ -3732,6 +3825,88 @@
           "members",
           "invitations",
           "updated_at"
+        ],
+        "type": "object"
+      },
+      "RollbackLineView": {
+        "properties": {
+          "collection": {
+            "type": "string"
+          },
+          "entry_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "kind": {
+            "description": "`publish` puts back the version readers had then; `unpublish` takes down what they didn't have",
+            "enum": [
+              "publish",
+              "unpublish"
+            ],
+            "type": "string"
+          },
+          "live_revision_id": {
+            "description": "what readers get of the entry now, if anything",
+            "format": "uuid",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "revision_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "title": {
+            "description": "the title of the version it pins",
+            "type": "string"
+          }
+        },
+        "required": [
+          "kind",
+          "entry_id",
+          "collection",
+          "title",
+          "revision_id",
+          "live_revision_id"
+        ],
+        "type": "object"
+      },
+      "RollbackPreviewView": {
+        "description": "what `POST` would build now (the same pins), and what it would leave down",
+        "properties": {
+          "generation": {
+            "description": "the release it restores",
+            "type": "integer"
+          },
+          "kept_down": {
+            "description": "up to 100 entries readers had at that release that it won't bring back, because they were taken down since (D-049), by title",
+            "items": {
+              "$ref": "#/components/schemas/KeptDownView"
+            },
+            "type": "array"
+          },
+          "kept_down_total": {
+            "type": "integer"
+          },
+          "latest": {
+            "description": "the environment's current generation",
+            "type": "integer"
+          },
+          "restore": {
+            "description": "exactly the pins a rollback made now would carry, by kind and title; empty when it would be refused `already_at`",
+            "items": {
+              "$ref": "#/components/schemas/RollbackLineView"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "generation",
+          "latest",
+          "restore",
+          "kept_down",
+          "kept_down_total"
         ],
         "type": "object"
       },
@@ -17145,6 +17320,125 @@
       }
     },
     "/api/v1/projects/{project}/environments/{environment}/releases/{generation}/rollback": {
+      "get": {
+        "operationId": "previewRollback",
+        "parameters": [
+          {
+            "description": "the project's id",
+            "in": "path",
+            "name": "project",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          },
+          {
+            "description": "the environment's slug, such as `production`",
+            "in": "path",
+            "name": "environment",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "the release's generation",
+            "in": "path",
+            "name": "generation",
+            "required": true,
+            "schema": {
+              "minimum": 0,
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "data": {
+                      "$ref": "#/components/schemas/RollbackPreviewView"
+                    }
+                  },
+                  "required": [
+                    "data"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "ok"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "`unauthorized` — not signed in, the credential is invalid, or the token was revoked"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "`not_found` — no such resource — or one the caller may not see, which looks the same"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "`invalid_generation` — only an earlier release than the live one"
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "`rate_limited` — over the per-credential or per-address limit; `Retry-After`"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "any other failure, in the one error envelope"
+          }
+        },
+        "security": [
+          {
+            "sessionCookie": []
+          },
+          {
+            "bearerToken": []
+          },
+          {
+            "apiToken": []
+          }
+        ],
+        "summary": "What a rollback to that release would restore and take down, without making it",
+        "tags": [
+          "publishing"
+        ]
+      },
       "post": {
         "operationId": "rollbackRelease",
         "parameters": [

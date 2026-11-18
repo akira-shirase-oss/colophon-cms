@@ -1,14 +1,19 @@
 <!--
   One publish request (a changeset, D-044): the exact versions it holds and what each changes for
-  readers, where it stands, the actions that move it on, and its schedule (D-060). Every action
-  names the hash on screen, so nobody approves a version they didn't see: if the request changed
-  meanwhile, the page shows the current one and says so. Where the environment names review
-  stages (D-104), each one and where it stands is listed, every review names the stage it
-  decides, and publishing waits for all of them. Internal names and hashes are in the
+  readers, where it stands, and its one next step (lib/requestState.ts): prepared → Ask for review
+  (who should look, P2-12); waiting → the reviewer approves or asks for changes, everyone else
+  reads who it waits for; approved → Publish now, or Schedule…; scheduled → when, with Publish now
+  and Cancel schedule; published → the release. One primary at a time, never three. Once it is
+  approved, the review is one line, and approving your own request is a note, not a warning.
+  Every action names the hash on screen, so nobody approves a version they didn't see: if the
+  request changed meanwhile, the page shows the current one and says so. Where the environment
+  names review stages (D-104), each one and where it stands is listed, every review names the
+  stage it decides, and publishing waits for all of them. Internal names and hashes are in the
   Technical details.
 -->
 <script lang="ts">
 	import ChevronDownIcon from '@lucide/svelte/icons/chevron-down';
+	import CircleCheckIcon from '@lucide/svelte/icons/circle-check';
 	import MessageSquareIcon from '@lucide/svelte/icons/message-square';
 	import { resolve } from '$app/paths';
 	import { page } from '$app/state';
@@ -18,20 +23,36 @@
 	import { Label } from '@colophon/ui/ui/label';
 	import { Skeleton } from '@colophon/ui/ui/skeleton';
 	import { Textarea } from '@colophon/ui/ui/textarea';
-	import { ApiError, type Changeset, type ChangesetStage, changesetAction, createChangeset, getChangeset, may, mayOn, newKey, publishChangeset } from '#lib/api.ts';
+	import {
+		ApiError,
+		cancelSchedule,
+		type Changeset,
+		type ChangesetStage,
+		changesetAction,
+		createChangeset,
+		getChangeset,
+		getReceipt,
+		may,
+		mayOn,
+		newKey,
+		publishChangeset,
+		updateTask
+	} from '#lib/api.ts';
 	import { goto } from '$app/navigation';
 	import { explainLinks, type Named } from '#lib/references.ts';
 	import { plainError } from '#lib/errors.ts';
+	import AskForReview from '#lib/AskForReview.svelte';
 	import ChangesetPreview from '#lib/ChangesetPreview.svelte';
 	import ItemDiff from '#lib/ItemDiff.svelte';
-	import SchedulePanel from '#lib/SchedulePanel.svelte';
-	import { ago, meQuery, projectQuery, releasesQuery, typesQuery } from '#lib/queries.ts';
+	import SchedulePanel, { readsShort, schedulesQuery } from '#lib/SchedulePanel.svelte';
+	import { ago, meQuery, membersQuery, projectQuery, releasesQuery, tasksQuery, typesQuery } from '#lib/queries.ts';
+	import { ACTION, actionsOf, names, nextStep, type Viewer } from '#lib/requestState.ts';
 	import ChangesetBadge from '#lib/shell/ChangesetBadge.svelte';
 	import StatusBadge from '#lib/shell/StatusBadge.svelte';
 	import PageHeader from '#lib/shell/PageHeader.svelte';
 	import Problem from '#lib/shell/Problem.svelte';
 	import TechnicalDetails from '#lib/shell/TechnicalDetails.svelte';
-	import { capital, PUBLISH_REQUEST, REVIEW_STAGES, STAGE_STATE, VALUE_TAKEN_ON_PUBLISH } from '#lib/words.ts';
+	import { capital, PUBLISH_REQUEST, releaseName, REVIEW_STAGES, STAGE_STATE, VALUE_TAKEN_ON_PUBLISH } from '#lib/words.ts';
 
 	const project = $derived(page.params.project ?? '');
 	const id = $derived(page.params.changeset ?? '');
@@ -51,14 +72,45 @@
 			who.data != null &&
 			(set.data?.items ?? []).every((item) => mayOn(mine.data, 'content.update', item.collection, item.created_by === who.data?.id))
 	);
+	const own = $derived(set.data?.submitted_by != null && set.data.submitted_by === who.data?.id);
+	// Approving your own request is the project's choice (D-044); without it a reviewer's own request
+	// waits for someone else.
+	const decides = $derived(reviewer && set.data?.submitted_by != null && (!own || mine.data?.self_review === true));
+	// Its schedules, read with the Schedule card's own key: one answer serves both.
+	const schedules = createQuery(() => schedulesQuery(project, id));
+	const pending = $derived(schedules.data?.find((item) => item.state === 'scheduled'));
+	const cancels = $derived(publisher || (pending !== undefined && who.data != null && pending.scheduled_by === who.data.id));
+	const viewer = $derived<Viewer>({ writer, decides, publisher, cancels });
+	const step = $derived(set.data === undefined ? null : nextStep(set.data.status.state, pending !== undefined, viewer));
+	const stepActions = $derived(step === null ? { primary: null, secondary: [] } : actionsOf(step, viewer));
+	// Who it waits for: the review tasks sent with it (AskForReview), on its first entry.
+	const first = $derived(set.data?.items[0]?.entry_id);
+	const tasks = createQuery(() => ({ ...tasksQuery(project, { entry: first ?? '', status: 'open' }), enabled: first !== undefined }));
+	const members = createQuery(() => membersQuery(project));
+	const asked = $derived((tasks.data?.data ?? []).filter((task) => task.changeset_id === id && task.assignee_id !== null));
+	const nameOf = (identity: string) =>
+		identity === who.data?.id ? 'you' : (members.data?.find((member) => member.identity_id === identity)?.display_name ?? 'a member');
+	const waitingFor = $derived(names([...new Set(asked.map((task) => task.assignee_id ?? ''))].map(nameOf)));
 	// Publishing names the release it follows: the latest one this page has seen.
 	const releases = createQuery(() => releasesQuery(project));
 	const types = createQuery(() => typesQuery(project));
 	const typeName = (collection: string) => types.data?.find((type) => type.slug === collection)?.definition.name ?? collection;
-	// One key per publish attempt: pressing Publish again after a lost answer is safe.
+	// Once published, "what readers had" is the release's own record (its receipt), not what is
+	// live now, which is this request's own versions.
+	const generation = $derived(set.data?.status.state === 'published' ? set.data.status.generation : null);
+	const receipt = createQuery(() => ({
+		queryKey: ['receipt', project, generation ?? 0],
+		queryFn: () => getReceipt(project, generation ?? 0),
+		enabled: generation !== null
+	}));
+	const before = (entry: string, fallback: string | null) =>
+		receipt.data === undefined ? fallback : (receipt.data.changes.find((change) => change.entry_id === entry)?.previous_revision_id ?? null);
+	// One key per publish attempt: pressing Publish now again after a lost answer is safe.
 	let publishKey = newKey();
 	// Which items show their comparison; the first few open by default.
 	let open = $state<Record<string, boolean>>({});
+	let scheduling = $state(false);
+	let reviewing = $state(false);
 
 	let comment = $state('');
 	// The stage the next review decides (D-104): the first one still waiting, so several
@@ -111,7 +163,25 @@
 				queryClient.invalidateQueries({ queryKey: ['changeset', project, id] }),
 				queryClient.invalidateQueries({ queryKey: ['releases', project] }),
 				queryClient.invalidateQueries({ queryKey: ['changesets', project] }),
-				queryClient.invalidateQueries({ queryKey: ['entries', project] })
+				queryClient.invalidateQueries({ queryKey: ['entries', project] }),
+				queryClient.invalidateQueries({ queryKey: ['schedules', project] })
+			]);
+		}
+	}
+
+	async function cancel() {
+		if (pending === undefined) return;
+		busy = true;
+		error = '';
+		try {
+			await cancelSchedule(project, pending.id);
+		} catch (failure) {
+			error = plainError(failure, 'cancel this schedule');
+		} finally {
+			busy = false;
+			await Promise.all([
+				queryClient.invalidateQueries({ queryKey: ['schedules', project] }),
+				queryClient.invalidateQueries({ queryKey: ['changeset', project, id] })
 			]);
 		}
 	}
@@ -134,7 +204,7 @@
 		}
 	}
 
-	async function act(shown: Changeset, action: 'submit' | 'refresh' | 'reviews', decision?: 'approve' | 'request_changes') {
+	async function act(shown: Changeset, action: 'refresh' | 'reviews', decision?: 'approve' | 'request_changes') {
 		busy = true;
 		error = '';
 		notice = '';
@@ -144,19 +214,30 @@
 			queryClient.setQueryData(['changeset', project, id], next);
 			if (decision !== undefined) {
 				comment = '';
+				reviewing = false;
 				deciding = nextUndecided(next.stages);
+				await closeOwnReviewTasks();
 			}
 		} catch (failure) {
 			if (failure instanceof ApiError && failure.reason === 'stale_changeset') {
 				notice = STALE;
 			} else {
-				error = plainError(failure, action === 'reviews' ? 'review this' : action === 'submit' ? 'ask for review here' : 'update it');
+				error = plainError(failure, action === 'reviews' ? 'review this' : 'update it');
 			}
 			await queryClient.invalidateQueries({ queryKey: ['changeset', project, id] });
 		} finally {
 			busy = false;
 			void queryClient.invalidateQueries({ queryKey: ['changesets', project] });
 		}
+	}
+
+	/** A reviewer who decided has done what their review task asked: it is marked done. If that
+	 *  fails the task stays open, where the Tasks page shows it; the review itself counted. */
+	async function closeOwnReviewTasks() {
+		for (const task of asked.filter((one) => one.assignee_id === who.data?.id)) {
+			await updateTask(project, task.id, task.etag, { status: 'done' }, newKey()).catch(() => undefined);
+		}
+		await queryClient.invalidateQueries({ queryKey: ['tasks', project] });
 	}
 
 	// Keep the pick on a stage that exists; if the list or the request changed under it, move to
@@ -168,7 +249,7 @@
 
 	const STAGE_BADGE = { pending: 'pending', approved: 'live', changes_requested: 'attention', approval_expired: 'attention' } as const;
 	const select =
-		'h-8 rounded-md border border-input bg-popover px-2 text-sm outline-none focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/40 disabled:opacity-50';
+		'h-9 rounded-control border border-input bg-popover px-2 text-sm outline-none focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/40 disabled:opacity-50';
 
 	const STEPS = ['Prepared', 'Sent for review', 'Approved', 'Live'] as const;
 	function reached(shown: Changeset): number {
@@ -185,6 +266,9 @@
 				return 1;
 		}
 	}
+	/** The approval that counts now: who gave it and when. */
+	const approval = (shown: Changeset) => shown.reviews.find((review) => review.current && review.decision === 'approve');
+	const at = (instant: string) => new Intl.DateTimeFormat(undefined, { hour: '2-digit', minute: '2-digit' }).format(new Date(instant));
 </script>
 
 <svelte:head><title>{set.data?.title ?? 'Publish request'} · Colophon Studio</title></svelte:head>
@@ -196,43 +280,75 @@
 	<Problem error={set.error} />
 {:else}
 	{@const shown = set.data}
+	{@const approved = approval(shown)}
 	<PageHeader title={shown.title}>
 		{#snippet meta()}
-			<span data-testid="changeset-status" data-state={shown.status.state} class="inline-flex flex-wrap items-center gap-2">
-				<ChangesetBadge state={shown.status.state} />
-				{#if shown.rollback_generation != null}
-					<span>restores <a class="underline underline-offset-2" href={resolve('/projects/[project]/releases/[generation]', { project, generation: String(shown.rollback_generation) })} data-testid="restores-link">release {shown.rollback_generation}</a></span>
+			<span data-testid="changeset-status" data-state={shown.status.state} data-step={step?.kind} class="inline-flex flex-wrap items-center gap-x-2 gap-y-1">
+				{#if step?.kind === 'scheduled' && pending}
+					<StatusBadge state="scheduled" testid="scheduled-badge" />
+					<span class="text-foreground" data-testid="publishes-at">Publishes {readsShort(pending.run_at, pending.time_zone)}</span>
+				{:else}
+					<ChangesetBadge state={shown.status.state} />
 				{/if}
-				{#if shown.status.state === 'approved'}
-					<span>by {shown.status.by}</span>
-					{#if shown.status.self_review}<Badge variant="secondary" data-testid="self-review">approved their own request</Badge>{/if}
+				{#if shown.rollback_generation != null}
+					<span>restores <a class="underline underline-offset-2" href={resolve('/projects/[project]/releases/[generation]', { project, generation: String(shown.rollback_generation) })} data-testid="restores-link">{releaseName(shown.rollback_generation)}</a></span>
+				{/if}
+				{#if step?.kind === 'waiting' || (step?.kind === 'decide' && shown.status.state === 'awaiting_review')}
+					<span data-testid="waiting-for">{waitingFor === '' ? 'Waiting for someone who can approve it' : `Waiting for ${waitingFor}`}</span>
 				{:else if shown.status.state === 'changes_requested'}
 					<span>by {shown.status.by}</span>
 				{:else if shown.status.state === 'published'}
-					<span>as <a class="underline underline-offset-2" href={resolve('/projects/[project]/releases/[generation]', { project, generation: String(shown.status.generation) })} data-testid="release-link">release {shown.status.generation}</a></span>
+					<span>as <a class="underline underline-offset-2" href={resolve('/projects/[project]/releases/[generation]', { project, generation: String(shown.status.generation) })} data-testid="release-link">{releaseName(shown.status.generation ?? 0)}</a></span>
 				{/if}
 			</span>
 		{/snippet}
 		{#snippet actions()}
-			{#if (shown.status.state === 'stale' || shown.status.state === 'open') && mine.data !== undefined && !writer}
+			{#if step?.kind === 'cannot-send' || step?.kind === 'cannot-update'}
 				<p class="max-w-xs text-sm text-muted-foreground" data-testid="cannot-send">
-					{shown.status.state === 'open' ? 'Someone who can edit these entries sends it for review.' : 'Someone who can edit these entries updates it.'}
+					{step.kind === 'cannot-send' ? 'Someone who can edit these entries sends it for review.' : 'Someone who can edit these entries updates it.'}
 				</p>
-			{:else if shown.status.state === 'stale' && writer}
-				<Button onclick={() => act(shown, 'refresh')} disabled={busy}>Update to the latest versions</Button>
-			{:else if shown.status.state === 'open' && writer}
-				<Button onclick={() => act(shown, 'submit')} disabled={busy}>Ask for review</Button>
-			{:else if shown.status.state === 'approved' && publisher}
-				<Button onclick={() => publish(shown)} disabled={busy || releases.data === undefined}>Publish</Button>
+			{:else if step?.kind === 'ask-review'}
+				<AskForReview
+					{project}
+					changeset={shown}
+					disabled={busy}
+					onsent={(next, warning) => {
+						queryClient.setQueryData(['changeset', project, id], next);
+						notice = warning;
+						void queryClient.invalidateQueries({ queryKey: ['changesets', project] });
+					}}
+					onerror={(failure) => {
+						if (failure instanceof ApiError && failure.reason === 'stale_changeset') notice = STALE;
+						else error = plainError(failure, 'ask for review here');
+						void queryClient.invalidateQueries({ queryKey: ['changeset', project, id] });
+					}}
+				/>
+			{:else if step?.kind === 'update'}
+				<Button onclick={() => act(shown, 'refresh')} disabled={busy}>{ACTION.update}</Button>
+			{:else if step?.kind === 'publish'}
+				<Button variant="outline" onclick={() => (scheduling = true)} disabled={busy || scheduling} data-testid="schedule-open">{ACTION.schedule}</Button>
+				<Button onclick={() => publish(shown)} disabled={busy || releases.data === undefined}>{ACTION.publishNow}</Button>
+			{:else if step?.kind === 'scheduled'}
+				{#each stepActions.secondary as name (name)}
+					{#if name === ACTION.publishNow}
+						<Button variant="outline" onclick={() => publish(shown)} disabled={busy || releases.data === undefined}>{name}</Button>
+					{:else}
+						<Button variant="outline" onclick={cancel} disabled={busy} data-testid="cancel-schedule">{name}</Button>
+					{/if}
+				{/each}
+			{:else if step?.kind === 'approved'}
+				<p class="max-w-xs text-sm text-muted-foreground" data-testid="cannot-publish">Approved. Someone who can publish it puts it live.</p>
+			{:else if step?.kind === 'changes-asked'}
+				<p class="max-w-xs text-sm text-muted-foreground" data-testid="changes-asked">Edit the entries, then update this request; it goes back for review.</p>
 			{/if}
 		{/snippet}
 	</PageHeader>
 
 	<ol class="mb-8 grid grid-cols-4 gap-2" aria-label="Progress">
-		{#each STEPS as step, index (step)}
-			<li class="grid gap-1.5">
+		{#each STEPS as stepName, index (stepName)}
+			<li class="grid gap-1.5" aria-current={index === reached(shown) - 1 ? 'step' : undefined}>
 				<span class="h-1 rounded-full {index < reached(shown) ? 'bg-brand' : 'bg-border'}"></span>
-				<span class="text-xs {index < reached(shown) ? 'text-foreground' : 'text-muted-foreground'}">{step}</span>
+				<span class="text-xs {index < reached(shown) ? 'text-foreground' : 'text-muted-foreground'}">{stepName}</span>
 			</li>
 		{/each}
 	</ol>
@@ -258,6 +374,7 @@
 			<ul class="space-y-3" data-testid="changeset-items">
 				{#each shown.items as item, index (item.entry_id)}
 					{@const expanded = open[item.entry_id] ?? index < 3}
+					{@const had = generation === null ? item.published_revision_id : before(item.entry_id, item.published_revision_id)}
 					<li class="overflow-hidden rounded-xl border border-border bg-card">
 						<div class="flex flex-wrap items-center gap-x-3 gap-y-1 px-4 py-3">
 							<span class="min-w-0 flex-1">
@@ -268,12 +385,12 @@
 							</span>
 							{#if item.kind === 'unpublish'}
 								<StatusBadge state="taken_down" testid="unpublish" />
-							{:else if item.published_revision_id === null}
-								<StatusBadge state="new" />
+							{:else if had === null}
+								<StatusBadge state="new" testid="item-new" />
 							{:else}
-								<StatusBadge state="updated" />
+								<StatusBadge state="updated" testid="item-updated" />
 							{/if}
-							{#if item.edited}
+							{#if item.edited && shown.status.state !== 'published'}
 								<Badge variant="attention" data-testid="edited"
 									>{#if item.kind === 'publish'}edited since it was added{:else if item.current_revision_id === null}no longer published{:else}a newer version was published{/if}</Badge
 								>
@@ -285,12 +402,16 @@
 								aria-controls="diff-{item.entry_id}"
 								onclick={() => (open[item.entry_id] = !expanded)}
 							>
-								Changes<ChevronDownIcon class="transition-transform {expanded ? 'rotate-180' : ''}" />
+								{item.kind === 'unpublish' ? 'What goes' : had === null ? 'Preview' : 'Changes'}<ChevronDownIcon class="transition-transform {expanded ? 'rotate-180' : ''}" />
 							</Button>
 						</div>
 						{#if expanded}
 							<div id="diff-{item.entry_id}" class="unfold border-t border-dotted border-border bg-background/60 px-4 py-4">
-								<ItemDiff {project} {item} />
+								{#if generation !== null && receipt.data === undefined && !receipt.isError}
+									<p class="text-sm text-muted-foreground">Loading the comparison…</p>
+								{:else}
+									<ItemDiff {project} item={{ ...item, published_revision_id: had }} done={shown.status.state === 'published'} />
+								{/if}
 							</div>
 						{/if}
 					</li>
@@ -298,12 +419,60 @@
 			</ul>
 		</section>
 
-		<!-- Beside the entries on wide screens. Below lg its parts join the page's column, and the
-		     Review panel moves to the top, so a reviewer on a phone finds Approve without scrolling
-		     past every comparison (D-059, rule 7). -->
+		<!-- Beside the entries on wide screens: Review, then Schedule, then History. Below lg its
+		     parts join the page's column, and what asks for action (deciding, scheduling) moves to
+		     the top, so a reviewer on a phone finds Approve without scrolling past every comparison
+		     (D-059, rule 7). -->
 		<div class="contents lg:block lg:space-y-8">
-			{#if shown.status.state !== 'open' && shown.status.state !== 'stale'}
-				<SchedulePanel {project} changeset={shown} canSchedule={publisher} />
+			{#if step?.kind === 'decide' || (reviewing && reviewer && shown.status.state === 'approved')}
+				<section class="-order-1 rounded-xl border border-border bg-card p-4 lg:order-none" aria-label="Review" data-testid="review-panel">
+					<h2 class="text-base font-semibold">Review</h2>
+					<p class="mt-1 text-sm text-muted-foreground">
+						You approve exactly the {shown.items.length === 1 ? 'version' : 'versions'} on this page<span class="lg:hidden">: the changes are below</span>. If
+						{shown.items.length === 1 ? 'it changes' : 'they change'}, your approval no longer counts.
+					</p>
+					{#if shown.stages.length > 0}
+						<div class="mt-4 grid gap-1.5">
+							<Label for="review-stage">Deciding</Label>
+							<select id="review-stage" class={select} bind:value={deciding} disabled={busy} data-testid="review-stage">
+								{#each shown.stages as stage (stage.key)}
+									<option value={stage.key} data-user-content
+										>{stage.name} — {STAGE_STATE[stage.state].toLowerCase()}{stage.different_reviewer && own ? ', someone other than you' : ''}</option
+									>
+								{/each}
+							</select>
+						</div>
+					{/if}
+					<div class="mt-4 grid gap-1.5">
+						<Label for="review-comment">Comment (optional)</Label>
+						<Textarea id="review-comment" bind:value={comment} rows={3} maxlength={2000} />
+					</div>
+					<div class="mt-3 grid gap-2">
+						{#if step?.kind === 'decide'}
+							<Button onclick={() => act(shown, 'reviews', 'approve')} disabled={busy}>{ACTION.approve}</Button>
+						{/if}
+						<Button variant="outline" onclick={() => act(shown, 'reviews', 'request_changes')} disabled={busy}>{ACTION.requestChanges}</Button>
+						{#if reviewing}<Button variant="ghost" onclick={() => (reviewing = false)} disabled={busy}>Keep the approval</Button>{/if}
+					</div>
+				</section>
+			{:else if shown.status.state === 'approved' && approved}
+				<!-- Approved: the review is one line now; the decision is history, the next step is above. -->
+				<section class="rounded-xl border border-border bg-card px-4 py-3 text-sm" aria-label="Review" data-testid="review-done">
+					<p class="flex flex-wrap items-center gap-x-1.5 gap-y-1">
+						<CircleCheckIcon class="size-4 shrink-0 text-live-ink" aria-hidden="true" />
+						<span>Approved by {approved.reviewer_id === who.data?.id ? 'you' : (approved.reviewer_name ?? 'a reviewer')}</span>
+						<span class="text-muted-foreground" title={new Date(approved.created_at).toLocaleString()}>· {at(approved.created_at)}</span>
+						{#if reviewer}
+							<span class="text-muted-foreground">·</span>
+							<Button variant="link" size="xs" class="h-auto p-0" onclick={() => (reviewing = true)} data-testid="ask-changes-instead">Ask for changes instead</Button>
+						{/if}
+					</p>
+					{#if shown.status.self_review}
+						<p class="mt-1.5 text-muted-foreground" data-testid="self-review">
+							{approved.reviewer_id === who.data?.id ? 'You approved your own request' : `${approved.reviewer_name ?? 'The sender'} approved their own request`}: this project allows it.
+						</p>
+					{/if}
+				</section>
 			{/if}
 			{#if shown.stages.length > 0}
 				<!-- Each stage and where it stands (D-104): all of them approve — in any order —
@@ -317,7 +486,7 @@
 								<span class="text-sm font-medium" data-user-content>{stage.name}</span>
 								<Badge variant={STAGE_BADGE[stage.state]}>{STAGE_STATE[stage.state]}</Badge>
 								{#if stage.different_reviewer}
-									<span class="text-xs text-muted-foreground">needs {shown.submitted_by !== null && shown.submitted_by === who.data?.id ? 'someone other than you' : 'someone other than whoever sent it'}</span>
+									<span class="text-xs text-muted-foreground">needs {own ? 'someone other than you' : 'someone other than whoever sent it'}</span>
 								{/if}
 								{#if stage.by_name !== null || stage.by !== null}
 									<span class="text-xs text-muted-foreground" data-user-content>
@@ -330,39 +499,9 @@
 					</ol>
 				</section>
 			{/if}
-			{#if reviewer && shown.submitted_by !== null && shown.status.state !== 'stale' && shown.status.state !== 'published'}
-				<section class="-order-1 rounded-xl border border-border bg-card p-4 lg:order-none" aria-label="Review" data-testid="review-panel">
-					<h2 class="text-base font-semibold">Review</h2>
-					<p class="mt-1 text-sm text-muted-foreground">
-						You approve exactly the {shown.items.length === 1 ? 'version' : 'versions'} on this page<span class="lg:hidden">: the changes are below</span>. If
-						{shown.items.length === 1 ? 'it changes' : 'they change'}, your approval no longer counts.
-					</p>
-					{#if shown.stages.length > 0}
-						<div class="mt-4 grid gap-1.5">
-							<Label for="review-stage">Deciding</Label>
-							<select id="review-stage" class={select} bind:value={deciding} disabled={busy} data-testid="review-stage">
-								{#each shown.stages as stage (stage.key)}
-									<option value={stage.key} data-user-content
-										>{stage.name} — {STAGE_STATE[stage.state].toLowerCase()}{stage.different_reviewer &&
-										shown.submitted_by === who.data?.id
-											? ', someone other than you'
-											: ''}</option
-									>
-								{/each}
-							</select>
-						</div>
-					{/if}
-					<div class="mt-4 grid gap-1.5">
-						<Label for="review-comment">Comment (optional)</Label>
-						<Textarea id="review-comment" bind:value={comment} rows={3} maxlength={2000} />
-					</div>
-					<div class="mt-3 grid gap-2">
-						<!-- The one primary while it waits; once approved, Publish in the header leads. -->
-						<Button variant={shown.status.state === 'approved' ? 'outline' : 'default'} onclick={() => act(shown, 'reviews', 'approve')} disabled={busy}>Approve this version</Button>
-						<Button variant="outline" onclick={() => act(shown, 'reviews', 'request_changes')} disabled={busy}>Request changes</Button>
-					</div>
-				</section>
-			{/if}
+			<div class={scheduling ? '-order-1 lg:order-none' : ''}>
+				<SchedulePanel {project} changeset={shown} canSchedule={publisher} bind:form={scheduling} />
+			</div>
 
 			<section aria-labelledby="history-heading">
 				<h2 id="history-heading" class="mb-3 text-base font-semibold">History</h2>
@@ -374,7 +513,7 @@
 								<strong class="font-medium">{review.decision === 'approve' ? 'Approved' : 'Changes requested'}</strong>
 								{#if review.stage !== null}for <span data-user-content>{stageName(shown, review.stage)}</span> {/if}by {review.reviewer_name ?? review.reviewer_id}{#if review.decision === 'approve' && review.reviewer_id === shown.submitted_by}<span
 										class="text-muted-foreground"
-										data-testid="self-review-note">, who sent it: their own request</span
+										data-testid="self-review-note">, who sent it</span
 									>{/if}
 							</p>
 							<p class="text-xs text-muted-foreground" title={new Date(review.created_at).toLocaleString()}>
@@ -390,7 +529,7 @@
 					{#if shown.submitted_at}
 						<li class="relative text-sm">
 							<span class="absolute top-1.5 -left-[1.6rem] size-2.5 rounded-full border-2 border-background bg-pending" aria-hidden="true"></span>
-							<p>Sent for review</p>
+							<p>Sent for review{#if asked.length > 0}<span class="text-muted-foreground">, to {waitingFor}</span>{/if}</p>
 							<p class="text-xs text-muted-foreground">{ago(shown.submitted_at)}</p>
 						</li>
 					{/if}

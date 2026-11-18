@@ -238,6 +238,99 @@ pub async fn rollback_pins(
     .map_err(DbError::from_query)
 }
 
+/// What a person reads about one pin before a rollback is made: the title of the version it
+/// names, and the version readers get of its entry now, if any.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PinTitle {
+    /// The pinned revision.
+    pub revision_id: Uuid,
+    /// Its title.
+    pub title: String,
+    /// The entry's open publication now, if it is published.
+    pub live_revision_id: Option<Uuid>,
+}
+
+/// The titles of `revisions` and what each one's entry publishes now: the rollback preview's
+/// words for [`rollback_pins`].
+pub async fn pin_titles(
+    tx: &mut ProjectTransaction,
+    revisions: &[Uuid],
+) -> Result<Vec<PinTitle>, DbError> {
+    sqlx::query_as!(
+        PinTitle,
+        r#"SELECT r.id AS "revision_id!", r.title AS "title!", now.revision_id AS "live_revision_id?"
+           FROM revisions r
+           LEFT JOIN publications now ON now.project_id = r.project_id AND now.environment_id = r.environment_id
+                                     AND now.entry_id = r.entry_id AND now.valid_to IS NULL
+           WHERE r.project_id = $1 AND r.environment_id = $2 AND r.id = ANY($3)"#,
+        tx.project,
+        tx.environment,
+        revisions
+    )
+    .fetch_all(&mut *tx.transaction)
+    .await
+    .map_err(DbError::from_query)
+}
+
+/// An entry readers had at a generation that a rollback to it can't bring back: it was taken
+/// down since, which revoked that publication (D-049), so the generation's set no longer holds
+/// it (D-097). Only entries not published now: one published again is taken down by the
+/// rollback, and is among its pins.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct KeptDown {
+    /// The entry.
+    pub entry_id: Uuid,
+    /// Its collection.
+    pub collection: String,
+    /// The title readers had at the generation.
+    pub title: String,
+    /// The version readers had at the generation.
+    pub revision_id: Uuid,
+    /// The release that took it down (and revoked that publication).
+    pub taken_down_in: i64,
+    /// The entry was deleted since (D-080), so it can't be published again.
+    pub entry_deleted: bool,
+    /// How many entries a rollback to the generation keeps down, however many are listed.
+    pub total: i64,
+}
+
+/// The most kept-down entries a rollback preview lists.
+pub const MAX_KEPT_DOWN: i64 = 100;
+
+/// The entries a rollback to `generation` leaves down although readers had them then: published
+/// at `generation`, revoked by a takedown since, and not published now. By title, at most
+/// [`MAX_KEPT_DOWN`], each row carrying the total.
+pub async fn kept_down(
+    tx: &mut ProjectTransaction,
+    generation: i64,
+) -> Result<Vec<KeptDown>, DbError> {
+    sqlx::query_as!(
+        KeptDown,
+        r#"SELECT p.entry_id, p.collection, p.title, p.revision_id,
+                  p.revoked_in AS "taken_down_in!",
+                  NOT EXISTS (SELECT 1 FROM entries e
+                              WHERE e.project_id = p.project_id AND e.environment_id = p.environment_id
+                                AND e.id = p.entry_id) AS "entry_deleted!",
+                  count(*) OVER () AS "total!"
+           FROM publications p
+           WHERE p.project_id = $1 AND p.environment_id = $2
+             AND p.valid_from <= $3 AND coalesce(p.valid_to, $3 + 1) > $3
+             AND p.revoked_in IS NOT NULL
+             AND NOT EXISTS (SELECT 1 FROM publications now
+                             WHERE now.project_id = p.project_id AND now.environment_id = p.environment_id
+                               AND now.entry_id = p.entry_id AND now.valid_to IS NULL)
+           ORDER BY p.title, p.entry_id
+           LIMIT $4"#,
+        tx.project,
+        tx.environment,
+        generation,
+        MAX_KEPT_DOWN
+    )
+    .fetch_all(&mut *tx.transaction)
+    .await
+    .map_err(DbError::from_query)
+}
+
 /// A pinned `publish` revision written before its collection's current version, with the
 /// definition in force: a type change can move on after the revision's publication closed, so
 /// publish checks it again (D-055). A rollback pins history on purpose (D-097), which is how
