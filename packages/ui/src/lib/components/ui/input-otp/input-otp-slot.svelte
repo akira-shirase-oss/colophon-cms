@@ -15,7 +15,7 @@
 	bind:ref
 	data-slot="input-otp-slot"
 	class={cn(
-		"border-input bg-card data-[active=true]:border-ring data-[active=true]:ring-4 data-[active=true]:ring-ring/15 aria-invalid:border-destructive size-11 rounded-lg border text-sm transition-[color,box-shadow,border-color] outline-none relative flex items-center justify-center data-[active=true]:z-10",
+		"border-input bg-popover data-[active=true]:border-ring data-[active=true]:ring-4 data-[active=true]:ring-ring/15 aria-invalid:border-destructive size-11 rounded-lg border text-sm transition-[color,box-shadow,border-color] outline-none relative flex items-center justify-center data-[active=true]:z-10",
 		className
 	)}
 	{...restProps}

@@ -1,6 +1,7 @@
 import { defineConfig, devices } from '@playwright/test';
 
-const PORT = 58201;
+// STUDIO_E2E_PORT moves it, so two checkouts (or a busy machine's other servers) don't collide.
+const PORT = Number(process.env['STUDIO_E2E_PORT'] ?? 58201);
 
 export default defineConfig({
 	testDir: 'tests',

@@ -36,6 +36,7 @@
 		getRevision,
 		listRevisions,
 		type Loaded,
+		may,
 		mayOn,
 		type Referrer,
 		signInUrl,
@@ -62,6 +63,9 @@
 	import { kept } from './drafts.ts';
 	import FieldInputs from './FieldInputs.svelte';
 	import { Saver } from './saver.svelte.ts';
+	import PreviewMenu from './PreviewMenu.svelte';
+	import PreviewPane from './PreviewPane.svelte';
+	import PreviewSplit from './PreviewSplit.svelte';
 
 	let {
 		project,
@@ -152,9 +156,14 @@
 	$effect(() => {
 		latest = initial.draft;
 	});
+	// Preview on the editor's own site (D-181): the pane, and the last save the server
+	// acknowledged, which the pane tells the site about — never a keystroke.
+	let previewOpen = $state(false);
+	let acknowledged = $state.raw<{ revision: string; at: number } | null>(null);
 	// svelte-ignore state_referenced_locally
 	const saver = new Saver(project, collection, entry, definition, initial, (loaded) => {
 		latest = loaded.draft;
+		acknowledged = { revision: loaded.draft.revision.id, at: Date.now() };
 		queryClient.setQueryData(['draft', project, collection, entry], loaded);
 		void queryClient.invalidateQueries({ queryKey: ['entries', project, collection] });
 		void queryClient.invalidateQueries({ queryKey: ['history', project, collection, entry] });
@@ -472,7 +481,10 @@
 	{/each}
 {/snippet}
 
-<div class="grid gap-8 xl:grid-cols-[minmax(0,1fr)_17rem]">
+<!-- Beside the site preview, the save card moves under the fields, so they keep their width; the
+     pane says whether what it shows is saved. -->
+<PreviewSplit open={previewOpen} id="entry-{entry}">
+<div class="grid gap-8 {previewOpen ? '' : 'xl:grid-cols-[minmax(0,1fr)_17rem]'}">
 	<div class="min-w-0">
 		{#if unopenable}
 			<p role="alert" class="mb-4 rounded-lg border border-destructive/30 bg-destructive/5 px-4 py-3 text-sm text-destructive">
@@ -504,7 +516,8 @@
 			</section>
 		{/if}
 
-		<div role="tablist" aria-label="Entry" class="mb-6 inline-flex rounded-lg bg-muted p-1">
+		<div class="mb-6 flex flex-wrap items-center justify-between gap-3">
+		<div role="tablist" aria-label="Entry" class="inline-flex rounded-lg bg-muted p-1">
 			{#each tabs as [value, name] (value)}
 				<button
 					role="tab"
@@ -528,6 +541,8 @@
 					{name}{#if value === 'history' && revisions.data}<span class="ml-1.5 text-xs text-muted-foreground tabular">{revisions.data.length}</span>{/if}{#if value === 'comments' && commentCount > 0}<span class="ml-1.5 text-xs text-muted-foreground tabular">{commentCount}</span>{/if}
 				</button>
 			{/each}
+		</div>
+		<PreviewMenu {project} {entry} bind:open={previewOpen} manages={may(mine.data, 'destinations.manage')} />
 		</div>
 
 		{#if restoreNote}
@@ -585,7 +600,7 @@
 					{@const field = segment.field}
 					<div class="py-5" hidden={!appliesNow(field)} data-testid="rich-field" data-field={field.id}>
 						<p class="mb-2 text-sm font-medium">{field.label}{field.required ? '' : ' (optional)'}</p>
-						<div class="overflow-hidden rounded-xl border border-border bg-card shadow-xs focus-within:border-ring/60">
+						<div class="overflow-hidden rounded-xl border border-border bg-card focus-within:border-ring/60">
 							<RichTextToolbar editor={editors[field.id] ?? null} label="Formatting: {field.label}" {project} />
 							<div class="editor px-6 py-5 sm:px-8" bind:this={hosts[field.id]}></div>
 						</div>
@@ -598,6 +613,40 @@
 					</div>
 				{/if}
 			{/each}
+			<!-- What links here belongs with the content: it is not repeated on the other tabs. -->
+			{#if linkedFrom.length > 0}
+				<section class="mt-8" aria-labelledby="linked-from-heading" data-testid="linked-from">
+					<h2 id="linked-from-heading" class="mb-1 text-sm font-semibold">Linked from</h2>
+					<p class="mb-3 text-xs text-muted-foreground">Entries whose fields link to this one.</p>
+					<ul class="overflow-hidden rounded-xl border border-border bg-card">
+						{#each linkedFrom as item (`${item.link.entry_id}-${item.link.field}`)}
+							<li class="rule-dotted flex flex-wrap items-center gap-x-3 gap-y-1 px-4 py-2.5 text-sm last:border-b-0" data-testid="linked-from-entry">
+								<LinkIcon class="size-3.5 shrink-0 text-muted-foreground" aria-hidden="true" />
+								<span class="min-w-0 flex-1">
+									{#if item.read === undefined}
+										<span class="text-muted-foreground">Loading…</span>
+									{:else if item.read.seen}
+										<a
+											class="font-medium hover:underline"
+											data-user-content
+											href={resolve('/projects/[project]/[collection]/[entry]', { project, collection: item.link.collection, entry: item.link.entry_id })}
+											>{shownTitle(item.read.title)}</a
+										>
+									{:else}
+										<span class="text-muted-foreground">An entry you can’t see</span>
+									{/if}
+									<span class="block text-xs text-muted-foreground" data-user-content>{item.collectionName}, in {item.fieldLabel}</span>
+								</span>
+								{#if item.link.published}
+									<StatusBadge state="live" text="Readers see this link" testid="link-state" />
+								{:else}
+									<StatusBadge state="draft" text="In a draft" testid="link-state" />
+								{/if}
+							</li>
+						{/each}
+					</ul>
+				</section>
+			{/if}
 		</div>
 
 		{#if sitePage || siteTheme}
@@ -608,40 +657,6 @@
 					<SiteCanvas {project} content={canvasContent ?? {}} onsection={editSection} />
 				{/if}
 			</div>
-		{/if}
-
-		{#if linkedFrom.length > 0}
-			<section class="mt-8" aria-labelledby="linked-from-heading" data-testid="linked-from">
-				<h2 id="linked-from-heading" class="mb-1 text-sm font-semibold">Linked from</h2>
-				<p class="mb-3 text-xs text-muted-foreground">Entries whose fields link to this one.</p>
-				<ul class="overflow-hidden rounded-xl border border-border bg-card">
-					{#each linkedFrom as item (`${item.link.entry_id}-${item.link.field}`)}
-						<li class="rule-dotted flex flex-wrap items-center gap-x-3 gap-y-1 px-4 py-2.5 text-sm last:border-b-0" data-testid="linked-from-entry">
-							<LinkIcon class="size-3.5 shrink-0 text-muted-foreground" aria-hidden="true" />
-							<span class="min-w-0 flex-1">
-								{#if item.read === undefined}
-									<span class="text-muted-foreground">Loading…</span>
-								{:else if item.read.seen}
-									<a
-										class="font-medium hover:underline"
-										data-user-content
-										href={resolve('/projects/[project]/[collection]/[entry]', { project, collection: item.link.collection, entry: item.link.entry_id })}
-										>{shownTitle(item.read.title)}</a
-									>
-								{:else}
-									<span class="text-muted-foreground">An entry you can’t see</span>
-								{/if}
-								<span class="block text-xs text-muted-foreground" data-user-content>{item.collectionName}, in {item.fieldLabel}</span>
-							</span>
-							{#if item.link.published}
-								<Badge variant="live">Readers see this link</Badge>
-							{:else}
-								<Badge variant="draft">In a draft</Badge>
-							{/if}
-						</li>
-					{/each}
-				</ul>
-			</section>
 		{/if}
 
 		<div role="tabpanel" id="panel-comments" aria-labelledby="tab-comments" hidden={tab !== 'comments'}>
@@ -662,7 +677,7 @@
 									<span class="text-xs text-muted-foreground" title={new Date(revision.created_at).toLocaleString()}>Saved {ago(revision.created_at)}</span>
 								</span>
 								{#if index === 0}<Badge variant="secondary">Current draft</Badge>{/if}
-								{#if published?.revision_id === revision.id}<Badge variant="live">Live in {releaseName(published.generation)}</Badge>{/if}
+								{#if published?.revision_id === revision.id}<StatusBadge state="live" text="Live in {releaseName(published.generation)}" testid="history-live" class="tabular" />{/if}
 								{#if index > 0}
 									<Button variant="ghost" size="xs" onclick={() => (comparing = comparing === revision.id ? null : revision.id)}>
 										{comparing === revision.id ? 'Hide' : 'Compare with draft'}
@@ -705,13 +720,15 @@
 	  made, and Technical details) close the card on wide screens and follow the fields on a phone:
 	  below xl the card's box is left out (`contents`), so the bar sticks within the whole page.
 	-->
-	<div class="min-w-0 max-xl:contents xl:sticky xl:top-20 xl:self-start xl:rounded-xl xl:border xl:border-border xl:bg-card xl:p-4 xl:shadow-xs" data-testid="entry-panel">
+	<div class="min-w-0 max-xl:contents xl:sticky xl:top-20 xl:self-start xl:rounded-xl xl:border xl:border-border xl:bg-card xl:p-4" data-testid="entry-panel">
 		<aside
 			class="sticky bottom-0 z-20 -mx-5 flex min-w-0 flex-wrap items-center gap-x-4 gap-y-2 border-t border-border bg-background/95 px-5 py-3 backdrop-blur sm:-mx-8 sm:px-8 lg:-mx-10 lg:px-10 xl:static xl:z-auto xl:m-0 xl:block xl:border-t-0 xl:bg-transparent xl:p-0 xl:backdrop-blur-none"
 			aria-label="Saving and publishing"
 			data-testid="entry-actions"
 		>
-			<div class="flex min-w-0 flex-1 flex-wrap items-center gap-x-2.5 gap-y-1 xl:block xl:space-y-2.5">
+			<!-- On a phone the status keeps its own width, so a long one ("Live with changes") moves the
+			     buttons to a second row instead of running under them. -->
+			<div class="flex min-w-0 flex-1 flex-wrap items-center gap-x-2.5 gap-y-1 max-xl:min-w-fit xl:block xl:space-y-2.5">
 				<!-- One line for where it stands with readers: a word with a mark, then, on wide screens, the sentence. -->
 				<p class="text-sm xl:leading-6" data-testid="entry-status">
 					<span class="inline-flex align-middle xl:mr-1.5 xl:align-[0.0625rem]"><StatusBadge state={standing} generation={published?.generation ?? null} /></span>
@@ -772,6 +789,7 @@
 					{collection}
 					{entry}
 					title={latest.revision.title}
+					revision={latest.revision.id}
 					mine={mine.data}
 					{standing}
 					saved={saver.status === 'saved'}
@@ -875,3 +893,15 @@
 		<ReaderView bind:open={readerView} {project} {collection} {entry} changed={standing === 'changed'} titleLabel={titleLabel(definition)} />
 	{/if}
 </div>
+	{#snippet pane()}
+		<PreviewPane
+			{project}
+			{entry}
+			title={latest.revision.title}
+			status={saver.status}
+			saved={acknowledged}
+			manages={may(mine.data, 'destinations.manage')}
+			onclose={() => (previewOpen = false)}
+		/>
+	{/snippet}
+</PreviewSplit>

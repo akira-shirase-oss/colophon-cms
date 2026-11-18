@@ -11,8 +11,8 @@
 	}: { icon: Component; title: string; children?: Snippet; action?: Snippet; testid?: string } = $props();
 </script>
 
-<div class="flex flex-col items-center rounded-xl border border-dashed border-border px-6 py-12 text-center" data-testid={testid}>
-	<div class="mb-4 flex size-10 items-center justify-center rounded-lg border border-border bg-card shadow-xs">
+<div class="flex flex-col items-center rounded-card border border-border/70 bg-card px-6 py-12 text-center" data-testid={testid}>
+	<div class="mb-4 flex size-10 items-center justify-center rounded-lg border border-border bg-popover shadow-hairline">
 		<Icon class="size-5 text-muted-foreground" aria-hidden="true" />
 	</div>
 	<p class="font-medium">{title}</p>

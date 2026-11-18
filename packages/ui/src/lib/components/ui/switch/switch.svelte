@@ -27,7 +27,7 @@
 	<SwitchPrimitive.Thumb
 		data-slot="switch-thumb"
 		class={cn(
-			"rounded-full bg-card shadow-hairline dark:data-unchecked:bg-foreground dark:data-checked:bg-primary-foreground group-data-[size=default]/switch:size-5 group-data-[size=sm]/switch:size-3.5 group-data-[size=default]/switch:data-checked:translate-x-4 group-data-[size=sm]/switch:data-checked:translate-x-3.5 data-unchecked:translate-x-0.5 pointer-events-none block ring-0 transition-transform",
+			"rounded-full bg-popover shadow-hairline dark:data-unchecked:bg-foreground dark:data-checked:bg-primary-foreground group-data-[size=default]/switch:size-5 group-data-[size=sm]/switch:size-3.5 group-data-[size=default]/switch:data-checked:translate-x-4 group-data-[size=sm]/switch:data-checked:translate-x-3.5 data-unchecked:translate-x-0.5 pointer-events-none block ring-0 transition-transform",
 			"rtl:data-[state=checked]:translate-x-[calc(-100%)]"
 		)}
 	/>

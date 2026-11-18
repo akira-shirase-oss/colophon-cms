@@ -160,7 +160,7 @@
 </script>
 
 {#if !hidden}
-	<section class="mb-10 rounded-2xl border border-border bg-card p-5 shadow-xs sm:p-6" aria-labelledby="first-run-heading" data-testid="first-run">
+	<section class="mb-10 rounded-2xl border border-border bg-card p-5 sm:p-6" aria-labelledby="first-run-heading" data-testid="first-run">
 		<div class="mb-4 flex flex-wrap items-start justify-between gap-3">
 			<div>
 				<h2 id="first-run-heading" class="text-base font-semibold">{remaining === 0 ? "You're all set" : 'Get started'}</h2>

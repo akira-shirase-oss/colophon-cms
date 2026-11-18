@@ -70,7 +70,7 @@
 	}
 
 	const select =
-		'h-9 min-w-0 flex-1 rounded-md border border-input bg-card px-3 text-sm shadow-xs outline-none focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/40';
+		'h-9 min-w-0 flex-1 rounded-md border border-input bg-popover px-3 text-sm outline-none focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/40';
 </script>
 
 <svelte:head><title>Editor playground · Colophon Studio</title></svelte:head>
@@ -80,7 +80,7 @@
 </PageHeader>
 
 <section class="grid items-start gap-6 lg:grid-cols-[minmax(0,3fr)_minmax(0,2fr)]">
-	<div class="overflow-hidden rounded-xl border border-border bg-card shadow-xs">
+	<div class="overflow-hidden rounded-xl border border-border bg-card">
 		<RichTextToolbar {editor} />
 		<div class="editor px-6 py-5 sm:px-8" bind:this={host} data-testid="editor"></div>
 		<p class="border-t border-dotted border-border px-4 py-2 text-xs text-muted-foreground tabular" data-testid="limits">

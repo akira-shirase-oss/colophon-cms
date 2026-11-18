@@ -22,10 +22,12 @@
 	import { goto } from '$app/navigation';
 	import { explainLinks, type Named } from '#lib/references.ts';
 	import { plainError } from '#lib/errors.ts';
+	import ChangesetPreview from '#lib/ChangesetPreview.svelte';
 	import ItemDiff from '#lib/ItemDiff.svelte';
 	import SchedulePanel from '#lib/SchedulePanel.svelte';
 	import { ago, meQuery, projectQuery, releasesQuery, typesQuery } from '#lib/queries.ts';
 	import ChangesetBadge from '#lib/shell/ChangesetBadge.svelte';
+	import StatusBadge from '#lib/shell/StatusBadge.svelte';
 	import PageHeader from '#lib/shell/PageHeader.svelte';
 	import Problem from '#lib/shell/Problem.svelte';
 	import TechnicalDetails from '#lib/shell/TechnicalDetails.svelte';
@@ -166,7 +168,7 @@
 
 	const STAGE_BADGE = { pending: 'pending', approved: 'live', changes_requested: 'attention', approval_expired: 'attention' } as const;
 	const select =
-		'h-8 rounded-md border border-input bg-card px-2 text-sm shadow-xs outline-none focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/40 disabled:opacity-50';
+		'h-8 rounded-md border border-input bg-popover px-2 text-sm outline-none focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/40 disabled:opacity-50';
 
 	const STEPS = ['Prepared', 'Sent for review', 'Approved', 'Live'] as const;
 	function reached(shown: Changeset): number {
@@ -203,7 +205,7 @@
 				{/if}
 				{#if shown.status.state === 'approved'}
 					<span>by {shown.status.by}</span>
-					{#if shown.status.self_review}<Badge variant="attention" data-testid="self-review">approved their own request</Badge>{/if}
+					{#if shown.status.self_review}<Badge variant="secondary" data-testid="self-review">approved their own request</Badge>{/if}
 				{:else if shown.status.state === 'changes_requested'}
 					<span>by {shown.status.by}</span>
 				{:else if shown.status.state === 'published'}
@@ -229,11 +231,14 @@
 	<ol class="mb-8 grid grid-cols-4 gap-2" aria-label="Progress">
 		{#each STEPS as step, index (step)}
 			<li class="grid gap-1.5">
-				<span class="h-1 rounded-full {index < reached(shown) ? 'bg-foreground' : 'bg-border'}"></span>
+				<span class="h-1 rounded-full {index < reached(shown) ? 'bg-brand' : 'bg-border'}"></span>
 				<span class="text-xs {index < reached(shown) ? 'text-foreground' : 'text-muted-foreground'}">{step}</span>
 			</li>
 		{/each}
 	</ol>
+
+	<!-- Exactly these versions on the editor's own site, in a new tab (gap/preview). -->
+	<ChangesetPreview {project} changeset={shown.id} published={shown.status.state === 'published'} manages={may(mine.data, 'destinations.manage')} />
 
 	{#if notice}<p role="status" class="mb-4 rounded-lg bg-pending-soft px-4 py-3 text-sm text-pending-ink" data-testid="changeset-notice">{notice}</p>{/if}
 	{#if error}
@@ -262,11 +267,11 @@
 								<span class="text-xs text-muted-foreground">{typeName(item.collection)}</span>
 							</span>
 							{#if item.kind === 'unpublish'}
-								<Badge variant="attention" data-testid="unpublish">unpublish</Badge>
+								<StatusBadge state="taken_down" testid="unpublish" />
 							{:else if item.published_revision_id === null}
-								<Badge variant="live">new</Badge>
+								<StatusBadge state="new" />
 							{:else}
-								<Badge variant="pending">update</Badge>
+								<StatusBadge state="updated" />
 							{/if}
 							{#if item.edited}
 								<Badge variant="attention" data-testid="edited"
@@ -326,7 +331,7 @@
 				</section>
 			{/if}
 			{#if reviewer && shown.submitted_by !== null && shown.status.state !== 'stale' && shown.status.state !== 'published'}
-				<section class="-order-1 rounded-xl border border-border bg-card p-4 shadow-xs lg:order-none" aria-label="Review" data-testid="review-panel">
+				<section class="-order-1 rounded-xl border border-border bg-card p-4 lg:order-none" aria-label="Review" data-testid="review-panel">
 					<h2 class="text-base font-semibold">Review</h2>
 					<p class="mt-1 text-sm text-muted-foreground">
 						You approve exactly the {shown.items.length === 1 ? 'version' : 'versions'} on this page<span class="lg:hidden">: the changes are below</span>. If
@@ -352,7 +357,8 @@
 						<Textarea id="review-comment" bind:value={comment} rows={3} maxlength={2000} />
 					</div>
 					<div class="mt-3 grid gap-2">
-						<Button onclick={() => act(shown, 'reviews', 'approve')} disabled={busy}>Approve this version</Button>
+						<!-- The one primary while it waits; once approved, Publish in the header leads. -->
+						<Button variant={shown.status.state === 'approved' ? 'outline' : 'default'} onclick={() => act(shown, 'reviews', 'approve')} disabled={busy}>Approve this version</Button>
 						<Button variant="outline" onclick={() => act(shown, 'reviews', 'request_changes')} disabled={busy}>Request changes</Button>
 					</div>
 				</section>

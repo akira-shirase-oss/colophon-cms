@@ -927,3 +927,68 @@ async fn a_preview_never_shows_a_field_its_issuer_cant_read() {
 async fn token_for_owner(owner: &Session, project: &str, entry: &str) -> String {
     token(owner, project, &json!({ "entry": entry })).await
 }
+
+#[tokio::test]
+#[ignore = "needs the stack and scripts/migrate.sh"]
+async fn only_the_preview_origin_may_read_preview_answers_in_a_browser() {
+    let _server = Server::start().await;
+    let owner = sign_in("dev-owner").await;
+    let id = project(&owner).await;
+    set_target(&owner, &id).await;
+    let entry = create_article(&owner, &id, "Read from a browser").await;
+    let token = token(&owner, &id, &json!({ "entry": entry })).await;
+    let path = format!("/preview/v1/{id}/production/articles/{entry}");
+    let site = "http://localhost:58099";
+    for (origin, allowed) in [(site, true), ("https://evil.example", false)] {
+        let preflight = common::app()
+            .request(Method::OPTIONS, format!("{ORIGIN}{path}"))
+            .header("origin", origin)
+            .header("access-control-request-method", "GET")
+            .header("access-control-request-headers", "authorization")
+            .send()
+            .await
+            .expect("request");
+        assert_eq!(preflight.status(), StatusCode::NO_CONTENT, "{origin}");
+        let headers = preflight.headers();
+        assert_eq!(
+            headers
+                .get("access-control-allow-origin")
+                .map(|v| v.to_str().unwrap_or_default().to_owned()),
+            allowed.then(|| origin.to_owned()),
+            "{origin}"
+        );
+        if allowed {
+            assert_eq!(
+                headers["access-control-allow-headers"],
+                "Authorization, Content-Type"
+            );
+        }
+        assert!(
+            headers.get("access-control-allow-credentials").is_none(),
+            "{origin}"
+        );
+        let read = common::app()
+            .get(format!("{ORIGIN}{path}"))
+            .header("origin", origin)
+            .bearer_auth(&token)
+            .send()
+            .await
+            .expect("request");
+        assert_eq!(read.status(), StatusCode::OK, "{origin}");
+        let headers = read.headers();
+        assert_eq!(
+            headers.get("access-control-allow-origin").is_some(),
+            allowed,
+            "{origin}"
+        );
+        assert!(
+            headers.get("access-control-allow-credentials").is_none(),
+            "{origin}"
+        );
+        assert_eq!(headers["cache-control"], "private, no-store");
+    }
+    // A server-side read sends no Origin and gets no CORS headers at all.
+    let (status, headers, _) = read(Some(&token), &path).await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(headers.get("access-control-allow-origin").is_none());
+}

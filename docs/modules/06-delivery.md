@@ -237,8 +237,18 @@ the current versions of the uploads it names (as drafts show them), kept to what
   served in preview yet); 503 with `Retry-After` past the per-server bound of 32 concurrent preview reads.
 - **Bounds.** `/preview/` counts in admission per client address and per bearer (D-076's management rates); the
   semaphore keeps a burst of previews from taking the connections delivery needs; the exchange reads at most 1 KiB.
-- **Not yet.** CORS for browser-side preview fetching (sites fetch server-side today), `depth` over the overlay,
-  locale selection (arrives with gap 2's `?locale=`).
+- **Browsers.** A static or client-rendered site may exchange and read from the browser: `/preview/v1` answers
+  CORS for exactly the environment's preview-address origin (`Access-Control-Allow-Origin` echoed, `Authorization`
+  and `Content-Type` allowed, `GET` and `POST`, never `Allow-Credentials` — preview reads are bearer, never cookie;
+  `Vary: Origin`). Any other origin gets no CORS headers, so the browser keeps the answer from its page. Preflights
+  are answered before the router; a request without `Origin` (a site's server) costs nothing extra.
+- **Load.** `perf/k6/preview.js` (entry and publish-request scopes, a query, invalid and revoked tokens, an
+  exchange arm), smoke-run in CI at 200/s for 20 s: on a GitHub runner (2026-11-17, branch CI) 225/s, p99 62 ms,
+  no failures — inside the spec's 150 ms budget, but about ten times delivery's cached p99 on the same runner, since
+  every preview read checks its grant and opens as the issuer in two transactions. A runner observation, not a
+  capacity claim. Owed: the full 1M run, the stress run (knee; the failure mode must be the bound's 503) and the
+  mixed run beside `delivery.js`, on a quiet machine.
+- **Not yet.** `depth` over the overlay, locale selection (arrives with gap 2's `?locale=`).
 
 ### Site metadata (spec §06)
 - Sitemaps, feeds and language alternates are generated from a single published generation.

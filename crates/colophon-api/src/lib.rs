@@ -74,6 +74,9 @@ pub fn app(state: AppState, limits: HttpLimits) -> Router {
 /// the served routes and the published contract cannot drift (D-110).
 pub fn routes(state: AppState) -> Router {
     let admission = axum::middleware::from_fn_with_state(state.clone(), admission::admit);
+    // CORS for `/preview/v1` (D-172): outside admission, so a refusal still names the origin
+    // a browser may read it from; preflights are answered here, before the router.
+    let preview_cors = axum::middleware::from_fn_with_state(state.clone(), preview::cors);
     let served = std::sync::Arc::new(openapi::Served::new(&state.build));
     let mut router = Router::new();
     for route in openapi::TABLE {
@@ -90,6 +93,7 @@ pub fn routes(state: AppState) -> Router {
         .fallback(fallback)
         // Rate limits (D-076): inside the error envelope, before any handler does work.
         .layer(admission)
+        .layer(preview_cors)
         .with_state(state)
 }
 

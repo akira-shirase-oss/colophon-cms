@@ -81,7 +81,7 @@
 		<div class="grid gap-2 sm:grid-cols-3">
 			{#each STARTERS as option (option.id)}
 				<label
-					class="flex cursor-pointer flex-col gap-1 rounded-xl border border-border bg-card p-3.5 text-sm shadow-xs transition-colors hover:border-foreground/30 has-checked:border-foreground has-checked:ring-[3px] has-checked:ring-ring/30 has-focus-visible:ring-[3px] has-focus-visible:ring-ring/40"
+					class="flex cursor-pointer flex-col gap-1 rounded-xl border border-border bg-card p-3.5 text-sm transition-colors hover:border-foreground/30 has-checked:border-foreground has-checked:ring-[3px] has-checked:ring-ring/30 has-focus-visible:ring-[3px] has-focus-visible:ring-ring/40"
 				>
 					<span class="flex items-center gap-2">
 						<input

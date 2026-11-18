@@ -58,7 +58,19 @@ through `--version` and `GET /version`.
   one-time code for a 15-minute bearer token and reads `/preview/v1`, which answers
   `/content/v1`'s shapes with the drafts laid over the latest release. Never cached, never
   indexed, re-checked against the issuer on every read, revocable. Set the address with
-  `PUT {P}/preview-target`; the Studio pane and the SDK's site helpers follow.
+  `PUT {P}/preview-target`.
+- Preview in the Studio (D-181): Settings → Website connections → "Preview on your site", and
+  a Preview menu in the entry editor that shows the saved draft on your site side by side or
+  in a new tab, refreshed after each save; a publish request's page previews exactly what it
+  will publish.
+- `/preview/v1` answers CORS for the environment's preview origin, so a static site can read
+  previews from the browser (never with credentials).
+- `colophon preview ENTRY` (or `--changeset ID`) prints a one-time preview address for your
+  site.
+- `@colophon-cms/sdk` preview helpers for your site (D-181): `previewClient`,
+  `createPreviewHandler`, `previewTokenFromRequest`, `previewHeaders`, `exitPreviewHandler` and
+  `listenForDraftUpdates`, with a guide for SvelteKit, Astro and Next.js
+  (`docs/guides/preview.md`).
 - **Secrets from files:** every secret setting also takes `<KEY>_FILE`, a path to a mounted
   secret; the admin commands take `COLOPHON_MIGRATION_DATABASE_URL_FILE` (D-173).
 - **`colophon admin init-roles`:** creates the server's database roles with passwords from

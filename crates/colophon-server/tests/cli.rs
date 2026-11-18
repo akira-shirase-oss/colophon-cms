@@ -405,7 +405,10 @@ async fn the_new_commands_all_have_help_text() {
         let text = String::from_utf8_lossy(&help.stdout);
         assert!(text.contains("Usage:"), "{args:?}: {text}");
     }
-    // A top-level command too — it takes no family prefix.
+    // Top-level commands too — they take no family prefix.
+    let help = colophon(&config, &["preview", "--help"]);
+    assert_eq!(help.status.code(), Some(0), "preview");
+    assert!(String::from_utf8_lossy(&help.stdout).contains("one-time address"));
     let help = colophon(&config, &["mcp", "--help"]);
     assert_eq!(
         help.status.code(),
@@ -1419,4 +1422,105 @@ async fn colophon_mcp_serves_the_stdio_server_in_process() {
         .expect("exits once the host closes stdin")
         .expect("wait");
     assert_eq!(status.code(), Some(0));
+}
+
+/// `colophon preview` (D-171): a signed-in person opens a preview and gets the site's
+/// one-time address; the code in it exchanges once for a token that reads the draft.
+#[tokio::test]
+#[ignore = "needs the stack and scripts/migrate.sh"]
+async fn colophon_preview_prints_a_one_time_address_that_opens_the_draft() {
+    let _server = Server::start().await;
+    let owner = sign_in("dev-owner").await;
+    let slug = unique_slug();
+    let created = call(
+        &owner,
+        Method::POST,
+        "/api/v1/projects",
+        Some(&json!({"slug": slug, "name": "Preview project"})),
+        &[],
+    )
+    .await
+    .expect("request");
+    let project = created.body["data"]["id"]
+        .as_str()
+        .expect("an id")
+        .to_owned();
+    let entry = create_article(&owner, &project, "A draft").await;
+    let config = std::env::temp_dir().join(format!("colophon-cli-{}", uuid::Uuid::now_v7()));
+    let output = login(&config, &owner).await;
+    assert_eq!(
+        output.status.code(),
+        Some(0),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    // No preview address yet: refused in plain words.
+    let refused = colophon(&config, &["preview", &entry, "--project", &slug, "--json"]);
+    assert_ne!(refused.status.code(), Some(0));
+    assert!(
+        String::from_utf8_lossy(&refused.stdout).contains("preview_not_configured")
+            || String::from_utf8_lossy(&refused.stderr).contains("preview address"),
+        "{}{}",
+        String::from_utf8_lossy(&refused.stdout),
+        String::from_utf8_lossy(&refused.stderr)
+    );
+    let target = call(
+        &owner,
+        Method::PUT,
+        &format!("/api/v1/projects/{project}/environments/production/preview-target"),
+        Some(&json!({"url_template": "http://localhost:58099/preview?code={code}&path=/{id}"})),
+        &[],
+    )
+    .await
+    .expect("request");
+    assert_eq!(target.status, StatusCode::OK, "{}", target.body);
+
+    let opened = colophon(
+        &config,
+        &[
+            "preview",
+            &entry,
+            "--project",
+            &slug,
+            "--minutes",
+            "5",
+            "--json",
+        ],
+    );
+    assert_eq!(
+        opened.status.code(),
+        Some(0),
+        "{}",
+        String::from_utf8_lossy(&opened.stderr)
+    );
+    let preview = json_out(&opened)["data"]["preview"].clone();
+    let url = preview["url"].as_str().expect("a url");
+    assert!(
+        url.starts_with("http://localhost:58099/preview?code=cpc_"),
+        "{url}"
+    );
+    assert!(url.ends_with(&format!("&path=/{entry}")), "{url}");
+    let code = preview["code"].as_str().expect("a code");
+    let exchanged = common::app()
+        .post(format!("{ORIGIN}/preview/v1/{project}/production/exchange"))
+        .json(&json!({ "code": code }))
+        .send()
+        .await
+        .expect("request");
+    assert_eq!(exchanged.status(), StatusCode::OK);
+    let token = exchanged.json::<Value>().await.expect("json")["data"]["token"]
+        .as_str()
+        .expect("a token")
+        .to_owned();
+    let read = common::app()
+        .get(format!(
+            "{ORIGIN}/preview/v1/{project}/production/articles/{entry}"
+        ))
+        .bearer_auth(&token)
+        .send()
+        .await
+        .expect("request");
+    assert_eq!(read.status(), StatusCode::OK);
+    let _cleanup = std::fs::remove_dir_all(&config);
 }

@@ -237,7 +237,7 @@
 	<ol class="mb-8 grid grid-cols-4 gap-2" aria-label="Progress">
 		{#each STEPS as step, index (step)}
 			<li class="grid gap-1.5">
-				<span class="h-1 rounded-full {index < reached(shown) ? 'bg-foreground' : 'bg-border'}"></span>
+				<span class="h-1 rounded-full {index < reached(shown) ? 'bg-brand' : 'bg-border'}"></span>
 				<span class="text-xs {index < reached(shown) ? 'text-foreground' : 'text-muted-foreground'}">{step}</span>
 			</li>
 		{/each}

@@ -299,7 +299,7 @@ test('an upload’s details: words saved, a conflict said plainly, its use, a re
 	await expect(sheet.getByTestId('details-state')).toHaveText('Ready');
 	await expect(sheet.getByTestId('details-preview')).toHaveAttribute('src', new RegExp(`/${cover}$`));
 	await expect(sheet.getByTestId('details-users')).toContainText('Harbour story');
-	await expect(sheet.getByTestId('details-users')).toContainText('Published');
+	await expect(sheet.getByTestId('details-users').getByTestId('user-state')).toHaveText('Live');
 	await expect(sheet.getByTestId('details-versions').locator('li')).toHaveCount(1);
 
 	// The words, saved under If-Match.

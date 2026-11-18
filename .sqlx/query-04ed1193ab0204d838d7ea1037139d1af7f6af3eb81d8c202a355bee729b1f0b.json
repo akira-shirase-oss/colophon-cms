@@ -1,0 +1,29 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT t.url_template FROM preview_targets t\n         JOIN environments e ON e.project_id = t.project_id AND e.id = t.environment_id\n         WHERE t.project_id = $1 AND e.slug = $2",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "url_template",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "preview_targets",
+            "name": "url_template"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Text"
+      ]
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "04ed1193ab0204d838d7ea1037139d1af7f6af3eb81d8c202a355bee729b1f0b"
+}

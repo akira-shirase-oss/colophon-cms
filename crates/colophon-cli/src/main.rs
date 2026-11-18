@@ -22,6 +22,7 @@ mod login;
 mod mcp;
 mod migration;
 mod out;
+mod preview;
 mod release;
 mod scope;
 
@@ -135,6 +136,26 @@ enum Command {
     /// List releases and read one release's receipt.
     #[command(subcommand)]
     Release(ReleaseCommand),
+    /// Preview a saved draft (or a publish request) on your own site: prints a one-time address.
+    ///
+    /// The project needs a preview address (Studio → Settings → Website connections). The
+    /// address works once, within a minute; the preview lasts `--minutes`.
+    Preview {
+        #[command(flatten)]
+        scope: InProject,
+        /// The entry's id: its saved draft, with its translations.
+        #[arg(required_unless_present = "changeset", conflicts_with = "changeset")]
+        entry: Option<String>,
+        /// Preview a publish request instead: exactly what it will publish.
+        #[arg(long)]
+        changeset: Option<String>,
+        /// How long the preview lasts, in minutes.
+        #[arg(long, default_value_t = 15, value_parser = clap::value_parser!(u32).range(1..=60))]
+        minutes: u32,
+        /// Print one versioned JSON result instead of text.
+        #[arg(long)]
+        json: bool,
+    },
     /// Plan, inspect and drive content schema migrations.
     #[command(subcommand)]
     Migration(MigrationCommand),
@@ -851,6 +872,26 @@ fn main() -> ExitCode {
         }
         Command::Content(command) => run_content(&runtime, command),
         Command::Release(command) => run_release(&runtime, command),
+        Command::Preview {
+            scope,
+            entry,
+            changeset,
+            minutes,
+            json,
+        } => {
+            let out = out::Out::new("preview", out::Format::of(json, false));
+            let target = match (&entry, &changeset) {
+                (_, Some(changeset)) => preview::Target::Changeset(changeset),
+                (Some(entry), None) => preview::Target::Entry(entry),
+                // clap requires one of the two.
+                (None, None) => return Exit::Usage.into(),
+            };
+            finish(
+                runtime.block_on(preview::open(&scope.scope(), target, minutes, out)),
+                &out,
+            )
+            .into()
+        }
         Command::Migration(command) => run_migration(&runtime, command),
         Command::Comment(command) => run_comment(&runtime, command),
         Command::Task(command) => run_task(&runtime, command),

@@ -6,9 +6,9 @@
 		variants: {
 			orientation: {
 				horizontal:
-					"rounded-full shadow-soft *:shadow-none [&>*:not(:first-child)]:rounded-l-none [&>*:not(:first-child)]:border-l-0 [&>*:not(:last-child)]:rounded-r-none",
+					"rounded-control *:shadow-none [&>*:not(:first-child)]:rounded-l-none [&>*:not(:first-child)]:border-l-0 [&>*:not(:last-child)]:rounded-r-none",
 				vertical:
-					"flex-col rounded-3xl shadow-soft *:shadow-none [&>*:not(:first-child)]:rounded-t-none [&>*:not(:first-child)]:border-t-0 [&>*:not(:last-child)]:rounded-b-none",
+					"flex-col rounded-control *:shadow-none [&>*:not(:first-child)]:rounded-t-none [&>*:not(:first-child)]:border-t-0 [&>*:not(:last-child)]:rounded-b-none",
 			},
 		},
 		defaultVariants: {

@@ -2,7 +2,8 @@
   "extends": "$app/tsconfig",
   "compilerOptions": {
     "strict": true,
-    "noUncheckedIndexedAccess": true
+    "noUncheckedIndexedAccess": true,
+    "paths": { "@colophon-cms/sdk": ["../../packages/sdk/src/index.ts"] }
   },
   "include": ["src", "tests", "vite.config.ts", "playwright.config.ts"]
 }

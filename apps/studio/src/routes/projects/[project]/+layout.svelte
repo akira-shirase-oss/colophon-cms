@@ -1,6 +1,6 @@
 <!--
   A project's shell: the warm-grey sidebar (where things are, how many, what's waiting) around one
-  white page, with breadcrumbs, the command palette (⌘K) and the appearance menu above it. The
+  white page, with breadcrumbs, the command palette (⌘K, or the search button) and the theme toggle above it. The
   sidebar's foot always says what readers have now: the live release and its label.
 -->
 <script lang="ts">
@@ -27,9 +27,10 @@
 	import { getEntry, may, mayAny, SETTINGS_ACTIONS } from '#lib/api.ts';
 	import { rememberProject } from '#lib/lastProject.ts';
 	import { watchProject } from '#lib/live.ts';
+	import { pageWidth } from '#lib/pageWidth.svelte.ts';
 	import { ago, changesetsQuery, entriesQuery, meQuery, projectQuery, releasesQuery, rolesQuery, typesQuery } from '#lib/queries.ts';
 	import AccountMenu from '#lib/shell/AccountMenu.svelte';
-	import AppearanceMenu from '#lib/shell/AppearanceMenu.svelte';
+	import ThemeToggle from '#lib/shell/ThemeToggle.svelte';
 	import CollectionCount from '#lib/shell/CollectionCount.svelte';
 	import CommandPalette from '#lib/shell/CommandPalette.svelte';
 	import Mark from '#lib/shell/Mark.svelte';
@@ -172,7 +173,7 @@
 						<DropdownMenu.Trigger>
 							{#snippet child({ props })}
 								<Sidebar.MenuButton size="lg" {...props} class="data-[state=open]:bg-sidebar-accent">
-									<span class="flex size-8 shrink-0 items-center justify-center rounded-lg border border-sidebar-border bg-background shadow-xs">
+									<span class="flex size-8 shrink-0 items-center justify-center rounded-lg border border-sidebar-border bg-background">
 										<Mark size={16} />
 									</span>
 									<span class="grid min-w-0 flex-1 text-left leading-tight">
@@ -215,12 +216,6 @@
 							{#snippet child({ props })}
 								<a href={resolve('/projects/[project]', { project })} {...props}><LayoutDashboardIcon /><span>Overview</span></a>
 							{/snippet}
-						</Sidebar.MenuButton>
-					</Sidebar.MenuItem>
-					<Sidebar.MenuItem>
-						<Sidebar.MenuButton onclick={() => (searching = true)} tooltipContent="Search">
-							<SearchIcon /><span>Search</span>
-							<kbd class="ml-auto rounded border border-sidebar-border bg-background px-1.5 font-sans text-sm text-muted-foreground">⌘K</kbd>
 						</Sidebar.MenuButton>
 					</Sidebar.MenuItem>
 				</Sidebar.Menu>
@@ -291,7 +286,7 @@
 							{/snippet}
 						</Sidebar.MenuButton>
 						{#if releases.data && releases.data.generation > 0}
-							<Sidebar.MenuBadge class="tabular" title="Release {releases.data.generation} is live">No.&nbsp;{releases.data.generation}</Sidebar.MenuBadge>
+							<Sidebar.MenuBadge class="tabular" title="{releaseName(releases.data.generation)} is live">{releases.data.generation}</Sidebar.MenuBadge>
 						{/if}
 					</Sidebar.MenuItem>
 				</Sidebar.Menu>
@@ -354,7 +349,7 @@
 		</Sidebar.Content>
 
 		<Sidebar.Footer class="group-data-[collapsible=icon]:hidden">
-			<div class="rounded-xl border border-sidebar-border bg-background p-3 shadow-xs" data-testid="live-card">
+			<div class="rounded-xl border border-sidebar-border bg-background p-3" data-testid="live-card">
 				{#if releases.data === undefined}
 					<p class="text-xs text-muted-foreground">Checking what's live…</p>
 				{:else if live === undefined}
@@ -374,7 +369,7 @@
 		</nav>
 	</Sidebar.Root>
 
-	<Sidebar.Inset class="min-w-0 border border-sidebar-border md:peer-data-[variant=inset]:shadow-xs">
+	<Sidebar.Inset class="min-w-0 border border-sidebar-border">
 		<header class="sticky top-0 z-10 flex h-14 shrink-0 items-center gap-2 rounded-t-2xl border-b border-border bg-background/90 px-4 backdrop-blur">
 			<Sidebar.Trigger class="-ml-1 mr-1" aria-label="Toggle sidebar" />
 			<Breadcrumb.Root>
@@ -399,12 +394,17 @@
 				<Button variant="outline" size="sm" class="hidden w-56 justify-start text-muted-foreground sm:flex" onclick={() => (searching = true)}>
 					<SearchIcon />Search<kbd class="ml-auto font-sans text-sm">⌘K</kbd>
 				</Button>
-				<AppearanceMenu />
+				<!-- On a phone the wide button doesn't fit and there is no ⌘K: search is this icon. -->
+				<Button variant="ghost" size="icon-sm" class="sm:hidden" aria-label="Search" onclick={() => (searching = true)}>
+					<SearchIcon aria-hidden="true" />
+				</Button>
+				<ThemeToggle />
 				<AccountMenu />
 			</div>
 		</header>
 		{#key page.url.pathname}
-			<div class="page-enter mx-auto w-full max-w-6xl flex-1 px-5 py-8 sm:px-8 lg:px-10">
+			<!-- The entry editor beside its site preview takes the whole width (pageWidth). -->
+			<div class="page-enter mx-auto w-full {pageWidth.wide ? 'max-w-none' : 'max-w-6xl'} flex-1 px-5 py-8 sm:px-8 lg:px-10">
 				{@render children()}
 			</div>
 		{/key}

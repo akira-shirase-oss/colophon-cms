@@ -143,7 +143,7 @@
 <div class="grid gap-6" data-testid="component-builder">
 	<header class="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
 		<div class="min-w-0 space-y-1.5">
-			<h1 class="text-2xl leading-tight font-semibold tracking-tight text-balance sm:text-[1.75rem]">{draft.name.trim() || saved.name}</h1>
+			<h1 class="page-title">{draft.name.trim() || saved.name}</h1>
 			<p class="flex flex-wrap items-center gap-x-3 gap-y-1 text-sm text-muted-foreground">
 				<Badge variant="secondary">Shared component</Badge>
 				<span>{draft.fields.length} field{draft.fields.length === 1 ? '' : 's'}</span>

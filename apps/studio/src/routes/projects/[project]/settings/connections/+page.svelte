@@ -22,6 +22,7 @@
 	import EmptyState from '#lib/shell/EmptyState.svelte';
 	import PageHeader from '#lib/shell/PageHeader.svelte';
 	import Problem from '#lib/shell/Problem.svelte';
+	import PreviewTargetCard from '#lib/PreviewTargetCard.svelte';
 	import { CONNECTION_KIND } from '#lib/words.ts';
 
 	const project = $derived(page.params.project ?? '');
@@ -141,6 +142,11 @@
 				</li>
 			{/each}
 		</ul>
+	{/if}
+
+	<!-- Where editors' draft previews open (D-181): every member who reads content sees it. -->
+	{#if mine.isSuccess}
+		<PreviewTargetCard {project} {manages} />
 	{/if}
 </SettingsFrame>
 
