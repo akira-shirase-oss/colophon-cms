@@ -124,6 +124,16 @@ install_release() {
     log "v$version is already current and ready"; return 0
   fi
 
+  # A database migrated by a newer binary than this one is refused: serving it would be guessing.
+  # (--rollback is the deliberate exception: forward-compatible for one release.)
+  if [[ -s $CREDS/migration_database_url ]]; then
+    local schema
+    schema=$("$release/bin/colophon" admin migrate-status --database-url-file "$CREDS/migration_database_url" --json 2>/dev/null || true)
+    if [[ "$(jq -r '.data.status // empty' <<<"$schema" 2>/dev/null)" == unknown ]]; then
+      die "the database has migrations v$version doesn't know ($(jq -r '.data.unknown | join(", ")' <<<"$schema")): a newer build migrated it; refusing to switch to an older one (use --rollback for the one release you came from)"
+    fi
+  fi
+
   # The new binary migrates while the old one serves (forward-compatible for one release).
   if [[ -s $CREDS/migration_database_url ]]; then
     log "migrating with v$version (D-202's lock_timeout and retry not in yet)"
