@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "SELECT s.id, s.changeset_id, c.title, s.changeset_hash, s.local_time, s.time_zone,\n                  s.choice, s.run_at, s.state, s.reason, s.generation, s.started_at, s.finished_at,\n                  s.scheduled_by, i.display_name AS scheduled_by_name, s.created_at\n           FROM schedules s\n           JOIN changesets c ON c.project_id = s.project_id AND c.environment_id = s.environment_id\n                            AND c.id = s.changeset_id\n           JOIN identities i ON i.id = s.scheduled_by\n           WHERE s.project_id = $1 AND s.environment_id = $2 AND s.id = $3",
+  "query": "SELECT s.id, s.changeset_id,\n                  (SELECT c.title FROM changesets c\n                   WHERE c.project_id = s.project_id AND c.environment_id = s.environment_id\n                     AND c.id = s.changeset_id) AS \"title!\",\n                  s.changeset_hash, s.local_time, s.time_zone, s.choice, s.run_at, s.state,\n                  s.reason, s.generation, s.started_at, s.finished_at, s.scheduled_by,\n                  (SELECT i.display_name FROM identities i WHERE i.id = s.scheduled_by)\n                      AS scheduled_by_name,\n                  s.created_at\n           FROM schedules s\n           WHERE s.project_id = $1 AND s.environment_id = $2 AND s.id = $3",
   "describe": {
     "columns": [
       {
@@ -27,14 +27,9 @@
       },
       {
         "ordinal": 2,
-        "name": "title",
+        "name": "title!",
         "type_info": "Text",
-        "origin": {
-          "Table": {
-            "table": "changesets",
-            "name": "title"
-          }
-        }
+        "origin": "Expression"
       },
       {
         "ordinal": 3,
@@ -161,12 +156,7 @@
         "ordinal": 14,
         "name": "scheduled_by_name",
         "type_info": "Text",
-        "origin": {
-          "Table": {
-            "table": "identities",
-            "name": "display_name"
-          }
-        }
+        "origin": "Expression"
       },
       {
         "ordinal": 15,
@@ -190,7 +180,7 @@
     "nullable": [
       false,
       false,
-      false,
+      null,
       false,
       false,
       false,
@@ -202,9 +192,9 @@
       true,
       true,
       false,
-      true,
+      null,
       false
     ]
   },
-  "hash": "5cf8b44f5652253fcda60f23478bb654cc54f1fb47d4b61528147ea3d5547572"
+  "hash": "009428291f605d2ce5b7e9068797718be92c8f4dde392e2e492a883a4e259892"
 }
