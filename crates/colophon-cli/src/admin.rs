@@ -461,10 +461,49 @@ struct S3Settings {
 fn s3_settings(lookup: impl Fn(&str) -> Option<String>) -> Result<S3Settings, String> {
     let setting = |name: &str| lookup(name).ok_or_else(|| format!("{name} is not set"));
     let endpoint = setting("COLOPHON_S3_ENDPOINT")?;
-    // As today: plain HTTP for any http:// endpoint.
-    let allow_http = endpoint.starts_with("http://");
-    // As today: the secret from the environment only.
-    let secret_key = setting("COLOPHON_S3_SECRET_KEY")?;
+    let parsed = reqwest::Url::parse(&endpoint)
+        .map_err(|_| format!("COLOPHON_S3_ENDPOINT: cannot parse {endpoint:?}"))?;
+    let allow_http = match parsed.scheme() {
+        "https" => false,
+        "http" => {
+            let loopback = parsed.host_str().is_some_and(|host| {
+                host == "localhost"
+                    || host.ends_with(".localhost")
+                    || host
+                        .trim_start_matches('[')
+                        .trim_end_matches(']')
+                        .parse::<std::net::IpAddr>()
+                        .is_ok_and(|ip| ip.is_loopback())
+            });
+            if !loopback {
+                return Err(
+                    "COLOPHON_S3_ENDPOINT may be plain HTTP only for a loopback address".to_owned(),
+                );
+            }
+            true
+        }
+        other => return Err(format!("COLOPHON_S3_ENDPOINT: unsupported scheme {other:?}")),
+    };
+    let secret_key = match (
+        lookup("COLOPHON_S3_SECRET_KEY"),
+        lookup("COLOPHON_S3_SECRET_KEY_FILE"),
+    ) {
+        (Some(_), Some(_)) => {
+            return Err(
+                "COLOPHON_S3_SECRET_KEY and COLOPHON_S3_SECRET_KEY_FILE are both set: use one"
+                    .to_owned(),
+            );
+        }
+        (Some(value), None) => value,
+        (None, Some(path)) => read_secret_file(std::path::Path::new(&path))
+            .map_err(|problem| format!("COLOPHON_S3_SECRET_KEY_FILE: {path}: {problem}"))?,
+        (None, None) => {
+            return Err(
+                "COLOPHON_S3_SECRET_KEY is not set (or COLOPHON_S3_SECRET_KEY_FILE, a file holding it)"
+                    .to_owned(),
+            );
+        }
+    };
     Ok(S3Settings {
         endpoint,
         allow_http,
