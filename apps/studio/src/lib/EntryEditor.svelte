@@ -1136,6 +1136,16 @@
 	{/snippet}
 </PreviewSplit>
 
+<!-- Escape closes the drawer wherever the focus is — after posting, the focus may have left it —
+     unless a menu or a modal dialog is open, whose own Escape comes first. -->
+<svelte:window
+	onkeydown={(event) => {
+		if (event.key !== 'Escape' || !commentsOpen || event.defaultPrevented) return;
+		if (document.querySelector('[role="menu"], [role="alertdialog"], [role="dialog"][aria-modal="true"]') !== null) return;
+		void openComments(false);
+	}}
+/>
+
 <!-- Comments beside the content (D-184): a drawer that leaves the text in view. Kept mounted, so
      the count on its button is right before it is opened. -->
 <div

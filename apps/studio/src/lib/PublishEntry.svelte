@@ -118,10 +118,23 @@
 	const nextRelease = $derived(seenGeneration === undefined ? 'the next release' : releaseName(seenGeneration + 1));
 
 	let confirming = $state(false);
+	let keep = $state<HTMLButtonElement | null>(null);
 
 	/** Publishes the saved version, or with `unpublish`, takes the live one down: the same path,
 	 *  a request whose one item unpublishes (D-049). Publishing it again puts it back. */
 	async function go(unpublish = false) {
+		// One attempt at a time, decided before anything awaits: a double click is one request.
+		if (going) return;
+		going = true;
+		try {
+			await attempt(unpublish);
+		} finally {
+			going = false;
+		}
+	}
+	let going = false;
+
+	async function attempt(unpublish: boolean) {
 		result = null;
 		const acting = revision;
 		const done = await publishInOneClick({
@@ -202,7 +215,8 @@
 			<DropdownMenu.Trigger class={buttonVariants({ variant: 'secondary', size: 'icon' })} aria-label="More actions" title="More actions" data-testid="more-menu">
 				<EllipsisIcon />
 			</DropdownMenu.Trigger>
-			<DropdownMenu.Content align="end" class="w-56">
+			<!-- Inside the page's main landmark, so a screen reader's landmarks still hold it. -->
+			<DropdownMenu.Content align="end" class="w-56" portalProps={{ to: 'main' }}>
 				{#if published || outcome?.kind === 'published'}
 					<DropdownMenu.Item onSelect={oncopy} data-testid="copy-public-link"><LinkIcon />Copy public link</DropdownMenu.Item>
 				{/if}
@@ -252,7 +266,14 @@
 </div>
 
 <AlertDialog.Root bind:open={confirming}>
-	<AlertDialog.Content data-testid="unpublish-dialog">
+	<AlertDialog.Content
+		data-testid="unpublish-dialog"
+		onOpenAutoFocus={(event) => {
+			// Keeping it live is the default: the focus starts there, not on the red button.
+			event.preventDefault();
+			keep?.focus();
+		}}
+	>
 		<AlertDialog.Header>
 			<AlertDialog.Title>{oneClick ? `Take “${named}” off your site?` : `Ask to take “${named}” off your site?`}</AlertDialog.Title>
 			<AlertDialog.Description>
@@ -272,8 +293,17 @@
 			</p>
 		{/if}
 		<AlertDialog.Footer>
-			<AlertDialog.Cancel data-testid="keep-it-live">Keep it live</AlertDialog.Cancel>
-			<AlertDialog.Action variant="destructive" onclick={() => go(true)} data-testid="unpublish-confirm">
+			<AlertDialog.Cancel bind:ref={keep} data-testid="keep-it-live">Keep it live</AlertDialog.Cancel>
+			<AlertDialog.Action
+				variant="destructive"
+				onclick={() => {
+					// The action doesn't close the dialog by itself; close it first, so its overlay
+					// never sits over the toast that follows, and a second click finds nothing.
+					confirming = false;
+					void go(true);
+				}}
+				data-testid="unpublish-confirm"
+			>
 				{linkedLive.length > 0 ? 'Try anyway' : oneClick ? 'Unpublish' : 'Ask to unpublish'}
 			</AlertDialog.Action>
 		</AlertDialog.Footer>

@@ -752,3 +752,300 @@ async fn a_gated_entry_comes_back_gated() {
     let body: Value = list.json().await.expect("json");
     assert_eq!(body["data"], json!([]), "{body}");
 }
+
+/// An undo is a publish, so it shares publishing's idempotency scope (D-184): one key names one
+/// request, and sending it for the other is refused, either way round.
+#[tokio::test]
+#[ignore = "needs the stack and scripts/migrate.sh"]
+async fn a_key_used_for_a_publish_cannot_name_an_undo_or_the_reverse() {
+    let _server = Server::start().await;
+    let owner = sign_in("dev-owner").await;
+    let project = project(&owner).await;
+    let entry = new_article(&owner, &project, &article("Keys", "text")).await;
+    publish(&owner, &project, &entry).await;
+    // A takedown published with a key of our own, then an undo sent with that same key.
+    let made = send(
+        &owner,
+        Method::POST,
+        &format!("{}/changesets", base(&project)),
+        Some(&json!({"title": "Down", "unpublish": [entry]})),
+        &[("idempotency-key", &key())],
+    )
+    .await;
+    let path = format!(
+        "{}/changesets/{}",
+        base(&project),
+        made.body["data"]["id"].as_str().expect("an id")
+    );
+    let if_match = format!(
+        "\"{}\"",
+        made.body["data"]["hash"].as_str().expect("a hash")
+    );
+    send(
+        &owner,
+        Method::POST,
+        &format!("{path}/submit"),
+        None,
+        &[("if-match", &if_match)],
+    )
+    .await;
+    send(
+        &owner,
+        Method::POST,
+        &format!("{path}/reviews"),
+        Some(&json!({"decision": "approve"})),
+        &[("if-match", &if_match)],
+    )
+    .await;
+    let shared = key();
+    let published = send(
+        &owner,
+        Method::POST,
+        &format!("{path}/publish"),
+        Some(&json!({"base_generation": 1})),
+        &[("if-match", &if_match), ("idempotency-key", &shared)],
+    )
+    .await;
+    assert_eq!(published.status, StatusCode::CREATED, "{}", published.body);
+    let reused = undo(&owner, &project, "2", &shared).await;
+    assert_eq!(reason(&reused), "idempotency_key_reused", "{}", reused.body);
+    assert!(!reused.replayed());
+    // The reverse: an undo's key, then a publish sent with it.
+    let undo_key = key();
+    assert_eq!(
+        undo(&owner, &project, "2", &undo_key).await.status,
+        StatusCode::CREATED
+    );
+    let other = new_article(&owner, &project, &article("Other", "text")).await;
+    let made = send(
+        &owner,
+        Method::POST,
+        &format!("{}/changesets", base(&project)),
+        Some(&json!({"title": "Other", "entries": [other]})),
+        &[("idempotency-key", &key())],
+    )
+    .await;
+    let path = format!(
+        "{}/changesets/{}",
+        base(&project),
+        made.body["data"]["id"].as_str().expect("an id")
+    );
+    let if_match = format!(
+        "\"{}\"",
+        made.body["data"]["hash"].as_str().expect("a hash")
+    );
+    send(
+        &owner,
+        Method::POST,
+        &format!("{path}/submit"),
+        None,
+        &[("if-match", &if_match)],
+    )
+    .await;
+    send(
+        &owner,
+        Method::POST,
+        &format!("{path}/reviews"),
+        Some(&json!({"decision": "approve"})),
+        &[("if-match", &if_match)],
+    )
+    .await;
+    let refused = send(
+        &owner,
+        Method::POST,
+        &format!("{path}/publish"),
+        Some(&json!({"base_generation": 3})),
+        &[("if-match", &if_match), ("idempotency-key", &undo_key)],
+    )
+    .await;
+    assert_eq!(
+        reason(&refused),
+        "idempotency_key_reused",
+        "{}",
+        refused.body
+    );
+    assert_eq!(latest(&owner, &project).await, 3);
+}
+
+/// The lock order, deterministically (D-131, D-135): an undo takes publishing's admission pair
+/// before any lock on the environment row. A third session holding the project's admission lock
+/// makes the undo wait — and while it waits, that session can still lock the environment row
+/// without waiting (`NOWAIT`), which it couldn't if the undo had taken the row first. Reordering
+/// the undo's locks fails here every time, not one race in a hundred.
+#[tokio::test]
+#[ignore = "needs the stack and scripts/migrate.sh"]
+async fn an_undo_waits_for_the_admission_lock_before_touching_the_environment_row() {
+    let _server = Server::start().await;
+    let owner = sign_in("dev-owner").await;
+    let project = project(&owner).await;
+    let entry = new_article(&owner, &project, &article("Locks", "text")).await;
+    publish(&owner, &project, &entry).await;
+    let down = take_down(&owner, &project, &entry).await;
+
+    let database = common::owner_database().await;
+    let mut third = database.begin().await.expect("a transaction");
+    // `colophon_db::work::lock`'s key: class "WA", the project id's text hash.
+    sqlx::query("SELECT pg_advisory_xact_lock(22337, hashtext($1::text))")
+        .bind(&project)
+        .execute(&mut *third)
+        .await
+        .expect("hold the admission lock");
+    let waiting = tokio::spawn({
+        let owner = owner.clone();
+        let project = project.clone();
+        async move { undo(&owner, &project, &down.to_string(), &key()).await }
+    });
+    tokio::time::sleep(std::time::Duration::from_millis(1500)).await;
+    assert!(
+        !waiting.is_finished(),
+        "the undo didn't wait for the admission lock"
+    );
+    let row = sqlx::query(
+        "SELECT 1 FROM environments WHERE project_id = $1::uuid FOR NO KEY UPDATE NOWAIT",
+    )
+    .bind(&project)
+    .execute(&mut *third)
+    .await;
+    assert!(
+        row.is_ok(),
+        "the waiting undo already holds a lock on the environment row: {row:?}"
+    );
+    third.commit().await.expect("release");
+    let done = waiting.await.expect("the undo task");
+    assert_eq!(done.status, StatusCode::CREATED, "{}", done.body);
+}
+
+/// Races, repeated (`UNDO_RACE_ROUNDS`, 20 by default): two undos of one takedown, and an undo
+/// against another person's publish on the same base. Every round has exactly one winner and the
+/// loser is refused by name — never a 500 or a deadlock. The counts are printed.
+#[tokio::test]
+#[ignore = "needs the stack and scripts/migrate.sh"]
+#[expect(
+    clippy::too_many_lines,
+    reason = "two races in one loop, counted the same way"
+)]
+async fn races_repeated_always_have_one_winner_and_a_named_loser() {
+    let rounds: usize = std::env::var("UNDO_RACE_ROUNDS")
+        .ok()
+        .and_then(|value| value.parse().ok())
+        .unwrap_or(20);
+    let _server = Server::start().await;
+    let owner = sign_in("dev-owner").await;
+    let other = sign_in("dev-editor").await;
+    let project = project(&owner).await;
+    join(&owner, &other, &project, "publisher").await;
+    let entry = new_article(&owner, &project, &article("Raced", "text")).await;
+    publish(&owner, &project, &entry).await;
+    let mut tally: std::collections::BTreeMap<String, usize> = std::collections::BTreeMap::new();
+    let mut note = |race: &str, reply: &Reply| {
+        let what = if reply.status == StatusCode::CREATED {
+            "won".to_owned()
+        } else {
+            format!(
+                "{} {}",
+                reply.status.as_u16(),
+                reason(reply).as_str().unwrap_or("-")
+            )
+        };
+        *tally.entry(format!("{race}: {what}")).or_default() += 1;
+    };
+    for round in 0..rounds {
+        // Undo against undo.
+        let down = take_down(&owner, &project, &entry).await;
+        let (taken, a, b) = (down.to_string(), key(), key());
+        let (left, right) = tokio::join!(
+            undo(&owner, &project, &taken, &a),
+            undo(&owner, &project, &taken, &b)
+        );
+        note("undo vs undo", &left);
+        note("undo vs undo", &right);
+        let wins = [&left, &right]
+            .iter()
+            .filter(|r| r.status == StatusCode::CREATED)
+            .count();
+        assert_eq!(wins, 1, "round {round}: {} / {}", left.body, right.body);
+
+        // Undo against another person's publish on the same base.
+        let down = take_down(&owner, &project, &entry).await;
+        let fresh = new_article(
+            &other,
+            &project,
+            &article(&format!("Fresh {round}"), "text"),
+        )
+        .await;
+        let made = send(
+            &other,
+            Method::POST,
+            &format!("{}/changesets", base(&project)),
+            Some(&json!({"title": "Fresh", "entries": [fresh]})),
+            &[("idempotency-key", &key())],
+        )
+        .await;
+        let path = format!(
+            "{}/changesets/{}",
+            base(&project),
+            made.body["data"]["id"].as_str().expect("an id")
+        );
+        let if_match = format!(
+            "\"{}\"",
+            made.body["data"]["hash"].as_str().expect("a hash")
+        );
+        send(
+            &other,
+            Method::POST,
+            &format!("{path}/submit"),
+            None,
+            &[("if-match", &if_match)],
+        )
+        .await;
+        send(
+            &other,
+            Method::POST,
+            &format!("{path}/reviews"),
+            Some(&json!({"decision": "approve"})),
+            &[("if-match", &if_match)],
+        )
+        .await;
+        let (taken, undo_key, publish_key) = (down.to_string(), key(), key());
+        let (publish_path, publish_body) =
+            (format!("{path}/publish"), json!({"base_generation": down}));
+        let publish_headers = [
+            ("if-match", if_match.as_str()),
+            ("idempotency-key", publish_key.as_str()),
+        ];
+        let (undone, published) = tokio::join!(
+            undo(&owner, &project, &taken, &undo_key),
+            send(
+                &other,
+                Method::POST,
+                &publish_path,
+                Some(&publish_body),
+                &publish_headers
+            )
+        );
+        note("undo vs publish (undo)", &undone);
+        note("undo vs publish (publish)", &published);
+        let wins = [&undone, &published]
+            .iter()
+            .filter(|r| r.status == StatusCode::CREATED)
+            .count();
+        assert_eq!(
+            wins, 1,
+            "round {round}: {} / {}",
+            undone.body, published.body
+        );
+        // Whichever lost, the entry must be live for the next round's takedown.
+        if undone.status != StatusCode::CREATED {
+            publish(&owner, &project, &entry).await;
+        }
+    }
+    println!("{rounds} rounds: {tally:?}");
+    for (outcome, count) in &tally {
+        assert!(
+            outcome.ends_with("won")
+                || outcome.ends_with("409 changed_since")
+                || outcome.ends_with("409 generation_moved"),
+            "{outcome} x{count}"
+        );
+    }
+}

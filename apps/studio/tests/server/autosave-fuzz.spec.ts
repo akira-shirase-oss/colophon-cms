@@ -77,14 +77,16 @@ for (const seed of [11, 42, 2026]) {
 				const which = Math.floor(next() * 5);
 				steps.push(`command ${which}`);
 				await command(page, which);
-				// Commands move focus to the editor themselves; type straight on, as people do.
+				// Type on once the caret is back in the text, as a person does: keys pressed while
+				// a menu still holds the focus belong to the menu, not to the text.
+				await expect(body).toBeFocused();
 			}
 		}
 		await expect(page.getByTestId('save-status')).toHaveAttribute('data-status', 'saved', { timeout: 60_000 });
 		const shown = (await body.innerText()).replace(/\s+/g, ' ');
 		const stored = await api(page, 'GET', `${env(project)}/collections/articles/entries/${entry}`);
-		const saved = texts(stored.body?.['data'].content.body).join(' ').replace(/\s+/g, ' ');
-		const trail = `seed ${seed}: ${steps.join(', ')}`;
+		const saved = texts(stored.body?.['data'].content.body?.doc).join(' ').replace(/\s+/g, ' ');
+		const trail = `seed ${seed}: ${steps.join(', ')}\nscreen: ${shown}\nsaved: ${saved}`;
 		let shownAt = -1;
 		let savedAt = -1;
 		for (const word of words) {
