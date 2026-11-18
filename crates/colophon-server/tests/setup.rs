@@ -29,6 +29,40 @@ use sqlx::AssertSqlSafe;
 struct FreshDatabase {
     name: String,
     admin: sqlx::PgPool,
+    /// True once [`FreshDatabase::drop`] has dropped it; until then, `Drop` does (a failed or
+    /// panicking test leaves no `colophon_setup_*` database behind).
+    dropped: bool,
+}
+
+impl Drop for FreshDatabase {
+    fn drop(&mut self) {
+        if self.dropped {
+            return;
+        }
+        // Dropping can't await, and the test's runtime may be the one unwinding: a thread and a
+        // small runtime of its own run the DROP.
+        let name = self.name.clone();
+        let admin = format!("{}postgres", server_url("COLOPHON_MIGRATION_DATABASE_URL"));
+        let dropped = std::thread::spawn(move || {
+            let runtime = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .expect("invariant: a current-thread runtime builds");
+            runtime.block_on(async move {
+                let pool = sqlx::PgPool::connect(&admin).await?;
+                // Generated from a UUID by `new`, never input.
+                sqlx::query(AssertSqlSafe(format!("DROP DATABASE IF EXISTS {name} WITH (FORCE)")))
+                    .execute(&pool)
+                    .await?;
+                pool.close().await;
+                Ok::<(), sqlx::Error>(())
+            })
+        })
+        .join();
+        if !matches!(dropped, Ok(Ok(()))) {
+            eprintln!("warning: couldn't drop {}; the next run's sweep will", self.name);
+        }
+    }
 }
 
 /// `postgres://user:password@host/` from the stack's migration URL.
@@ -55,17 +89,18 @@ impl FreshDatabase {
             .execute(&admin)
             .await
             .expect("create database");
-        let owner = sqlx::PgPool::connect(&format!(
-            "{}{name}",
-            server_url("COLOPHON_MIGRATION_DATABASE_URL")
-        ))
-        .await
-        .expect("connect as owner");
+        // Owned from here on, so even a failed migration below doesn't leave the database behind.
+        let database = Self {
+            name,
+            admin,
+            dropped: false,
+        };
+        let owner = database.owner().await;
         colophon_db::migrate(&owner)
             .await
             .expect("migrations apply");
         owner.close().await;
-        Self { name, admin }
+        database
     }
 
     fn url(&self, key: &str) -> String {
@@ -78,7 +113,7 @@ impl FreshDatabase {
             .expect("connect as owner")
     }
 
-    async fn drop(self) {
+    async fn drop(mut self) {
         sqlx::query(AssertSqlSafe(format!(
             "DROP DATABASE {} WITH (FORCE)",
             self.name
@@ -86,6 +121,7 @@ impl FreshDatabase {
         .execute(&self.admin)
         .await
         .expect("drop database");
+        self.dropped = true;
     }
 }
 

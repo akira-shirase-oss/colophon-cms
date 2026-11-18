@@ -18,6 +18,62 @@ pub(crate) fn host() -> String {
     std::env::var("COLOPHON_TEST_PG_HOST").unwrap_or_else(|_| "127.0.0.1:55432".to_owned())
 }
 
+/// A database a test made, dropped when this is dropped: at the end of the test, and also when
+/// the test fails or panics halfway, so no `colophon_test_*` database is left on the stack.
+/// Dropping can't await, so the DROP runs on a thread of its own with a small runtime (the test's
+/// own runtime may be the one unwinding). [`DropGuard::disarm`] after an explicit drop.
+pub(crate) struct DropGuard {
+    name: String,
+    armed: bool,
+}
+
+impl DropGuard {
+    pub(crate) fn new(name: impl Into<String>) -> Self {
+        Self {
+            name: name.into(),
+            armed: true,
+        }
+    }
+
+    pub(crate) fn disarm(&mut self) {
+        self.armed = false;
+    }
+}
+
+impl Drop for DropGuard {
+    fn drop(&mut self) {
+        if !self.armed {
+            return;
+        }
+        let name = self.name.clone();
+        let dropped = std::thread::spawn(move || {
+            let runtime = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .expect("invariant: a current-thread runtime builds");
+            runtime.block_on(async move {
+                let admin = PgPool::connect(&format!(
+                    "postgres://colophon:colophon-dev@{}/postgres",
+                    host()
+                ))
+                .await?;
+                // The name was generated from a UUID by the test helpers, never from input.
+                sqlx::query(AssertSqlSafe(format!(
+                    "DROP DATABASE IF EXISTS {name} WITH (FORCE)"
+                )))
+                .execute(&admin)
+                .await?;
+                admin.close().await;
+                Ok::<(), sqlx::Error>(())
+            })
+        })
+        .join();
+        if !matches!(dropped, Ok(Ok(()))) {
+            eprintln!("warning: couldn't drop the test database {}; the next run's sweep will", self.name);
+        }
+    }
+}
+
 pub(crate) struct TestDb {
     /// A pool on the `postgres` database: schema-level work like CREATE DATABASE a sibling.
     pub(crate) admin: PgPool,
@@ -25,6 +81,8 @@ pub(crate) struct TestDb {
     pub(crate) name: String,
     /// The application login's pool: one connection, reused as pooled requests reuse them.
     pub(crate) app: PgPool,
+    /// Drops the database if the test ends without [`TestDb::drop`] (a failure, a panic).
+    guard: DropGuard,
 }
 
 impl TestDb {
@@ -39,6 +97,8 @@ impl TestDb {
             .execute(&admin)
             .await
             .expect("create database");
+        // From here on, however the test ends, the database goes with it.
+        let guard = DropGuard::new(&name);
         let owner = PgPool::connect(&format!("postgres://colophon:colophon-dev@{host}/{name}"))
             .await
             .expect("connect as owner");
@@ -54,7 +114,12 @@ impl TestDb {
             ))
             .await
             .expect("connect as the application login");
-        Self { admin, name, app }
+        Self {
+            admin,
+            name,
+            app,
+            guard,
+        }
     }
 
     /// A pool for the table owner, which row-level security doesn't apply to.
@@ -81,7 +146,7 @@ impl TestDb {
             .expect("connect as the application login")
     }
 
-    pub(crate) async fn drop(self) {
+    pub(crate) async fn drop(mut self) {
         self.app.close().await;
         sqlx::query(AssertSqlSafe(format!(
             "DROP DATABASE {} WITH (FORCE)",
@@ -90,6 +155,7 @@ impl TestDb {
         .execute(&self.admin)
         .await
         .expect("drop database");
+        self.guard.disarm();
     }
 
     /// A `LISTEN` connection on the application login, for the change-hint tests (D-108).

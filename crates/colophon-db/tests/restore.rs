@@ -133,6 +133,8 @@ async fn a_restored_backup_gets_a_new_epoch_and_a_held_outbox() {
     .execute(&db.admin)
     .await
     .expect("the backup clone");
+    // Dropped however the test ends (a failed assertion below included).
+    let mut backup_guard = common::DropGuard::new(&backup);
     let restored = PgPoolOptions::new()
         .max_connections(2)
         .connect(&format!(
@@ -213,5 +215,6 @@ async fn a_restored_backup_gets_a_new_epoch_and_a_held_outbox() {
     .execute(&db.admin)
     .await
     .expect("drop the backup");
+    backup_guard.disarm();
     db.drop().await;
 }
