@@ -3,6 +3,9 @@
 # an upgrade in under 2 minutes with under ~5 s unavailable, a rollback in under 1 minute.
 #
 #   sudo upgrade.sh <version>       install that release and switch to it (install.sh calls this)
+#   sudo upgrade.sh --channel edge  the newest build of main (D-211): provenance verified (edge.yml
+#                                   on refs/heads/main of this repository), every file against
+#                                   SHA256SUMS, EDGE's commit equal to the attested one
 #   sudo upgrade.sh --rollback      switch back to the release before the current one
 #   sudo upgrade.sh --status        which releases are here and which one is current
 #   sudo upgrade.sh --fetch <version>   verify and unpack only (install.sh, before the service exists)
@@ -24,8 +27,13 @@
 # path or file:// URL for a rehearsal). UPGRADE_NO_VERSION_CHECK=1, for rehearsals only, skips the
 # check that /version reports the version just installed. The last 3 releases are kept.
 set -euo pipefail
-ROOT=/opt/colophon
+ROOT="${COLOPHON_ROOT:-/opt/colophon}"
 BASE="${COLOPHON_RELEASE_BASE:-https://github.com/akira-shirase-oss/colophon-cms/releases/download}"
+# The edge channel's provenance pins (D-211): this repository, edge.yml, and main only.
+REPO=akira-shirase-oss/colophon-cms
+EDGE_WORKFLOW=$REPO/.github/workflows/edge.yml
+EDGE_REF=refs/heads/main
+TESTING="${COLOPHON_UPGRADE_TEST:-0}"   # scripts/tests only: no root, no systemd, no /usr/local links
 CREDS=/etc/colophon/credentials
 LOCAL=http://127.0.0.1:58000
 KEEP=3
@@ -33,20 +41,46 @@ here=$(cd "$(dirname "$0")" && pwd)
 
 log() { printf '%s  %s\n' "$(date -u +%H:%M:%S)" "$*"; }
 die() { log "error: $*" >&2; exit 1; }
-[[ $EUID -eq 0 ]] || die "run as root"
+[[ $EUID -eq 0 || "$TESTING" == 1 ]] || die "run as root"
 
 arch() {
   case "$(uname -m)" in x86_64) echo x86_64 ;; aarch64 | arm64) echo aarch64 ;; *) die "unsupported machine $(uname -m)" ;; esac
 }
 
-# fetch <file> <dest-dir>: from the release base, by version.
+# fetch <file> <dest-dir> <tag>: one asset of a release (tag v<version>, or edge).
 fetch() {
-  local file=$1 dest=$2 version=$3
+  local file=$1 dest=$2 tag=$3
   case "$BASE" in
-    http://* | https://*) curl -fsSL --retry 3 --max-time 120 -o "$dest/$file" "$BASE/v$version/$file" ;;
-    file://*) cp "${BASE#file://}/v$version/$file" "$dest/$file" ;;
-    *) cp "$BASE/v$version/$file" "$dest/$file" ;;
+    http://* | https://*) curl -fsSL --retry 3 --max-time 120 -o "$dest/$file" "$BASE/$tag/$file" ;;
+    file://*) cp "${BASE#file://}/$tag/$file" "$dest/$file" ;;
+    *) cp "$BASE/$tag/$file" "$dest/$file" ;;
   esac
+}
+
+# sums_cover <dir> <file>...: each file matches its line in SHA256SUMS (and has one).
+sums_cover() {
+  local dir=$1 f; shift
+  for f in "$@"; do
+    grep -qE " [*]?$f\$" "$dir/SHA256SUMS" || { why="SHA256SUMS has no line for $f"; return 1; }
+  done
+  (cd "$dir" && for f in "$@"; do grep -E " [*]?$f\$" SHA256SUMS; done | sha256sum -c --quiet - >/dev/null 2>&1) \
+    || { why="a file doesn't match SHA256SUMS (tampered, or two builds' files mixed)"; return 1; }
+}
+
+# verify_edge <dir> <server> <cli> <studio>: the provenance of SHA256SUMS (edge.yml on main, this
+# repository), every file against SHA256SUMS (EDGE included), and EDGE's commit equal to the
+# attested one. Sets EDGE_COMMIT; on failure, `why`.
+verify_edge() {
+  local dir=$1 out commit; shift
+  [[ -s "$dir/SHA256SUMS.intoto.jsonl" ]] || { why="no provenance bundle (SHA256SUMS.intoto.jsonl)"; return 1; }
+  out=$(gh attestation verify "$dir/SHA256SUMS" --bundle "$dir/SHA256SUMS.intoto.jsonl" --repo "$REPO" \
+    --signer-workflow "$EDGE_WORKFLOW" --source-ref "$EDGE_REF" --format json 2>/dev/null) \
+    || { why="the provenance doesn't verify (not edge.yml on $EDGE_REF of $REPO)"; return 1; }
+  commit=$(jq -r '.[0].verificationResult.signature.certificate.sourceRepositoryDigest // empty' <<<"$out" 2>/dev/null)
+  [[ "$commit" =~ ^[0-9a-f]{40}$ ]] || { why="the attestation names no source commit"; return 1; }
+  sums_cover "$dir" EDGE "$@" || return 1
+  [[ "$(tr -d ' \n' <"$dir/EDGE")" == "$commit" ]] || { why="EDGE names $(tr -d ' \n' <"$dir/EDGE"), the attestation $commit (two builds mixed)"; return 1; }
+  EDGE_COMMIT=$commit
 }
 
 current_version() { [[ -L $ROOT/current ]] && basename "$(readlink "$ROOT/current")" || echo ""; }
@@ -91,32 +125,63 @@ prune() { # keep the current release, the previous one and up to $KEEP in all, n
   done
 }
 
+# download <channel> <version> <dir>: the release's assets into <dir>, verified. For the release
+# channel, archives against SHA256SUMS; for edge, provenance too, and a mismatch is fetched again
+# once (the rolling release is replaced on each merge, so one download can straddle two builds).
+download() {
+  local channel=$1 version=$2 dir=$3 arch=$4 attempt
+  why=""
+  if [[ "$channel" == release ]]; then
+    local server=colophon-server-$version-$arch-unknown-linux-musl.tar.gz cli=colophon-cli-$version-$arch-unknown-linux-musl.tar.gz studio=colophon-studio-$version.tar.gz
+    for f in SHA256SUMS "$server" "$cli" "$studio"; do fetch "$f" "$dir" "v$version"; done
+    sums_cover "$dir" "$server" "$cli" "$studio" || die "$why: nothing installed"
+    ASSETS=("$server" "$cli" "$studio" "colophon-studio-$version")
+    return 0
+  fi
+  local server=colophon-server-edge-$arch-unknown-linux-musl.tar.gz cli=colophon-cli-edge-$arch-unknown-linux-musl.tar.gz studio=colophon-studio-edge.tar.gz
+  for attempt in 1 2; do
+    rm -f "$dir"/*
+    for f in SHA256SUMS SHA256SUMS.intoto.jsonl EDGE "$server" "$cli" "$studio"; do fetch "$f" "$dir" edge 2>/dev/null || true; done
+    if verify_edge "$dir" "$server" "$cli" "$studio"; then
+      ASSETS=("$server" "$cli" "$studio" "colophon-studio-edge")
+      return 0
+    fi
+    log "edge: $why$([[ $attempt == 1 ]] && echo '; fetching once more')"
+  done
+  die "edge: $why: refusing the switch"
+}
+
 install_release() {
-  local version=$1 mode=${2:-switch} arch tmp release start=$SECONDS
-  [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?$ ]] || die "'$version' isn't a version (like 0.1.0-alpha.1)"
+  local channel=$1 version=$2 mode=${3:-switch} arch tmp release start=$SECONDS
   arch=$(arch)
-  release=$ROOT/releases/$version
-  local server=colophon-server-$version-$arch-unknown-linux-musl.tar.gz cli=colophon-cli-$version-$arch-unknown-linux-musl.tar.gz studio=colophon-studio-$version.tar.gz
+  tmp=$(mktemp -d); trap 'rm -rf "$tmp"' RETURN
+  if [[ "$channel" == release ]]; then
+    [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?$ ]] || die "'$version' isn't a version (like 0.1.0-alpha.1)"
+    release=$ROOT/releases/$version
+    [[ -x "$release/bin/colophon-server" ]] || { log "fetching v$version ($arch)"; download release "$version" "$tmp" "$arch"; }
+  else
+    log "fetching the edge build ($arch)"
+    download edge "" "$tmp" "$arch"
+    version=edge-${EDGE_COMMIT:0:12}
+    release=$ROOT/releases/$version
+    log "edge build $EDGE_COMMIT: provenance (edge.yml, $EDGE_REF) and checksums verified"
+  fi
   if [[ ! -x "$release/bin/colophon-server" ]]; then
-    tmp=$(mktemp -d); trap 'rm -rf "$tmp"' RETURN
-    log "fetching v$version ($arch)"
-    for f in SHA256SUMS "$server" "$cli" "$studio"; do fetch "$f" "$tmp" "$version"; done
-    (cd "$tmp" && grep -E " [*]?($server|$cli|$studio)\$" SHA256SUMS | sha256sum -c --quiet -) || die "checksums don't match SHA256SUMS: nothing installed"
     log "checksums verified"
     mkdir -p "$release.partial/bin"
-    tar -xzf "$tmp/$server" -C "$release.partial/bin" colophon-server
-    tar -xzf "$tmp/$cli" -C "$release.partial/bin" colophon
-    tar -xzf "$tmp/$studio" -C "$release.partial"
-    mv "$release.partial/colophon-studio-$version" "$release.partial/studio"
+    tar -xzf "$tmp/${ASSETS[0]}" -C "$release.partial/bin" colophon-server
+    tar -xzf "$tmp/${ASSETS[1]}" -C "$release.partial/bin" colophon
+    tar -xzf "$tmp/${ASSETS[2]}" -C "$release.partial"
+    mv "$release.partial/${ASSETS[3]}" "$release.partial/studio"
     chmod 0755 "$release.partial/bin/"*
     "$release.partial/bin/colophon-server" --version >/dev/null || die "the new server doesn't run here"
     rm -rf "$release" && mv "$release.partial" "$release"
   else
-    log "v$version is already unpacked"
+    log "$version is already unpacked"
   fi
 
   if [[ "$mode" == fetch ]]; then
-    ln -sfn "$release/bin/colophon" /usr/local/bin/colophon
+    [[ "$TESTING" == 1 ]] || ln -sfn "$release/bin/colophon" /usr/local/bin/colophon
     log "v$version unpacked at $release (not switched)"; return 0
   fi
   local old; old=$(current_version)
@@ -176,10 +241,20 @@ status() {
 }
 
 mkdir -p "$ROOT/releases"
+channel=release
+if [[ "${1:-}" == --channel ]]; then
+  channel=${2:-}; shift 2 || true
+  [[ "$channel" == release || "$channel" == edge ]] || die "--channel is release or edge"
+fi
 case "${1:-}" in
   --rollback) rollback ;;
   --status) status ;;
-  --fetch) [[ -n "${2:-}" ]] || die "usage: upgrade.sh --fetch <version>"; install_release "$2" fetch ;;
-  "" | -*) echo "usage: upgrade.sh <version> | --rollback | --status" >&2; exit 2 ;;
-  *) install_release "$1" ;;
+  --fetch)
+    if [[ "$channel" == edge ]]; then install_release edge "" fetch
+    else [[ -n "${2:-}" ]] || die "usage: upgrade.sh --fetch <version>"; install_release release "$2" fetch; fi ;;
+  "")
+    if [[ "$channel" == edge ]]; then install_release edge ""
+    else echo "usage: upgrade.sh [--channel release] <version> | --channel edge | --rollback | --status" >&2; exit 2; fi ;;
+  -*) echo "usage: upgrade.sh [--channel release] <version> | --channel edge | --rollback | --status" >&2; exit 2 ;;
+  *) [[ "$channel" == release ]] || die "the edge channel takes no version"; install_release release "$1" ;;
 esac
