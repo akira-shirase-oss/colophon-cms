@@ -3,7 +3,8 @@
 # COMPOSE_PROJECT_NAME of its own, no COLOPHON_STACK_OWNER=1), nothing stops, pauses or
 # reconfigures a service, and nothing writes to the everyday database:
 #
-#   - scripts/stack.sh up|check|down|reset refuse, before calling docker at all;
+#   - scripts/stack.sh check|down|reset refuse, before calling docker at all (up is allowed: it is
+#     idempotent and destroys nothing);
 #   - scripts/load.sh refuses the scenarios that pause Postgres or Valkey (cache-down,
 #     postgres-trouble), before calling docker;
 #   - scripts/migrate.sh (which load.sh, testbed.sh and studio.sh call) refuses without a
@@ -46,15 +47,28 @@ expect_refused() {
   ! grep -qE '^(docker|cargo) ' "$work/calls" || fail "$what: called $(cat "$work/calls") before refusing"
 }
 
-for sub in up check down reset; do
+# The maintainer's real situation: the project is `colophon`, no CI, no owner flag.
+for sub in check down reset; do
   expect_refused "stack.sh $sub" shared scripts/stack.sh "$sub"
+  expect_refused "stack.sh $sub, project named colophon" shared env COMPOSE_PROJECT_NAME=colophon scripts/stack.sh "$sub"
 done
 expect_refused "load.sh cache-down" shared scripts/load.sh cache-down throughput
 expect_refused "load.sh postgres-trouble" shared scripts/load.sh postgres-trouble throughput
 expect_refused "migrate.sh without a test database" shared scripts/migrate.sh
 expect_refused "migrate.sh naming the everyday database" shared env COLOPHON_TEST_DATABASE=colophon scripts/migrate.sh
 
-# The owner, and a stack of one's own, may: stack.sh down reaches docker.
+# stack.sh up is allowed on a shared stack: it reaches docker.
+: >"$work/calls"
+shared scripts/stack.sh up >/dev/null 2>&1 || true
+grep -q '^docker compose .*up' "$work/calls" || fail "stack.sh up was refused on a shared stack: $(cat "$work/calls")"
+
+# CI, the owner, and a stack of one's own may: stack.sh down reaches docker.
+: >"$work/calls"
+shared env CI=true scripts/stack.sh down >/dev/null 2>&1 || true
+grep -q '^docker compose .*down' "$work/calls" || fail "stack.sh down in CI didn't reach docker: $(cat "$work/calls")"
+: >"$work/calls"
+shared env CI=true scripts/load.sh cache-down throughput >/dev/null 2>&1 || true
+! grep -q "D-187" <<<"$(shared env CI=true scripts/load.sh cache-down throughput 2>&1 || true)" || fail "load.sh cache-down was refused in CI"
 : >"$work/calls"
 shared env COLOPHON_STACK_OWNER=1 scripts/stack.sh down >/dev/null 2>&1 || true
 grep -q '^docker compose .*down' "$work/calls" || fail "the owner's stack.sh down didn't reach docker: $(cat "$work/calls")"
@@ -64,7 +78,7 @@ grep -q '^docker compose .*down' "$work/calls" || fail "stack.sh down on an own 
 
 # check.sh's integration plan, printed without running anything.
 plan_shared=$(shared env COLOPHON_TEST_DATABASE=colophon_mine scripts/check.sh --integration-plan)
-! grep -q 'scripts/stack.sh check' <<<"$plan_shared" || fail "shared plan runs stack.sh check: $plan_shared"
+! grep -qx 'scripts/stack.sh check' <<<"$plan_shared" || fail "shared plan runs stack.sh check: $plan_shared"
 for test in admission::without_valkey_each_server_still_limits_on_its_own \
   quotas::without_valkey_a_token_is_still_limited_never_unlimited \
   cache::answers_survive_valkey_going_away_and_caching_resumes_when_it_is_back \
@@ -81,7 +95,7 @@ out=$(shared scripts/check.sh --integration-plan 2>&1) || status=$?
 [[ "$status" == 2 ]] || fail "a shared plan without COLOPHON_TEST_DATABASE: exit $status, wanted 2 ($out)"
 
 plan_own=$(shared env COLOPHON_STACK_OWNER=1 scripts/check.sh --integration-plan)
-grep -q 'scripts/stack.sh check' <<<"$plan_own" || fail "the owner's plan lacks stack.sh check: $plan_own"
+grep -qx 'scripts/stack.sh check' <<<"$plan_own" || fail "the owner's plan lacks stack.sh check: $plan_own"
 grep -q 'load.sh cache-down ' <<<"$plan_own" || fail "the owner's plan lacks the cache-down smoke: $plan_own"
 ! grep -q -- '--skip ' <<<"$plan_own" || fail "the owner's plan skips tests: $plan_own"
 

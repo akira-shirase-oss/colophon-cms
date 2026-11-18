@@ -312,13 +312,15 @@ check() {
   echo "stack ok: $checks checks passed"
 }
 
-# Each subcommand starts, writes to (role DDL, a forced WAL switch) or removes the stack's
-# services, so it runs only on a stack that is this run's own (D-187, scripts/stack-guard.sh).
+# check writes to the server (a temporary table, a forced WAL switch that archives a segment);
+# down and reset remove the stack's containers or data. They run only on a stack that is this
+# run's own (D-187, scripts/stack-guard.sh). up stays open to anyone: it is idempotent and
+# destroys nothing, and it is how a stack comes back after a reboot.
 case "${1:-}" in
-  up | check | down | reset)
+  check | down | reset)
     # shellcheck source=scripts/stack-guard.sh
     . scripts/stack-guard.sh
-    require_own_stack "run 'scripts/stack.sh $1' (it starts, writes to or removes the stack's services)"
+    require_own_stack "run 'scripts/stack.sh $1' (it writes to the server, or removes the stack's containers or data)"
     ;;
 esac
 

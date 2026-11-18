@@ -67,6 +67,28 @@ If a port clashes with something else on your machine, move it: `COLOPHON_PG_POR
 addresses for the server and the CLI; update its URLs to match (and `COLOPHON_SERVER` if the server's own port
 moved). The bind address is deliberately not a setting.
 
+## Whose stack is it? (D-187)
+
+**What changed for the stack's owner:** `scripts/stack.sh check|down|reset`, `check.sh`'s outage steps,
+`load.sh cache-down|postgres-trouble` and `migrate.sh` against `colophon` now need `COLOPHON_STACK_OWNER=1` on
+your own everyday stack; `stack.sh up` and everything else work as before.
+
+The project is named `colophon`, so from any checkout or worktree on this machine `docker compose -f
+deploy/compose.yaml` reaches the same stack. Scripts and tests change it only when it is the run's own: in CI,
+under a `COMPOSE_PROJECT_NAME` of another project (with its own ports), or with `COLOPHON_STACK_OWNER=1`.
+Otherwise these refuse, before touching anything:
+
+| Step | What it would do |
+|---|---|
+| `scripts/stack.sh check` | Write a temporary table and force a WAL switch (an archived segment) |
+| `scripts/stack.sh down`, `reset` | Remove the containers, or their data |
+| `scripts/load.sh cache-down`, `postgres-trouble` | Pause Valkey or Postgres mid-run |
+| `scripts/migrate.sh` (and `load.sh`, `testbed.sh`, `studio.sh`, which call it) | Migrate and add accounts to `colophon`; set `COLOPHON_TEST_DATABASE` to a database of your own instead |
+| The four outage tests (`admission::without_valkey…`, `quotas::without_valkey…`, `cache::answers_survive_valkey…`, `lifecycle::readiness_follows_real_outages…`) | Stop and start Postgres or Valkey |
+| `scripts/check.sh` | On someone else's stack it runs everything except the steps above (it prints them; CI runs them), in your `COLOPHON_TEST_DATABASE`, and never drops `colophon_check` |
+
+`scripts/stack.sh up` is open to anyone: it is idempotent and destroys nothing.
+
 ## Several servers behind a balancer
 
 `scripts/cluster.sh up [servers] [workers]` (milestone S, [D-075](../docs/DECISIONS.md)) starts API servers (default
