@@ -44,6 +44,18 @@ grep -qiE '^HTTP/[0-9.]+ 200' <<<"$headers" && ok "the Studio answers 200" || ba
 body=$(curl -sS --max-time 10 "$public/content/v1/00000000-0000-4000-8000-000000000000/production/articles" || true)
 jq -e '.error.code == "not_found"' <<<"$body" >/dev/null 2>&1 && ok "anonymous delivery of nothing is a 404 envelope" || bad "anonymous delivery: $body"
 
+echo "backups"
+if command -v colophon-backup-logical >/dev/null; then
+  latest=$(colophon-backup-logical latest 2>/dev/null || echo none)
+  hours=${latest##* }
+  if [[ "$latest" != none && "$hours" =~ ^[0-9]+$ ]] && (( hours < 26 )); then ok "the newest logical backup is ${hours} h old (${latest%% *})"
+  else bad "no logical backup in the last 26 h ($latest)"; fi
+else
+  bad "colophon-backup-logical isn't installed (DEPLOY.md step 10)"
+fi
+check "the ledger export timer is active" systemctl is-active --quiet colophon-ledger-export.timer
+check "the logical backup timer is active" systemctl is-active --quiet colophon-backup-logical.timer
+
 echo "memory (S0 exit gate: recorded idle)"
 current=$(systemctl show colophon -p MemoryCurrent --value 2>/dev/null || echo "")
 if [[ "$current" =~ ^[0-9]+$ ]]; then ok "colophon uses $((current / 1024 / 1024)) MiB"; else bad "no MemoryCurrent for colophon ($current)"; fi

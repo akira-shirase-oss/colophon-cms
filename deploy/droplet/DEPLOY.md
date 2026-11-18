@@ -11,14 +11,23 @@ only on the droplet, into root-only files; nothing secret goes into chat, an iss
 point-in-time restore recorded (step 12), idle memory recorded (`smoke.sh` prints it).
 
 The commands run on the droplet as root unless they say otherwise. `$CHECKOUT` is a copy of this
-repository on the droplet (step 2).
+repository on the droplet (step 2). **The version is in one place:**
+
+```sh
+export COLOPHON_VERSION=0.1.0-alpha.1    # the release this guide installs; change only this to upgrade
+```
 
 ## 1. The host
 
 ```sh
 ssh root@<droplet-ip>
 apt-get update && apt-get -y upgrade
-apt-get install -y ufw jq curl ca-certificates unattended-upgrades redis-server debian-keyring debian-archive-keyring apt-transport-https
+apt-get install -y ufw jq curl ca-certificates unattended-upgrades redis-server debian-keyring debian-archive-keyring apt-transport-https age rclone
+# pg_dump 18 for the logical backup (step 10), from PostgreSQL's own repository:
+install -d /usr/share/postgresql-common/pgdg
+curl -fsSo /usr/share/postgresql-common/pgdg/apt.postgresql.org.asc https://www.postgresql.org/media/keys/ACCC4CF8.asc
+echo "deb [signed-by=/usr/share/postgresql-common/pgdg/apt.postgresql.org.asc] https://apt.postgresql.org/pub/repos/apt noble-pgdg main" >/etc/apt/sources.list.d/pgdg.list
+apt-get update && apt-get install -y postgresql-client-18
 dpkg-reconfigure -f noninteractive unattended-upgrades
 timedatectl set-timezone UTC
 
@@ -39,7 +48,7 @@ Keep the DigitalOcean cloud firewall from CREATE.md as well: two layers, either 
 From a release, each file checked against `SHA256SUMS` (`deploy/production/README.md` step 1):
 
 ```sh
-v=<version>; arch=x86_64
+v=$COLOPHON_VERSION; arch=x86_64
 base=https://github.com/akira-shirase-oss/colophon-cms/releases/download/v$v
 cd /tmp && curl -fsSLO "$base/SHA256SUMS"
 for f in colophon-server-$v-$arch-unknown-linux-musl.tar.gz colophon-cli-$v-$arch-unknown-linux-musl.tar.gz colophon-studio-$v.tar.gz; do curl -fsSLO "$base/$f"; done
@@ -56,10 +65,9 @@ git clone --depth 1 --branch v$v https://github.com/akira-shirase-oss/colophon-c
 CHECKOUT=/opt/colophon-src
 ```
 
-> **No release exists yet.** The release workflow (`.github/workflows/release.yml`) builds these
-> from a `v*` tag; cutting one is the maintainer's decision. Until then there is no checksummed
-> artifact to install, and building from source on a 2 GB droplet is not recommended (the Rust
-> build needs more memory than the host has).
+> The draft release `v0.1.0-alpha.1` is cut once the hardening batch and D-183 are merged; its
+> checksummed musl archives are what this step installs. Building from source on a 2 GB droplet
+> is not recommended (the Rust build needs more memory than the host has).
 
 ## 3. Neon: the roles and the schema
 
@@ -169,26 +177,41 @@ LoadCredential=resend_api_key:/etc/colophon/credentials/resend_api_key
 Environment=COLOPHON_RESEND_API_KEY_FILE=%d/resend_api_key
 ```
 
-## 10. Backups: Neon's point-in-time restore plus the deletion ledger
+## 10. Backups: Neon's point-in-time restore, the deletion ledger, and a dump Neon doesn't hold
 
-`scripts/backup.sh` (pg_basebackup) and the WAL archive retention don't apply here: Neon takes
-neither, and keeps its own history. S0's backup is:
+`scripts/backup.sh` (pg_basebackup) and its WAL archive retention (D-201) are for self-hosted
+PostgreSQL: Neon takes no pg_basebackup and keeps its own WAL. S0's backups are:
 
-- **the database:** Neon's point-in-time restore, over the plan's window (CREATE.md 4);
-- **the deletion ledger:** exported daily to the `colophon-backups` bucket, so a restore to an
-  earlier moment can replay what was deleted after it (O2, `deploy/runbooks/restore.md` step 4);
-- **media:** the `colophon-media` bucket itself (R2 keeps objects until deleted; Colophon's
-  versioned assets keep old versions of a replaced image).
+- **Neon's point-in-time restore**, over the plan's window (CREATE.md 4): a bad write, undone;
+- **the deletion ledger**, exported daily to the `colophon-backups` bucket, so a restore to an
+  earlier moment replays what was deleted after it (O2, `deploy/runbooks/restore.md` step 4);
+- **a logical backup**, daily: `pg_dump -Fc` over `verify-full`, encrypted with age, to
+  `colophon-backups/logical/`, keeping the newest of 14 days and of 8 weeks. It doesn't depend on
+  Neon at all: it covers losing the Neon account or project, not just a bad write;
+- **media:** the `colophon-media` bucket itself (Colophon keeps a replaced image's old versions).
+
+The age key: generated here, its public half stays on the droplet, and you keep a copy of the
+private half **offline** (a password manager or paper). Without it, the logical backups can't be
+read; the droplet's own copy is for restore drills.
 
 ```sh
-install -m 0644 $CHECKOUT/deploy/droplet/colophon-ledger-export.service /etc/systemd/system/
-install -m 0644 $CHECKOUT/deploy/droplet/colophon-ledger-export.timer /etc/systemd/system/
-systemctl daemon-reload && systemctl enable --now colophon-ledger-export.timer
-systemctl start colophon-ledger-export && journalctl -u colophon-ledger-export -n 5 --no-pager
+age-keygen -o /etc/colophon/backup-age-identity 2>/dev/null && chmod 0400 /etc/colophon/backup-age-identity
+age-keygen -y /etc/colophon/backup-age-identity >/etc/colophon/backup-age-recipient
+cat /etc/colophon/backup-age-identity    # copy the AGE-SECRET-KEY-… line to your offline store, then clear the screen
+
+install -m 0755 $CHECKOUT/deploy/droplet/backup-logical.sh /usr/local/bin/colophon-backup-logical
+for unit in colophon-ledger-export.service colophon-ledger-export.timer colophon-backup-logical.service colophon-backup-logical.timer; do
+  install -m 0644 $CHECKOUT/deploy/droplet/$unit /etc/systemd/system/
+done
+systemctl daemon-reload
+systemctl enable --now colophon-ledger-export.timer colophon-backup-logical.timer
+systemctl start colophon-ledger-export colophon-backup-logical
+journalctl -u colophon-ledger-export -u colophon-backup-logical -n 10 --no-pager
+colophon-backup-logical latest           # the newest dump and its age in hours
 ```
 
-The export unit needs D-191 (the CLI reads `COLOPHON_S3_SECRET_KEY_FILE`): it is in the
-hardening batch, so install from a release that includes it.
+The ledger-export unit needs D-191 (the CLI reads `COLOPHON_S3_SECRET_KEY_FILE`), which is in
+`v0.1.0-alpha.1`.
 
 ## 11. The smoke check
 
@@ -236,6 +259,24 @@ Prove the backup is a restore before relying on it:
    that the deleted entry stays deleted and the "restore drill" entry is absent (it came after
    the branch point), then stop the drill server, `rm /root/drill_url`, and delete the branch.
 5. Record the times and what you checked in `deploy/runbooks/install-feedback.md`.
+
+### And from the logical backup (not Neon at all)
+
+On any machine with Docker and your offline age key (your laptop is fine), restore the newest
+dump into a scratch PostgreSQL and look at it:
+
+```sh
+rclone copy r2:colophon-backups/logical/<newest>.dump.age .      # or download it in R2's dashboard
+age --decrypt -i <your-identity-file> -o colophon.dump <newest>.dump.age
+docker run -d --name drill -e POSTGRES_PASSWORD=drill -p 127.0.0.1:55499:5432 postgres:18
+sleep 5 && docker exec -i drill createdb -U postgres colophon
+docker exec -i drill pg_restore -U postgres -d colophon --no-owner <colophon.dump
+docker exec -i drill psql -U postgres -d colophon -Atc "select count(*) from entries; select count(*) from revisions;"
+docker rm -f drill && rm colophon.dump
+```
+
+The counts should match the Studio's at the dump's time. Record them, with the dump's name, in
+`deploy/runbooks/install-feedback.md`.
 
 ## Upgrading
 

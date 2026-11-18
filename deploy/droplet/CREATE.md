@@ -25,4 +25,6 @@ What you'll paste on the droplet, and where (DEPLOY.md walks you through each):
 - the R2 account id and access key id (not secret) → `/etc/colophon/colophon.env`.
 
 The app's own database password and the cache password are generated on the droplet; you never
-see them.
+see them. One thing generated there you **must** copy out: the backup age key's private line
+(DEPLOY.md step 10), into a password manager or onto paper. The logical backups are unreadable
+without it.

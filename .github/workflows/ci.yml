@@ -131,6 +131,8 @@ jobs:
         run: scripts/test-install.sh
       - name: The Homebrew formula, rendered from a SHA256SUMS
         run: scripts/test-homebrew-formula.sh
+      - name: The droplet's logical backup (deploy/droplet/test-backup-logical.sh)
+        run: deploy/droplet/test-backup-logical.sh
 
   # The testing rule (D-018) from a clean clone: the real stack, the real binary, real outages,
   # the testbed in a browser, and a load smoke run.
@@ -354,7 +356,9 @@ jobs:
             caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile
           # The S0 droplet's files (deploy/droplet): its units, and its Caddyfile with a throwaway
           # certificate standing in for Cloudflare's origin certificate.
-          systemd-analyze verify deploy/droplet/colophon-ledger-export.service deploy/droplet/colophon-ledger-export.timer
+          sudo install -m 0755 deploy/droplet/backup-logical.sh /usr/local/bin/colophon-backup-logical
+          systemd-analyze verify deploy/droplet/colophon-ledger-export.service deploy/droplet/colophon-ledger-export.timer \
+            deploy/droplet/colophon-backup-logical.service deploy/droplet/colophon-backup-logical.timer
           caddy_dir=$(mktemp -d)
           cp deploy/droplet/Caddyfile "$caddy_dir/"
           openssl req -x509 -newkey rsa:2048 -nodes -subj /CN=app.colophon.404human.dev -days 1 \
