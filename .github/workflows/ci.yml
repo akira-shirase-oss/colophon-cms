@@ -343,6 +343,17 @@ jobs:
           echo "$RUNNER_TEMP/bin" >>"$GITHUB_PATH"
       - name: The quick start, as documented (scripts/quickstart.sh)
         run: QUICKSTART_SHOTS="$PWD/apps/studio/test-results/screens" scripts/quickstart.sh --image colophon:local --browser --load --record
+      - name: The production files (deploy/production) pass systemd-analyze and caddy validate
+        run: |
+          set -euo pipefail
+          # verify checks that ExecStart's binary exists: the image's own.
+          id=$(docker create colophon:local)
+          sudo docker cp "$id:/usr/local/bin/colophon-server" /usr/local/bin/colophon-server
+          docker rm "$id" >/dev/null
+          systemd-analyze verify deploy/production/colophon.service
+          docker run --rm -e COLOPHON_DOMAIN=cms.example.com -v "$PWD/deploy/production:/etc/caddy:ro" \
+            caddy:2.10.2@sha256:c3d7ee5d2b11f9dc54f947f68a734c84e9c9666c92c88a7f30b9cba5da182adb \
+            caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile
       - name: Timings and sizes
         if: always()
         run: |

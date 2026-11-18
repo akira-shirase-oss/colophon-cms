@@ -63,6 +63,11 @@ on clean infrastructure and an independent install, so operations are a module w
   first start into per-service volumes and read through `COLOPHON_*_FILE`. `deploy/runbooks/install.md` covers
   install, first run, serving it behind a proxy, upgrade, backup and troubleshooting; `scripts/quickstart.sh` runs it
   as documented (CI's `quickstart` job).
+- `deploy/production/`: the binary path — a systemd unit (secrets as `LoadCredential=` files read through
+  `COLOPHON_*_FILE`, a dynamic user, a read-only file system, a system-call filter), the settings template, a
+  Caddyfile, and the steps (managed PostgreSQL with `verify-full` on its direct endpoint; S3 stores other than
+  Garage not yet verified). CI checks the unit with `systemd-analyze verify` and the Caddyfile with `caddy validate`;
+  nobody has followed it on a real host yet.
 
 ### Production topology (spec §03, §26, §32)
 - An external TLS proxy or CDN in front.

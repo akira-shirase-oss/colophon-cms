@@ -219,6 +219,10 @@ packaging/           the Homebrew formula template (scripts/homebrew-formula.sh 
 fixtures/            the shared rich-text contract: 12 valid documents with their reviewed HTML, 34 that must be refused
 perf/                k6 scenarios, every load and micro-benchmark result, and per-machine baselines
 deploy/              compose.yaml: the local stack (PostgreSQL, Valkey, Garage; Keycloak behind the `oidc` profile); local.env
+  image/             the container image: server, CLI and Studio on distroless static
+  quickstart/        compose.yaml: Colophon with its dependencies on one machine, from Docker alone
+  production/        the binary path: a systemd unit, a Caddyfile and the steps
+  runbooks/          install, upgrade, backup, restore, observability
 scripts/             check.sh (everything CI runs), stack.sh, testbed.sh, load.sh, install-k6.sh, and the checks
 docs/                the plan; docs/formats/ holds the stored formats
 ```
