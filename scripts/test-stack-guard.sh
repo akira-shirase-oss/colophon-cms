@@ -79,12 +79,6 @@ grep -q '^docker compose .*down' "$work/calls" || fail "stack.sh down on an own 
 # check.sh's integration plan, printed without running anything.
 plan_shared=$(shared env COLOPHON_TEST_DATABASE=colophon_mine scripts/check.sh --integration-plan)
 ! grep -qx 'scripts/stack.sh check' <<<"$plan_shared" || fail "shared plan runs stack.sh check: $plan_shared"
-for test in admission::without_valkey_each_server_still_limits_on_its_own \
-  quotas::without_valkey_a_token_is_still_limited_never_unlimited \
-  cache::answers_survive_valkey_going_away_and_caching_resumes_when_it_is_back \
-  lifecycle::readiness_follows_real_outages_and_recoveries; do
-  grep -q -- "--skip $test" <<<"$plan_shared" || fail "shared plan doesn't skip $test: $plan_shared"
-done
 # libtest names an integration test without its file (`without_valkey_…`, not
 # `admission::without_valkey_…`): a skip with the file prefix matches nothing, and the test runs.
 for name in without_valkey_each_server_still_limits_on_its_own without_valkey_a_token_is_still_limited_never_unlimited \

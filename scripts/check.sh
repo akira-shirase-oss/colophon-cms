@@ -64,6 +64,7 @@ fi
 # there); colophon_check is never dropped on a shared stack.
 # shellcheck source=scripts/stack-guard.sh
 . scripts/stack-guard.sh
+# As file::name for the reader; skipped by name alone (libtest's name for an integration test).
 STOPS_SERVICES=(
   admission::without_valkey_each_server_still_limits_on_its_own
   quotas::without_valkey_a_token_is_still_limited_never_unlimited
@@ -132,7 +133,9 @@ integration_plan() {
       return 2
     fi
     echo "# CI only on a shared stack (D-187): scripts/stack.sh check; scripts/sweep-test-databases.sh; tests ${STOPS_SERVICES[*]}; smokes ${PAUSES_SERVICES[*]}; the testbed's outage spec (it skips itself)"
-    for test in "${STOPS_SERVICES[@]}"; do skips+=" --skip $test"; done
+    # libtest names an integration test without its file, so the skip takes the name alone (the
+    # names are unique across the workspace's tests).
+    for test in "${STOPS_SERVICES[@]}"; do skips+=" --skip ${test##*::}"; done
   else
     echo "scripts/stack.sh check"
     # Leftover colophon_test_*/colophon_setup_* databases from runs that were killed (D-195).
