@@ -23,6 +23,9 @@ through `--version` and `GET /version`.
 
 ### Performance
 
+- Making an API token holds the project's creation lock for two statements instead of eight:
+  the count of active tokens stays exact (one creator at a time per project), but queued
+  creators no longer hold pooled connections long enough to starve reads.
 - Watched writes no longer take PostgreSQL's NOTIFY lock (D-180): their live-list hints are
   queued in an unlogged table and sent by a pump every 100 ms, so concurrent saves commit in
   groups again instead of one at a time. A live list may hear a change up to 100 ms later.
