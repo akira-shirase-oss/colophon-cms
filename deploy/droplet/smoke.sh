@@ -3,6 +3,9 @@
 # Run on the droplet as root (it reads the unit's state and, optionally, a token file).
 #
 #   sudo deploy/droplet/smoke.sh                       # health, TLS, headers, delivery, memory
+#   sudo SMOKE_SCOPE=local deploy/droplet/smoke.sh     # the server itself only, on loopback (what
+#                                                      # upgrade.sh gates a switch on: a Cloudflare
+#                                                      # hiccup mustn't roll back a good release)
 #   sudo SMOKE_PROJECT=<project id> SMOKE_TOKEN_FILE=/root/smoke-token deploy/droplet/smoke.sh
 #                                                      # also: an upload lands in R2 and verifies
 #
@@ -13,6 +16,7 @@
 # shellcheck disable=SC2015  # ok and bad only print, so `test && ok || bad` is if-then-else here.
 set -uo pipefail
 domain="${SMOKE_DOMAIN:-app.colophon.404human.dev}"
+scope="${SMOKE_SCOPE:-full}"
 local_url="http://127.0.0.1:58000"
 public="https://$domain"
 failures=0
@@ -33,6 +37,23 @@ ready=$(curl -sS --max-time 5 "$local_url/readyz" || true)
 if jq -e '.status == "ready"' <<<"$ready" >/dev/null 2>&1; then ok "/readyz is ready ($(jq -c '.checks' <<<"$ready"))"; else bad "/readyz is not ready: $ready"; fi
 version=$(curl -fsS --max-time 5 "$local_url/version" || true)
 jq -e '.version' <<<"$version" >/dev/null 2>&1 && ok "/version: $(jq -r '.version + " " + (.commit // "")' <<<"$version")" || bad "/version: $version"
+
+echo "the Studio and delivery, on loopback"
+headers=$(curl -sSI --max-time 5 "$local_url/studio/" || true)
+grep -qiE '^HTTP/[0-9.]+ 200' <<<"$headers" && ok "the Studio answers 200" || bad "the Studio: $(head -1 <<<"$headers")"
+grep -qi '^content-security-policy:' <<<"$headers" && ok "the Studio has a content security policy" || bad "no content-security-policy on /studio/"
+body=$(curl -sS --max-time 5 "$local_url/content/v1/00000000-0000-4000-8000-000000000000/production/articles" || true)
+jq -e '.error.code == "not_found"' <<<"$body" >/dev/null 2>&1 && ok "anonymous delivery of nothing is a 404 envelope" || bad "anonymous delivery: $body"
+if [[ -n "${SMOKE_EXPECT_VERSION:-}" ]]; then
+  [[ "$(jq -r '.version' <<<"$version" 2>/dev/null)" == "$SMOKE_EXPECT_VERSION" ]] && ok "the server is v$SMOKE_EXPECT_VERSION" || bad "the server is $(jq -r '.version' <<<"$version" 2>/dev/null), not $SMOKE_EXPECT_VERSION"
+fi
+
+if [[ "$scope" == local ]]; then
+  echo
+  if (( failures > 0 )); then echo "smoke (local): $failures check(s) FAILED"; exit 1; fi
+  echo "smoke (local): every check passed"
+  exit 0
+fi
 
 echo "through Cloudflare"
 code=$(curl -sS -o /dev/null -w '%{http_code} %{ssl_verify_result}' --max-time 10 "$public/livez" || echo "000 x")

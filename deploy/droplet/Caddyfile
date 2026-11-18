@@ -26,5 +26,10 @@ app.colophon.404human.dev:443 {
 	reverse_proxy 127.0.0.1:58000 {
 		# Live updates are server-sent events: pass each event on as it is written.
 		flush_interval -1
+		# During an upgrade's restart (upgrade.sh) the server is briefly not listening: hold each
+		# request and retry it for up to 10 s instead of answering 502, so the switch costs
+		# visitors a pause, not an error.
+		lb_try_duration 10s
+		lb_try_interval 100ms
 	}
 }
