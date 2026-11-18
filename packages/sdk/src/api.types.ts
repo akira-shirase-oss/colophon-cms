@@ -2419,7 +2419,7 @@ export interface components {
             referenced_by?: components["schemas"]["ReferrerView"][];
             total?: number;
         };
-        /** @description a `text/event-stream` of `hello` once, then `change` events `{"k","c"?,"e"?}` scoped to the stream's environment, `resync` on a missed hint, and keep-alive comments */
+        /** @description a `text/event-stream` of `hello` once, then `change` events `{"k","c"?,"e"?}` scoped to the stream's environment — each sent after the commits it reports, at most one per distinct hint per ~100 ms pass, so commits close together fold into one and the last commit is always reported (D-180) — `resync` on a missed hint, and keep-alive comments */
         EventStream: string;
         EventView: {
             action?: string;
@@ -9439,7 +9439,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description `hello`, then `change` frames, `resync` on a missed hint — never a replay */
+            /** @description `hello`, then `change` frames — always after the commits they report, at most one per distinct hint per pump pass (about 100 ms), so several commits may fold into one (D-180) — `resync` on a missed hint, never a replay */
             200: {
                 headers: {
                     [name: string]: unknown;
