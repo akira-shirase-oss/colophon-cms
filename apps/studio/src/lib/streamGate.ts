@@ -1,4 +1,4 @@
-// Reads wait for the project's live stream (F9). The stream (`live.ts`) never replays, so a commit that lands
+// Reads wait for the project's live stream (F9, D-203, which amends D-108). The stream (`live.ts`) never replays, so a commit that lands
 // between a page's read and the stream starting to listen would go unheard. Until now the first open therefore
 // re-read everything the page had loaded: every resource twice on every full page load. Instead, a project's
 // reads wait (briefly) until its stream is open: the server subscribes before it answers the stream's request,

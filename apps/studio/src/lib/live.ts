@@ -7,7 +7,7 @@
 //   invalidate every project-scoped key: the stream is a disposable accelerator and Postgres
 //   stays the authority, so a missed hint costs one refetch, never a wrong row. The first open
 //   doesn't need to: the project's reads wait for it (`streamGate.ts`), unless one had to go
-//   ahead first, and then it re-reads as a reopen would.
+//   ahead first, and then it re-reads as a reopen would (D-203).
 // - The stream ends cleanly at its server-side lifetime; EventSource re-opens it on its own,
 //   and an open after a gap may have missed hints, so it resyncs rather than trust the state.
 // - A backgrounded tab can lose its connection quietly: becoming visible re-opens a dead

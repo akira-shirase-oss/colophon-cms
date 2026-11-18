@@ -108,3 +108,29 @@ test('a long release title stays on one line inside its home card (F11)', async 
 		expect(fits, `${viewport.width}px`).toEqual({ rowInCard: true, oneLine: true, truncated: true, pageScroll: false });
 	}
 });
+
+// The price of waiting for the stream (D-203): on a full load, how long until the page's first project read
+// answers, and until the releases list shows. Printed for the before/after comparison (main's build against this
+// one), not asserted beyond a loose ceiling: laptop numbers are not capacity claims.
+test('first data on a full load: time to the first project answer and to the list', async ({ page }) => {
+	test.setTimeout(180_000);
+	await signIn(page);
+	const project = await newProject(page);
+	await publishThroughApi(page, project, 'Timed', [await newEntry(page, project, 'Timed')]);
+	await page.waitForTimeout(2_000);
+	const firstAnswer: number[] = [];
+	const listShown: number[] = [];
+	for (let round = 0; round < 15; round++) {
+		await page.goto('about:blank');
+		const started = Date.now();
+		const answered = page.waitForResponse((response) => /\/api\/v1\/projects\/[^/]+\/environments\//.test(response.url()) && !response.url().endsWith('/events'));
+		await page.goto(`/studio/projects/${project}/releases`);
+		await answered;
+		firstAnswer.push(Date.now() - started);
+		await expect(page.locator('[data-generation="1"]')).toBeVisible();
+		listShown.push(Date.now() - started);
+	}
+	const p = (values: number[], q: number) => [...values].sort((a, b) => a - b)[Math.min(values.length - 1, Math.floor(q * values.length))]!;
+	console.log(`FIRSTDATA ${JSON.stringify({ firstAnswer: { p50: p(firstAnswer, 0.5), p90: p(firstAnswer, 0.9) }, listShown: { p50: p(listShown, 0.5), p90: p(listShown, 0.9) } })}`);
+	expect(p(listShown, 0.5)).toBeLessThan(5_000);
+});
