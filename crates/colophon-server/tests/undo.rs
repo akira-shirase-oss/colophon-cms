@@ -764,37 +764,10 @@ async fn a_key_used_for_a_publish_cannot_name_an_undo_or_the_reverse() {
     let entry = new_article(&owner, &project, &article("Keys", "text")).await;
     publish(&owner, &project, &entry).await;
     // A takedown published with a key of our own, then an undo sent with that same key.
-    let made = send(
+    let (path, if_match) = approved(
         &owner,
-        Method::POST,
-        &format!("{}/changesets", base(&project)),
-        Some(&json!({"title": "Down", "unpublish": [entry]})),
-        &[("idempotency-key", &key())],
-    )
-    .await;
-    let path = format!(
-        "{}/changesets/{}",
-        base(&project),
-        made.body["data"]["id"].as_str().expect("an id")
-    );
-    let if_match = format!(
-        "\"{}\"",
-        made.body["data"]["hash"].as_str().expect("a hash")
-    );
-    send(
-        &owner,
-        Method::POST,
-        &format!("{path}/submit"),
-        None,
-        &[("if-match", &if_match)],
-    )
-    .await;
-    send(
-        &owner,
-        Method::POST,
-        &format!("{path}/reviews"),
-        Some(&json!({"decision": "approve"})),
-        &[("if-match", &if_match)],
+        &project,
+        &json!({"title": "Down", "unpublish": [entry]}),
     )
     .await;
     let shared = key();
@@ -807,9 +780,14 @@ async fn a_key_used_for_a_publish_cannot_name_an_undo_or_the_reverse() {
     )
     .await;
     assert_eq!(published.status, StatusCode::CREATED, "{}", published.body);
-    let reused = undo(&owner, &project, "2", &shared).await;
-    assert_eq!(reason(&reused), "idempotency_key_reused", "{}", reused.body);
-    assert!(!reused.replayed());
+    let undo_reused = undo(&owner, &project, "2", &shared).await;
+    assert_eq!(
+        reason(&undo_reused),
+        "idempotency_key_reused",
+        "{}",
+        undo_reused.body
+    );
+    assert!(!undo_reused.replayed());
     // The reverse: an undo's key, then a publish sent with it.
     let undo_key = key();
     assert_eq!(
@@ -817,40 +795,13 @@ async fn a_key_used_for_a_publish_cannot_name_an_undo_or_the_reverse() {
         StatusCode::CREATED
     );
     let other = new_article(&owner, &project, &article("Other", "text")).await;
-    let made = send(
+    let (path, if_match) = approved(
         &owner,
-        Method::POST,
-        &format!("{}/changesets", base(&project)),
-        Some(&json!({"title": "Other", "entries": [other]})),
-        &[("idempotency-key", &key())],
+        &project,
+        &json!({"title": "Other", "entries": [other]}),
     )
     .await;
-    let path = format!(
-        "{}/changesets/{}",
-        base(&project),
-        made.body["data"]["id"].as_str().expect("an id")
-    );
-    let if_match = format!(
-        "\"{}\"",
-        made.body["data"]["hash"].as_str().expect("a hash")
-    );
-    send(
-        &owner,
-        Method::POST,
-        &format!("{path}/submit"),
-        None,
-        &[("if-match", &if_match)],
-    )
-    .await;
-    send(
-        &owner,
-        Method::POST,
-        &format!("{path}/reviews"),
-        Some(&json!({"decision": "approve"})),
-        &[("if-match", &if_match)],
-    )
-    .await;
-    let refused = send(
+    let publish_reused = send(
         &owner,
         Method::POST,
         &format!("{path}/publish"),
@@ -859,12 +810,51 @@ async fn a_key_used_for_a_publish_cannot_name_an_undo_or_the_reverse() {
     )
     .await;
     assert_eq!(
-        reason(&refused),
+        reason(&publish_reused),
         "idempotency_key_reused",
         "{}",
-        refused.body
+        publish_reused.body
     );
     assert_eq!(latest(&owner, &project).await, 3);
+}
+
+/// A publish request made from `body`, sent for review and approved by `session`: its path and
+/// the `If-Match` its publish needs.
+async fn approved(session: &Session, project: &str, body: &Value) -> (String, String) {
+    let made = send(
+        session,
+        Method::POST,
+        &format!("{}/changesets", base(project)),
+        Some(body),
+        &[("idempotency-key", &key())],
+    )
+    .await;
+    let path = format!(
+        "{}/changesets/{}",
+        base(project),
+        made.body["data"]["id"].as_str().expect("an id")
+    );
+    let if_match = format!(
+        "\"{}\"",
+        made.body["data"]["hash"].as_str().expect("a hash")
+    );
+    send(
+        session,
+        Method::POST,
+        &format!("{path}/submit"),
+        None,
+        &[("if-match", &if_match)],
+    )
+    .await;
+    send(
+        session,
+        Method::POST,
+        &format!("{path}/reviews"),
+        Some(&json!({"decision": "approve"})),
+        &[("if-match", &if_match)],
+    )
+    .await;
+    (path, if_match)
 }
 
 /// The lock order, deterministically (D-131, D-135): an undo takes publishing's admission pair
