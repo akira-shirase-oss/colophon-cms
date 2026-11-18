@@ -82,6 +82,12 @@ async fn write_to(path: &std::path::Path, file: &File) -> Result<(), Failure> {
     #[cfg(unix)]
     options.mode(0o600);
     let mut handle = options.open(path).await.map_err(internal)?;
+    // `mode` above applies only when the file is created.
+    #[cfg(unix)]
+    handle
+        .set_permissions(std::os::unix::fs::PermissionsExt::from_mode(0o600))
+        .await
+        .map_err(internal)?;
     tokio::io::AsyncWriteExt::write_all(&mut handle, &bytes)
         .await
         .map_err(internal)?;
