@@ -123,8 +123,8 @@ pub enum DbError {
     /// The collection is a single type and already has its entry (migration 0026, D-067).
     #[error("this single type already has its entry")]
     SingleExists,
-    /// The entry's localization group already holds that locale, in any case (migration 0078,
-    /// D-212): two writes that raced past the check meet the unique index.
+    /// The entry's localization group already holds that locale, in any case (migrations 0034 and
+    /// 0077, D-212): two writes that raced past the check meet the unique index.
     #[error("the localization group already has that locale")]
     LocaleTaken,
     /// A reference field names an entry that isn't one of its collection's (migration 0024,
@@ -216,9 +216,7 @@ impl DbError {
                 match database.constraint() {
                     Some("entries_draft_slug" | "publications_live_slug") => Self::SlugTaken,
                     Some("entries_single") => Self::SingleExists,
-                    Some("entries_one_locale_per_group" | "entries_one_locale_per_group_ci") => {
-                        Self::LocaleTaken
-                    }
+                    Some("entries_one_locale_per_group") => Self::LocaleTaken,
                     Some("unique_claims_value") => Self::ValueTaken,
                     _ => Self::Conflict,
                 }

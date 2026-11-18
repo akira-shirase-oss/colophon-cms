@@ -1,8 +1,10 @@
 -- Locale tags are case-insensitive (BCP 47, RFC 5646 §2.1.1), but `entries_one_locale_per_group`
 -- (0034) compared them as text, so one localization group could hold both `fr` and `FR` and a
 -- reader asking for French got either (D-212). This migration stores every tag in the one case
--- BCP 47 recommends, the same rule as `colophon_domain::locale::canonical`; 0078 then adds the
--- unique index on `lower(locale)` concurrently and 0079 drops the old one.
+-- BCP 47 recommends, the same rule as `colophon_domain::locale::canonical`, and keeps it so: a
+-- trigger recases every tag written, whoever writes it (an older server during a deploy, an
+-- import, psql, a future code path). Case variants recase to one string, so 0034's unique index on
+-- `(localization_id, locale)` then refuses `FR` beside `fr` as it is, with no new index.
 --
 -- A group that already holds two tags differing only in case is not merged or deleted here: that
 -- would choose between two people's entries. The migration refuses, naming each group and its
@@ -61,4 +63,19 @@ END
 $$;
 
 UPDATE entries SET locale = colophon_canonical_locale(locale)
- WHERE locale IS NOT NULL AND locale IS DISTINCT FROM colophon_canonical_locale(locale);
+ WHERE locale IS NOT NULL AND locale <> colophon_canonical_locale(locale);
+
+-- From here on every tag written is recased on its way in, so stored tags stay canonical.
+CREATE FUNCTION colophon_entries_canonical_locale() RETURNS trigger
+    LANGUAGE plpgsql
+    SET search_path = pg_catalog, public
+AS $$
+BEGIN
+    NEW.locale := public.colophon_canonical_locale(NEW.locale);
+    RETURN NEW;
+END
+$$;
+CREATE TRIGGER entries_canonical_locale
+    BEFORE INSERT OR UPDATE OF locale ON entries
+    FOR EACH ROW WHEN (NEW.locale IS NOT NULL)
+    EXECUTE FUNCTION colophon_entries_canonical_locale();

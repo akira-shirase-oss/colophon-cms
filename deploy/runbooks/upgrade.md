@@ -145,7 +145,6 @@ possible for as long as you might need it.
 | `migrate-status` exits 4 (`unknown`) | The database is newer than this binary | Stop: do not deploy, do not migrate. The rollback gate working as designed. |
 | `admin migrate` fails part-way | A migration stopped | It is a transaction per migration — re-run after fixing the cause; `migrate-status` shows where it stands. |
 | `admin migrate` stops with `locale_case_duplicates` (0077) | A localization group holds one language twice, in different case (`fr` and `FR`), which older servers allowed (D-212) | Nothing was changed. For each group the error names, keep one of the two entries and delete the other through the API or the Studio (`DELETE …/entries/{id}`), then run `admin migrate` again. |
-| `admin migrate` fails in 0078 with a unique violation | A case-only duplicate was written by an older server between 0077 and 0078 | 0078 leaves its index `INVALID`: `DROP INDEX CONCURRENTLY entries_one_locale_per_group_ci;`, resolve the duplicate as above, and run `admin migrate` again. |
 | `/readyz` stays `not_ready` after the swap | A dependency the new binary needs is absent or misconfigured | Read the JSON body for which probe fails; fix and re-check before traffic returns. |
 | Smoke checks pass but content looks wrong | A data problem, not a serve problem | Forward-fix first; the restore path is for loss or corruption, and its data-loss window applies. |
 | `verify` fails before the upgrade | The backup is not trustworthy | Do not upgrade on a bad backup: re-capture and investigate storage first. |

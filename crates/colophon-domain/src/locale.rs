@@ -11,8 +11,8 @@
 //!
 //! Only case changes: no alias is mapped (`iw` stays `iw`, not `he`) and no subtag is reordered,
 //! so a tag reads back as it was written, apart from its letters' case. The database's
-//! `colophon_canonical_locale` (migration 0077) applies the same rule to stored tags, and the
-//! unique index compares `lower(locale)`, so a duplicate is refused even if a path missed this.
+//! `colophon_canonical_locale` (migration 0077) applies the same rule in a trigger to every tag
+//! written, so the group index refuses a case-only duplicate even if a path missed this.
 
 /// `tag` in BCP 47's recommended case (see the module). Assumes a tag already shape-checked
 /// (ASCII letters, digits and `-`); anything else is returned with only its ASCII letters recased.

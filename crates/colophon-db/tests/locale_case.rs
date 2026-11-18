@@ -1,7 +1,7 @@
-//! Migrations 0077–0079 (D-212) against real PostgreSQL: a localization group the old schema let
-//! hold `fr` and `FR` makes 0077 refuse, by name and naming the group; once one is deleted the
-//! migrations finish, stored tags are in BCP 47's case, and the database itself refuses a tag that
-//! differs from a sibling's only in case. Needs the local stack.
+//! Migration 0077 (D-212) against real PostgreSQL: a localization group the old schema let hold `fr`
+//! and `FR` makes it refuse, by name and naming the group; once one is deleted it finishes, stored
+//! tags are in BCP 47's case, and its trigger recases every tag written by any role, so the group
+//! index refuses a tag that differs from a sibling's only in case. Needs the local stack.
 #![expect(
     clippy::expect_used,
     reason = "database tests: a failed connection or setup step is a test failure"
@@ -110,16 +110,39 @@ async fn case_only_duplicates_stop_the_migration_until_one_is_deleted() {
     .expect("read");
     assert_eq!(tags, ["en", "fr", "pt-BR"], "stored in BCP 47's case");
 
-    // The database itself now refuses a sibling that differs only in case, even as the table owner.
+    // The trigger recases what any role writes: the table owner here, outside the API.
+    sqlx::query("UPDATE entries SET locale = 'EN-gb' WHERE id = $1")
+        .bind(english)
+        .execute(&owner)
+        .await
+        .expect("updated");
+    let recased: String = sqlx::query_scalar("SELECT locale FROM entries WHERE id = $1")
+        .bind(english)
+        .fetch_one(&owner)
+        .await
+        .expect("read");
+    assert_eq!(recased, "en-GB");
+    // …and the application's login, through the Rust API, which passes the tag on as given.
+    let mut tx = enter(&db.app, alice, project).await;
+    let mexico = create(&mut tx, "Mareas", "Es-mx").await;
+    tx.commit().await.expect("commit");
+    let stored: String = sqlx::query_scalar("SELECT locale FROM entries WHERE id = $1")
+        .bind(mexico)
+        .fetch_one(&owner)
+        .await
+        .expect("read");
+    assert_eq!(stored, "es-MX");
+
+    // So a sibling that differs only in case meets 0034's index as it is, even from the owner.
     let again = sqlx::query("UPDATE entries SET locale = 'Fr' WHERE id = $1")
         .bind(english)
         .execute(&owner)
         .await
-        .expect_err("refused by the index");
+        .expect_err("refused by the group index");
     let constraint = again
         .as_database_error()
         .and_then(|error| error.constraint().map(str::to_owned));
-    assert_eq!(constraint.as_deref(), Some("entries_one_locale_per_group_ci"));
+    assert_eq!(constraint.as_deref(), Some("entries_one_locale_per_group"));
     owner.close().await;
     db.drop().await;
 }
