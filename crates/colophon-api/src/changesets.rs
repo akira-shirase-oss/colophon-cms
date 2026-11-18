@@ -279,6 +279,9 @@ pub(crate) struct ChangesetView {
     updated_at: String,
     /// The release its publication set restores, when a rollback built it (D-097).
     rollback_generation: Option<i64>,
+    /// The release it undoes, when it is an undo of a takedown (D-184): read this before
+    /// `rollback_generation`, which an undo also sets (to the release before).
+    undo_of: Option<i64>,
     items: Vec<ItemView>,
     reviews: Vec<ReviewView>,
     /// Each configured review stage and where it stands, in order; empty where none are
@@ -303,6 +306,8 @@ pub(crate) struct SummaryView {
     updated_at: String,
     /// The release it restores, when a rollback built it (D-097).
     rollback_generation: Option<i64>,
+    /// The release it undoes, when it is an undo of a takedown (D-184).
+    undo_of: Option<i64>,
 }
 
 /// The domain's decision for `head`, from its reviews on its current hash (newest first) and
@@ -413,6 +418,7 @@ async fn view(tx: &mut ProjectTransaction, head: Head) -> Result<ChangesetView, 
         submitted_at: head.submitted_at.map(rfc3339).transpose()?,
         updated_at: rfc3339(head.updated_at)?,
         rollback_generation: head.rollback,
+        undo_of: head.undo_of,
         items: items
             .into_iter()
             .map(|item| ItemView {
@@ -589,6 +595,7 @@ pub(crate) async fn list(
                 submitted_at: row.head.submitted_at.map(rfc3339).transpose()?,
                 updated_at: rfc3339(row.head.updated_at)?,
                 rollback_generation: row.head.rollback,
+                undo_of: row.head.undo_of,
             })
         })
         .collect::<Result<_, ApiError>>()?;
@@ -1202,6 +1209,8 @@ pub(crate) struct ReleaseView {
     epoch: i64,
     changeset_id: Uuid,
     title: String,
+    /// The release this one undoes, when its changeset is an undo of a takedown (D-184).
+    undo_of: Option<i64>,
     changeset_hash: String,
     published_by: Uuid,
     published_by_name: Option<String>,
@@ -1228,6 +1237,7 @@ impl ReleaseView {
             epoch: row.epoch,
             changeset_id: row.changeset_id,
             title: row.title,
+            undo_of: row.undo_of,
             changeset_hash: content_hash(&row.changeset_hash),
             published_by: row.published_by,
             published_by_name: row.published_by_name,

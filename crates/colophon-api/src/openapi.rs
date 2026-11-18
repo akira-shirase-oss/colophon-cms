@@ -6214,6 +6214,7 @@ fn publishing_parts() -> Value {
                 "submitted_at": { "type": ["string", "null"], "format": "date-time" },
                 "updated_at": { "type": "string", "format": "date-time" },
                 "rollback_generation": { "type": ["integer", "null"] },
+                "undo_of": { "type": ["integer", "null"], "description": "the release it undoes, for an undo of a takedown (D-184); read it before `rollback_generation`, which an undo also sets" },
                 "items": { "type": "array", "items": { "$ref": "#/components/schemas/ChangesetItemView" } },
                 "reviews": { "type": "array", "items": { "$ref": "#/components/schemas/ReviewView" } },
                 "stages": { "type": "array", "items": { "$ref": "#/components/schemas/StageStateView" } },
@@ -6233,6 +6234,7 @@ fn publishing_parts() -> Value {
                 "submitted_at": { "type": ["string", "null"], "format": "date-time" },
                 "updated_at": { "type": "string", "format": "date-time" },
                 "rollback_generation": { "type": ["integer", "null"] },
+                "undo_of": { "type": ["integer", "null"], "description": "the release it undoes, for an undo of a takedown (D-184); read it before `rollback_generation`, which an undo also sets" },
             },
         },
         "PublishedView": {
@@ -6251,13 +6253,14 @@ fn publishing_parts() -> Value {
             "required": [
                 "generation", "epoch", "changeset_id", "title", "changeset_hash", "published_by",
                 "published_by_name", "published_at", "entries", "unpublished", "purge", "label",
-                "locations",
+                "locations", "undo_of",
             ],
             "properties": {
                 "generation": { "type": "integer", "description": "its number in the environment: 1 for the first, up by exactly one each release" },
                 "epoch": { "type": "integer", "description": "the environment's epoch when it committed" },
                 "changeset_id": { "type": "string", "format": "uuid" },
                 "title": { "type": "string", "description": "the changeset's title" },
+                "undo_of": { "type": ["integer", "null"], "description": "the release this one undoes, when its changeset is an undo of a takedown (D-184); null otherwise" },
                 "changeset_hash": { "type": "string", "description": "the approved hash it published" },
                 "published_by": { "type": "string", "format": "uuid" },
                 "published_by_name": { "type": ["string", "null"] },
