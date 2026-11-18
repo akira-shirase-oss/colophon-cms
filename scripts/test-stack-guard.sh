@@ -85,6 +85,13 @@ for test in admission::without_valkey_each_server_still_limits_on_its_own \
   lifecycle::readiness_follows_real_outages_and_recoveries; do
   grep -q -- "--skip $test" <<<"$plan_shared" || fail "shared plan doesn't skip $test: $plan_shared"
 done
+# libtest names an integration test without its file (`without_valkey_…`, not
+# `admission::without_valkey_…`): a skip with the file prefix matches nothing, and the test runs.
+for name in without_valkey_each_server_still_limits_on_its_own without_valkey_a_token_is_still_limited_never_unlimited \
+  answers_survive_valkey_going_away_and_caching_resumes_when_it_is_back readiness_follows_real_outages_and_recoveries; do
+  grep -qE -- "--skip $name( |\$)" <<<"$plan_shared" || fail "the shared plan doesn't skip $name by the name libtest gives it: $plan_shared"
+done
+! grep -qE -- '--skip [a-z_]+::' <<<"$plan_shared" || fail "the shared plan skips by file::name, which libtest never matches: $plan_shared"
 ! grep -qE 'load.sh (cache-down|postgres-trouble) ' <<<"$plan_shared" || fail "shared plan runs a pausing smoke: $plan_shared"
 ! grep -q 'DROP DATABASE' <<<"$plan_shared" || fail "shared plan drops a database: $plan_shared"
 grep -q 'load.sh tokens throughput' <<<"$plan_shared" || fail "shared plan lost an ordinary smoke: $plan_shared"
