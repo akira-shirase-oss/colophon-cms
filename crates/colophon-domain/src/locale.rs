@@ -25,11 +25,14 @@ pub fn canonical(tag: &str) -> String {
             out.push('-');
         }
         let letters = !sub.is_empty() && sub.bytes().all(|byte| byte.is_ascii_alphabetic());
-        if index == 0 || after_singleton {
+        if after_singleton {
             out.push_str(&sub.to_ascii_lowercase());
         } else if sub.len() == 1 {
-            // A singleton starts an extension or private use: it and all after it are lowercase.
+            // A singleton starts an extension or private use, the tag's first subtag too (`x-ab`,
+            // `i-klingon`): it and all after it are lowercase.
             after_singleton = true;
+            out.push_str(&sub.to_ascii_lowercase());
+        } else if index == 0 {
             out.push_str(&sub.to_ascii_lowercase());
         } else if letters && sub.len() == 4 {
             let lower = sub.to_ascii_lowercase();
@@ -91,6 +94,9 @@ mod tests {
         ("en-x-legal-ab", "en-x-legal-ab"),
         ("iw", "iw"),
         ("yue-hk", "yue-HK"),
+        // A tag that starts with a singleton is lowercase throughout (RFC 5646 §2.1.1).
+        ("x-ab", "x-ab"),
+        ("i-klingon", "i-klingon"),
     ];
 
     #[test]

@@ -2821,6 +2821,17 @@ mod tests {
     }
 
     #[test]
+    fn a_locale_starts_with_its_language_never_a_singleton() {
+        // The API takes a language subtag first (2–3 letters), so tags that start with a singleton
+        // (`x-…` private use, `i-…` grandfathered) never reach storage through it (D-212).
+        for refused in ["x-ab", "X-AB", "i-klingon", "x", "e-n"] {
+            assert!(check_locale(refused).is_err(), "{refused}");
+        }
+        assert_eq!(locale_tag("PT-br").ok().as_deref(), Some("pt-BR"));
+        assert_eq!(locale_tag("x-ab").ok(), None);
+    }
+
+    #[test]
     fn if_match_takes_exactly_one_quoted_revision() {
         let id = Uuid::now_v7();
         assert_eq!(

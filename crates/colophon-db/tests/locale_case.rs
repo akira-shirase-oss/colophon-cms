@@ -172,6 +172,8 @@ async fn the_database_and_the_domain_agree_on_every_tag() {
         "EN-us-U-CA-Gregory",
         "en-X-Legal",
         "iw",
+        "x-AB",
+        "i-KLINGON",
     ] {
         let stored: String = sqlx::query_scalar("SELECT colophon_canonical_locale($1)")
             .bind(tag)
@@ -179,6 +181,15 @@ async fn the_database_and_the_domain_agree_on_every_tag() {
             .await
             .expect("canonical");
         assert_eq!(stored, colophon_domain::locale::canonical(tag), "{tag}");
+    }
+    // A tag that starts with a singleton is lowercase throughout (RFC 5646 §2.1.1).
+    for (tag, expected) in [("x-AB", "x-ab"), ("i-KLINGON", "i-klingon")] {
+        let stored: String = sqlx::query_scalar("SELECT colophon_canonical_locale($1)")
+            .bind(tag)
+            .fetch_one(&owner)
+            .await
+            .expect("canonical");
+        assert_eq!(stored, expected, "{tag}");
     }
     owner.close().await;
     db.drop().await;

@@ -25,10 +25,13 @@ DECLARE
 BEGIN
     FOR i IN 1 .. coalesce(array_length(parts, 1), 0) LOOP
         sub := parts[i];
-        IF i = 1 OR after_singleton THEN
+        IF after_singleton THEN
             out := out || lower(sub);
         ELSIF length(sub) = 1 THEN
+            -- A singleton, the first subtag too (x-ab, i-klingon): it and all after it lowercase.
             after_singleton := true;
+            out := out || lower(sub);
+        ELSIF i = 1 THEN
             out := out || lower(sub);
         ELSIF length(sub) = 4 AND sub ~ '^[A-Za-z]{4}$' THEN
             out := out || (upper(substr(sub, 1, 1)) || lower(substr(sub, 2)));
