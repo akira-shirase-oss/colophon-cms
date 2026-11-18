@@ -31,6 +31,10 @@ export type SiteMode =
 
 export interface World {
 	role: 'owner' | 'editor';
+	/** What built the request (D-097, D-184): a rollback restores `rollback_generation`; an undo of
+	 *  release N sets `undo_of` N and `rollback_generation` N - 1. */
+	rollbackGeneration: number | null;
+	undoOf: number | null;
 	template: string | null;
 	/** What issuing a grant answers: a grant, or a refusal. */
 	issue: 'grant' | 'not-configured' | 'unavailable' | 'limit' | 'invalid' | 'already-live' | 'offline';
@@ -63,6 +67,8 @@ export interface World {
 export function world(overrides: Partial<World> = {}): World {
 	return {
 		role: 'owner',
+		rollbackGeneration: null,
+		undoOf: null,
 		template: TEMPLATE,
 		issue: 'grant',
 		request: 'awaiting_review',
@@ -150,7 +156,8 @@ function changeset(w: World) {
 		submitted_by: 'person-1',
 		submitted_at: AT,
 		updated_at: AT,
-		rollback_generation: null,
+		rollback_generation: w.rollbackGeneration,
+		undo_of: w.undoOf,
 		items: [
 			{
 				kind: 'publish',

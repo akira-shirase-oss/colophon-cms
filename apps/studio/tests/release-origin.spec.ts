@@ -15,7 +15,7 @@ test('a rollback reads as a rollback', () => {
 	const rollback = releaseOrigin({ undo_of: null, rollback_generation: 2 });
 	expect(originText(rollback)).toBe('Rollback to Release 2');
 	expect(originRelease(rollback)).toBe(2);
-	// A server without `undo_of` yet (the field is optional until D-184 lands).
+	// An answer that leaves `undo_of` out (a server older than D-184) still labels the rollback.
 	expect(originText(releaseOrigin({ rollback_generation: 2 }))).toBe('Rollback to Release 2');
 });
 

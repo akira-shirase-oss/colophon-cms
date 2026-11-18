@@ -55,6 +55,9 @@ pub struct Head {
     pub submitted_at: Option<OffsetDateTime>,
     /// The generation whose publication set it restores, when a rollback built it (D-097).
     pub rollback: Option<i64>,
+    /// The release it undoes, when it is an undo of a takedown (D-184); `rollback` is then the
+    /// release just before it.
+    pub undo_of: Option<i64>,
     /// When it last changed.
     pub updated_at: OffsetDateTime,
     /// The release it was published as, if it has been (D-045).
@@ -526,7 +529,7 @@ fn head(
     created_at: OffsetDateTime,
     submitted: (Option<Uuid>, Option<OffsetDateTime>),
     changed: (OffsetDateTime, Option<i64>),
-    rollback: Option<i64>,
+    restores: (Option<i64>, Option<i64>),
 ) -> Head {
     Head {
         id,
@@ -536,7 +539,8 @@ fn head(
         created_at,
         submitted_by: submitted.0,
         submitted_at: submitted.1,
-        rollback,
+        rollback: restores.0,
+        undo_of: restores.1,
         updated_at: changed.0,
         published: changed.1,
     }
@@ -546,7 +550,7 @@ fn head(
 pub async fn get(tx: &mut ProjectTransaction, id: Uuid) -> Result<Option<Head>, DbError> {
     let row = sqlx::query!(
         r#"SELECT c.title, c.hash, c.created_by, c.created_at, c.submitted_by, c.submitted_at, c.updated_at,
-                  c.rollback_generation,
+                  c.rollback_generation, c.undo_of,
                   r.generation AS "published?"
            FROM changesets c
            LEFT JOIN releases r ON r.project_id = c.project_id AND r.environment_id = c.environment_id
@@ -568,7 +572,7 @@ pub async fn get(tx: &mut ProjectTransaction, id: Uuid) -> Result<Option<Head>, 
             row.created_at,
             (row.submitted_by, row.submitted_at),
             (row.updated_at, row.published),
-            row.rollback_generation,
+            (row.rollback_generation, row.undo_of),
         )
     }))
 }
@@ -577,7 +581,7 @@ pub async fn get(tx: &mut ProjectTransaction, id: Uuid) -> Result<Option<Head>, 
 pub async fn lock(tx: &mut ProjectTransaction, id: Uuid) -> Result<Option<Head>, DbError> {
     let row = sqlx::query!(
         r#"SELECT c.title, c.hash, c.created_by, c.created_at, c.submitted_by, c.submitted_at, c.updated_at,
-                  c.rollback_generation,
+                  c.rollback_generation, c.undo_of,
                   r.generation AS "published?"
            FROM changesets c
            LEFT JOIN releases r ON r.project_id = c.project_id AND r.environment_id = c.environment_id
@@ -600,7 +604,7 @@ pub async fn lock(tx: &mut ProjectTransaction, id: Uuid) -> Result<Option<Head>,
             row.created_at,
             (row.submitted_by, row.submitted_at),
             (row.updated_at, row.published),
-            row.rollback_generation,
+            (row.rollback_generation, row.undo_of),
         )
     }))
 }
@@ -986,7 +990,7 @@ pub async fn list(tx: &mut ProjectTransaction) -> Result<Vec<Summary>, DbError> 
         .map_err(DbError::from_query)?;
     let rows = sqlx::query!(
         r#"SELECT c.id, c.title, c.hash, c.created_by, c.created_at, c.submitted_by, c.submitted_at,
-                  c.updated_at, c.rollback_generation, rel.generation AS "published?",
+                  c.updated_at, c.rollback_generation, c.undo_of, rel.generation AS "published?",
                   counts.items AS "items!", counts.unpublish AS "unpublish!", counts.stale AS "stale!",
                   latest.id AS "review_id?", latest.reviewer_id AS "reviewer_id?",
                   latest.reviewer_name, latest.decision AS "decision?", latest.seq AS "seq?",
@@ -1057,7 +1061,7 @@ pub async fn list(tx: &mut ProjectTransaction) -> Result<Vec<Summary>, DbError> 
                     row.created_at,
                     (row.submitted_by, row.submitted_at),
                     (row.updated_at, row.published),
-                    row.rollback_generation,
+                    (row.rollback_generation, row.undo_of),
                 ),
                 items: row.items,
                 unpublish: row.unpublish,

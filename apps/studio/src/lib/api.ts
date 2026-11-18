@@ -1136,7 +1136,7 @@ export interface Changeset {
 	rollback_generation: number | null;
 	/** The release it undoes, when Undo built it (D-184): it republishes what that release took
 	 *  down. Read before `rollback_generation`, which an undo also carries. */
-	undo_of?: number | null;
+	undo_of: number | null;
 	/** The items your role reads; an entry it can't read is left out and counted in
 	 *  `hidden_items` (D-185). The hash still covers every item. */
 	items: ChangesetItem[];
@@ -1163,7 +1163,7 @@ export interface ChangesetSummary {
 	/** The release it restores, when a rollback built it (D-097). */
 	rollback_generation: number | null;
 	/** The release it undoes, when Undo built it (D-184). */
-	undo_of?: number | null;
+	undo_of: number | null;
 }
 
 const changesets = (project: string) => `${base(project)}/changesets`;
@@ -1291,7 +1291,7 @@ export interface Release {
 	/** How many distinct locations a probe saw this release, or a later one, from. */
 	locations: number;
 	/** The release it undid, when Undo made it (D-184). */
-	undo_of?: number | null;
+	undo_of: number | null;
 }
 
 /** One destination's part in delivering a release. */

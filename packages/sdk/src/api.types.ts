@@ -2237,6 +2237,8 @@ export interface components {
             /** Format: uuid */
             submitted_by?: string | null;
             title?: string;
+            /** @description the release it undoes, for an undo of a takedown (D-184); read it before `rollback_generation`, which an undo also sets */
+            undo_of?: number | null;
             unpublish?: number;
             /** Format: date-time */
             updated_at?: string;
@@ -2263,6 +2265,8 @@ export interface components {
             /** Format: uuid */
             submitted_by?: string | null;
             title?: string;
+            /** @description the release it undoes, for an undo of a takedown (D-184); read it before `rollback_generation`, which an undo also sets */
+            undo_of?: number | null;
             /** Format: date-time */
             updated_at?: string;
         };
@@ -3171,6 +3175,8 @@ export interface components {
             purge: "none" | "pending" | "accepted" | "failed";
             /** @description the changeset's title */
             title: string;
+            /** @description the release this one undoes, when its changeset is an undo of a takedown (D-184); null otherwise */
+            undo_of: number | null;
             /** @description entries it took down */
             unpublished: number;
         };
@@ -3212,6 +3218,8 @@ export interface components {
             purge: "none" | "pending" | "accepted" | "failed";
             /** @description the changeset's title */
             title: string;
+            /** @description the release this one undoes, when its changeset is an undo of a takedown (D-184); null otherwise */
+            undo_of: number | null;
             /** @description entries it took down */
             unpublished: number;
         };

@@ -720,6 +720,13 @@
           "title": {
             "type": "string"
           },
+          "undo_of": {
+            "description": "the release it undoes, for an undo of a takedown (D-184); read it before `rollback_generation`, which an undo also sets",
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
           "unpublish": {
             "type": "integer"
           },
@@ -796,6 +803,13 @@
           },
           "title": {
             "type": "string"
+          },
+          "undo_of": {
+            "description": "the release it undoes, for an undo of a takedown (D-184); read it before `rollback_generation`, which an undo also sets",
+            "type": [
+              "integer",
+              "null"
+            ]
           },
           "updated_at": {
             "format": "date-time",
@@ -3502,6 +3516,13 @@
             "description": "the changeset's title",
             "type": "string"
           },
+          "undo_of": {
+            "description": "the release this one undoes, when its changeset is an undo of a takedown (D-184); null otherwise",
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
           "unpublished": {
             "description": "entries it took down",
             "type": "integer"
@@ -3522,7 +3543,8 @@
           "unpublished",
           "purge",
           "label",
-          "locations"
+          "locations",
+          "undo_of"
         ],
         "type": "object"
       },
@@ -3611,6 +3633,13 @@
             "description": "the changeset's title",
             "type": "string"
           },
+          "undo_of": {
+            "description": "the release this one undoes, when its changeset is an undo of a takedown (D-184); null otherwise",
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
           "unpublished": {
             "description": "entries it took down",
             "type": "integer"
@@ -3629,7 +3658,8 @@
           "unpublished",
           "purge",
           "label",
-          "locations"
+          "locations",
+          "undo_of"
         ],
         "type": "object"
       },

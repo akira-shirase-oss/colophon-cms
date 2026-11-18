@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "SELECT c.title, c.hash, c.created_by, c.created_at, c.submitted_by, c.submitted_at, c.updated_at,\n                  c.rollback_generation,\n                  r.generation AS \"published?\"\n           FROM changesets c\n           LEFT JOIN releases r ON r.project_id = c.project_id AND r.environment_id = c.environment_id\n                               AND r.changeset_id = c.id\n           WHERE c.project_id = $1 AND c.environment_id = $2 AND c.id = $3\n           FOR UPDATE OF c",
+  "query": "SELECT c.title, c.hash, c.created_by, c.created_at, c.submitted_by, c.submitted_at, c.updated_at,\n                  c.rollback_generation, c.undo_of,\n                  r.generation AS \"published?\"\n           FROM changesets c\n           LEFT JOIN releases r ON r.project_id = c.project_id AND r.environment_id = c.environment_id\n                               AND r.changeset_id = c.id\n           WHERE c.project_id = $1 AND c.environment_id = $2 AND c.id = $3\n           FOR UPDATE OF c",
   "describe": {
     "columns": [
       {
@@ -93,6 +93,17 @@
       },
       {
         "ordinal": 8,
+        "name": "undo_of",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "changesets",
+            "name": "undo_of"
+          }
+        }
+      },
+      {
+        "ordinal": 9,
         "name": "published?",
         "type_info": "Int8",
         "origin": {
@@ -119,8 +130,9 @@
       true,
       false,
       true,
+      true,
       false
     ]
   },
-  "hash": "7208e53a676220713e6410a4077260535d3905c00b2f1196f1c0f3bca0dab6d2"
+  "hash": "a294db734711815873499f34520fa1e1228fa2d34296cf6fd68a74d32998d0c7"
 }

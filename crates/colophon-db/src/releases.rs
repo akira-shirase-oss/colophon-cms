@@ -19,6 +19,8 @@ pub struct Release {
     pub changeset_id: Uuid,
     /// That changeset's title.
     pub title: String,
+    /// The release that changeset undoes, when it is an undo of a takedown (D-184).
+    pub undo_of: Option<i64>,
     /// The changeset hash it published: the approved one.
     pub changeset_hash: Vec<u8>,
     /// The approval it was published under.
@@ -577,10 +579,12 @@ pub async fn list(tx: &mut ProjectTransaction, window: Window) -> Result<Vec<Rel
                -- The page's rows from releases alone, then each one's title and publisher by
                -- primary key: joined first, a misjudged plan paired every release with every
                -- changeset of the environment before the limit (as schedules::read did).
+               -- One changeset row per release, by its key, for its title and `undo_of` alike
+               -- (D-184): the whole row once, read field by field below, not a lookup per field.
                SELECT r.project_id, r.environment_id, r.generation, r.epoch, r.changeset_id,
-                      (SELECT c.title FROM changesets c
+                      (SELECT c FROM changesets c
                        WHERE c.project_id = r.project_id AND c.environment_id = r.environment_id
-                         AND c.id = r.changeset_id) AS title,
+                         AND c.id = r.changeset_id) AS changeset,
                       r.changeset_hash, r.review_id, r.published_by,
                       (SELECT i.display_name FROM identities i WHERE i.id = r.published_by)
                           AS published_by_name,
@@ -611,7 +615,7 @@ pub async fn list(tx: &mut ProjectTransaction, window: Window) -> Result<Vec<Rel
                GROUP BY o.location
            )
            SELECT p.generation AS "generation!", p.epoch AS "epoch!", p.changeset_id AS "changeset_id!",
-                  p.title AS "title!", p.changeset_hash AS "changeset_hash!", p.review_id AS "review_id!",
+                  (p.changeset).title AS "title!", (p.changeset).undo_of AS "undo_of?", p.changeset_hash AS "changeset_hash!", p.review_id AS "review_id!",
                   p.published_by AS "published_by!", p.published_by_name, p.published_at AS "published_at!",
                   (SELECT count(*) FROM publications x
                    WHERE x.project_id = p.project_id AND x.environment_id = p.environment_id

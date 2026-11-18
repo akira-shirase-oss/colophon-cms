@@ -1227,3 +1227,177 @@ async fn a_rollback_preview_and_receipts_say_what_changes_for_readers() {
     assert_eq!(preview["data"]["kept_down"], json!([]));
     assert_eq!(preview["data"]["kept_down_total"], 0);
 }
+
+/// One changeset's `undo_of`, as its own view, the list and (once published) its release say it.
+async fn undo_of_everywhere(session: &Session, project: &str, changeset: &str) -> [Value; 2] {
+    let view = call(
+        session,
+        Method::GET,
+        &format!("{}/changesets/{changeset}", base(project)),
+        None,
+        &[],
+    )
+    .await
+    .expect("request");
+    assert_eq!(view.status, StatusCode::OK, "{}", view.body);
+    let listed = call(
+        session,
+        Method::GET,
+        &format!("{}/changesets", base(project)),
+        None,
+        &[],
+    )
+    .await
+    .expect("request");
+    let summary = listed.body["data"]
+        .as_array()
+        .and_then(|rows| rows.iter().find(|row| row["id"] == changeset))
+        .expect("the changeset is listed");
+    [
+        view.body["data"]["undo_of"].clone(),
+        summary["undo_of"].clone(),
+    ]
+}
+
+/// The release `generation`'s `undo_of`, from the releases list and from its receipt.
+async fn release_undo_of(session: &Session, project: &str, generation: i64) -> [Value; 2] {
+    let listed = call(
+        session,
+        Method::GET,
+        &format!("{}/releases", base(project)),
+        None,
+        &[],
+    )
+    .await
+    .expect("request");
+    let row = listed.body["data"]
+        .as_array()
+        .and_then(|rows| rows.iter().find(|row| row["generation"] == generation))
+        .expect("the release is listed");
+    let receipt = call(
+        session,
+        Method::GET,
+        &format!("{}/releases/{generation}", base(project)),
+        None,
+        &[],
+    )
+    .await
+    .expect("request");
+    assert_eq!(receipt.status, StatusCode::OK, "{}", receipt.body);
+    [
+        row["undo_of"].clone(),
+        receipt.body["data"]["undo_of"].clone(),
+    ]
+}
+
+/// D-184's marker (migration 0071): `undo_of` names the release an undo reverses. It is null for
+/// ordinary and rollback changesets and their releases; set, it reads back from the changeset's
+/// view, the changesets list, the releases list and the receipt; and the database refuses a pair
+/// that doesn't restore the release just before the one undone. Nothing in the API writes it yet,
+/// so the test sets it directly as the migrator.
+#[tokio::test]
+#[ignore = "needs the stack and scripts/migrate.sh"]
+async fn an_undo_names_the_release_it_undoes_and_nothing_else_does() {
+    let _server = Server::start().await;
+    let owner = sign_in("dev-owner").await;
+    let project = project(&owner).await;
+    let entry = new_article(&owner, &project, "Undo marker", "text").await;
+    let other = new_article(&owner, &project, "Published later", "text").await;
+    let (first, first_hash) = approved(&owner, &owner, &project, &[&entry]).await;
+    let released = publish(&owner, &first, &first_hash, 0, &key()).await;
+    assert_eq!(released.body["data"]["generation"], 1, "{}", released.body);
+    let (second, second_hash) = approved(&owner, &owner, &project, &[&other]).await;
+    let released = publish(&owner, &second, &second_hash, 1, &key()).await;
+    assert_eq!(released.body["data"]["generation"], 2, "{}", released.body);
+    let body = json!({"title": "Take it down", "unpublish": [entry.clone()]});
+    let (third, third_hash) = approved_changeset(&owner, &owner, &project, &body).await;
+    let released = publish(&owner, &third, &third_hash, 2, &key()).await;
+    assert_eq!(released.body["data"]["generation"], 3, "{}", released.body);
+    // A rollback to 1 takes `other` down (and, D-097, doesn't put back what 3 took down).
+    let rollback = call(
+        &owner,
+        Method::POST,
+        &format!("{}/releases/1/rollback", base(&project)),
+        Some(&json!({"title": "Back to one"})),
+        &[("idempotency-key", &key())],
+    )
+    .await
+    .expect("request");
+    assert_eq!(rollback.status, StatusCode::CREATED, "{}", rollback.body);
+    let rollback = rollback.body["data"]["id"]
+        .as_str()
+        .expect("an id")
+        .to_owned();
+    let id = |path: &str| path.rsplit('/').next().expect("an id").to_owned();
+    let (first, second, third) = (id(&first), id(&second), id(&third));
+
+    // Ordinary and rollback changesets, and their releases, name no undo.
+    for changeset in [&first, &second, &third, &rollback] {
+        assert_eq!(
+            undo_of_everywhere(&owner, &project, changeset).await,
+            [Value::Null, Value::Null],
+            "{changeset}"
+        );
+    }
+    for generation in [1, 2, 3] {
+        assert_eq!(
+            release_undo_of(&owner, &project, generation).await,
+            [Value::Null, Value::Null],
+            "release {generation}"
+        );
+    }
+
+    // The database refuses every pair that isn't "undo of N restores N - 1".
+    let database = common::owner_database().await;
+    let uuid = |text: &str| uuid::Uuid::try_parse(text).expect("a uuid");
+    for (undo_of, rollback_generation, changeset) in [
+        (3, None, &first),        // an undo always restores the release before
+        (3, Some(1), &rollback),  // ...that one, not another
+        (0, Some(-1), &rollback), // there is no release 0 to undo
+    ] {
+        let refused = sqlx::query(
+            "UPDATE changesets SET undo_of = $1, rollback_generation = coalesce($2, rollback_generation)
+             WHERE id = $3",
+        )
+        .bind(undo_of)
+        .bind(rollback_generation)
+        .bind(uuid(changeset))
+        .execute(&database)
+        .await
+        .expect_err("the CHECK refuses it");
+        let code = refused
+            .as_database_error()
+            .and_then(|error| error.code().map(std::borrow::Cow::into_owned));
+        assert_eq!(code.as_deref(), Some("23514"), "{undo_of}: {refused}");
+    }
+
+    // Set honestly on the takedown's own changeset (rollback 2, undo of 3), it reads back
+    // everywhere; the other changesets and releases stay null.
+    sqlx::query("UPDATE changesets SET rollback_generation = 2, undo_of = 3 WHERE id = $1")
+        .bind(uuid(&third))
+        .execute(&database)
+        .await
+        .expect("a matching pair is allowed");
+    assert_eq!(
+        undo_of_everywhere(&owner, &project, &third).await,
+        [json!(3), json!(3)]
+    );
+    assert_eq!(
+        release_undo_of(&owner, &project, 3).await,
+        [json!(3), json!(3)]
+    );
+    for generation in [1, 2] {
+        assert_eq!(
+            release_undo_of(&owner, &project, generation).await,
+            [Value::Null, Value::Null],
+            "release {generation}"
+        );
+    }
+    for changeset in [&first, &second, &rollback] {
+        assert_eq!(
+            undo_of_everywhere(&owner, &project, changeset).await,
+            [Value::Null, Value::Null],
+            "{changeset}"
+        );
+    }
+}
