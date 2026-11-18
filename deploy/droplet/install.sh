@@ -76,8 +76,12 @@ if ! swapon --show | grep -q /swapfile && [[ "${COLOPHON_INSTALL_NO_SWAP:-0}" !=
     say "swap: couldn't enable /swapfile here (a container?); skipped"
   fi
 fi
-ssh_ip=$(value ssh_ip "Your own address for SSH (Enter for the one you're connected from: ${SSH_CLIENT%% *})")
-[[ -z "$ssh_ip" ]] && ssh_ip=${SSH_CLIENT%% *} && printf '%s' "$ssh_ip" >/etc/colophon/install/ssh_ip
+# The address you SSH from: the session's own when there is one (none from the Droplet Console).
+connected=${SSH_CLIENT:-}; connected=${connected%% *}
+hint=""; [[ -n "$connected" ]] && hint=" (Enter for $connected, the address of this session)"
+ssh_ip=$(value ssh_ip "Your own address for SSH$hint")
+if [[ -z "$ssh_ip" && -n "$connected" ]]; then ssh_ip=$connected; printf '%s' "$ssh_ip" >/etc/colophon/install/ssh_ip; fi
+[[ -n "$ssh_ip" ]] || { rm -f /etc/colophon/install/ssh_ip; echo "error: SSH needs an address to allow (yours); nothing opened" >&2; exit 1; }
 ufw default deny incoming >/dev/null && ufw default allow outgoing >/dev/null
 ufw status | grep -q "22/tcp.*ALLOW.*$ssh_ip" || ufw allow from "$ssh_ip" to any port 22 proto tcp comment 'ssh: maintainer' >/dev/null
 ufw --force enable >/dev/null && say "ufw: 22 from $ssh_ip, nothing else yet"
