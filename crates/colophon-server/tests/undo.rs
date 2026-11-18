@@ -915,7 +915,7 @@ async fn an_undo_waits_for_the_admission_lock_before_touching_the_environment_ro
     assert_eq!(done.status, StatusCode::CREATED, "{}", done.body);
 }
 
-/// Races, repeated (`UNDO_RACE_ROUNDS`, 20 by default): two undos of one takedown, and an undo
+/// Races, repeated (`UNDO_RACE_ROUNDS`; by default 200 in CI, where `CI` is set, and 20 locally): two undos of one takedown, and an undo
 /// against another person's publish on the same base. Every round has exactly one winner and the
 /// loser is refused by name — never a 500 or a deadlock. The counts are printed.
 #[tokio::test]
@@ -928,7 +928,11 @@ async fn races_repeated_always_have_one_winner_and_a_named_loser() {
     let rounds: usize = std::env::var("UNDO_RACE_ROUNDS")
         .ok()
         .and_then(|value| value.parse().ok())
-        .unwrap_or(20);
+        .unwrap_or(if std::env::var_os("CI").is_some() {
+            200
+        } else {
+            20
+        });
     let _server = Server::start().await;
     let owner = sign_in("dev-owner").await;
     let other = sign_in("dev-editor").await;
