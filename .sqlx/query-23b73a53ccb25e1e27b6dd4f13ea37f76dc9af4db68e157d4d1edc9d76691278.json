@@ -1,0 +1,106 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT DISTINCT ON (c.group_key)\n                      c.entry_id AS \"entry_id!\", c.revision_id AS \"revision_id!\",\n                      c.collection AS \"collection!\", c.title AS \"title!\", c.slug,\n                      c.content AS \"content!\", c.content_hash AS \"content_hash!\",\n                      c.valid_from AS \"valid_from!\", c.visibility AS \"visibility!\",\n                      c.media::text AS \"media!\", c.locale, c.group_key AS \"group_key!\"\n               FROM (\n                   SELECT p.*, t.rank\n                   FROM unnest($5::text[]) WITH ORDINALITY AS t (tag, rank)\n                   CROSS JOIN LATERAL (\n                       SELECT p.* FROM publications p\n                       WHERE p.project_id = nullif(current_setting('app.project_id', true), '')::uuid\n                         AND p.environment_id = $1 AND p.collection = $2 AND p.locale = t.tag\n                         AND p.group_key < $6\n                         AND p.valid_from <= $3 AND (p.valid_to IS NULL OR p.valid_to > $3)\n                         AND p.revoked_in IS NULL\n                       ORDER BY p.locale, p.group_key DESC\n                       LIMIT $7\n                   ) p\n                   UNION ALL\n                   SELECT p.*, array_position($5::text[], $4) AS rank\n                   FROM (\n                       SELECT p.* FROM publications p\n                       WHERE p.project_id = nullif(current_setting('app.project_id', true), '')::uuid\n                         AND p.environment_id = $1 AND p.collection = $2 AND p.locale IS NULL\n                         AND $4 = ANY ($5::text[])\n                         AND p.group_key < $6\n                         AND p.valid_from <= $3 AND (p.valid_to IS NULL OR p.valid_to > $3)\n                         AND p.revoked_in IS NULL\n                       ORDER BY p.locale, p.group_key DESC\n                       LIMIT $7\n                   ) p\n               ) c\n               ORDER BY c.group_key DESC, c.rank, c.entry_id DESC\n               LIMIT $7",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "entry_id!",
+        "type_info": "Uuid",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 1,
+        "name": "revision_id!",
+        "type_info": "Uuid",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 2,
+        "name": "collection!",
+        "type_info": "Text",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 3,
+        "name": "title!",
+        "type_info": "Text",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 4,
+        "name": "slug",
+        "type_info": "Text",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 5,
+        "name": "content!",
+        "type_info": "Text",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 6,
+        "name": "content_hash!",
+        "type_info": "Bytea",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 7,
+        "name": "valid_from!",
+        "type_info": "Int8",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 8,
+        "name": "visibility!",
+        "type_info": "Text",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 9,
+        "name": "media!",
+        "type_info": "Text",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 10,
+        "name": "locale",
+        "type_info": "Text",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 11,
+        "name": "group_key!",
+        "type_info": "Uuid",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Text",
+        "Int8",
+        "Text",
+        "TextArray",
+        "Uuid",
+        "Int8"
+      ]
+    },
+    "nullable": [
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null
+    ]
+  },
+  "hash": "23b73a53ccb25e1e27b6dd4f13ea37f76dc9af4db68e157d4d1edc9d76691278"
+}

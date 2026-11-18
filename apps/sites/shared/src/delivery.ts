@@ -6,6 +6,19 @@
 
 import type { Site } from './config.ts';
 
+/** One image a published revision names, as the row's `media` sidecar records it: the version
+ *  its release published (`url`, immutable) and the asset's newest (`current_url`). */
+export interface PublishedMedia {
+	url: string;
+	current_url: string;
+	type: string;
+	width: number;
+	height: number;
+	/** The released version's renditions by name; `wN` exists only when the original is wider than
+	 *  N, and is exactly N pixels wide. */
+	renditions: Record<string, string>;
+}
+
 /** One published entry, as the delivery API answers. */
 export interface Entry {
 	id: string;
@@ -19,6 +32,9 @@ export interface Entry {
 	published_in: number;
 	/** Who may read it (D-137): `public`, `authenticated` or `role:<name>`. */
 	visibility: string;
+	/** Every asset the revision names, by id, at the version its release published; absent when
+	 *  it names none, and on answers cached before the sidecar existed. */
+	media?: Record<string, PublishedMedia>;
 }
 
 /** A collection's whole published set and the generation it was read at. */
@@ -88,6 +104,47 @@ export async function entry(site: Site, collection: string, id: string, token?: 
 export function mediaUrl(site: Site, asset: string, rendition?: string): string {
 	const base = `${site.api}/media/v1/${site.project}/${site.environment}/${asset}`;
 	return rendition === undefined ? base : `${base}/${rendition}`;
+}
+
+/** An `<img>`'s attributes: where, how big, and the candidates a browser may pick from. */
+export interface Picture {
+	src: string;
+	width?: number;
+	height?: number;
+	srcset?: string;
+	sizes?: string;
+}
+
+/** The width a rendition name promises: `w320` → 320. */
+function renditionWidth(name: string): number | undefined {
+	const match = /^w([1-9][0-9]{0,5})$/.exec(name);
+	return match?.[1] === undefined ? undefined : Number(match[1]);
+}
+
+/**
+ * An image `entry` names, at the version its release published: the sidecar's immutable
+ * address, `rendition` when the worker wrote it (else the original — a narrow upload has none),
+ * its size so the page reserves the box, and every rendition as a `srcset` candidate for
+ * `sizes`. An asset the sidecar doesn't hold — an answer cached before it existed — falls back
+ * to the bare address, as before.
+ */
+export function picture(site: Site, entry: Entry, asset: string, options: { rendition?: string; sizes?: string } = {}): Picture {
+	const media = entry.media !== undefined && Object.hasOwn(entry.media, asset) ? entry.media[asset] : undefined;
+	if (media === undefined) return { src: mediaUrl(site, asset, options.rendition) };
+	const candidates: Array<[string, number]> = [];
+	for (const [name, url] of Object.entries(media.renditions)) {
+		const width = renditionWidth(name);
+		if (width !== undefined && width < media.width) candidates.push([url, width]);
+	}
+	candidates.sort((a, b) => a[1] - b[1]);
+	const chosen = options.rendition === undefined ? undefined : media.renditions[options.rendition];
+	const picked: Picture = { src: chosen ?? media.url, width: media.width, height: media.height };
+	if (candidates.length > 0) {
+		candidates.push([media.url, media.width]);
+		picked.srcset = candidates.map(([url, width]) => `${url} ${String(width)}w`).join(', ');
+		picked.sizes = options.sizes ?? '(max-width: 1280px) 100vw, 1280px';
+	}
+	return picked;
 }
 
 /** The entry's URL name: its slug when it set one, else its id. */

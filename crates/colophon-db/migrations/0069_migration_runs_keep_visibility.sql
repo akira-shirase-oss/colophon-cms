@@ -1,4 +1,4 @@
--- D-179: a content-migration run keeps a gated entry gated.
+-- D-182: a content-migration run keeps a gated entry gated.
 --
 -- 0041's `colophon_migration_apply_item` writes the migrated revision in SQL and names no
 -- `visibility` — it predates the column (0052) — so the revision took the column's default,

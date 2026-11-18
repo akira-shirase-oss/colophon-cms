@@ -172,13 +172,19 @@ pub async fn commit(
     .execute(&mut *tx.transaction)
     .await
     .map_err(DbError::from_write)?;
+    // An entry whose open publication already has the pinned revision stays open — unless the
+    // uploads it names have moved on since (a replace landed): then it closes and reopens with
+    // the versions current now, so publishing again is what carries a replaced image to sites
+    // that use the recorded URLs (D-178).
     sqlx::query!(
         "UPDATE publications p SET valid_to = $4
          FROM changeset_items i
          WHERE i.project_id = $1 AND i.environment_id = $2 AND i.changeset_id = $3
            AND p.project_id = i.project_id AND p.environment_id = i.environment_id
            AND i.kind = 'publish' AND p.entry_id = i.entry_id AND p.valid_to IS NULL
-           AND p.revision_id <> i.revision_id",
+           AND (p.revision_id <> i.revision_id
+                OR p.media <> colophon_publication_media(i.project_id, i.environment_id, i.changeset_id,
+                                            i.entry_id, i.revision_id))",
         tx.project,
         tx.environment,
         changeset,
@@ -188,17 +194,19 @@ pub async fn commit(
     .await
     .map_err(DbError::from_query)?;
     // A slug another entry still publishes fails `publications_live_slug`: `SlugTaken`, and the
-    // whole release rolls back (D-054).
+    // whole release rolls back (D-054). Each new publication records the upload versions it
+    // releases (D-178).
     let opened = sqlx::query!(
         "INSERT INTO publications (project_id, environment_id, entry_id, revision_id, collection, title, content, content_hash, slug, valid_from, visibility,
-                                   locale, group_key)
+                                   media, locale, group_key)
          SELECT i.project_id, i.environment_id, i.entry_id, r.id, r.collection, r.title, r.content, r.content_hash, r.slug, $4, r.visibility,
+                colophon_publication_media(i.project_id, i.environment_id, i.changeset_id, i.entry_id, r.id),
                 r.locale, coalesce(e.localization_id, i.entry_id)
          FROM changeset_items i
          JOIN revisions r ON r.project_id = i.project_id AND r.environment_id = i.environment_id
                          AND r.id = i.revision_id
          -- The locale is the revision's, pinned when it was written; the translation group is
-         -- the entry's, which never changes once set (D-177).
+         -- the entry's, which never changes once set (D-180).
          LEFT JOIN entries e ON e.project_id = i.project_id AND e.environment_id = i.environment_id
                             AND e.id = i.entry_id
          WHERE i.project_id = $1 AND i.environment_id = $2 AND i.changeset_id = $3 AND i.kind = 'publish'

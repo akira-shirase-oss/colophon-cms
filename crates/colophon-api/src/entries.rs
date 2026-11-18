@@ -675,7 +675,7 @@ async fn unique_free(
     ))
 }
 
-/// The tag an entry write stores (D-177): once the environment lists languages, only a listed
+/// The tag an entry write stores (D-180): once the environment lists languages, only a listed
 /// one, respelled as the list spells it — `locale_not_configured` otherwise. Without a list,
 /// any well-formed tag, as written.
 async fn listed_locale(tx: &mut ProjectTransaction, locale: &str) -> Result<String, ApiError> {
@@ -697,7 +697,7 @@ async fn listed_locale(tx: &mut ProjectTransaction, locale: &str) -> Result<Stri
 
 /// The `?locale=` a save writes (D-087): `None` clears to the project's default. It moves the
 /// entry before the save writes its revision, which pins the entry's tag as it is written
-/// (D-177), so the revision and the entry always agree. A locale a sibling of the entry's group
+/// (D-180), so the revision and the entry always agree. A locale a sibling of the entry's group
 /// already holds is refused `locale_taken`, and clearing a grouped entry `locale_required` —
 /// the group needs each member named.
 async fn apply_locale(
@@ -1678,7 +1678,7 @@ async fn import_create(
             "your role can't create entries here",
         ))?;
     // A Strapi `locale` maps to the entry's tag (D-087), shape-checked before it writes — and,
-    // once the environment lists languages, one of them (D-177).
+    // once the environment lists languages, one of them (D-180).
     let locale = match mapped.locale.as_deref() {
         Some(locale) => {
             check_locale(locale)?;
@@ -2036,7 +2036,7 @@ pub(crate) async fn save(
         gate.as_deref(),
     );
     // The save and the locale change commit or fail together (D-087); the entry moves first,
-    // so the revision the save writes pins the new tag (D-177). A refusal returns early,
+    // so the revision the save writes pins the new tag (D-180). A refusal returns early,
     // dropping the transaction: the claim, the tag and anything else roll back.
     if let Some(locale) = set {
         apply_locale(&mut tx, &path.collection, entry, locale).await?;

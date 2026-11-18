@@ -1,4 +1,4 @@
--- Locale selection in delivery (milestone E; D-177, D-178). docs/modules/02-db.md,
+-- Locale selection in delivery (milestone E; D-180, D-181). docs/modules/02-db.md,
 -- docs/modules/06-delivery.md ("Locales").
 --
 -- D-087 gave entries a locale tag and translation groups, but publications carried neither, so
@@ -128,7 +128,7 @@ ALTER TABLE environments ADD COLUMN locale_policy_version bigint NOT NULL DEFAUL
 GRANT UPDATE (locale_policy_version) ON environments TO colophon_api;
 GRANT SELECT (locale_policy_version) ON environments TO colophon_delivery;
 
--- Replacing the list is idempotent like the other whole-list writes: the operations 0051 last
+-- Replacing the list is idempotent like the other whole-list writes: the operations 0066 last
 -- listed, and `locales.update`.
 ALTER TABLE idempotency_records DROP CONSTRAINT idempotency_records_operation_check;
 ALTER TABLE idempotency_records ADD CONSTRAINT idempotency_records_operation_check
@@ -137,7 +137,7 @@ ALTER TABLE idempotency_records ADD CONSTRAINT idempotency_records_operation_che
                          'content_type.create', 'content_type.update', 'content_type.delete',
                          'changeset.create', 'changeset.publish',
                          'component.create', 'component.update',
-                         'asset.upload', 'asset.replace', 'asset.delete',
+                         'asset.upload', 'asset.replace', 'asset.delete', 'asset.update',
                          'migration.plan', 'migration.approve', 'migration.apply',
                          'migration.cancel', 'migration.resolve',
                          'comment.create', 'comment.resolve',

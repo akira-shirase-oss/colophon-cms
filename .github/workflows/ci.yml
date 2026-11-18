@@ -251,7 +251,7 @@ jobs:
           RATE=500 P99_MS=200 scripts/load.sh projects steady
           RATE=400 P99_MS=200 scripts/load.sh changesets steady
           RATE=1500 P99_MS=200 scripts/load.sh delivery steady
-          # The same reads in one language through fallbacks, 20 languages listed (D-178): a
+          # The same reads in one language through fallbacks, 20 languages listed (D-181): a
           # smoke on the laptop did 2,923 a second back to back at p99 16 ms; a third of that.
           RATE=1000 P99_MS=200 scripts/load.sh delivery-locales steady
           # Draft preview reads (D-172): never cached, each re-checked as its issuer — the
@@ -274,6 +274,9 @@ jobs:
           # a second back to back on the laptop (1,284 requests), so about 300 on a 7763; half
           # is 150.
           RATE=150 P99_MS=500 scripts/load.sh deletion steady
+          # Images inside rich text (D-177, D-178): cached image-heavy reads, saves naming 20
+          # images, refused saves. A first smoke; its rate is set from a runner's run.
+          RATE=100 P99_MS=700 scripts/load.sh rich-text-media steady
           TOTAL=50000 P99_MS=50 scripts/load.sh studio throughput
       - name: Service logs, and what the database was doing
         if: failure()

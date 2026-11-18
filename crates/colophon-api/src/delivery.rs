@@ -30,7 +30,7 @@
 //! it out and a read of it is 410 `gone`, uncached. Cache keys name the environment's latest
 //! unpublish, so answers cached before it are never served again.
 //!
-//! Locales (D-177, D-178): every row names its `locale` — its own tag, or the default language's
+//! Locales (D-180, D-181): every row names its `locale` — its own tag, or the default language's
 //! for an untagged entry — and an entry read lists its published translations as `alternates`.
 //! `?locale=` (with `?fallback=policy|none|<tags>`) answers in one language: lists and queries
 //! give one row per translation group, the best published member through the chain, labelled
@@ -38,7 +38,10 @@
 //! every language comes back, as before. Resolution runs inside the reader's own row-level
 //! security, so a member-only translation is never an anonymous reader's fallback.
 
-use std::{collections::BTreeSet, future::Future};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    future::Future,
+};
 
 use axum::{
     Json,
@@ -75,7 +78,7 @@ pub(crate) const GENERATION: HeaderName = HeaderName::from_static("colophon-gene
 pub(crate) const CACHE: HeaderName = HeaderName::from_static("colophon-cache");
 /// The tags a CDN purges by (Cloudflare's header name).
 pub(crate) const CACHE_TAG: HeaderName = HeaderName::from_static("cache-tag");
-/// The response header naming the locale policy version an answer resolved with (D-178).
+/// The response header naming the locale policy version an answer resolved with (D-181).
 pub(crate) const LOCALE_POLICY: HeaderName = HeaderName::from_static("colophon-locale-policy");
 
 /// Module 06: live public queries may be shared for 30 seconds; browsers revalidate every time.
@@ -114,7 +117,7 @@ pub(crate) struct ReadQuery {
 }
 
 /// The `?generation=`, `?cursor=`, `?locale=` and `?fallback=` a delivery query takes (DX.4,
-/// D-178): the release pin, the page boundary and the language travel outside the document,
+/// D-181): the release pin, the page boundary and the language travel outside the document,
 /// which the validator holds to its own keys — `limit` among them, the document's own, not a
 /// parameter's.
 #[derive(Deserialize)]
@@ -125,7 +128,7 @@ pub(crate) struct QueryParams {
     fallback: Option<String>,
 }
 
-/// A `?locale=` read, checked against the environment's policy (D-178).
+/// A `?locale=` read, checked against the environment's policy (D-181).
 struct Asked {
     /// The requested tag, as the environment's list spells it (or as asked, without a list).
     tag: String,
@@ -225,6 +228,7 @@ fn scope_of(
     environment: &delivery::Environment,
     generation: i64,
     asked: Option<&Asked>,
+    media: u64,
 ) -> Scope {
     Scope {
         project: project.as_u128(),
@@ -232,6 +236,7 @@ fn scope_of(
         epoch: environment.epoch,
         generation,
         unpublished: environment.last_unpublish,
+        media,
         locale_policy: environment.locale_policy,
         locale: asked.map(|asked| locale::chain_digest(&asked.resolution.chain)),
     }
@@ -253,7 +258,7 @@ fn with_locale(
     response
 }
 
-/// How a `?locale=` row was resolved (D-178).
+/// How a `?locale=` row was resolved (D-181).
 #[derive(Serialize)]
 struct Localization {
     /// The tag asked for.
@@ -264,7 +269,7 @@ struct Localization {
     fallback: bool,
 }
 
-/// A published translation of an entry (D-178): what a site needs for `hreflang` links.
+/// A published translation of an entry (D-181): what a site needs for `hreflang` links.
 #[derive(Serialize)]
 struct Alternate {
     id: Uuid,
@@ -291,7 +296,7 @@ pub(crate) struct PublishedView {
     /// Who may read it (D-137): a site that caches pages needs to know which answers are
     /// member-only even before it signs anyone in.
     visibility: String,
-    /// Its language (D-178): its own tag, or the default language's for an untagged entry;
+    /// Its language (D-181): its own tag, or the default language's for an untagged entry;
     /// `null` when it has none and the environment lists no default.
     locale: Option<String>,
     /// On a `?locale=` read: what was asked for, what was served, and whether it fell back.
@@ -303,17 +308,130 @@ pub(crate) struct PublishedView {
     /// On an entry read: its other published translations at the same generation.
     #[serde(skip_serializing_if = "Option::is_none")]
     alternates: Option<Vec<Alternate>>,
+    /// The uploads it names — asset fields and rich-text images — at the versions its release
+    /// recorded (D-178), by asset id. Left out when it names none.
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    media: BTreeMap<String, MediaView>,
+}
+
+/// What a release recorded of one upload, as `publications.media` holds it (D-178).
+/// Every field is optional on the way in: a stamp missing one is left out of the answer rather
+/// than failing the whole row.
+#[derive(Deserialize)]
+struct Stamp {
+    sha: Option<String>,
+    #[serde(rename = "type")]
+    kind: Option<String>,
+    width: Option<u32>,
+    height: Option<u32>,
+    #[serde(default)]
+    renditions: Vec<String>,
+}
+
+/// One upload as a site sees it (D-178): `url` and the renditions name the exact bytes the
+/// release published and never change (cached a year, D-157); `current_url` follows
+/// replacements, for a site that wants the newest bytes without publishing again.
+#[derive(Serialize)]
+pub(crate) struct MediaView {
+    url: String,
+    current_url: String,
+    #[serde(rename = "type")]
+    kind: String,
+    width: u32,
+    height: u32,
+    renditions: BTreeMap<String, String>,
+}
+
+/// Where an answer's media URLs start: `{origin}/media/v1/{project}/{environment}`.
+pub(crate) struct MediaBase(String);
+
+impl MediaBase {
+    pub(crate) fn new(origin: &str, project: Uuid, environment: &str) -> Self {
+        Self(format!("{origin}/media/v1/{project}/{environment}"))
+    }
+
+    /// The views of a publication's recorded `media`. Only what the server itself wrote is
+    /// stored there, but it still goes into URLs: an id that isn't a UUID, a digest that isn't
+    /// 64 hex characters or a rendition name that isn't lowercase letters and digits is left
+    /// out rather than written into a link.
+    fn views(&self, media: &str) -> Result<BTreeMap<String, MediaView>, ApiError> {
+        let stamps: BTreeMap<String, Stamp> =
+            serde_json::from_str(media).map_err(ApiError::internal)?;
+        let base = &self.0;
+        Ok(stamps
+            .into_iter()
+            .filter_map(|(asset, stamp)| {
+                let sha = stamp
+                    .sha
+                    .filter(|sha| colophon_media::is_version_sha(sha))?;
+                Uuid::try_parse(&asset).ok()?;
+                Some((
+                    asset,
+                    sha,
+                    stamp.kind?,
+                    stamp.width?,
+                    stamp.height?,
+                    stamp.renditions,
+                ))
+            })
+            .map(|(asset, sha, kind, width, height, renditions)| {
+                let url = format!("{base}/{asset}/{sha}");
+                let renditions = renditions
+                    .iter()
+                    .filter(|name| {
+                        !name.is_empty()
+                            && name.len() <= 16
+                            && name
+                                .bytes()
+                                .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit())
+                    })
+                    .map(|name| (name.clone(), format!("{url}/{name}")))
+                    .collect();
+                let view = MediaView {
+                    current_url: format!("{base}/{asset}"),
+                    url,
+                    kind,
+                    width,
+                    height,
+                    renditions,
+                };
+                (asset, view)
+            })
+            .collect())
+    }
+}
+
+/// A query row's `media` (D-178): its own recorded versions plus those of the publications
+/// `depth` populated into it, kept to the uploads its answered `content` still names — so
+/// `fields` narrowing drops the stamps of the fields it left out, and a populated reference's
+/// images carry the versions its release recorded. An asset id is a UUID, so finding it in the
+/// content's JSON is finding where it is named.
+pub(crate) fn media_named(
+    own: &str,
+    populated: &serde_json::Map<String, Value>,
+    content: &str,
+) -> Result<String, ApiError> {
+    let mut stamps: serde_json::Map<String, Value> =
+        serde_json::from_str(own).map_err(ApiError::internal)?;
+    for (asset, stamp) in populated {
+        if !stamps.contains_key(asset) {
+            stamps.insert(asset.clone(), stamp.clone());
+        }
+    }
+    stamps.retain(|asset, _| content.contains(asset.as_str()));
+    serde_json::to_string(&stamps).map_err(ApiError::internal)
 }
 
 impl PublishedView {
-    pub(crate) fn new(row: Published) -> Result<Self, ApiError> {
-        Self::in_locale(row, None, None)
+    pub(crate) fn new(row: Published, media: &MediaBase) -> Result<Self, ApiError> {
+        Self::in_locale(row, media, None, None)
     }
 
     /// The row as a reader of `asked`'s language gets it, with `default` the language of an
     /// untagged entry.
     fn in_locale(
         row: Published,
+        media: &MediaBase,
         default: Option<&str>,
         asked: Option<&Asked>,
     ) -> Result<Self, ApiError> {
@@ -335,6 +453,7 @@ impl PublishedView {
             content_hash: crate::entries::content_hash(&row.content_hash),
             published_in: row.valid_from,
             visibility: row.visibility,
+            media: media.views(&row.media)?,
             locale,
             localization,
             requested_id: None,
@@ -354,7 +473,7 @@ enum Read {
     Found(Answer),
     Missing,
     Gone,
-    /// Published, but not in the language asked for or its fallbacks: in these (D-178).
+    /// Published, but not in the language asked for or its fallbacks: in these (D-181).
     NotInLocale(Vec<String>),
 }
 
@@ -402,7 +521,7 @@ fn cursor(path: &CollectionPath, project: Uuid, generation: i64, last: Uuid) -> 
     ))
 }
 
-/// A `?locale=` list's cursor (D-178): `d2:` adds the chain's digest, so a page of one
+/// A `?locale=` list's cursor (D-181): `d2:` adds the chain's digest, so a page of one
 /// language never continues another's, and its position is the last row's translation group.
 fn locale_cursor(
     path: &CollectionPath,
@@ -643,6 +762,7 @@ pub(crate) async fn list(
         query.locale.as_deref(),
     )
     .await?;
+    let media = MediaBase::new(&services.media_origin, project, &path.environment);
     let asked = asked(
         &environment,
         query.locale.as_deref(),
@@ -673,7 +793,13 @@ pub(crate) async fn list(
     // Who the read is for: a live site session makes it a member's, reading as its role
     // (D-137) — otherwise anonymous, which the generation-keyed cache is for.
     let audience = audience::reader(services, project, &request).await?;
-    let scope = scope_of(project, &environment, generation, asked.as_ref());
+    let scope = scope_of(
+        project,
+        &environment,
+        generation,
+        asked.as_ref(),
+        colophon_domain::cache::media_digest(&services.media_origin),
+    );
     let key = scope.list_key(&path.collection, limit, before.as_ref().map(Uuid::as_u128));
     let tags = scope.list_tags(&path.collection);
     let fill = || {
@@ -730,7 +856,7 @@ pub(crate) async fn list(
             let default = environment.default_locale.as_deref();
             let data = rows
                 .into_iter()
-                .map(|row| PublishedView::in_locale(row, default, asked))
+                .map(|row| PublishedView::in_locale(row, &media, default, asked))
                 .collect::<Result<Vec<_>, ApiError>>()?;
             let empty = data.is_empty();
             let body =
@@ -747,7 +873,7 @@ pub(crate) async fn list(
 }
 
 /// `GET /content/v1/{project}/{environment}/{collection}/{entry}`. With `?locale=`, the entry's
-/// best published translation through the chain (D-178): `id` is the translation's,
+/// best published translation through the chain (D-181): `id` is the translation's,
 /// `requested_id` the one asked for; nothing in the chain is 404 `not_in_locale`, naming the
 /// languages that are published. Every answer lists the other published translations as
 /// `alternates`.
@@ -771,6 +897,7 @@ pub(crate) async fn get(
         query.locale.as_deref(),
     )
     .await?;
+    let media = MediaBase::new(&services.media_origin, project, &path.environment);
     let asked = asked(
         &environment,
         query.locale.as_deref(),
@@ -782,7 +909,13 @@ pub(crate) async fn get(
     }
     // Who the read is for (D-137), as in `list`.
     let audience = audience::reader(services, project, &request).await?;
-    let scope = scope_of(project, &environment, generation, asked.as_ref());
+    let scope = scope_of(
+        project,
+        &environment,
+        generation,
+        asked.as_ref(),
+        colophon_domain::cache::media_digest(&services.media_origin),
+    );
     let key = scope.entry_key(&path.collection, entry.as_u128());
     let tags = scope.entry_tags(&path.collection, entry.as_u128());
     let pinned = query.generation.is_some();
@@ -872,7 +1005,7 @@ pub(crate) async fn get(
                 return Ok(if gone { Read::Gone } else { Read::Missing });
             };
             let answered = row.entry_id;
-            let mut view = PublishedView::in_locale(row, default, asked)?;
+            let mut view = PublishedView::in_locale(row, &media, default, asked)?;
             if asked.is_some() {
                 view.requested_id = Some(entry);
             }
@@ -946,6 +1079,7 @@ pub(crate) async fn query(
         parameters.locale.as_deref(),
     )
     .await?;
+    let media = MediaBase::new(&services.media_origin, project, &path.environment);
     let asked = asked(
         &environment,
         parameters.locale.as_deref(),
@@ -997,7 +1131,13 @@ pub(crate) async fn query(
         .map(|inner| format!("q1:{generation}:{inner}"));
     // Who the read is for (D-137), as in `list`.
     let audience = audience::reader(services, project, &request).await?;
-    let scope = scope_of(project, &environment, generation, asked.as_ref());
+    let scope = scope_of(
+        project,
+        &environment,
+        generation,
+        asked.as_ref(),
+        colophon_domain::cache::media_digest(&services.media_origin),
+    );
     let key = scope.query_key(&path.collection, &language.query_hash(), cursor.as_deref());
     let tags = scope.list_tags(&path.collection);
     let fill = || {
@@ -1008,6 +1148,7 @@ pub(crate) async fn query(
             let depth = language.depth();
             let keep = language.fields();
             let mut resolved = crate::populate::Resolved::default();
+            let mut populated = serde_json::Map::new();
             let found = if generation == 0 {
                 db_query::PublishedPage {
                     rows: Vec::new(),
@@ -1046,7 +1187,7 @@ pub(crate) async fn query(
                     }
                 }
                 if !wanted.is_empty() {
-                    resolved = crate::populate::resolve_publications(
+                    (resolved, populated) = crate::populate::resolve_publications(
                         services,
                         &mut tx,
                         project,
@@ -1067,7 +1208,8 @@ pub(crate) async fn query(
                 .map(|mut row| {
                     row.content =
                         crate::populate::expand_document(&content_type, &row.content, &resolved)?;
-                    PublishedView::in_locale(row, default, asked)
+                    row.media = media_named(&row.media, &populated, &row.content)?;
+                    PublishedView::in_locale(row, &media, default, asked)
                 })
                 .collect::<Result<Vec<_>, ApiError>>()?;
             let empty = data.is_empty();
@@ -1092,6 +1234,66 @@ pub(crate) async fn query(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn a_query_rows_media_is_what_its_answered_content_names() {
+        let a = "0199f0a2-6c1e-7b3a-9d42-00000000000a";
+        let b = "0199f0a2-6c1e-7b3a-9d42-00000000000b";
+        let c = "0199f0a2-6c1e-7b3a-9d42-00000000000c";
+        let own = serde_json::json!({ a: {"sha": "x"}, b: {"sha": "y"} }).to_string();
+        let mut populated = serde_json::Map::new();
+        populated.insert(c.to_owned(), serde_json::json!({"sha": "z"}));
+        populated.insert(a.to_owned(), serde_json::json!({"sha": "other"}));
+        // `fields` kept only the field naming `a`; the populated author's avatar names `c`.
+        let content =
+            format!(r#"{{"cover":"{a}","author":{{"id":"e","content":{{"avatar":"{c}"}}}}}}"#);
+        let named: Value =
+            serde_json::from_str(&super::media_named(&own, &populated, &content).expect("merges"))
+                .expect("json");
+        assert_eq!(
+            named,
+            serde_json::json!({ a: {"sha": "x"}, c: {"sha": "z"} }),
+            "the row's own stamp wins; what the content no longer names goes"
+        );
+    }
+
+    #[test]
+    fn media_views_name_the_recorded_version_and_follow_the_current_one() {
+        let base = super::MediaBase::new("https://media.example", uuid::Uuid::nil(), "production");
+        let asset = "0199f0a2-6c1e-7b3a-9d42-5e8f1a2b3c4d";
+        let sha = "ab".repeat(32);
+        let stored = serde_json::json!({
+            asset: {"sha": sha, "type": "image/png", "width": 2400, "height": 1600,
+                    "renditions": ["w320", "w1280", "../x", "W9"]},
+            "not-a-uuid": {"sha": sha, "type": "image/png", "width": 1, "height": 1, "renditions": []},
+            "0199f0a2-6c1e-7b3a-9d42-5e8f1a2b3c4e": {"sha": "../../x", "type": "image/png",
+                    "width": 1, "height": 1, "renditions": []},
+            "0199f0a2-6c1e-7b3a-9d42-5e8f1a2b3c4f": {"sha": sha, "type": "image/png", "width": null}
+        })
+        .to_string();
+        let views = base.views(&stored).expect("parses");
+        let view = serde_json::to_value(&views).expect("serializes");
+        let prefix = format!(
+            "https://media.example/media/v1/{}/production/{asset}",
+            uuid::Uuid::nil()
+        );
+        assert_eq!(
+            view,
+            serde_json::json!({asset: {
+                "url": format!("{prefix}/{sha}"),
+                "current_url": prefix,
+                "type": "image/png",
+                "width": 2400,
+                "height": 1600,
+                "renditions": {
+                    "w1280": format!("{prefix}/{sha}/w1280"),
+                    "w320": format!("{prefix}/{sha}/w320"),
+                }
+            }}),
+            "only what could be a URL segment the server wrote is linked"
+        );
+        assert!(base.views("{}").expect("empty").is_empty());
+    }
+
     use super::*;
 
     #[test]

@@ -152,10 +152,10 @@ pub struct ErrorDetails {
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub changesets: Vec<PendingChangeset>,
     /// For a delivery read in a language nothing in the chain is published in
-    /// (`not_in_locale`, D-178): the tags the entry's translations are published in.
+    /// (`not_in_locale`, D-181): the tags the entry's translations are published in.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub available: Vec<String>,
-    /// For a refused language list (`locale_in_use`, D-177): the tag the entries are written in.
+    /// For a refused language list (`locale_in_use`, D-180): the tag the entries are written in.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub locale: Option<String>,
 }
@@ -361,7 +361,7 @@ pub enum ApiError {
         /// The current list's `ETag`, as `sha256:<hex>`.
         current: String,
     },
-    /// A language-list change named a policy version that is no longer current (D-177). The
+    /// A language-list change named a policy version that is no longer current (D-180). The
     /// response's `ETag` names the list now.
     #[error(
         "someone changed this environment's languages since you loaded them; review them and save again"
@@ -370,12 +370,12 @@ pub enum ApiError {
         /// The list's current policy version.
         current: i64,
     },
-    /// A language list leaves out a tag that live entries carry (D-177): 409 `locale_in_use`,
+    /// A language list leaves out a tag that live entries carry (D-180): 409 `locale_in_use`,
     /// naming the tag and the first entries. Boxed, so every `Result` in the API stays small.
     #[error("{}", .0.1.message)]
     LocaleInUse(Box<(String, InTheWay)>),
     /// A delivery read asked for an entry in a language that neither it nor any translation in
-    /// the fallback chain is published in (D-178). 404 — it may exist in others.
+    /// the fallback chain is published in (D-181). 404 — it may exist in others.
     #[error("this entry isn't published in that language or its fallbacks")]
     NotInLocale {
         /// The tags its group is published in, for the reader to choose from.
@@ -625,19 +625,12 @@ impl ApiError {
             // installation's payload bound answers the same way (D-135).
             DbError::WorkFull { open, limit } => Self::WorkFull { open, limit },
             DbError::PayloadFull { pending, limit } => Self::PayloadFull { pending, limit },
-            // 422, at the very place in the content (media M1).
-            DbError::MissingAsset {
-                field,
-                position,
-                many,
-            } => Self::Invalid(colophon_domain::schema::Refusal {
+            // 422, at the very place in the content (media M1): an asset field's value, or the
+            // `assetId` of the rich-text image naming it (D-177).
+            DbError::MissingAsset { pointer } => Self::Invalid(colophon_domain::schema::Refusal {
                 code: "asset_not_found",
-                pointer: if many {
-                    format!("/{field}/{position}")
-                } else {
-                    format!("/{field}")
-                },
-                message: "this names no asset of the environment".to_owned(),
+                pointer,
+                message: "this names no upload in this environment's media library".to_owned(),
             }),
             other => Self::internal(other),
         }

@@ -58,7 +58,10 @@ A fast, prerendered blog built from a release manifest pinned to one generation:
 ### Blog content model (spec §05)
 - Posts, authors and categories.
 - SEO fields: title, slug, description, canonical URL override, image alt text, social metadata.
-- Images, through [media](07-media.md).
+- Images, through [media](07-media.md). Article images (rich text and asset fields) use the row's `media`
+  sidecar (D-178): the versioned URL the release recorded, with `width`, `height` and a `srcset` of its
+  renditions through renderer v2; a row without `media` (an answer cached before it) falls back to the bare
+  `/media/v1/{project}/{environment}/{asset}` address.
 
 ### Pages
 - Home, post list, article, author, category and 404.

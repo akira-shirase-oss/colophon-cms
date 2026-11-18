@@ -129,6 +129,49 @@ The locale fields (`locale`, `localization`, `requested_id`, `alternates`) and t
 shapes are hand-written in `src/client.ts` until the served OpenAPI document carries them; they
 become aliases of the generated schemas then.
 
+## Images: the `media` sidecar and `mediaFor`
+
+A delivery row carries `media` — every asset its published revision names, asset fields and
+images inside rich text alike — with the version that release published:
+
+```json
+"media": {
+  "0199f0a2-…": {
+    "url": "https://cms.example.com/media/v1/{project}/production/0199f0a2-…/{sha256}",
+    "current_url": "https://cms.example.com/media/v1/{project}/production/0199f0a2-…",
+    "type": "image/webp", "width": 2400, "height": 1600,
+    "renditions": { "w320": "…/{sha256}/w320", "w1280": "…/{sha256}/w1280" }
+  }
+}
+```
+
+`url` is immutable: a pinned read shows the images that release published, and replacing an
+image reaches it when the entry is published again. `current_url` always follows the newest
+version. `mediaFor(row)` turns the sidecar into the rich-text renderer's `media` option — the
+versioned source, `width`/`height` (no layout shift), and the renditions as a `srcset` with a
+default `sizes`:
+
+```ts
+import { Client, mediaFor } from '@colophon-cms/sdk';
+import { renderToHtml, type RichTextValue } from '@colophon-cms/rich-text';
+
+const origin = 'https://cms.example.com';
+const site = new Client({ baseUrl: origin }).delivery('my-site');
+
+const { data: row } = await site.get('articles', '0199f0a2-6c1e-7b3a-9d42-5e8f1a2b3c4d');
+const body = row.content?.['body'] as RichTextValue | undefined;
+const html = body === undefined ? '' : renderToHtml(body, {
+  assetUrl: (id) => `${origin}/media/v1/my-site/production/${id}`, // fallback for older answers
+  media: mediaFor(row) // or mediaFor(row, { current: true, sizes: '50vw' })
+});
+// An asset field's upload: { src, width, height, srcset, sizes }, or undefined.
+const hero = mediaFor(row)(String(row.content?.['hero'] ?? ''));
+console.log(html.length, hero?.src);
+```
+
+An id the sidecar doesn't hold — an answer cached before the sidecar existed — answers
+`undefined`, and the renderer falls back to `assetUrl`.
+
 ## Errors
 
 Every failure is an `ApiError`: the HTTP `status` (0 when no answer arrived), the envelope's
@@ -183,6 +226,7 @@ browser (12 KB min+gzip budget).
 - `src/client.ts` — `Client`, `Environment`, `Delivery`, `newIdempotencyKey`, the locale types
 - `src/compat.ts` — the server-version rule (`SDK_VERSION`, `compatibility()`'s verdicts)
 - `src/error.ts` — `ApiError`, the envelope types, `availableLocales`
+- `src/media.ts` — `mediaFor`, `imageSource`, the `media` sidecar's types
 - `src/index.ts` — exports and the common schema aliases
 - `test/` — mocked-fetch contract tests, type-level tests, the compatibility table, and a
   real-server suite gated on `COLOPHON_TEST_ORIGIN`

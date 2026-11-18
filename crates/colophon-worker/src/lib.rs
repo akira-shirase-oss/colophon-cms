@@ -1453,10 +1453,10 @@ impl Worker {
                         String::new(),
                         "a reference names no entry".to_owned(),
                     ),
-                    colophon_db::DbError::MissingAsset { .. } => (
+                    colophon_db::DbError::MissingAsset { pointer } => (
                         "missing_asset",
-                        String::new(),
-                        "an asset field names no asset".to_owned(),
+                        pointer.clone(),
+                        "the content names no asset".to_owned(),
                     ),
                     _ => {
                         tracing::warn!(job = %job.id, error = %error, "an item's write failed");

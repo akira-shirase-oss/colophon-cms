@@ -31,7 +31,7 @@ pub struct Environment {
     pub generation: i64,
     /// The generation of its latest release that unpublished something (0 if none has).
     pub last_unpublish: i64,
-    /// Its locale policy version: bumped by every change to its languages (D-177).
+    /// Its locale policy version: bumped by every change to its languages (D-180).
     pub locale_policy: i64,
     /// The tags it lists, in display order (at most 50); empty when it lists none, and then any
     /// well-formed tag may be asked for.
@@ -67,14 +67,17 @@ pub struct Published {
     /// Who may read it: `public`, `authenticated` or `role:<name>` — what the transaction's
     /// audience already proved it may see (D-137).
     pub visibility: String,
-    /// The tag its revision was written in, `None` for the default language (D-177).
+    /// The upload versions its release recorded (D-178), as JSON: `{asset id: {sha, type,
+    /// width, height, renditions}}` — `{}` when it names none.
+    pub media: String,
+    /// The tag its revision was written in, `None` for the default language (D-180).
     pub locale: Option<String>,
     /// Its translation group: the entry's `localization_id`, or its own id when it has none.
     pub group_key: Uuid,
 }
 
 /// A published member of a translation group, without its content: what resolution and an
-/// entry's `alternates` need (D-178).
+/// entry's `alternates` need (D-181).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Sibling {
     /// The entry.
@@ -85,7 +88,7 @@ pub struct Sibling {
     pub slug: Option<String>,
 }
 
-/// How a `?locale=` read picks rows (D-178).
+/// How a `?locale=` read picks rows (D-181).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Resolution {
     /// The tags to try, best first: the requested tag, then its fallbacks — as the
@@ -97,7 +100,7 @@ pub struct Resolution {
 }
 
 /// The environment `slug` of `project` with its latest generation, in one statement: the delivery
-/// cache asks this on every request (`delivery_environment`, migrations 0011, 0012 and 0066,
+/// cache asks this on every request (`delivery_environment`, migrations 0011, 0012 and 0068,
 /// which runs as `colophon_delivery` in the project's context and returns nothing else).
 pub async fn environment(
     pool: &PgPool,
@@ -107,7 +110,7 @@ pub async fn environment(
     environment_in(pool, project, slug, None).await
 }
 
-/// [`environment`], also answering the locale policy for `requested` (D-178): the tag as the
+/// [`environment`], also answering the locale policy for `requested` (D-181): the tag as the
 /// list spells it and its fallback chain — still one statement.
 pub async fn environment_in(
     pool: &PgPool,
@@ -256,15 +259,15 @@ impl DeliveryTransaction {
     ) -> Result<Vec<Published>, DbError> {
         sqlx::query_as!(
             Published,
-            "SELECT entry_id, revision_id, collection, title, slug, content, content_hash, valid_from, visibility,
-                    locale, group_key
+            r#"SELECT entry_id, revision_id, collection, title, slug, content, content_hash, valid_from,
+                    visibility, media::text AS "media!", locale, group_key
              FROM publications
              WHERE project_id = nullif(current_setting('app.project_id', true), '')::uuid
                AND environment_id = $1 AND collection = $2
                AND valid_from <= $3 AND (valid_to IS NULL OR valid_to > $3) AND revoked_in IS NULL
                AND ($4::uuid IS NULL OR entry_id < $4)
              ORDER BY entry_id DESC
-             LIMIT $5",
+             LIMIT $5"#,
             environment,
             collection,
             generation,
@@ -286,12 +289,12 @@ impl DeliveryTransaction {
     ) -> Result<Option<Published>, DbError> {
         sqlx::query_as!(
             Published,
-            "SELECT entry_id, revision_id, collection, title, slug, content, content_hash, valid_from, visibility,
-                    locale, group_key
+            r#"SELECT entry_id, revision_id, collection, title, slug, content, content_hash, valid_from,
+                    visibility, media::text AS "media!", locale, group_key
              FROM publications
              WHERE project_id = nullif(current_setting('app.project_id', true), '')::uuid
                AND environment_id = $1 AND collection = $2 AND entry_id = $3
-               AND valid_from <= $4 AND (valid_to IS NULL OR valid_to > $4) AND revoked_in IS NULL",
+               AND valid_from <= $4 AND (valid_to IS NULL OR valid_to > $4) AND revoked_in IS NULL"#,
             environment,
             collection,
             entry,
@@ -338,7 +341,7 @@ impl DeliveryTransaction {
         .map_err(DbError::from_query)
     }
 
-    /// A page of the collection as one row per translation group, at `generation` (D-178):
+    /// A page of the collection as one row per translation group, at `generation` (D-181):
     /// each group's best published member for `resolution` — the earliest tag in its chain
     /// that the group publishes, an untagged member counting as the default — in group order,
     /// newest first, after the group `before` when given; at most `limit` (capped like
@@ -368,8 +371,8 @@ impl DeliveryTransaction {
                       c.entry_id AS "entry_id!", c.revision_id AS "revision_id!",
                       c.collection AS "collection!", c.title AS "title!", c.slug,
                       c.content AS "content!", c.content_hash AS "content_hash!",
-                      c.valid_from AS "valid_from!", c.visibility AS "visibility!", c.locale,
-                      c.group_key AS "group_key!"
+                      c.valid_from AS "valid_from!", c.visibility AS "visibility!",
+                      c.media::text AS "media!", c.locale, c.group_key AS "group_key!"
                FROM (
                    SELECT p.*, t.rank
                    FROM unnest($5::text[]) WITH ORDINALITY AS t (tag, rank)

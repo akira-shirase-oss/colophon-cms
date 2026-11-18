@@ -53,7 +53,7 @@
 	const releases = createQuery(() => releasesQuery(project));
 	const types = createQuery(() => typesQuery(project));
 	const typeName = (collection: string) => types.data?.find((type) => type.slug === collection)?.definition.name ?? collection;
-	// Which readers each item publishes to (D-177): its pinned language, by the name the
+	// Which readers each item publishes to (D-180): its pinned language, by the name the
 	// project's list gives it.
 	const languages = createQuery(() => localesQuery(project));
 	const languageName = (tag: string) => languages.data?.locales.find((row) => row.tag === tag)?.label ?? tag;

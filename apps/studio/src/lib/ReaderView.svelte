@@ -3,7 +3,7 @@
   website makes it (no sign-in), at the latest release. It says in words which release that is and
   whether newer changes are left out, then shows the answer exactly as a website receives it, to
   copy for whoever builds the site. Taken down, not out yet, or no answer: each said plainly.
-  With the project's languages listed (D-178), a picker reads it the way a site in one language
+  With the project's languages listed (D-181), a picker reads it the way a site in one language
   does: which translation that reader gets, and when it is a fallback, from which language.
 -->
 <script lang="ts">

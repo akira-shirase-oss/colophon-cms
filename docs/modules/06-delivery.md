@@ -56,7 +56,7 @@ L10, L11, L13, the spec §27 cache-isolation tests and the mixed-release checker
   `…/{collection}/{entry}`, with no sign-in, from `publications` as `colophon_delivery` (`colophon_db::delivery`,
   which switches role for each transaction). Answers carry `Colophon-Generation`; a list's cursor keeps the
   generation of its first page; a generation that hasn't committed is 422 `invalid_generation`. Projects are
-  addressed by id; languages are chosen with `?locale=` (E, D-178, below).
+  addressed by id; languages are chosen with `?locale=` (E, D-181, below).
 - Step 3.1 (D-048) adds a strong `ETag` (304 for a matching `If-None-Match`), the cache policies below,
   `Cache-Tag`, and `Colophon-Cache: hit | miss | coalesced | bypass`.
 - Step 3.2 (D-049): revoked publications are never delivered; an unpublished entry is 410 `gone`.
@@ -83,7 +83,21 @@ L10, L11, L13, the spec §27 cache-isolation tests and the mixed-release checker
   publication revoked or taken down since resolves to nothing, staying the stored id at any generation.
   `applied` echoes the canonical
   document and its `query_hash`. With `?locale=` the rows are resolved to one per translation group first, and
-  the document's filters, order and keyset run over what readers of that language get (D-178, below).
+  the document's filters, order and keyset run over what readers of that language get (D-181, below).
+
+- Gap 3 (D-178) adds `media` to every row (list, get and query), left out when the published revision names no
+  uploads: by asset id, the version of each upload — asset fields and rich-text images alike — that the row's
+  release recorded in `publications.media`. Each carries `url` (the versioned address
+  `{COLOPHON_MEDIA_URL}/media/v1/{project}/{env}/{asset}/{sha}`, immutable and cached a year, D-157),
+  `renditions` (`w320`, `w1280` under that version, only those the worker wrote), `width`, `height`, `type`, and
+  `current_url` (the bare address, which follows replacements). A site that uses `url` shows exactly the bytes
+  that were released, so a pinned read at generation N shows N's images; a replaced image reaches it when the
+  entries that use it are published again (publishing an unchanged entry whose upload has a newer version reopens
+  its publication). A site that wants the newest bytes without publishing uses `current_url`.
+  `COLOPHON_MEDIA_URL` (an http(s) origin, default `COLOPHON_PUBLIC_URL`) puts a CDN or asset host in front.
+  On a query, a row's `media` is what its answered `content` names: `fields` narrowing drops the stamps of the
+  fields it left out, and `depth` adds the versions each populated reference's own release recorded (an avatar on
+  a populated author), so a site renders a populated reference's images at their recorded versions too.
 
 ### Gated content (P7, D-137)
 - Every draft, revision and publication carries a `visibility`: `public` (the default), `authenticated` (any
@@ -104,16 +118,16 @@ L10, L11, L13, the spec §27 cache-isolation tests and the mixed-release checker
   simply anonymous — delivery never 401s a public collection, it answers the public rows, and the member
   answer's `Vary: Authorization, Cookie` keeps any shared cache between the two honest.
 
-### Locales (E, D-177, D-178)
+### Locales (E, D-180, D-181)
 - **What a publication says.** A revision pins the tag its entry had when it was written (`revisions.locale`,
   set by a trigger on every insert, so saves, creates, translations, bulk items and the content-migration run all
   pin alike; a save that changes the tag moves the entry first). A release copies it into the projection
   (`publications.locale`) beside the translation group (`publications.group_key`: the entry's `localization_id`,
   or its own id when it has none — a new group takes its source's id, so a page published before it was
   translated stays in its group). Delivery reads the locale from there, never from the moving draft. Migration
-  0066 backfilled revisions from their entry's tag at the time, which is exact for every revision written since
+  0068 backfilled revisions from their entry's tag at the time, which is exact for every revision written since
   and an approximation for older ones whose entry changed its tag later.
-- **The policy.** Each environment may list its languages (`environment_locales`, `GET|PUT {P}/locales`, D-177):
+- **The policy.** Each environment may list its languages (`environment_locales`, `GET|PUT {P}/locales`, D-180):
   at most 50 tags, one default (the language of entries with no tag), each with up to four ordered fallbacks
   drawn from the list, and a non-empty list must cover every tag live entries carry (`locale_in_use`). Every
   replace bumps `environments.locale_policy_version`. Once a list exists, entry
@@ -150,7 +164,7 @@ L10, L11, L13, the spec §27 cache-isolation tests and the mixed-release checker
   (`crates/colophon-db/tests/delivery_locales.rs`).
 - **Cache.** Keys name the policy version (every key: an untagged row's `locale` is the policy's default) and,
   on a locale read, the chain's digest (`Scope::locale`), so `fr` and `fr` falling back to `en` are different
-  answers and a policy change never serves an old resolution. `RENDER_VERSION` is 2, since every row gained
+  answers and a policy change never serves an old resolution. `RENDER_VERSION` is 3, since every row gained
   `locale`. Tags are unchanged — collection and entry — so a purge of a translation's collection reaches every
   language's pages.
 - **Plans.** A page in one language reads each tag of its chain straight off its own range of
@@ -204,6 +218,9 @@ L10, L11, L13, the spec §27 cache-isolation tests and the mixed-release checker
   resolves its generation from Postgres in one statement, before and apart from the cache: `delivery_environment`
   (migration 0011) runs as `colophon_delivery` in the project's context and returns only the environment's id, epoch
   and generation. As a delivery transaction (five round trips) the lookup cost as much as the cache saved.
+- Gap 3 (D-178): `RENDER_VERSION` is 2 (rows carry `media`), and the key's prefix names the media origin's
+  digest (`m{16 hex}`), since answers carry absolute media URLs: an answer cached while media pointed at one
+  origin is never served after `COLOPHON_MEDIA_URL` moves.
 - DX.4 (D-105): a query page keys on `Scope::query_key` — the normalized query's own `query_hash` and the page
   boundary's SHA-256, both fixed-width hex, the collection last as always — so two different queries can never
   share an answer (§15) and a key stays short however long a cursor is. The boundary names the canonical
@@ -277,6 +294,8 @@ These are policies to test, not a global 30-second consistency guarantee.
 the latest release. It deviates from spec §06's separate preview origin: Colophon serves JSON, not pages — the page
 sandbox is the customer's own site — so preview is a path family on the content origin, which an operator may still
 route to its own host.
+Preview rows carry `media` like delivery's (D-178): a published row the versions its release recorded, a draft row
+the current versions of the uploads it names (as drafts show them), kept to what the issuer's role may see.
 
 - `POST /preview/v1/{project}/{environment}/exchange {code}` → the bearer token;
   `GET …/session` → scope and end, for the site's banner;
@@ -310,7 +329,7 @@ route to its own host.
 - Sitemaps, feeds and language alternates are generated from a single published generation.
 - Canonical URLs are normalized against the verified site configuration.
 - A slug change proposes a reviewed redirect, with cycles and collisions rejected.
-- Locale fallback follows an explicit environment policy (D-177): none until a list names fallbacks; it resolves
+- Locale fallback follows an explicit environment policy (D-180): none until a list names fallbacks; it resolves
   only to published revisions and labels the resolved locale (built in E, above). Sitemaps and feeds aren't built.
 
 ## Invariants

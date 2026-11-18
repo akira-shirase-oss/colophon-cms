@@ -8,6 +8,19 @@ through `--version` and `GET /version`.
 
 ## [Unreleased]
 
+### Changed — read before upgrading
+
+- **Images inside rich text must name real uploads** (D-177). A rich-text `image` whose
+  `assetId` isn't an upload of the environment is refused `422 asset_not_found` at that
+  image's pointer. Drafts made with the old Studio dialog hold random placeholder ids, so they
+  are refused at their next save until each image is replaced or removed; the Studio marks the
+  image in place and offers Replace and Remove. Revisions saved before migration 0066 record no rich-text references until saved again.
+- **A replaced image reaches published pages at the next publish** (D-178). Delivery rows now
+  carry `media`: the versioned, immutable URL of each upload the release recorded, with its
+  size and renditions. A site using `url` keeps showing the released bytes after a replace
+  until the entries using it are published again; `current_url` follows the newest bytes.
+  `RENDER_VERSION` is 2, so cached delivery answers are refetched once.
+
 ### Added
 
 - **The TypeScript SDK is ready for npm (D-170):** `@colophon-cms/sdk` gains
@@ -41,7 +54,23 @@ through `--version` and `GET /version`.
   attaches `colophon-studio-<version>.tar.gz` and the quick start's `compose.yaml`, pinned to the
   image's digest (`SHA256SUMS` now lists 24 files). An allocator job measures the musl server
   against a glibc build of the same commit (D-174, D-176).
-- Languages in delivery (D-177, D-178): each environment may list its languages with a
+- Images inside rich text are tracked like every upload: publish-checked, kept from deletion,
+  listed under "Used in"; at most 200 distinct images per document (D-177).
+- The Studio inserts images into rich text from the media library (pick, search or upload,
+  then alt text, required), shows each image as itself with its state, and edits its alt text,
+  replaces or removes it from the keyboard; a pasted or dropped image is uploaded and inserted.
+- The Studio's Media page shows the whole library (paged, searchable, filtered by state and
+  tag), uploads many files at once through a bounded queue, and opens each upload's details:
+  its alt text, title, credit and tags (saved under If-Match, with a conflict state), versions,
+  where it's used, replace with the republish warning, both addresses to copy, and delete.
+- Renderer v2 (`@colophon-cms/rich-text`) gives images `width`, `height`, `srcset` and
+  `sizes` from the delivery row's `media`; the SDK's `mediaFor(row)` builds that for a site,
+  and the reference and demo sites use it.
+- `COLOPHON_MEDIA_URL`: the origin delivery's media URLs name (default the public origin).
+- The media library pages past 100 uploads (`cursor`, `next_cursor`), searches (`q`), filters
+  by `state` and `tag`, and keeps alt text, title, credit and tags via
+  `PATCH …/assets/{asset}` under `If-Match` (D-179).
+- Languages in delivery (D-180, D-181): each environment may list its languages with a
   default and ordered fallbacks (`GET`/`PUT {P}/locales`), and `/content/v1` lists, entry
   reads and queries take `?locale=` and `?fallback=`, answering one row per translation
   group with what was served labelled, `alternates` on entry reads, and the cache keyed by
@@ -57,7 +86,7 @@ closes and carries a test that failed without it.
 - A content-migration run no longer un-gates an entry: the revision it wrote took the default
   `public` visibility, so publishing a migrated member-only entry served it to anonymous
   readers. The run's revision now keeps the gate of the draft it replaces, and revisions and
-  publications runs already wrote are corrected (D-179, migration 0067).
+  publications runs already wrote are corrected (D-182, migration 0069).
 - Magic links land only on an origin the project lists, and spending one retires its
   siblings (D-148); requests are bounded per client address first, then per recipient with
   an escalating cooldown, then per project (D-153, D-161).
@@ -105,11 +134,11 @@ closes and carries a test that failed without it.
   allocation-heavy requests five times slower than glibc's on the same runner. Other builds are
   unchanged.
 - Delivery rows gain `locale` (the row's tag, or the default language's for an untagged
-  entry) and entry reads gain `alternates`; the render version is now 2, so answers cached
+  entry) and entry reads gain `alternates`; the render version is now 3, so answers cached
   under the old shape are not served. Without `?locale=` every language still comes back.
   Once an environment lists languages, entry writes with an unlisted tag are refused
   (`locale_not_configured`). The database function `delivery_environment` takes a third
-  argument (migration 0066).
+  argument (migration 0068).
 - **Magic links stop until origins are listed:** `PUT {P}/audience/origins` must name each
   site a link may land on; until then a request is `422 return_to_not_allowed` (D-148).
 - **A database on another machine needs `sslmode=verify-full`:** the server and the admin

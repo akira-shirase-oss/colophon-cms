@@ -204,6 +204,7 @@ fn delivery(c: &mut Criterion) {
         epoch: 1,
         generation: 4_812,
         unpublished: 4_790,
+        media: 0x5eed_0000_0000_0001,
         locale_policy: 3,
         locale: None,
     };

@@ -1,7 +1,9 @@
 <script lang="ts">
+	import { onMount } from 'svelte';
 	import { fixtures } from '#lib/fixtures.ts';
 	import { check, validate, type Verdict } from '#lib/richText.ts';
-	import type { Reply } from '#lib/api.ts';
+	import { listProjects, type Reply } from '#lib/api.ts';
+	import { imageJourney, type Delivered } from '#lib/imageJourney.ts';
 
 	let verdicts = $state<Record<string, Verdict | 'running'>>({});
 	let running = $state(false);
@@ -24,6 +26,32 @@
 	async function tryDraft() {
 		tried = await validate(draft);
 	}
+
+	// Images inside rich text: a real upload, tracked, published, and delivered with its version.
+	let projects = $state<{ id: string; name: string }[]>([]);
+	let signedIn = $state<boolean | null>(null);
+	let projectId = $state('');
+	let imageSteps = $state<string[]>([]);
+	let imageRunning = $state(false);
+	let delivered = $state<Delivered | null>(null);
+
+	async function runImages() {
+		imageRunning = true;
+		imageSteps = [];
+		delivered = null;
+		try {
+			delivered = await imageJourney(projectId, (step) => (imageSteps = [...imageSteps, step]));
+		} finally {
+			imageRunning = false;
+		}
+	}
+
+	onMount(async () => {
+		const reply = await listProjects<{ id: string; name: string }>();
+		signedIn = reply.status === 200;
+		projects = reply.projects;
+		if (projects.length > 0) projectId = projects[0]?.id ?? '';
+	});
 </script>
 
 <h1>Rich text</h1>
@@ -66,7 +94,51 @@
 	<pre>{tried.text}</pre>
 {/if}
 
+<h2>An image from the media library</h2>
+<p class="lede">
+	An image node names a real upload. The server keeps it as an asset reference: an id that names no upload is refused at its place, the
+	upload lists where it is used and can't be deleted from under the draft, and the release records the version it published — delivery
+	hands a site that immutable address with the image's size and renditions.
+</p>
+{#if signedIn === false}
+	<p data-testid="images-signed-out">Sign in first (the Session page) to run this one.</p>
+{:else}
+	<p>
+		<label>
+			Project
+			<select bind:value={projectId} data-testid="images-project">
+				{#each projects as project (project.id)}
+					<option value={project.id}>{project.name}</option>
+				{/each}
+			</select>
+		</label>
+		<button data-testid="images-run" onclick={runImages} disabled={!projectId || imageRunning}>{imageRunning ? 'Running…' : 'Upload, insert, publish, deliver'}</button>
+	</p>
+	<ol data-testid="images-steps">
+		{#each imageSteps as step, at (at)}
+			<li>{step}</li>
+		{/each}
+	</ol>
+	{#if delivered}
+		<figure class="delivered">
+			<img data-testid="images-delivered" src={delivered.media.url} width={delivered.media.width} height={delivered.media.height} alt={delivered.alt} />
+			<figcaption>As delivered: the version this release published, {delivered.media.width}×{delivered.media.height}.</figcaption>
+		</figure>
+	{/if}
+{/if}
+
 <style>
+	.delivered img {
+		width: 100%;
+		max-width: 400px;
+		height: auto;
+		border: 1px solid var(--line);
+		image-rendering: pixelated;
+	}
+	.delivered figcaption {
+		color: var(--muted);
+		font-size: 0.875rem;
+	}
 	.lede {
 		color: var(--muted);
 		max-width: 46rem;

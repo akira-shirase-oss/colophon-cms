@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "SELECT entry_id, revision_id, collection, title, slug, content, content_hash, valid_from, visibility,\n                    locale, group_key\n             FROM publications\n             WHERE project_id = nullif(current_setting('app.project_id', true), '')::uuid\n               AND environment_id = $1 AND collection = $2\n               AND valid_from <= $3 AND (valid_to IS NULL OR valid_to > $3) AND revoked_in IS NULL\n               AND ($4::uuid IS NULL OR entry_id < $4)\n             ORDER BY entry_id DESC\n             LIMIT $5",
+  "query": "SELECT entry_id, revision_id, collection, title, slug, content, content_hash, valid_from,\n                    visibility, media::text AS \"media!\", locale, group_key\n             FROM publications\n             WHERE project_id = nullif(current_setting('app.project_id', true), '')::uuid\n               AND environment_id = $1 AND collection = $2 AND entry_id = $3\n               AND valid_from <= $4 AND (valid_to IS NULL OR valid_to > $4) AND revoked_in IS NULL",
   "describe": {
     "columns": [
       {
@@ -104,6 +104,12 @@
       },
       {
         "ordinal": 9,
+        "name": "media!",
+        "type_info": "Text",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 10,
         "name": "locale",
         "type_info": "Text",
         "origin": {
@@ -114,7 +120,7 @@
         }
       },
       {
-        "ordinal": 10,
+        "ordinal": 11,
         "name": "group_key",
         "type_info": "Uuid",
         "origin": {
@@ -129,7 +135,6 @@
       "Left": [
         "Uuid",
         "Text",
-        "Int8",
         "Uuid",
         "Int8"
       ]
@@ -144,9 +149,10 @@
       false,
       false,
       false,
+      null,
       true,
       false
     ]
   },
-  "hash": "ac1c1528747a5600bed9678fd97b2a99c4c323ec8795977f339a669f2d7709f6"
+  "hash": "08821dfde1e3c9b8bb2b154f1828805d9494324fe3058ba3c806b3518528f278"
 }

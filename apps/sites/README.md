@@ -12,10 +12,28 @@ in the Studio, publishes a release, rebuilds a site, and sees the change on a re
 | Fieldnotes Docs | `@colophon/site-docs` | 58111 | `guides` | enum sections, ordered sidebar navigation, rich-text |
 | Butter & Thyme, recipes | `@colophon/site-recipes` | 58112 | `recipes` | a list of objects (ingredients), a list of text (steps), enums, numbers |
 | The Meridian Post, news | `@colophon/site-news` | 58113 | `stories` | a featured flag, categories, datelines, bylines |
-| Wren Hollis, portfolio | `@colophon/site-portfolio` | 58114 | `photos` | real uploaded assets served from `/media/v1`, renditions `w320`/`w1280` |
+| Wren Hollis, portfolio | `@colophon/site-portfolio` | 58114 | `photos` | real uploaded assets served from `/media/v1` at the version the release published, renditions `w320`/`w1280` as `srcset` |
 
 One project, five collections: the point is that the same published projection can feed front
 ends that share nothing but the API.
+
+## Images: the version a release published
+
+Every delivery row carries a `media` sidecar: each asset its published revision names — asset
+fields and images inside rich text alike — at the version its release recorded, with an
+immutable `url`, its renditions, `width`, `height` and `current_url`. The sites use it through
+`@colophon/site-kit`:
+
+- `picture(site, entry, asset, { rendition, sizes })` gives an `<img>` its attributes: the
+  versioned rendition (or the original when the upload is too narrow to have one), the original's
+  size so the page reserves the box, and every rendition as a `srcset` candidate.
+- `richText(site, value, entry)` renders a body with the same versioned, sized images
+  (renderer v2).
+
+So replacing an image in the media library reaches a site when the entries that use it are
+published again — a rebuild alone keeps showing what the release published. An answer cached
+before the sidecar existed has no `media`; the helpers then fall back to the bare current
+address (`mediaUrl`), as before.
 
 ## Seeding
 

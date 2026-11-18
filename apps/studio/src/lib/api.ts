@@ -379,9 +379,9 @@ export interface Details {
 	 *  collections the caller reads. */
 	referenced_by?: AssetReference[];
 	/** For a delivery read in a language nothing in its chain is published in (404
-	 *  `not_in_locale`, D-178): the languages it is published in. */
+	 *  `not_in_locale`, D-181): the languages it is published in. */
 	available?: string[];
-	/** For a refused language list (409 `locale_in_use`, D-177): the tag the entries are
+	/** For a refused language list (409 `locale_in_use`, D-180): the tag the entries are
 	 *  written in. */
 	locale?: string;
 }
@@ -475,7 +475,7 @@ async function send(method: string, path: string, body?: unknown, headers: Recor
 		case response.status === 401:
 			throw new ApiError('signed-out', message, 401);
 		case response.status === 404:
-			// A delivery read in a language nothing in its chain is published in (D-178) says
+			// A delivery read in a language nothing in its chain is published in (D-181) says
 			// which languages it is: the reason and details ride along.
 			throw new ApiError('not-found', message, 404, reason, null, details);
 		case response.status === 409 && (reason === 'stale_revision' || reason === 'stale_version' || reason === 'stale_role' || reason === 'stale_stages' || reason === 'stale_locales'):
@@ -668,19 +668,95 @@ export interface Asset {
 	file_name: string;
 	declared_type: string;
 	detected_type: string | null;
+	/** The current version's digest (D-136): `/media/v1/…/{asset}/{sha256}` pins those bytes. */
+	sha256: string | null;
 	size_bytes: number;
 	width: number | null;
 	height: number | null;
 	rejected_reason: string | null;
 	derivatives: string[];
 	created_at: string;
+	/** The library's own words for the upload (D2): the default alt text an image inserted into
+	 *  rich text starts from, a title, a credit, and up to ten slug-shaped tags. */
+	alt: string | null;
+	title: string | null;
+	credit: string | null;
+	tags: string[];
+	/** Bumped by every metadata change; `If-Match: "<n>"` on a PATCH names the one you edited. */
+	metadata_version: number;
 }
 
 const assetsPath = (project: string) => `${base(project)}/assets`;
 
-/** The project's uploads, newest first. */
+/** What the library list can narrow to: `q` (≤ 100 characters) matches the file name, title and
+ *  alt text; `state` one lifecycle state; `tag` one tag. */
+export interface AssetFilter {
+	q?: string;
+	state?: 'quarantined' | 'usable' | 'rejected' | 'deleting' | 'deleted';
+	tag?: string;
+	/** 1–100; the server's default is 100. */
+	limit?: number;
+	/** A page's `next_cursor`, to read the page after it. */
+	cursor?: string;
+}
+
+/** One page of the library, newest first, and the cursor for the next (null at the end). */
+export interface AssetPage {
+	data: Asset[];
+	next_cursor: string | null;
+}
+
+/** A page of the project's uploads, newest first (keyset paging: an upload added meanwhile never
+ *  shifts what the next page holds). */
+export async function listAssetPage(project: string, filter: AssetFilter = {}): Promise<AssetPage> {
+	const query = new URLSearchParams();
+	for (const [name, value] of Object.entries(filter)) {
+		if (value !== undefined && value !== '') query.set(name, String(value));
+	}
+	const suffix = query.size > 0 ? `?${query.toString()}` : '';
+	const page = (await (await send('GET', `${assetsPath(project)}${suffix}`)).json()) as Partial<AssetPage>;
+	return { data: page.data ?? [], next_cursor: page.next_cursor ?? null };
+}
+
+/** The project's newest uploads (the first page only: use `listAssetPage` to read on). */
 export async function listAssets(project: string): Promise<Asset[]> {
-	return ((await (await send('GET', assetsPath(project))).json()) as { data: Asset[] }).data;
+	return (await listAssetPage(project)).data;
+}
+
+/** The library metadata a PATCH may change; a field left out stays as it is, `null` clears it. */
+export interface AssetMetadata {
+	alt?: string | null;
+	title?: string | null;
+	credit?: string | null;
+	tags?: string[];
+}
+
+/** Changes an upload's library metadata under `If-Match` (D2): refused `stale_version` (409) when
+ *  someone changed it since `metadataVersion`, so nobody's edit is lost silently. */
+export async function updateAsset(project: string, asset: string, metadata: AssetMetadata, metadataVersion: number, key: string): Promise<Asset> {
+	return ((await (await send('PATCH', `${assetsPath(project)}/${asset}`, metadata, {
+		'If-Match': `"${metadataVersion}"`,
+		'Idempotency-Key': key
+	})).json()) as { data: Asset }).data;
+}
+
+/** The versions an upload has had, oldest first (D-136): `GET …/assets/{asset}` carries them. */
+export interface AssetVersion {
+	seq: number;
+	declared_type: string;
+	size_bytes: number;
+	detected_type: string;
+	sha256: string;
+	width: number;
+	height: number;
+	derivatives: string[];
+	created_at: string;
+}
+
+/** One upload's record with its version history (the answer carries `versions` beside `data`). */
+export async function getAssetWithVersions(project: string, asset: string): Promise<Asset & { versions: AssetVersion[] }> {
+	const body = (await (await send('GET', `${assetsPath(project)}/${asset}`)).json()) as { data: Asset; versions?: AssetVersion[] };
+	return { ...body.data, versions: body.versions ?? [] };
 }
 
 /** One upload's record — polled until it leaves `quarantined`. */
@@ -723,9 +799,20 @@ export async function deleteAsset(project: string, asset: string, key: string): 
 /** Uploads `file` into quarantine (M.0). `send` can't carry it because the body is the file,
  *  not a JSON document — same shape as `importEntries`. */
 export async function uploadAsset(project: string, file: File): Promise<Asset> {
+	return sendFile(assetsPath(project), file);
+}
+
+/** New bytes for an existing upload (D-136): `202` means the reverify job is queued; the asset
+ *  keeps serving its current version until the verdict lands. Published pages keep the version
+ *  their release recorded until the entries that use it are published again (D2). */
+export async function replaceAsset(project: string, asset: string, file: File): Promise<Asset> {
+	return sendFile(`${assetsPath(project)}/${asset}/replace`, file);
+}
+
+async function sendFile(path: string, file: File): Promise<Asset> {
 	let response: Response;
 	try {
-		response = await fetch(assetsPath(project), {
+		response = await fetch(path, {
 			method: 'POST',
 			cache: 'no-store',
 			signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
@@ -751,7 +838,7 @@ export async function uploadAsset(project: string, file: File): Promise<Asset> {
 		case response.status === 401:
 			throw new ApiError('signed-out', message, 401);
 		case response.status === 404:
-			// A delivery read in a language nothing in its chain is published in (D-178) says
+			// A delivery read in a language nothing in its chain is published in (D-181) says
 			// which languages it is: the reason and details ride along.
 			throw new ApiError('not-found', message, 404, reason, null, details);
 		case response.status >= 500 || response.status === 429:
@@ -798,7 +885,7 @@ export async function importEntries(project: string, collection: string, body: s
 		case response.status === 401:
 			throw new ApiError('signed-out', message, 401);
 		case response.status === 404:
-			// A delivery read in a language nothing in its chain is published in (D-178) says
+			// A delivery read in a language nothing in its chain is published in (D-181) says
 			// which languages it is: the reason and details ride along.
 			throw new ApiError('not-found', message, 404, reason, null, details);
 		case response.status >= 500 || response.status === 429:
@@ -1011,7 +1098,7 @@ export interface ChangesetItem {
 	published_revision_id: string | null;
 	/** Who created the entry, for permissions limited to one's own entries. */
 	created_by: string;
-	/** The language the pinned revision is written in (D-177); absent for the default. */
+	/** The language the pinned revision is written in (D-180); absent for the default. */
 	locale?: string;
 }
 
@@ -1411,7 +1498,7 @@ export interface Delivered {
 	content: Content;
 	content_hash: string;
 	published_in: number;
-	/** Its language (D-178): its own tag, or the default language's for an untagged entry. */
+	/** Its language (D-181): its own tag, or the default language's for an untagged entry. */
 	locale?: string | null;
 	/** On a read in one language: what was asked for, what was served, whether it fell back. */
 	localization?: { requested: string; resolved: string | null; fallback: boolean };
@@ -1419,7 +1506,7 @@ export interface Delivered {
 
 /** What readers get for one entry right now, with the release it was read at (the
  *  `Colophon-Generation` header) and the answer exactly as sent — in every language, or with
- *  `locale` the way a site reads it in that one (D-178). Taken down: 410 `gone`; not out yet:
+ *  `locale` the way a site reads it in that one (D-181). Taken down: 410 `gone`; not out yet:
  *  404; published, but not in that language or its fallbacks: 404 `not_in_locale`. */
 export async function readDelivered(
 	project: string,

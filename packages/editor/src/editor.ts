@@ -6,7 +6,7 @@
 // difference means saving would change the document, and it is not opened.
 
 import { Editor, type EditorOptions } from '@tiptap/core';
-import { extensions } from './extensions.ts';
+import { type EditorExtras, extensions } from './extensions.ts';
 import { type RichTextValue, serialize, toEditor, toStored, UnrepresentableContent } from './stored.ts';
 
 /** The first JSON Pointer at which two values differ, for the error message. */
@@ -26,12 +26,12 @@ function firstDifference(a: unknown, b: unknown, path = ''): string | null {
 }
 
 /** Creates an editor for `value`, or throws `UnrepresentableContent` if opening it would lose
- *  or change anything. */
-export function openEditor(value: RichTextValue, options: Partial<EditorOptions> = {}): Editor {
+ *  or change anything. `extras` change how it looks (an image's node view), never what it stores. */
+export function openEditor(value: RichTextValue, options: Partial<EditorOptions> = {}, extras: EditorExtras = {}): Editor {
 	let problem: Error | undefined;
 	const editor = new Editor({
 		...options,
-		extensions: extensions(),
+		extensions: extensions(extras),
 		content: toEditor(value),
 		enableContentCheck: true,
 		onContentError: ({ error }) => {

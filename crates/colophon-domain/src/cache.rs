@@ -9,7 +9,7 @@
 //! an entry under one of these keys can't go stale; a new release is a new generation and so new
 //! keys.
 //!
-//! Locales (D-178): a request with `?locale=` resolves through a chain of tags — the requested
+//! Locales (D-181): a request with `?locale=` resolves through a chain of tags — the requested
 //! one, then its fallbacks — and its key names that chain's digest, so `fr` and `fr` falling back
 //! to `en` are two answers. Every key also names the environment's locale policy version: which
 //! tag an untagged entry reads as, and which fallbacks a tag has, are the policy's, so a changed
@@ -26,8 +26,19 @@
 use sha2::{Digest, Sha256};
 
 /// Changes whenever the shape of a delivery answer does, so an entry cached for the old shape is
-/// never served as the new one.
-pub const RENDER_VERSION: u32 = 2;
+/// never served as the new one. 2: rows carry the `media` their release recorded (D-178).
+/// 3: rows name their `locale`, and entry reads their `alternates` (D-181).
+pub const RENDER_VERSION: u32 = 3;
+
+/// The first 8 bytes of SHA-256 of `origin`, as a number: what [`Scope::media`] names, so an
+/// answer cached while media URLs pointed at one origin is never served after they move
+/// (`COLOPHON_MEDIA_URL`, D-178).
+pub fn media_digest(origin: &str) -> u64 {
+    let digest = Sha256::digest(origin.as_bytes());
+    let mut first = [0_u8; 8];
+    first.copy_from_slice(&digest[..8]);
+    u64::from_be_bytes(first)
+}
 
 /// The most tags one purge names. A run of releases that changed more purges the whole
 /// environment instead: coarser, and still bounded.
@@ -45,6 +56,7 @@ pub fn purge_tags(project: u128, environment: u128, entries: &[(String, u128)]) 
         epoch: 0,
         generation: 0,
         unpublished: 0,
+        media: 0,
         locale_policy: 0,
         locale: None,
     };
@@ -80,6 +92,8 @@ pub struct Scope {
     /// The generation of the environment's latest release that unpublished something (0 if none
     /// has).
     pub unpublished: i64,
+    /// The media origin's [`media_digest`]: delivery answers carry absolute media URLs (D-178).
+    pub media: u64,
     /// The environment's locale policy version: bumped by every change to its languages.
     pub locale_policy: i64,
     /// For a `?locale=` read, the digest of the chain it resolves through
@@ -93,7 +107,8 @@ impl Scope {
             .locale
             .map_or_else(|| "-".to_owned(), |chain| format!("{chain:032x}"));
         format!(
-            "colophon:delivery:r{RENDER_VERSION}:p{:032x}:e{:032x}:x{}:g{}:u{}:l{}:{locale}",
+            "colophon:delivery:r{RENDER_VERSION}:m{:016x}:p{:032x}:e{:032x}:x{}:g{}:u{}:l{}:{locale}",
+            self.media,
             self.project,
             self.environment,
             self.epoch,
@@ -190,6 +205,7 @@ mod tests {
             epoch: 1,
             generation,
             unpublished: 0,
+            media: 0x0a,
             locale_policy: 0,
             locale: None,
         }
@@ -202,8 +218,8 @@ mod tests {
         assert_eq!(
             first,
             format!(
-                "colophon:delivery:r2:p{:032x}:e{:032x}:x1:g3:u0:l0:-:list:20:-:articles",
-                1, 14
+                "colophon:delivery:r3:m{:016x}:p{:032x}:e{:032x}:x1:g3:u0:l0:-:list:20:-:articles",
+                10, 1, 14
             )
         );
         assert_ne!(
@@ -229,6 +245,19 @@ mod tests {
         assert_ne!(first, at_3.list_key("articles", 21, None));
         assert_ne!(first, at_3.list_key("articles", 20, Some(7)));
         assert_ne!(first, at_3.list_key("events", 20, None));
+        assert_ne!(
+            first,
+            Scope {
+                media: 0x0b,
+                ..at_3
+            }
+            .list_key("articles", 20, None),
+            "the same answer with media URLs on another origin"
+        );
+        assert_ne!(
+            media_digest("https://a.example"),
+            media_digest("https://b.example")
+        );
         let other_project = Scope { project: 2, ..at_3 };
         assert_ne!(
             first,

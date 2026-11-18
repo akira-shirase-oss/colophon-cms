@@ -410,7 +410,7 @@ async fn a_draft_is_shown_only_through_its_preview_and_no_cache_ever_keeps_it() 
     let mut row = previewed["data"].as_object().expect("a row").clone();
     assert_eq!(row.remove("preview"), Some(json!({"source": "published"})));
     // Delivery's entry read also lists the entry's published translations (`alternates`,
-    // D-178); a preview read doesn't yet, so that one field is set aside here.
+    // D-181); a preview read doesn't yet, so that one field is set aside here.
     let mut delivered = delivered["data"].as_object().expect("a row").clone();
     assert_eq!(delivered.remove("alternates"), Some(json!([])));
     assert_eq!(Value::Object(row), Value::Object(delivered));

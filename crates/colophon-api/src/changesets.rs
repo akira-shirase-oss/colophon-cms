@@ -182,7 +182,7 @@ pub(crate) struct ItemView {
     /// changeset can still list it, as what it published.
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     entry_deleted: bool,
-    /// The language the pinned revision is written in (D-177): what readers of which language
+    /// The language the pinned revision is written in (D-180): what readers of which language
     /// this item publishes to. Left out for the default language.
     #[serde(skip_serializing_if = "Option::is_none")]
     locale: Option<String>,

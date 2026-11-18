@@ -154,7 +154,7 @@ pub async fn published_page(
     .await
 }
 
-/// [`published_page`] for a `?locale=` read (D-178): with a `resolution`, the rows the query
+/// [`published_page`] for a `?locale=` read (D-181): with a `resolution`, the rows the query
 /// filters, sorts and pages are first resolved to one per translation group — each group's
 /// best published member through the chain, inside the audience's own row-level security —
 /// so a filter sees the language a reader gets, never a sibling it doesn't.
@@ -238,7 +238,7 @@ pub const OVERLAY: &str = "WITH scoped AS (
      FROM unnest($4::uuid[], $5::uuid[]) AS s(entry_id, revision_id)
  ), overlay AS (
      SELECT p.entry_id, p.revision_id, p.collection, p.title, p.slug, p.content,
-            p.content_hash, p.valid_from, p.visibility, p.locale, p.group_key,
+            p.content_hash, p.valid_from, p.visibility, p.media, p.locale, p.group_key,
             'published'::text AS source
      FROM publications p
      WHERE p.project_id = nullif(current_setting('app.project_id', true), '')::uuid
@@ -248,7 +248,9 @@ pub const OVERLAY: &str = "WITH scoped AS (
        AND NOT EXISTS (SELECT 1 FROM scoped s WHERE s.entry_id = p.entry_id)
      UNION ALL
      SELECT r.entry_id, r.id, e.collection, r.title, r.slug, r.content, r.content_hash,
-            $3::bigint, r.visibility, r.locale, coalesce(e.localization_id, e.id), $6::text
+            $3::bigint, r.visibility,
+            colophon_release_media(e.project_id, e.environment_id, r.id),
+            r.locale, coalesce(e.localization_id, e.id), $6::text
      FROM scoped s
      JOIN entries e
        ON e.project_id = nullif(current_setting('app.project_id', true), '')::uuid
@@ -262,7 +264,8 @@ pub const OVERLAY: &str = "WITH scoped AS (
 /// The overlay's select list, over `overlay p`: delivery's columns, the row's source, and
 /// the entry's creator for the issuer's `own` condition.
 pub const OVERLAY_ROWS: &str = " SELECT p.entry_id, p.revision_id, p.collection, p.title,
-     p.slug, p.content, p.content_hash, p.valid_from, p.visibility, p.locale, p.group_key,
+     p.slug, p.content, p.content_hash, p.valid_from, p.visibility, p.media::text AS media,
+     p.locale, p.group_key,
      p.source,
      (SELECT c.created_by FROM entries c
       WHERE c.project_id = nullif(current_setting('app.project_id', true), '')::uuid
@@ -408,7 +411,8 @@ pub async fn resolved_publications(
     for chunk in ids.chunks(RESOLVE_BATCH) {
         let rows = sqlx::query(sqlx::AssertSqlSafe(
             "SELECT p.entry_id, p.revision_id, p.collection, p.title, p.slug, p.content,
-                    p.content_hash, p.valid_from, p.visibility, p.locale, p.group_key
+                    p.content_hash, p.valid_from, p.visibility, p.media::text AS media,
+                    p.locale, p.group_key
              FROM publications p
              WHERE p.project_id = nullif(current_setting('app.project_id', true), '')::uuid
                AND p.environment_id = $1 AND p.entry_id = ANY($2)
@@ -476,7 +480,7 @@ enum Arg {
     Generation(i64),
     /// The row cap.
     Rows(i64),
-    /// Tags: a locale read's chain (D-178).
+    /// Tags: a locale read's chain (D-181).
     Tags(Vec<String>),
     /// A preview overlay's scope entries (D-172).
     Ids(Vec<Uuid>),
@@ -587,7 +591,7 @@ fn published_statement(
         literals_fit(definition, &order, position)?;
     }
     if let Some(resolution) = resolution {
-        // One row per translation group first (D-178): the group's earliest tag in the chain,
+        // One row per translation group first (D-181): the group's earliest tag in the chain,
         // an untagged member counting as the default. The filters, the order and the keyset
         // below run over what readers of that language get.
         args.extend([
@@ -596,7 +600,8 @@ fn published_statement(
         ]);
         text.push_str(
             "SELECT p.entry_id, p.revision_id, p.collection, p.title, p.slug, p.content,
-         p.content_hash, p.valid_from, p.visibility, p.locale, p.group_key
+         p.content_hash, p.valid_from, p.visibility, p.media::text AS media,
+         p.locale, p.group_key
          FROM (SELECT DISTINCT ON (r.group_key) r.*
                FROM publications r
                WHERE r.project_id = nullif(current_setting('app.project_id', true), '')::uuid
@@ -612,7 +617,8 @@ fn published_statement(
     } else {
         text.push_str(
             "SELECT p.entry_id, p.revision_id, p.collection, p.title, p.slug, p.content,
-         p.content_hash, p.valid_from, p.visibility, p.locale, p.group_key
+         p.content_hash, p.valid_from, p.visibility, p.media::text AS media,
+         p.locale, p.group_key
          FROM publications p
          CROSS JOIN LATERAL (SELECT p.content::jsonb AS body) d
          WHERE p.project_id = nullif(current_setting('app.project_id', true), '')::uuid
@@ -999,6 +1005,7 @@ fn published(row: &sqlx::postgres::PgRow) -> Result<Published, DbError> {
         content_hash: row.try_get("content_hash").map_err(DbError::Query)?,
         valid_from: row.try_get("valid_from").map_err(DbError::Query)?,
         visibility: row.try_get("visibility").map_err(DbError::Query)?,
+        media: row.try_get("media").map_err(DbError::Query)?,
         locale: row.try_get("locale").map_err(DbError::Query)?,
         group_key: row.try_get("group_key").map_err(DbError::Query)?,
     })
@@ -1320,7 +1327,7 @@ mod tests {
         let (from, _) = stmt.text.split_once(" FROM ").expect("the projection");
         assert_eq!(
             from.trim_end(),
-            "SELECT p.entry_id, p.revision_id, p.collection, p.title, p.slug, p.content,\n         p.content_hash, p.valid_from, p.visibility, p.locale, p.group_key"
+            "SELECT p.entry_id, p.revision_id, p.collection, p.title, p.slug, p.content,\n         p.content_hash, p.valid_from, p.visibility, p.media::text AS media,\n         p.locale, p.group_key"
         );
         assert!(
             stmt.text.contains(

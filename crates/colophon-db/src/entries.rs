@@ -623,9 +623,7 @@ fn missing(reference: &ContentReference) -> DbError {
 
 fn missing_asset(asset: &ContentAsset) -> DbError {
     DbError::MissingAsset {
-        field: asset.field.clone(),
-        position: asset.position,
-        many: asset.many,
+        pointer: asset.pointer.clone(),
     }
 }
 
@@ -1181,7 +1179,7 @@ pub async fn create_localization(
 ) -> Result<Localized, DbError> {
     // The source was locked by `source_for_localization`; COALESCE keeps a group a concurrent
     // localize won while this one prepared its copy. A new group takes its source's own id
-    // (D-177): publications name an ungrouped entry's group by its id, so a source published
+    // (D-180): publications name an ungrouped entry's group by its id, so a source published
     // before it was translated stays in the same group as its translations.
     let candidate = source_id;
     let group = sqlx::query!(

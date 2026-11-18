@@ -217,7 +217,10 @@ M.1 to M.3, single types and patterns (branch `studio/dashboard`).
 - `studio`: release slider, history and compare, restore as a new revision, media picker.
 - `media`: upload intents, quarantine, signature and decoder checks, derivatives, reference tracking, cleanup —
   built through staged deletion with tombstones and the retention sweep (D-098, D-099); the CDN purge path for
-  deleted bytes is the remaining gap.
+  deleted bytes is the remaining gap. Gap 3 (2026-11-17): images inside rich text are tracked asset references
+  (D-177), releases record the upload versions they publish and delivery hands sites versioned URLs with sizes and
+  renditions (D-178), and the library pages, searches and keeps alt text, titles, credits and tags (D-179). Still
+  open there: media `Cache-Tag` and CDN purge, the full 1M load runs.
 - Preview capabilities on a separate origin; sitemaps and feeds from one generation; scheduled publishing with time
   zones and daylight-saving handling.
 
@@ -231,7 +234,7 @@ expired-approval scheduling).
 
 - Localization: locale variants with their own slugs, drafts and publication history (spec §06), the locale switcher,
   fallbacks as explicit policy. Variants and groups are built (D-087, migration 0034). Delivery in one language is
-  built (D-177, D-178, branch `gap/locales`, migration 0066): revisions pin their tag and releases copy it with the
+  built (D-180, D-181, branch `gap/locales`, migration 0068): revisions pin their tag and releases copy it with the
   translation group; each environment may list its languages with a default and ordered fallbacks
   (`GET`/`PUT {P}/locales`); `/content/v1` takes `?locale=` and `?fallback=` on lists, entry reads and queries,
   resolves one row per group inside the reader's own row security, labels what it served, lists `alternates`,
