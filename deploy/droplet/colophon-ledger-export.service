@@ -1,0 +1,27 @@
+# The deletion ledger, copied off the droplet daily (deploy/droplet/DEPLOY.md, step 10): Neon's
+# point-in-time restore brings the database back to a moment, and this ledger replays what was
+# deleted after it (O2, deploy/runbooks/restore.md). Each run writes the whole ledger to its
+# high-water mark under deletion-ledger/ in the backups bucket.
+#
+# Needs D-191 (colophon-cli reads COLOPHON_S3_SECRET_KEY_FILE and refuses plain HTTP off loopback).
+[Unit]
+Description=Colophon deletion-ledger export to R2
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+LoadCredential=migration_database_url:/etc/colophon/credentials/migration_database_url
+LoadCredential=s3_secret_key:/etc/colophon/credentials/s3_secret_key
+EnvironmentFile=/etc/colophon/colophon.env
+# The backups bucket, not the media bucket the server writes to.
+Environment=COLOPHON_S3_BUCKET=colophon-backups
+Environment=COLOPHON_MIGRATION_DATABASE_URL_FILE=%d/migration_database_url
+Environment=COLOPHON_S3_SECRET_KEY_FILE=%d/s3_secret_key
+ExecStart=/bin/sh -c 'exec /usr/local/bin/colophon admin ledger export --s3-key "deletion-ledger/$(date -u +%%Y-%%m-%%dT%%H%%M%%SZ).jsonl" --json'
+DynamicUser=yes
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX

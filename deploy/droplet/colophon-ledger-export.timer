@@ -1,0 +1,11 @@
+# Daily, at a quiet hour with up to 30 minutes of jitter; a missed run (the droplet was off) runs at boot.
+[Unit]
+Description=Daily Colophon deletion-ledger export
+
+[Timer]
+OnCalendar=*-*-* 03:17:00 UTC
+RandomizedDelaySec=30min
+Persistent=true
+
+[Install]
+WantedBy=timers.target

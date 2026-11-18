@@ -1,0 +1,20 @@
+# Caddy for the S0 droplet (deploy/droplet/DEPLOY.md): Cloudflare terminates visitors' TLS and
+# connects here over TLS with "Full (strict)", so Caddy serves Cloudflare's Origin Certificate
+# (no ACME: port 80 stays closed). Only Cloudflare reaches 443 (the firewall, cloudflare-ips.sh).
+{
+	auto_https off
+	servers {
+		# Cloudflare's ranges, so Caddy passes the visitor's address on in X-Forwarded-For
+		# (cloudflare-ips.sh writes this file).
+		import /etc/caddy/cloudflare-trusted.caddy
+	}
+}
+
+app.colophon.404human.dev:443 {
+	tls /etc/caddy/origin.pem /etc/caddy/origin.key
+	encode zstd gzip
+	reverse_proxy 127.0.0.1:58000 {
+		# Live updates are server-sent events: pass each event on as it is written.
+		flush_interval -1
+	}
+}
