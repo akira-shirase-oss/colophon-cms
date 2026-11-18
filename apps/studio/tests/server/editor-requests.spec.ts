@@ -89,6 +89,14 @@ test('In review reads the request list once and at most ten waiting requests in 
 	await expect(page.getByTestId('entry-state')).toHaveAttribute('data-state', 'review');
 });
 
+/** Reads beyond "once per navigation" that are known and named, so the test fails if a new one appears AND if a
+ *  known one goes away (then its allowance must be removed here). One today: F9, workstream 4 — the live
+ *  stream's first open re-reads what the page has just loaded (`lib/live.ts`'s catch-up), so every read the page
+ *  made can come once more after `/events` opens. Workstream 4's first slice removes it, and this entry with it. */
+const KNOWN_DUPLICATES = {
+	catchUp: 'F9, workstream 4: the first SSE open refetches what the page just loaded'
+} as const;
+
 test('opening a live entry: each resource read once per navigation', async ({ page }) => {
 	await signIn(page);
 	const project = await newProject(page);
@@ -96,14 +104,27 @@ test('opening a live entry: each resource read once per navigation', async ({ pa
 	await publishThroughApi(page, project, 'Regatta', [entry]);
 	await page.goto(`/studio/projects/${project}`);
 	await page.waitForLoadState('networkidle');
+	// The setup's own writes announce themselves on the live stream (D-108): let them drain first.
+	await page.waitForTimeout(3_000);
 	const seen = logged(page);
 	await page.goto(`/studio/projects/${project}/articles/${entry}`);
 	await expect(page.getByTestId('entry-state')).toHaveAttribute('data-state', 'live');
 	await page.waitForLoadState('networkidle');
-	const opened = counts(seen);
-	console.log(`requests opening a live entry: ${JSON.stringify(opened)}`);
+	// The page's own reads come before the stream opens; whatever follows the open is the catch-up.
+	const open = seen.findIndex((one) => one.endsWith('/events'));
+	const load = open < 0 ? seen : seen.slice(0, open);
+	const catchUp = open < 0 ? [] : seen.slice(open + 1).filter((one) => !one.endsWith('/events'));
+	console.log(`requests opening a live entry: ${JSON.stringify({ load: counts(load), catchUp: counts(catchUp) })}`);
 	// A live entry needs no public read at all: only a draft might be "taken down".
-	expect(opened['GET /content/v1/:id/production/articles/:id'] ?? 0).toBe(0);
-	const repeated = Object.entries(opened).filter(([path, times]) => times > 1 && !path.includes('/events'));
-	expect(repeated, JSON.stringify(opened, null, 1)).toEqual([]);
+	expect(counts(seen)['GET /content/v1/:id/production/articles/:id'] ?? 0).toBe(0);
+	// The page itself: every resource exactly once. No allowance here, so a new duplicate fails.
+	const twiceOnLoad = Object.entries(counts(load)).filter(([, times]) => times > 1);
+	expect(twiceOnLoad, JSON.stringify(counts(load), null, 1)).toEqual([]);
+	// The known catch-up (KNOWN_DUPLICATES.catchUp): it only re-reads what the page loaded, each at most once…
+	const unexpected = catchUp.filter((one) => !load.includes(one));
+	expect(unexpected, `the catch-up read something the page never loaded (${KNOWN_DUPLICATES.catchUp})`).toEqual([]);
+	const twiceInCatchUp = Object.entries(counts(catchUp)).filter(([, times]) => times > 1);
+	expect(twiceInCatchUp, 'the catch-up read the same thing twice').toEqual([]);
+	// …and it is still there: when F9 is fixed this fails, and the allowance above must go with it.
+	expect(catchUp.length, `the known duplicate is gone (${KNOWN_DUPLICATES.catchUp}): remove KNOWN_DUPLICATES.catchUp and assert no catch-up reads`).toBeGreaterThan(0);
 });
