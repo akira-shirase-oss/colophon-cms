@@ -131,6 +131,8 @@ jobs:
         run: scripts/test-install.sh
       - name: The Homebrew formula, rendered from a SHA256SUMS
         run: scripts/test-homebrew-formula.sh
+      - name: Every load smoke check.sh runs, CI runs too (scripts/test-smoke-parity.sh, D-209)
+        run: scripts/test-smoke-parity.sh
 
   # The testing rule (D-018) from a clean clone: the real stack, the real binary, real outages,
   # the testbed in a browser, and a load smoke run.
