@@ -369,6 +369,16 @@ jobs:
           docker run --rm -v "$caddy_dir:/etc/caddy:ro" \
             caddy:2.10.2@sha256:c3d7ee5d2b11f9dc54f947f68a734c84e9c9666c92c88a7f30b9cba5da182adb \
             caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile
+      - name: The shipped unit reads its secrets through systemd credentials, over verify-full (deploy/droplet/test-unit-credentials.sh)
+        run: |
+          set -euo pipefail
+          out=$(mktemp -d)
+          id=$(docker create colophon:local)
+          docker cp "$id:/usr/local/bin/colophon-server" "$out/colophon-server"
+          docker cp "$id:/usr/local/bin/colophon" "$out/colophon"
+          docker cp "$id:/usr/share/colophon/studio" "$out/studio"
+          docker rm "$id" >/dev/null
+          sudo CI=true deploy/droplet/test-unit-credentials.sh "$out/colophon-server" "$out/colophon" "$out/studio"
       - name: Timings and sizes
         if: always()
         run: |
