@@ -743,3 +743,47 @@ async fn a_token_can_never_approve_a_token_submitted_changeset() {
     .await;
     assert_eq!(state(&by_person), "approved", "{}", by_person.body);
 }
+
+/// The answer to making a token is what reading it back returns: every stored field comes from
+/// what the database wrote (its own `created_at`, `expires_at` at the database's precision, and
+/// the permissions as stored and ordered), not from the request.
+#[tokio::test]
+#[ignore = "needs the stack and scripts/migrate.sh"]
+async fn a_new_tokens_answer_is_what_reading_it_back_returns() {
+    let _server = Server::start().await;
+    let owner = sign_in("dev-owner").await;
+    let project = project(&owner).await;
+    for body in [
+        json!({"name": "Site build", "kind": "read-only", "expires_in_days": 30}),
+        json!({"name": "Agent", "kind": "full-access", "expires_in_days": 7}),
+        json!({
+            "name": "Titles", "kind": "custom", "expires_in_days": 1,
+            "permissions": [
+                {"action": "content.update", "subject": "articles", "fields": ["title"]},
+                {"action": "content.read", "subject": "articles", "fields": ["title", "body"]}
+            ]
+        }),
+    ] {
+        let (_, made) = make(&owner, &project, &body).await;
+        let id = made["id"].as_str().expect("an id");
+        let read = send(
+            &owner,
+            Method::GET,
+            &format!("{}/{id}", tokens(&project)),
+            None,
+            &[],
+        )
+        .await;
+        assert_eq!(read.status, StatusCode::OK, "{}", read.body);
+        let mut answered = made.clone();
+        if let Some(fields) = answered.as_object_mut() {
+            fields.remove("secret");
+        }
+        // A read adds the token's live `usage` counters; every stored field must match.
+        let mut stored = read.body["data"].clone();
+        if let Some(fields) = stored.as_object_mut() {
+            fields.remove("usage");
+        }
+        assert_eq!(answered, stored, "{body}");
+    }
+}
