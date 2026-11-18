@@ -36,8 +36,15 @@
 
 	const queryClient = useQueryClient();
 	const who = createQuery(() => ({ queryKey: ['me'], queryFn: me }));
-	// Signed out, whether anyone runs this Colophon yet: nobody does on a fresh installation.
-	const install = createQuery(() => ({ queryKey: ['installation'], queryFn: installation, enabled: who.data === null }));
+	// Signed out, whether anyone runs this Colophon yet: nobody does on a fresh installation. Until
+	// someone does, also how it was installed: a container's setup code is in its compose logs.
+	const install = createQuery(() => ({
+		queryKey: ['installation'],
+		queryFn: installation,
+		enabled: who.data === null || who.data?.installation.has_administrator === false
+	}));
+	const inContainer = $derived(install.data?.install_kind === 'container');
+	const logsCommand = 'docker compose logs colophon | grep "Setup code"';
 	// Whether a provider exists — the signed-out note's "close the browser" advice only makes
 	// sense when sign-in could live somewhere else too (D-146).
 	const providers = createQuery(providersQuery);
@@ -145,10 +152,18 @@
 				<p class="mt-6 text-sm text-pretty text-muted-foreground">
 					{#if kept !== null}
 						Your link carries the setup code, so you won't need to type it. Already have an account here? Sign in instead.
+					{:else if inContainer}
+						The server printed the setup code, and a link that fills it in, to its log when it started. Already have an account here? Sign in instead.
 					{:else}
 						The server printed the setup code, and a link that fills it in, when it started. Already have an account here? Sign in instead.
 					{/if}
 				</p>
+				{#if kept === null && inContainer}
+					<div class="mt-4 text-left text-sm" data-testid="setup-code-from-logs">
+						<p class="text-muted-foreground">To see it, run this in the folder you started Colophon from:</p>
+						<code class="mt-1.5 block overflow-x-auto rounded-lg border border-border bg-card px-3 py-2 font-mono">{logsCommand}</code>
+					</div>
+				{/if}
 			</div>
 		{:else}
 			<p class="mt-3 text-muted-foreground" data-testid="signed-out">Write, review and publish your website's content, and see what reached your readers.</p>
@@ -166,8 +181,14 @@
 		<h1 class="text-2xl font-semibold tracking-tight">Finish setting up Colophon</h1>
 		<p class="mt-3 text-pretty text-muted-foreground">
 			Nobody runs this Colophon yet. When its server started, it printed a <strong class="font-medium text-foreground">setup code</strong> in
-			its terminal. Enter it here to become the administrator: you'll create projects and invite people.
+			its {inContainer ? 'log' : 'terminal'}. Enter it here to become the administrator: you'll create projects and invite people.
 		</p>
+		{#if inContainer}
+			<div class="mt-4 text-sm" data-testid="setup-code-from-logs">
+				<p class="text-muted-foreground">To see it, run this in the folder you started Colophon from:</p>
+				<code class="mt-1.5 block overflow-x-auto rounded-lg border border-border bg-card px-3 py-2 font-mono">{logsCommand}</code>
+			</div>
+		{/if}
 		<form class="mt-8 grid gap-2" onsubmit={claim} aria-label="Become the administrator">
 			<Label for="setup-code">Setup code</Label>
 			<div class="flex flex-col gap-2 sm:flex-row">

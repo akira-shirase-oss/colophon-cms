@@ -1,0 +1,42 @@
+{
+  "description": "The same image twice and a second image: each distinct upload is one asset reference, at its first place (D-171).",
+  "value": {
+    "schema": "colophon/rich-text",
+    "version": 1,
+    "doc": {
+      "type": "doc",
+      "content": [
+        {
+          "type": "image",
+          "attrs": {
+            "assetId": "0199f0a2-6c1e-7b3a-9d42-5e8f1a2b3c4d",
+            "alt": "The press, from the left"
+          }
+        },
+        {
+          "type": "paragraph",
+          "content": [
+            {
+              "type": "text",
+              "text": "Between the pictures."
+            }
+          ]
+        },
+        {
+          "type": "image",
+          "attrs": {
+            "assetId": "0199f0a2-6c1e-7b3a-9d42-5e8f1a2b3c4e",
+            "alt": "The type case"
+          }
+        },
+        {
+          "type": "image",
+          "attrs": {
+            "assetId": "0199f0a2-6c1e-7b3a-9d42-5e8f1a2b3c4d",
+            "alt": "The press again, closer"
+          }
+        }
+      ]
+    }
+  }
+}

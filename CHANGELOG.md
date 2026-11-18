@@ -8,6 +8,25 @@ through `--version` and `GET /version`.
 
 ## [Unreleased]
 
+### Changed — read before upgrading
+
+- **Images inside rich text must name real uploads** (D-177). A rich-text `image` whose
+  `assetId` isn't an upload of the environment is refused `422 asset_not_found` at that
+  image's pointer. Drafts made with the old Studio dialog hold random placeholder ids, so they
+  are refused at their next save until each image is replaced or removed; the Studio marks the
+  image in place and offers Replace and Remove. Revisions saved before migration 0066 record no rich-text references until saved again.
+- **A replaced image reaches published pages at the next publish** (D-178). Delivery rows now
+  carry `media`: the versioned, immutable URL of each upload the release recorded, with its
+  size and renditions. A site using `url` keeps showing the released bytes after a replace
+  until the entries using it are published again; `current_url` follows the newest bytes.
+  `RENDER_VERSION` is 2, so cached delivery answers are refetched once.
+
+### Performance
+
+- Watched writes no longer take PostgreSQL's NOTIFY lock (D-180): their live-list hints are
+  queued in an unlogged table and sent by a pump every 100 ms, so concurrent saves commit in
+  groups again instead of one at a time. A live list may hear a change up to 100 ms later.
+
 ### Added
 
 - **The TypeScript SDK is ready for npm (D-170):** `@colophon-cms/sdk` gains
@@ -33,6 +52,38 @@ through `--version` and `GET /version`.
   `/content/v1`'s shapes with the drafts laid over the latest release. Never cached, never
   indexed, re-checked against the issuer on every read, revocable. Set the address with
   `PUT {P}/preview-target`; the Studio pane and the SDK's site helpers follow.
+- **Secrets from files:** every secret setting also takes `<KEY>_FILE`, a path to a mounted
+  secret; the admin commands take `COLOPHON_MIGRATION_DATABASE_URL_FILE` (D-173).
+- **`colophon admin init-roles`:** creates the server's database roles with passwords from
+  files, sent as SCRAM verifiers; refuses the development password; safe to rerun (D-173).
+- **A container image and a one-command quick start:** `deploy/image/Dockerfile` (server, CLI
+  and Studio on distroless static, non-root, 25 MB compressed) and
+  `deploy/quickstart/compose.yaml` — `docker compose up -d --wait` brings up Colophon with
+  PostgreSQL, Valkey and Garage, secrets generated on first start, only `127.0.0.1:8080`
+  published (D-174, D-175). The Studio's first-run screens say where a container's setup code
+  is. Operator guide: `deploy/runbooks/install.md`.
+- **Releases carry the image and the Studio:** the release workflow builds the image for amd64
+  and arm64 from the release's own checked binaries, scans it (Trivy: no fixable critical CVE),
+  and on a tag pushes it to `ghcr.io/akira-shirase-oss/colophon` with signed provenance; it
+  attaches `colophon-studio-<version>.tar.gz` and the quick start's `compose.yaml`, pinned to the
+  image's digest (`SHA256SUMS` now lists 24 files). An allocator job measures the musl server
+  against a glibc build of the same commit (D-174, D-176).
+- Images inside rich text are tracked like every upload: publish-checked, kept from deletion,
+  listed under "Used in"; at most 200 distinct images per document (D-177).
+- The Studio inserts images into rich text from the media library (pick, search or upload,
+  then alt text, required), shows each image as itself with its state, and edits its alt text,
+  replaces or removes it from the keyboard; a pasted or dropped image is uploaded and inserted.
+- The Studio's Media page shows the whole library (paged, searchable, filtered by state and
+  tag), uploads many files at once through a bounded queue, and opens each upload's details:
+  its alt text, title, credit and tags (saved under If-Match, with a conflict state), versions,
+  where it's used, replace with the republish warning, both addresses to copy, and delete.
+- Renderer v2 (`@colophon-cms/rich-text`) gives images `width`, `height`, `srcset` and
+  `sizes` from the delivery row's `media`; the SDK's `mediaFor(row)` builds that for a site,
+  and the reference and demo sites use it.
+- `COLOPHON_MEDIA_URL`: the origin delivery's media URLs name (default the public origin).
+- The media library pages past 100 uploads (`cursor`, `next_cursor`), searches (`q`), filters
+  by `state` and `tag`, and keeps alt text, title, credit and tags via
+  `PATCH …/assets/{asset}` under `If-Match` (D-179).
 
 ### Security
 
@@ -79,6 +130,9 @@ closes and carries a test that failed without it.
 
 ### Changed — read before upgrading
 
+- **The static Linux server allocates through mimalloc (D-176):** musl's own allocator ran
+  allocation-heavy requests five times slower than glibc's on the same runner. Other builds are
+  unchanged.
 - **Magic links stop until origins are listed:** `PUT {P}/audience/origins` must name each
   site a link may land on; until then a request is `422 return_to_not_allowed` (D-148).
 - **A database on another machine needs `sslmode=verify-full`:** the server and the admin

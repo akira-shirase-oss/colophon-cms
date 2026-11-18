@@ -1,10 +1,10 @@
 // Tiptap configured to exactly the colophon/rich-text v1 node and mark set: StarterKit minus
 // what the format doesn't allow, plus the two Colophon nodes (callout and image).
 
-import { Extension, type Extensions, mergeAttributes, Node } from '@tiptap/core';
+import { Extension, type Extensions, mergeAttributes, Node, type NodeViewRenderer } from '@tiptap/core';
 import StarterKit from '@tiptap/starter-kit';
 import { ASSET_ID, type CalloutTone, HEADING_LEVELS, isAllowedHref, isCalloutTone, isValidAlt, LIMITS } from './schema.ts';
-import { Plugin, PluginKey } from '@tiptap/pm/state';
+import { NodeSelection, Plugin, PluginKey } from '@tiptap/pm/state';
 import type { Node as ProseMirrorNode } from '@tiptap/pm/model';
 
 declare module '@tiptap/core' {
@@ -60,17 +60,56 @@ export const Callout = Node.create({
 	}
 });
 
+/** The DOM event an image asks its host for through (`CustomEvent<ImageAction>` on the editor's
+ *  root element, bubbling): edit its alt text or replace its upload. The editor package knows no
+ *  media library; the app that gave it a node view answers. */
+export const IMAGE_ACTION = 'colophon-image';
+
+/** What an image asks of its host, and where it sits (the position before the node). */
+export interface ImageAction {
+	action: 'edit' | 'replace';
+	pos: number;
+}
+
+/** How an app shows images while editing. Without a view an image is a plain figure with its
+ *  alt text, which is all a document with no media library (the playground) can show. */
+export interface ImageOptions {
+	/** Draws the image node (the real picture, its state, its buttons). It never changes the
+	 *  node's attributes itself: the stored JSON stays `{assetId, alt}` (D-022). */
+	view: NodeViewRenderer | null;
+}
+
 /**
  * An image from Colophon's media library: an asset id and its alt text, never a URL. Pasted
  * `<img>` tags from other sites are not turned into images; uploads go through the media
  * pipeline (module 07).
  */
-export const Image = Node.create({
+export const Image = Node.create<ImageOptions>({
 	name: 'image',
 	group: 'block',
 	atom: true,
 	draggable: true,
 	selectable: true,
+	addOptions() {
+		return { view: null };
+	},
+	addNodeView() {
+		return this.options.view;
+	},
+	addKeyboardShortcuts() {
+		return {
+			// Enter on a selected image edits its alt text, when an app draws images and so can
+			// answer; Backspace and Delete remove it as they remove any selected node.
+			Enter: ({ editor }) => {
+				const { selection } = editor.state;
+				if (this.options.view === null || !editor.isEditable) return false;
+				if (!(selection instanceof NodeSelection) || selection.node.type.name !== this.name) return false;
+				const detail: ImageAction = { action: 'edit', pos: selection.from };
+				editor.view.dom.dispatchEvent(new CustomEvent(IMAGE_ACTION, { bubbles: true, detail }));
+				return true;
+			}
+		};
+	},
 	addAttributes() {
 		return {
 			assetId: {
@@ -146,8 +185,13 @@ export const Limits = Extension.create({
 	}
 });
 
+/** What an app adds to the editor without changing the format: how images are drawn. */
+export interface EditorExtras {
+	image?: Partial<ImageOptions>;
+}
+
 /** The extension set for colophon/rich-text v1. */
-export function extensions(): Extensions {
+export function extensions(extras: EditorExtras = {}): Extensions {
 	return [
 		StarterKit.configure({
 			heading: { levels: [...HEADING_LEVELS] },
@@ -167,7 +211,7 @@ export function extensions(): Extensions {
 			}
 		}),
 		Callout,
-		Image,
+		extras.image === undefined ? Image : Image.configure(extras.image),
 		Limits
 	];
 }

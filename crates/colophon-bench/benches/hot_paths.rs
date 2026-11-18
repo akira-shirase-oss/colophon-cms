@@ -204,6 +204,7 @@ fn delivery(c: &mut Criterion) {
         epoch: 1,
         generation: 4_812,
         unpublished: 4_790,
+        media: 0x5eed_0000_0000_0001,
     };
     let entry = 0x0193_5e1b_0000_7000_8000_0000_0000_002a;
     // Every /content/v1 entry read builds its cache key and tags before the cache lookup

@@ -97,21 +97,20 @@ export async function build(options: BuildOptions): Promise<Built> {
 		['/style.css', STYLE],
 		['/generation.txt', `${generation}\n`]
 	]);
+	const assetUrl = (id: string) => `/media/v1/${encodeURIComponent(options.project)}/${encodeURIComponent(options.environment)}/${encodeURIComponent(id)}`;
 	for (const item of items) {
 		const path = `${articlePath(item)}index.html`;
 		// Slugs are unique among published entries, but a slug may spell another entry's id: two
 		// articles at one address would hide one of them, so the build fails and nothing goes live.
 		if (files.has(path)) throw new BuildFailed(`two articles would be served at ${path}`);
-		files.set(path, article(release, item));
+		files.set(path, article(release, item, assetUrl));
 	}
 	// The site's files go over the blog's base: its home replaces the article list at `/` and its
 	// 404 replaces the plain one, but a page slug that collides with any other fixed path —
 	// /colophon/, an article's — fails the whole build, like two articles at one address.
 	let siteMap: Map<string, string>;
 	try {
-		siteMap = siteFiles(release, site.items, navigation.items[0], theme.items[0], {
-			assetUrl: (id) => `/media/v1/${options.project}/${options.environment}/${encodeURIComponent(id)}`
-		});
+		siteMap = siteFiles(release, site.items, navigation.items[0], theme.items[0], { assetUrl });
 	} catch (error) {
 		throw new BuildFailed(error instanceof Error ? error.message : String(error));
 	}

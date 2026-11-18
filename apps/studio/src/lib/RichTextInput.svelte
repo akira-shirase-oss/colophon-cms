@@ -2,14 +2,18 @@
   Rich text inside a structure (D-066): the same editor and toolbar as an entry's own rich text,
   holding its value in the stored format. A document the editor can't give back exactly isn't
   opened (D-022): it says so and leaves the value as it is. The parent re-creates it when the whole
-  entry is replaced (a restore, their version), so it never fights an outside change.
+  entry is replaced (a restore, their version), so it never fights an outside change. Images show
+  their real picture from the page's project media library, as in the entry's own rich text.
 -->
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import type { Editor } from '@tiptap/core';
+	import { useQueryClient } from '@tanstack/svelte-query';
+	import { page } from '$app/state';
 	import { openEditor, type RichTextValue, toStored } from '@colophon/editor';
 	import { EMPTY_DOCUMENT, type FormValue } from './content.ts';
 	import RichTextToolbar from './RichTextToolbar.svelte';
+	import { imageFileHandlers, imageView } from './richTextImage.svelte.ts';
 
 	let {
 		value = $bindable(),
@@ -22,19 +26,23 @@
 	let host = $state<HTMLDivElement | null>(null);
 	let editor = $state.raw<Editor | null>(null);
 	let unopenable = $state('');
+	// Inside an entry the page names its project; images come from that project's library.
+	const project = page.params['project'] ?? null;
+	const queryClient = useQueryClient();
 
 	onMount(() => {
 		try {
 			const opened = openEditor(((value as unknown as RichTextValue | null) ?? EMPTY_DOCUMENT) as RichTextValue, {
 				editorProps: {
-					attributes: { role: 'textbox', 'aria-multiline': 'true', 'aria-label': label, class: 'prose-colophon min-h-32' }
+					attributes: { role: 'textbox', 'aria-multiline': 'true', 'aria-label': label, class: 'prose-colophon min-h-32' },
+					...(project === null ? {} : imageFileHandlers)
 				},
 				editable: !disabled,
 				onUpdate: () => {
 					value = toStored(opened.getJSON()) as unknown as FormValue;
 					onchange();
 				}
-			});
+			}, project === null ? {} : { image: { view: imageView(project, queryClient) } });
 			if (host) opened.mount(host);
 			editor = opened;
 		} catch (error) {
@@ -50,6 +58,6 @@
 	</p>
 {/if}
 <div class="overflow-hidden rounded-xl border border-border bg-card shadow-xs focus-within:border-ring/60" role="group" aria-labelledby={labelledBy}>
-	<RichTextToolbar {editor} label="Formatting: {label}" />
+	<RichTextToolbar {editor} label="Formatting: {label}" {project} />
 	<div class="editor px-4 py-3" bind:this={host}></div>
 </div>

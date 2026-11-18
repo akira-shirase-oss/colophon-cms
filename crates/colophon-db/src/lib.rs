@@ -24,6 +24,7 @@ pub mod idempotency;
 pub mod identity;
 pub mod jobs;
 pub mod ledger;
+pub mod login_roles;
 pub mod members;
 pub mod migrations;
 pub mod passwords;
@@ -133,17 +134,14 @@ pub enum DbError {
         /// Whether the field holds a list.
         many: bool,
     },
-    /// An asset field names an upload the environment doesn't have (migration 0036, media M1):
-    /// the id was never an asset of this project or its upload failed before the row existed.
-    /// Nothing was written.
-    #[error("an asset field names no asset of the environment")]
+    /// An asset field or a rich-text image names an upload the environment doesn't have
+    /// (migration 0036, media M1, D-177): the id was never an asset of this project or its
+    /// upload failed before the row existed. Nothing was written.
+    #[error("the content names no asset of the environment")]
     MissingAsset {
-        /// The field.
-        field: String,
-        /// The place in its list.
-        position: u16,
-        /// Whether the field holds a list.
-        many: bool,
+        /// RFC 6901 JSON Pointer, in the content, to the value naming it (`/cover`,
+        /// `/photos/1`, `/body/doc/content/3/attrs/assetId`).
+        pointer: String,
     },
     /// A changeset pin or a publication names an entry that is deleted (migration 0030, D-080):
     /// a deletion committed while it waited for the entry. Nothing was written; the transaction is

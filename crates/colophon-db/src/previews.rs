@@ -657,6 +657,7 @@ pub(crate) fn overlay_row(row: &sqlx::postgres::PgRow) -> Result<OverlayRow, DbE
             content_hash: row.try_get("content_hash").map_err(DbError::Query)?,
             valid_from: row.try_get("valid_from").map_err(DbError::Query)?,
             visibility: row.try_get("visibility").map_err(DbError::Query)?,
+            media: row.try_get("media").map_err(DbError::Query)?,
         },
         source: row.try_get("source").map_err(DbError::Query)?,
         created_by: row.try_get("created_by").map_err(DbError::Query)?,

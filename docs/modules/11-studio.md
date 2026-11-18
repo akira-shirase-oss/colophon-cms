@@ -369,6 +369,9 @@ screen-reader journeys pass, and no screen ever shows a success the server has n
   drawer first.
 - **Where Strapi was easier, fixed** (D-147, 2026-10-28; [research/strapi-vs-colophon-hands-on.md](../research/strapi-vs-colophon-hands-on.md)).
   Both products were used for the same seven first-day tasks; each change removes a place where Strapi was easier.
+  - **First run in a container** (D-175): when `GET /api/v1/installation` says `install_kind: container`, both
+    first-run screens say the code is in the server's log and show `docker compose logs colophon | grep "Setup
+    code"` (`setup-code-from-logs`); `apps/studio/tests/quickstart/` checks it against the real containers.
   - **First run from the setup link**: the server prints `<studio>#setup=<code>`. Opened signed out, the front door
     says "This Colophon is new. Create the first account; you'll become its administrator with the setup code the
     server printed", with *Create an account* first and primary. The code leaves the address bar and waits in this
@@ -578,7 +581,23 @@ Internal job terminology stays behind a technical detail drawer for developers.
    receipt: each destination's part and every probe look, oldest first. Probes are added with the other
    destinations, optionally pinned to a location. Step 3.5 (D-053): the redesign above, with the formatting toolbar,
    search, entry states, revision comparison and review diffs. Step 3.6: the content-type designer.
-5. **P4:** history, time-travel slider, media picker, preview.
+5. **P4:** history, time-travel slider, media picker, preview. Gap 3 (D-177, D-179): the library panel
+   (`MediaLibraryPanel.svelte`: search, "Load more" over the cursor, upload inside the panel, every state) serves
+   asset fields and rich text alike. "Insert an image" picks or uploads, then asks for alt text — required,
+   prefilled from the upload's default alt, with a warning when it reads like a file name — and inserts the real
+   asset id (the old random placeholder is gone). In the editor an image shows as itself (`w320` with a `srcset`),
+   with a state chip (Checking… / Rejected / Deleted / Missing) and Edit alt text, Replace and Remove; Enter edits,
+   Backspace and Delete remove; a pasted or dropped image file is uploaded, described and inserted. The stored JSON
+   is unchanged (D-022's round trip holds). A save refused `asset_not_found` or `too_many_images` says so in place,
+   in plain words, with the code under Technical details. Journeys: `tests/server/rich-text-images.spec.ts`;
+   screenshots `docs/screens/editor-image-*`.
+   The Media page (D-179) pages the library 48 at a time over the cursor (Load more or scrolling, capped at 480
+   cards with a note), searches with a 250 ms debounce, filters by state and tag, uploads by button or drop through
+   a queue of three at a time (each file ends Ready, Rejected with the checker's reason, or Couldn't upload), and
+   opens a details sheet: the large preview, the metadata form under If-Match ("Keep mine" on a conflict re-sends
+   only this person's fields), versions, where it's used, Replace with "Published pages keep the old image until
+   you publish again" and a publish request, both addresses to copy, and the staged delete. The route is its own
+   lazy chunk (about 15 KB gzipped). Journeys: `tests/server/media.spec.ts`; screenshots `docs/screens/media-*`.
 6. **P5:** developer area for tokens; the optional AI panel.
 7. **P6:** polish and the usability test.
 

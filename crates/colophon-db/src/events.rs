@@ -13,10 +13,59 @@
 //! `tasks`). Anything a stream receives only tells a client to refetch through the API it was
 //! already authorized for, so a hint can never reveal what a read would hide.
 
+use sqlx::PgPool;
 use uuid::Uuid;
+
+use crate::DbError;
 
 /// The `LISTEN` channel every API server holds (migration 0044).
 pub const CHANNEL: &str = "colophon_events";
+
+/// The most queued hints one pump pass drains (D-180); a pass that fills it runs again at once.
+pub const PUMP_BATCH: i64 = 5_000;
+
+/// Sends the change hints writers have committed since the last pass (D-180): takes up to
+/// [`PUMP_BATCH`] rows of `change_hints` — committed ones only, skipping rows another
+/// process's pump holds — deletes them, and notifies each distinct payload once on
+/// [`CHANNEL`], all in one short transaction. Writers never notify themselves (migration
+/// 0068): PostgreSQL serialises every committing transaction that issued a NOTIFY on one
+/// lock until its WAL flush, so only this pass takes it, a few times a second. Returns how
+/// many rows it drained.
+pub async fn pump(pool: &PgPool) -> Result<u64, DbError> {
+    let mut transaction = pool.begin().await.map_err(DbError::from_query)?;
+    let payloads: Vec<String> = sqlx::query_scalar!(
+        r#"DELETE FROM change_hints
+           WHERE ctid IN (SELECT ctid FROM change_hints LIMIT $1 FOR UPDATE SKIP LOCKED)
+           RETURNING payload AS "payload!""#,
+        PUMP_BATCH
+    )
+    .fetch_all(&mut *transaction)
+    .await
+    .map_err(DbError::from_write)?;
+    let drained = u64::try_from(payloads.len()).unwrap_or(u64::MAX);
+    if payloads.is_empty() {
+        transaction.commit().await.map_err(DbError::from_query)?;
+        return Ok(0);
+    }
+    // Distinct, in the order they were found: one notification per hint however many
+    // statements — or transactions — queued it.
+    let mut seen = std::collections::HashSet::with_capacity(payloads.len());
+    let distinct: Vec<String> = payloads
+        .into_iter()
+        .filter(|payload| seen.insert(payload.clone()))
+        .collect();
+    sqlx::query!(
+        "SELECT pg_notify($1, payload) FROM unnest($2::text[]) WITH ORDINALITY AS p (payload, n)
+         ORDER BY n",
+        CHANNEL,
+        &distinct
+    )
+    .fetch_all(&mut *transaction)
+    .await
+    .map_err(DbError::from_write)?;
+    transaction.commit().await.map_err(DbError::from_write)?;
+    Ok(drained)
+}
 
 /// What kind of row changed. Several tables report under one kind: a review or a changeset item
 /// is `Changesets`; a delivery job, an unpublish tombstone or a probe observation is `Releases`;

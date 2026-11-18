@@ -134,30 +134,36 @@ async fn stop_setup_code(cancel: &CancellationToken, task: Option<tokio::task::J
     }
 }
 
-/// Starts the change-hint listener for the api and all roles (D-108): one `LISTEN` connection
-/// feeding the bus the `{P}/events` streams subscribe to. The worker role alone has no streams
-/// to serve and gets none.
+/// Starts the change hints' two tasks: the pump in every role (D-180) — writers queue their
+/// hints in `change_hints` and some running Colophon process must send them, whichever pump
+/// gets there first — and, for the api and all roles, the listener (D-108): one `LISTEN`
+/// connection feeding the bus the `{P}/events` streams subscribe to. The worker role alone has
+/// no streams to serve and gets no listener.
 fn start_events(
     config: &Config,
+    pool: &colophon_db::PgPool,
     bus: &Arc<colophon_api::events::EventBus>,
     cancel: &CancellationToken,
-) -> Option<tokio::task::JoinHandle<()>> {
-    matches!(config.role, Role::Api | Role::All).then(|| {
-        tokio::spawn(events::run(
+) -> Vec<tokio::task::JoinHandle<()>> {
+    let mut tasks = vec![tokio::spawn(events::pump(pool.clone(), cancel.clone()))];
+    if matches!(config.role, Role::Api | Role::All) {
+        tasks.push(tokio::spawn(events::run(
             bus.clone(),
             config.database_url.expose().to_owned(),
             cancel.clone(),
-        ))
-    })
+        )));
+    }
+    tasks
 }
 
-/// Stops the listener; open streams end when the process does anyway, so there is no drain.
-async fn stop_events(cancel: &CancellationToken, task: Option<tokio::task::JoinHandle<()>>) {
+/// Stops the pump and the listener; open streams end when the process does anyway, so there is
+/// no drain, and hints still queued are sent by the next process's pump.
+async fn stop_events(cancel: &CancellationToken, tasks: Vec<tokio::task::JoinHandle<()>>) {
     cancel.cancel();
-    if let Some(task) = task
-        && tokio::time::timeout(CLEANUP_DEADLINE, task).await.is_err()
-    {
-        tracing::warn!("the change-hint listener did not stop in time");
+    for task in tasks {
+        if tokio::time::timeout(CLEANUP_DEADLINE, task).await.is_err() {
+            tracing::warn!("a change-hint task did not stop in time");
+        }
     }
 }
 
@@ -203,6 +209,8 @@ fn api_services(
         mcp: colophon_api::mcp::Shared::new(config.mcp),
         passwords: colophon_db::passwords::PasswordGate::new(config.password_concurrency),
         magic_links: config.magic_links,
+        media_origin: config.media_origin.clone(),
+        install_kind: config.install_kind,
     })
 }
 
@@ -338,7 +346,7 @@ pub async fn run(
     let setup_cancel = cancel.child_token();
     let setup = start_setup_code(&config, &pool, &setup_cancel);
     let events_cancel = cancel.child_token();
-    let hints = start_events(&config, &event_bus, &events_cancel);
+    let hints = start_events(&config, &pool, &event_bus, &events_cancel);
 
     let outcome = tokio::select! {
         outcome = shutdown::serve(listener, app, readiness, timing, trigger) => outcome.context("serving")?,

@@ -16,7 +16,7 @@ if (cms === null || user === null) return Astro.redirect('/signin/');
 const id = Astro.params.id ?? '';
 const post = await entry(cms, 'posts', id, token ?? undefined);
 if (post === null) return Astro.redirect('/members/');
-const body = richText(cms, post.content['body']);
+const body = richText(cms, post.content['body'], post);
 const tags = Array.isArray(post.content['tags'])
 	? post.content['tags'].filter((tag): tag is string => typeof tag === 'string')
 	: [];

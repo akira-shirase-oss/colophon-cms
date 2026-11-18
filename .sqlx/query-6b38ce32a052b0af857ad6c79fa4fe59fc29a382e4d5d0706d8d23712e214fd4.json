@@ -1,0 +1,38 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE assets SET\n             alt = CASE WHEN $5 THEN $6 ELSE alt END,\n             title = CASE WHEN $7 THEN $8 ELSE title END,\n             credit = CASE WHEN $9 THEN $10 ELSE credit END,\n             tags = coalesce($11, tags),\n             metadata_version = metadata_version + 1\n         WHERE project_id = $1 AND environment_id = $2 AND id = $3 AND metadata_version = $4\n         RETURNING id",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "assets",
+            "name": "id"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid",
+        "Uuid",
+        "Int4",
+        "Bool",
+        "Text",
+        "Bool",
+        "Text",
+        "Bool",
+        "Text",
+        "TextArray"
+      ]
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "6b38ce32a052b0af857ad6c79fa4fe59fc29a382e4d5d0706d8d23712e214fd4"
+}

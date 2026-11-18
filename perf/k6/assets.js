@@ -1,7 +1,8 @@
 // Load scenario for uploads and deletes (M.0, D-098): the asset lifecycle both ways. setup()
 // signs in, makes a project and verifies one warm asset; each iteration uploads a real or a
 // fake PNG into quarantine (the object's write to the store plus the asset and job rows in one
-// transaction), lists the environment's assets, reads one back, or runs the delete arm — upload,
+// transaction), lists the environment's assets a page and its next at a time, searches them,
+// changes the warm asset's metadata under If-Match (D-179), reads one back, or runs the delete arm — upload,
 // wait for the worker's verdict, then DELETE, where 202 is requested, not gone. Verification
 // and removal run off the request path, so the measured latency is the request's own.
 // RATE counts iterations here (about 1.5 requests each, the delete arm more); scripts/load.sh
@@ -142,9 +143,34 @@ export default function (data) {
         'delete names the asset': (r) => r.json('data.id') === id,
       });
     }
-  } else if (roll < 8) {
-    const res = http.get(data.assets, Object.assign({ tags: { endpoint: 'list', name: 'assets' } }, read));
+  } else if (roll === 5) {
+    // D-179: the first page and, through its cursor, the next — keyset, so neither shifts.
+    const res = http.get(`${data.assets}?limit=50`, Object.assign({ tags: { endpoint: 'list', name: 'assets' } }, read));
     check(res, { 'list 200': (r) => r.status === 200 });
+    const next = res.json('next_cursor');
+    if (typeof next === 'string') {
+      const page = http.get(`${data.assets}?limit=50&cursor=${encodeURIComponent(next)}`, Object.assign({ tags: { endpoint: 'list-page', name: 'assets?cursor' } }, read));
+      check(page, { 'next page 200': (r) => r.status === 200 && Array.isArray(r.json('data')) });
+    }
+  } else if (roll === 6) {
+    // D-179: search over the trigram index — a common term and a rare one.
+    const q = __ITER % 20 === 6 ? 'warm' : 'dot';
+    const res = http.get(`${data.assets}?q=${q}&limit=50`, Object.assign({ tags: { endpoint: 'search', name: 'assets?q' } }, read));
+    check(res, { 'search 200': (r) => r.status === 200 && Array.isArray(r.json('data')) });
+  } else if (roll === 7) {
+    // D-179: metadata under If-Match on the warm asset every VU shares — a lost race is the
+    // honest 409 stale_version, never a silent overwrite.
+    const one = http.get(`${data.assets}/${data.mediaId}`, Object.assign({ tags: { endpoint: 'read', name: 'assets/{asset}' } }, read));
+    const etag = one.headers.Etag;
+    const res = http.patch(`${data.assets}/${data.mediaId}`, JSON.stringify({ title: `Warm ${__VU}-${__ITER}`, tags: ['warm', `vu-${__VU}`] }), {
+      headers: { Cookie: data.session.cookie, 'X-CSRF-Token': data.session.csrf, Origin: PUBLIC_URL, 'Content-Type': 'application/json', 'If-Match': etag, 'Idempotency-Key': key() },
+      redirects: 0,
+      tags: { endpoint: 'patch', name: 'assets/{asset}' },
+      responseCallback: http.expectedStatuses(200, 409),
+    });
+    check(res, {
+      'patch 200, or 409 stale_version after a lost race': (r) => r.status === 200 || (r.status === 409 && r.json('error.details.reason') === 'stale_version'),
+    });
   } else if (roll === 8) {
     const res = http.get(`${data.assets}?limit=1`, Object.assign({ tags: { endpoint: 'list-one', name: 'assets?limit' } }, read));
     const id = res.json('data.0.id');

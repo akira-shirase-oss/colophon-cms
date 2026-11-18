@@ -1,0 +1,21 @@
+# The image's build context is the repository root; only what the Dockerfile copies goes in,
+# so a local target/ or node_modules/ never reaches the builder.
+*
+!Cargo.toml
+!Cargo.lock
+!rust-toolchain.toml
+!.cargo/config.toml
+!.sqlx
+!crates
+!package.json
+!package-lock.json
+!.npmrc
+!packages
+!apps
+**/node_modules
+**/target
+**/.svelte-kit
+**/build
+**/dist
+**/test-results
+**/playwright-report

@@ -11,6 +11,7 @@
 import { renderNav, renderSections, siteCss, pageHtml, type NavItem, type SectionContext, type ThemeContent } from '@colophon/site-renderer';
 import { THEME_SEED } from '@colophon/site-template';
 
+import { recorded, type MediaSidecar } from './media.ts';
 import { marker, type Release } from './pages.ts';
 
 /** One published entry of any collection, as the public API answers (the article shape plus its
@@ -21,6 +22,8 @@ export interface Entry {
 	slug?: string;
 	content: Record<string, unknown>;
 	published_in: number;
+	/** Every asset the revision names, at the version its release published. */
+	media?: MediaSidecar;
 }
 
 /** The starter theme's own content, used when a site has pages but no published theme entry. */
@@ -53,8 +56,11 @@ function head(release: Release): string {
 	return `${marker(release.generation)}\n<link rel="stylesheet" href="/site.css">\n`;
 }
 
-/** One page's document: its sections through the shared renderer, its title and description. */
-function pageDocument(release: Release, page: Entry, nav: string, ctx: SectionContext): string {
+/** One page's document: its sections through the shared renderer, its title and description. An
+ *  image the page's sidecar records is drawn at the version its release published; anything else
+ *  at `ctx`'s bare address. */
+function pageDocument(release: Release, page: Entry, nav: string, base: SectionContext): string {
+	const ctx: SectionContext = { ...base, assetUrl: (id) => recorded(page.media, id)?.url ?? base.assetUrl(id) };
 	const seo = page.content['seo'] as { description?: unknown } | undefined;
 	const description = typeof seo?.description === 'string' ? seo.description : undefined;
 	return pageHtml({

@@ -1,7 +1,7 @@
 # Colophon CMS: agent instructions
 
-**Current state (2026-11-16).** This tree carries migrations through 0064 and decisions
-through D-169 (D-148 to D-169, the 2026-11-16 security fixes and the MIT licence, made on
+**Current state (2026-11-17).** This tree carries migrations through 0067 and decisions
+through D-179 (D-177 to D-179, gap 3: rich-text images as asset references, release media, the library API) (D-148 to D-169, the 2026-11-16 security fixes and the MIT licence, made on
 `fix/security-2026-11-16`; D-147, the Studio's first-run answers to Strapi, from `studio/dashboard`). The content-cards port era is finished — its unique work landed on this
 lineage as D-083 to D-087 (migrations 0031–0034); the old branch is kept as the annotated tag
 `archive/lineage/content-cards` for reference (its branch was deleted from origin).
@@ -49,6 +49,11 @@ detail: `docs/ROADMAP.md` and the build log):
   members area end to end; built-in password accounts with an external provider optional
   (D-141, D-146). Five Astro demo sites (D-133) rebuild themselves on publish with live
   delivery updates (D-138, D-139).
+
+Running it as a user would (D-174, D-175): `docker build -f deploy/image/Dockerfile -t colophon:local .`, then
+`docker compose up -d --wait` in `deploy/quickstart/` with `COLOPHON_IMAGE=colophon:local`; `scripts/quickstart.sh`
+does that in a scratch directory and checks it (`--port` moves it off 8080). Operator guide:
+`deploy/runbooks/install.md`.
 
 Running locally: `scripts/migrate.sh` migrates the shared `colophon` dev database, then
 `COLOPHON_STUDIO_DIR=apps/studio/build target/release/colophon-server` — Studio at

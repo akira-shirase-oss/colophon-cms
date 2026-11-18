@@ -88,7 +88,7 @@ Evidence: generation marker or response hash, location, time, errors  →  deliv
 | Asset read (media M.1) | Reader → CDN → `/media/v1/{project}/{env}/{asset}` → the environment slug resolves to its id through a per-process memo (D-134; immutable mapping, misses still ask Postgres) → stream `public/{project}/{env}/{asset}` straight from the object store → object existence is proof of verification; the detected `Content-Type` is read from object attributes; `immutable` caching, `nosniff`, ETag — no sign-in, no asset-row read |
 | Pinned read (time travel) | `/content/v1/…?generation=N` → publication-history intervals map each entry to the revision live at N → revocation rules still apply |
 | Preview | A person issues a 15-minute grant (an entry, or a publish request bound to its hash) → the site exchanges its 60 s one-time code for a bearer token → `/preview/v1` re-checks the grant and the issuer on every read and lays the scope's drafts over the latest release → `private, no-store`, `noindex`, never cached (D-171, D-172) |
-| Live hint (E3, D-108) | Studio → `GET {P}/events` (SSE) ← committed writes `pg_notify` → the server's own `LISTEN` connection → per-project bounded broadcast → `change`/`resync` hint (kind and scope only, never content) → the client refetches through the authorized API |
+| Live hint (E3, D-108, D-180) | Studio → `GET {P}/events` (SSE) ← committed writes queue a hint in `change_hints` → every process's pump `pg_notify`s it within 100 ms → the server's own `LISTEN` connection → per-project bounded broadcast → `change`/`resync` hint (kind and scope only, never content) → the client refetches through the authorized API |
 
 ## Process topology
 
