@@ -1726,6 +1726,30 @@ mod tests {
         assert_eq!(outcome.structured["error"]["code"], "unavailable");
     }
 
+    /// A write whose answer came but couldn't be used may have happened: it is
+    /// `outcome_unknown`, never "nothing was changed" (hardening #3).
+    #[test]
+    fn a_write_with_an_unreadable_answer_may_have_happened() {
+        let plan = plan(
+            Tool::CreateDraft,
+            json!({"collection": "articles", "content": {}, "idempotency_key": "agent-key-0000000001"}),
+        )
+        .expect("valid");
+        for error in [ApiError::TooLarge { limit: 1024 }, ApiError::BadAnswer] {
+            let outcome = explain(Tool::CreateDraft, &plan, &error);
+            assert_eq!(outcome.structured["error"]["code"], "outcome_unknown", "{error}");
+            assert!(outcome.text.contains("may or may not have happened"), "{}", outcome.text);
+            assert!(outcome.text.contains("idempotency_key agent-key-0000000001"), "{}", outcome.text);
+            assert!(!outcome.text.contains("Nothing was changed"), "{}", outcome.text);
+        }
+        // A read changes nothing, whatever its answer was.
+        let outcome = explain(Tool::GetEntry, &plan_for_read(), &ApiError::BadAnswer);
+        assert_eq!(outcome.structured["error"]["code"], "unavailable");
+        // A request never sent changed nothing either.
+        let outcome = explain(Tool::CreateDraft, &plan, &ApiError::BadUrl);
+        assert_eq!(outcome.structured["error"]["code"], "unavailable");
+    }
+
     fn plan_for_read() -> Plan {
         plan(Tool::GetEntry, json!({"collection": "articles", "id": ID})).expect("valid")
     }
