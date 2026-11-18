@@ -86,6 +86,9 @@ test('a long release title stays on one line inside its home card (F11)', async 
 	const title = 'Storm week: how the coast road at Penmarch reopened in four days, and what the village did while the tide came '.padEnd(120, 'x').slice(0, 120);
 	const entry = await newEntry(page, project, 'For the long title');
 	await publishThroughApi(page, project, title, [entry]);
+	// The home page shows the project opened last: open this one first.
+	await page.goto(`/studio/projects/${project}`);
+	await page.waitForLoadState('networkidle');
 	for (const viewport of [
 		{ width: 1440, height: 900 },
 		{ width: 390, height: 844 }
