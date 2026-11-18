@@ -99,7 +99,8 @@ services:
 ```
 
 Without `COLOPHON_TRUSTED_PROXIES`, every visitor looks like the proxy and shares one rate
-limit. A managed PostgreSQL instead of the bundled one needs `sslmode=verify-full` in its URL
+limit. To run the binaries under systemd with Caddy instead of containers, see
+[deploy/production](../production/README.md). A managed PostgreSQL instead of the bundled one needs `sslmode=verify-full` in its URL
 (module 18, "Database TLS").
 
 ## Upgrade

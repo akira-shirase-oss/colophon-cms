@@ -1,0 +1,62 @@
+# Colophon as a systemd service, for a binary install on one Linux host (deploy/production/README.md).
+# The server's secrets come from systemd credentials (LoadCredential=), read through the
+# COLOPHON_*_FILE settings (D-173): they are never in this file, the environment file, or the
+# process environment. Everything else is in /etc/colophon/colophon.env.
+#
+#   sudo install -m 0644 colophon.service /etc/systemd/system/colophon.service
+#   sudo systemctl daemon-reload && sudo systemctl enable --now colophon
+[Unit]
+Description=Colophon CMS server (API, worker and Studio)
+Documentation=https://github.com/akira-shirase-oss/colophon-cms/blob/main/deploy/production/README.md
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=exec
+ExecStart=/usr/local/bin/colophon-server --role all
+EnvironmentFile=/etc/colophon/colophon.env
+# Each file is readable by root only; systemd hands the service a private copy.
+LoadCredential=database_url:/etc/colophon/credentials/database_url
+LoadCredential=cache_url:/etc/colophon/credentials/cache_url
+LoadCredential=s3_secret_key:/etc/colophon/credentials/s3_secret_key
+Environment=COLOPHON_DATABASE_URL_FILE=%d/database_url
+Environment=COLOPHON_CACHE_URL_FILE=%d/cache_url
+Environment=COLOPHON_S3_SECRET_KEY_FILE=%d/s3_secret_key
+Environment=COLOPHON_STUDIO_DIR=/usr/local/share/colophon/studio
+# Graceful shutdown: readiness drains, then requests finish within COLOPHON_SHUTDOWN_GRACE_MS
+# (25 s by default); systemd waits a little longer before it kills.
+KillSignal=SIGTERM
+TimeoutStopSec=35
+Restart=on-failure
+RestartSec=2
+
+# No account of its own on disk, no writable file system, no privileges.
+DynamicUser=yes
+NoNewPrivileges=yes
+CapabilityBoundingSet=
+AmbientCapabilities=
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectClock=yes
+ProtectHostname=yes
+ProtectKernelLogs=yes
+ProtectKernelModules=yes
+ProtectKernelTunables=yes
+ProtectControlGroups=yes
+ProtectProc=invisible
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallFilter=~@privileged
+UMask=0077
+LimitNOFILE=65536
+
+[Install]
+WantedBy=multi-user.target
