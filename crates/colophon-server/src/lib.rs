@@ -24,7 +24,8 @@ use probes::{CacheProbe, DatabaseProbe, Supervisor};
 pub use shutdown::ShutdownOutcome;
 use shutdown::ShutdownTiming;
 
-/// How long stopping the probes and closing the pool may take after the server has drained.
+/// How long everything after the grace may take, all of it together: the worker, the setup code,
+/// the change hints, the probes and the pool share this one budget (D-197).
 const CLEANUP_DEADLINE: Duration = Duration::from_secs(5);
 
 /// Starts the worker for the worker and all roles (D-046): it claims delivery jobs from the same
@@ -107,19 +108,32 @@ struct Background {
     hints: Vec<tokio::task::JoinHandle<()>>,
 }
 
-/// Stops the worker, the setup code and the change hints, in that order.
-async fn stop_background(tasks: Background) {
-    stop_worker(&tasks.worker_cancel, tasks.worker).await;
-    stop_setup_code(&tasks.setup_cancel, tasks.setup).await;
-    stop_events(&tasks.events_cancel, tasks.hints).await;
+/// Stops the worker, the setup code and the change hints, in that order, and answers the
+/// deadline the rest of the cleanup (the probes, the pool) shares. Every step after the grace
+/// shares one [`CLEANUP_DEADLINE`], not one each, so the whole stop is at most the grace plus
+/// that, inside systemd's `TimeoutStopSec` (D-197).
+async fn stop_background(tasks: Background) -> tokio::time::Instant {
+    let deadline = tokio::time::Instant::now() + CLEANUP_DEADLINE;
+    // Everything is asked to stop first, so each has the whole budget to wind down in.
+    tasks.worker_cancel.cancel();
+    tasks.setup_cancel.cancel();
+    tasks.events_cancel.cancel();
+    stop_worker(&tasks.worker_cancel, tasks.worker, deadline).await;
+    stop_setup_code(&tasks.setup_cancel, tasks.setup, deadline).await;
+    stop_events(&tasks.events_cancel, tasks.hints, deadline).await;
+    deadline
 }
 
-/// Stops the worker claiming, and lets attempts in flight finish within the cleanup deadline;
+/// Stops the worker claiming, and lets attempts in flight finish by the cleanup deadline;
 /// any it abandons are claimed again once their leases run out.
-async fn stop_worker(cancel: &CancellationToken, worker: Option<tokio::task::JoinHandle<()>>) {
+async fn stop_worker(
+    cancel: &CancellationToken,
+    worker: Option<tokio::task::JoinHandle<()>>,
+    deadline: tokio::time::Instant,
+) {
     cancel.cancel();
     if let Some(task) = worker
-        && tokio::time::timeout(CLEANUP_DEADLINE, task).await.is_err()
+        && tokio::time::timeout_at(deadline, task).await.is_err()
     {
         tracing::warn!("the worker did not stop in time; its leases will run out");
     }
@@ -142,10 +156,14 @@ fn start_setup_code(
 }
 
 /// Stops issuing the setup code, if it is still trying.
-async fn stop_setup_code(cancel: &CancellationToken, task: Option<tokio::task::JoinHandle<()>>) {
+async fn stop_setup_code(
+    cancel: &CancellationToken,
+    task: Option<tokio::task::JoinHandle<()>>,
+    deadline: tokio::time::Instant,
+) {
     cancel.cancel();
     if let Some(task) = task
-        && tokio::time::timeout(CLEANUP_DEADLINE, task).await.is_err()
+        && tokio::time::timeout_at(deadline, task).await.is_err()
     {
         tracing::warn!("issuing the setup code did not stop in time");
     }
@@ -175,10 +193,14 @@ fn start_events(
 
 /// Stops the pump and the listener; open streams end when the process does anyway, so there is
 /// no drain, and hints still queued are sent by the next process's pump.
-async fn stop_events(cancel: &CancellationToken, tasks: Vec<tokio::task::JoinHandle<()>>) {
+async fn stop_events(
+    cancel: &CancellationToken,
+    tasks: Vec<tokio::task::JoinHandle<()>>,
+    deadline: tokio::time::Instant,
+) {
     cancel.cancel();
     for task in tasks {
-        if tokio::time::timeout(CLEANUP_DEADLINE, task).await.is_err() {
+        if tokio::time::timeout_at(deadline, task).await.is_err() {
             tracing::warn!("a change-hint task did not stop in time");
         }
     }
@@ -370,7 +392,7 @@ pub async fn run(
         never = supervisor.watch() => match never {},
     };
 
-    stop_background(Background {
+    let deadline = stop_background(Background {
         worker_cancel,
         worker,
         setup_cancel,
@@ -379,8 +401,10 @@ pub async fn run(
         hints,
     })
     .await;
-    supervisor.shutdown(CLEANUP_DEADLINE).await;
-    if tokio::time::timeout(CLEANUP_DEADLINE, pool.close())
+    supervisor
+        .shutdown(deadline.saturating_duration_since(tokio::time::Instant::now()))
+        .await;
+    if tokio::time::timeout_at(deadline, pool.close())
         .await
         .is_err()
     {
@@ -407,6 +431,15 @@ mod stop_tests {
             .and_then(|value| value.trim().parse().ok())
             .expect("invariant: the unit sets TimeoutStopSec in whole seconds");
         Duration::from_secs(seconds)
+    }
+
+    /// The default grace plus the one cleanup budget fits inside systemd's stop timeout.
+    #[test]
+    fn the_default_stop_fits_inside_systemds_timeout() {
+        assert!(
+            Duration::from_millis(25_000) + super::CLEANUP_DEADLINE < systemd_stop_timeout(),
+            "raise TimeoutStopSec with the grace or the cleanup budget"
+        );
     }
 
     /// Tasks that never stop, however they're asked: the worst case a stop has to bound.
