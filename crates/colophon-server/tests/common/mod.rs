@@ -127,33 +127,62 @@ impl Drop for Server {
     }
 }
 
-/// Stops a stack service and starts it again when dropped, whatever the test did.
+/// Whether this run may stop, pause or restart services of the local stack (D-187b): only a
+/// stack that is its own — CI (`CI=true`), a compose project other than `colophon`
+/// (`COMPOSE_PROJECT_NAME`), or `COLOPHON_STACK_OWNER=1` — never the maintainer's shared one.
+/// The same rule `scripts/stack-guard.sh` applies to the scripts; `var` reads the environment.
+pub(crate) fn stack_guard(var: impl Fn(&str) -> Option<String>) -> Result<(), String> {
+    let set = |key: &str, value: &str| var(key).is_some_and(|got| got == value);
+    let project = var("COMPOSE_PROJECT_NAME").filter(|name| !name.is_empty());
+    if set("CI", "true")
+        || set("COLOPHON_STACK_OWNER", "1")
+        || project.is_some_and(|name| name != "colophon")
+    {
+        return Ok(());
+    }
+    Err(
+        "refusing to stop, pause or restart a service of the shared local stack (compose \
+         project `colophon`, D-187b): this test would take it away from everyone using it. Run \
+         it in CI, under a stack of your own (COMPOSE_PROJECT_NAME=<another project>), or, if the \
+         stack is yours alone, with COLOPHON_STACK_OWNER=1. Locally, run the tests you mean by \
+         name: `cargo test --test <file> -- --ignored --exact <name>` (check with --list first)."
+            .to_owned(),
+    )
+}
+
+/// `docker compose -f deploy/compose.yaml <args>`: the one way a test touches the stack's
+/// services, and it refuses the shared stack before any docker call ([`stack_guard`]).
+pub(crate) fn compose(args: &[&str]) {
+    if let Err(refusal) = stack_guard(|key| std::env::var(key).ok()) {
+        panic!("{refusal}");
+    }
+    let file = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../deploy/compose.yaml");
+    let status = Command::new("docker")
+        .args(["compose", "-f"])
+        .arg(file)
+        .args(args)
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .expect("docker compose runs");
+    assert!(status.success(), "docker compose {args:?} failed");
+}
+
+/// Stops a stack service and starts it again when dropped, whatever the test did. Refuses the
+/// shared stack ([`stack_guard`]).
 pub(crate) struct Stopped(&'static str);
 
 impl Stopped {
-    fn compose(args: &[&str]) {
-        let file = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../deploy/compose.yaml");
-        let status = Command::new("docker")
-            .args(["compose", "-f"])
-            .arg(file)
-            .args(args)
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .status()
-            .expect("docker compose runs");
-        assert!(status.success(), "docker compose {args:?} failed");
-    }
-
     /// `docker compose stop <service>`; the service comes back on drop.
     pub(crate) fn new(service: &'static str) -> Self {
-        Self::compose(&["stop", service]);
+        compose(&["stop", service]);
         Self(service)
     }
 }
 
 impl Drop for Stopped {
     fn drop(&mut self) {
-        Self::compose(&["start", self.0]);
+        compose(&["start", self.0]);
     }
 }
 

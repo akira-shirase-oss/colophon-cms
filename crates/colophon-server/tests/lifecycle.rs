@@ -7,10 +7,11 @@
     reason = "process-level tests: any failure to start, read or connect is a test failure"
 )]
 
+mod common;
+
 use std::{
     io::{BufRead as _, BufReader},
     net::SocketAddr,
-    path::PathBuf,
     process::{Child, Command, ExitStatus, Stdio},
     sync::mpsc,
     thread,
@@ -205,31 +206,18 @@ async fn sigterm_drains_then_exits_cleanly() {
 struct StackServices;
 
 impl StackServices {
-    fn compose(args: &[&str]) {
-        let file = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../deploy/compose.yaml");
-        let status = Command::new("docker")
-            .args(["compose", "-f"])
-            .arg(file)
-            .args(args)
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .status()
-            .expect("docker compose runs");
-        assert!(status.success(), "docker compose {args:?} failed");
-    }
-
     fn stop(service: &str) {
-        Self::compose(&["stop", service]);
+        common::compose(&["stop", service]);
     }
 
     fn start(service: &str) {
-        Self::compose(&["start", service]);
+        common::compose(&["start", service]);
     }
 }
 
 impl Drop for StackServices {
     fn drop(&mut self) {
-        Self::compose(&["start", "postgres", "valkey"]);
+        common::compose(&["start", "postgres", "valkey"]);
     }
 }
 
