@@ -198,7 +198,11 @@ stage_prepare() {
   local recorded actual
   recorded=$(jq -r '.payload.sha256' "$manifest")
   actual=$(openssl dgst -sha256 -r "$payload" | cut -d' ' -f1)
-  [[ "$actual" == "$recorded" ]] || die "$payload fails the manifest's SHA-256"
+  if [[ "$actual" != "$recorded" ]]; then
+    # The stored bytes aren't what was captured: blocked, with why, as the runbook says (never opened).
+    mark_blocked prepare "the payload fails the manifest's SHA-256 (stored $actual, recorded $recorded): do not restore; investigate storage and re-capture"
+    return 1
+  fi
   say "$1:" "payload SHA-256 matches the manifest"
 
   PG_PORT=$(free_port "$PG_PORT")
