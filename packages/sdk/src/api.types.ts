@@ -1135,6 +1135,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/projects/{project}/environments/{environment}/releases/{generation}/changes": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** What a release changed for readers, as far as your role reads it */
+        get: operations["listReleaseChanges"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/projects/{project}/environments/{environment}/releases/{generation}/rollback": {
         parameters: {
             query?: never;
@@ -2181,6 +2198,8 @@ export interface components {
             revision_id: string;
             /** @description the title of the version it published, or took down */
             title: string;
+            /** @description your role doesn't read the entry's title field, so `title` is blank */
+            title_hidden: boolean;
         };
         ChangesetItemView: {
             collection?: string;
@@ -2201,6 +2220,8 @@ export interface components {
             revision_id?: string;
             schema_version?: number;
             title?: string;
+            /** @description your role doesn't read the entry's title field, so `title` is blank */
+            title_hidden?: boolean;
         };
         ChangesetSummaryView: {
             /** Format: uuid */
@@ -2227,8 +2248,11 @@ export interface components {
             created_by?: string;
             /** @description `sha256:<hex>` — its `ETag`, and what reviews bind */
             hash?: string;
+            /** @description items left out because your role can't read their entries */
+            hidden_items?: number;
             /** Format: uuid */
             id?: string;
+            /** @description the items your role reads (D-185); the hash covers every item */
             items?: components["schemas"]["ChangesetItemView"][];
             reviews?: components["schemas"]["ReviewView"][];
             rollback_generation?: number | null;
@@ -2578,6 +2602,8 @@ export interface components {
             taken_down_in: number;
             /** @description the title readers had at that release */
             title: string;
+            /** @description your role doesn't read the title field, so `title` is blank */
+            title_hidden: boolean;
         };
         LiveView: {
             generation?: number;
@@ -3112,10 +3138,8 @@ export interface components {
             /** @enum {string} */
             status: "starting" | "ready" | "degraded" | "not_ready" | "draining";
         };
-        /** @description a release — every `ReleaseView` field, at the top level — plus what it changed for readers, its deliveries and observations: the publish receipt */
+        /** @description a release — every `ReleaseView` field, at the top level — plus its deliveries and observations: the publish receipt. What it changed for readers pages at `…/releases/{generation}/changes` */
         ReceiptView: {
-            /** @description each entry it published or took down, what went live first, then by title; at most 500 (`entries` and `unpublished` count them all) */
-            changes: components["schemas"]["ChangeView"][];
             /** @description the approved hash it published */
             changeset_hash: string;
             /** Format: uuid */
@@ -3278,18 +3302,30 @@ export interface components {
             revision_id: string;
             /** @description the title of the version it pins */
             title: string;
+            /** @description your role doesn't read the title field, so `title` is blank */
+            title_hidden: boolean;
         };
         /** @description what `POST` would build now (the same pins), and what it would leave down */
         RollbackPreviewView: {
             /** @description the release it restores */
             generation: number;
-            /** @description up to 100 entries readers had at that release that it won't bring back, because they were taken down since (D-049), by title */
+            /** @description `sha256:<hex>` of the pins a rollback made now would carry — the `ETag`; send it as `If-Match` on `POST`. Null when `too_large` */
+            hash: string | null;
+            /** @description up to 100 entries readers had at that release that it won't bring back, because they were taken down since (D-049), by title, less those your role can't read */
             kept_down: components["schemas"]["KeptDownView"][];
             kept_down_total: number;
             /** @description the environment's current generation */
             latest: number;
-            /** @description exactly the pins a rollback made now would carry, by kind and title; empty when it would be refused `already_at` */
+            /** @description the most entries one rollback may change */
+            max_items: number;
+            /** @description entries it would put back */
+            publish_total: number;
+            /** @description the first 100 of the pins a rollback made now would carry, publishes first, each by entry id, less those your role can't read; empty when it would be refused `already_at` */
             restore: components["schemas"]["RollbackLineView"][];
+            /** @description it would change more than `max_items`, so `POST` refuses it `rollback_too_large`; roll back to a nearer release first */
+            too_large: boolean;
+            /** @description entries it would take down */
+            unpublish_total: number;
         };
         ScheduleView: {
             changeset_hash?: string;
@@ -11269,6 +11305,87 @@ export interface operations {
             };
         };
     };
+    listReleaseChanges: {
+        parameters: {
+            query?: {
+                /** @description page size: 1–100, default 100 */
+                limit?: number;
+                /** @description the `next_cursor` a previous page answered */
+                cursor?: string;
+            };
+            header?: never;
+            path: {
+                /** @description the project's id */
+                project: string;
+                /** @description the environment's slug, such as `production` */
+                environment: string;
+                /** @description the release's generation */
+                generation: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description a page of the entries it published (first) and took down, each by entry id; an entry your role can't read is left out, so a page may hold fewer than `limit` — follow `next_cursor` until it is `null` */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        data: components["schemas"]["ChangeView"][];
+                        /** @description pass back in the operation's cursor parameter for the next page; `null` on the last page */
+                        next_cursor: string | null;
+                    };
+                };
+            };
+            /** @description `bad_request` — `limit` out of range, or a cursor that isn't this list's */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description `unauthorized` — not signed in, the credential is invalid, or the token was revoked */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description `not_found` — no such resource — or one the caller may not see, which looks the same */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description `rate_limited` — over the per-credential or per-address limit; `Retry-After` */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description any other failure, in the one error envelope */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
     previewRollback: {
         parameters: {
             query?: never;
@@ -11288,6 +11405,7 @@ export interface operations {
             /** @description ok */
             200: {
                 headers: {
+                    ETag?: string;
                     [name: string]: unknown;
                 };
                 content: {
@@ -11298,6 +11416,15 @@ export interface operations {
             };
             /** @description `unauthorized` — not signed in, the credential is invalid, or the token was revoked */
             401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description `missing_permission and friends` — signed in, but the role does not allow this */
+            403: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -11349,6 +11476,8 @@ export interface operations {
             header: {
                 /** @description 16–128 of `A-Z a-z 0-9 - _`, scoped to the actor, operation and environment */
                 "idempotency-key": string;
+                /** @description the rollback preview's `ETag`: refused `stale_changeset` if the pins moved since */
+                "if-match"?: string;
             };
             path: {
                 /** @description the project's id */
@@ -11396,6 +11525,15 @@ export interface operations {
                     "application/json": components["schemas"]["Error"];
                 };
             };
+            /** @description `missing_permission and friends` — signed in, but the role does not allow this */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
             /** @description `not_found` — no such resource — or one the caller may not see, which looks the same */
             404: {
                 headers: {
@@ -11405,7 +11543,7 @@ export interface operations {
                     "application/json": components["schemas"]["Error"];
                 };
             };
-            /** @description `idempotency_key_reused` — this `Idempotency-Key` was used before for a different request */
+            /** @description `stale_changeset` — the pins moved since the preview named in `If-Match`; `idempotency_key_reused` — this `Idempotency-Key` was used before for a different request */
             409: {
                 headers: {
                     [name: string]: unknown;
@@ -11414,7 +11552,7 @@ export interface operations {
                     "application/json": components["schemas"]["Error"];
                 };
             };
-            /** @description `invalid_field` — a rollback takes no `entries` or `unpublish` */
+            /** @description `invalid_field` — a rollback takes no `entries` or `unpublish`; `invalid_generation, already_at, rollback_too_large` — not an earlier release, nothing to restore, or more than 190 entries */
             422: {
                 headers: {
                     [name: string]: unknown;

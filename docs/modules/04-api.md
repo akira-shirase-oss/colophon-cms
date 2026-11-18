@@ -137,6 +137,14 @@ The spec's `/forms`, `/leads`, `/commerce/*` and `/store/v1` families are parked
     holds the document to it, and `tests/contract.rs` holds the releases list and the receipt to their schemas over
     the real binary.
   - Errors: `{ code, message, fields[], retryable, request_id }`, with no stack traces or secrets.
+- **Lists across collections (D-185):** a release's changes (`…/releases/{n}/changes`, paged by
+  cursor), a rollback preview and a publish request's items follow the entries API's read rules
+  row by row: an entry the role can't read is left out (`hidden_items` counts them on a request),
+  a title it can't read is blank with `title_hidden`. A page may so hold fewer than `limit`.
+  An approval needs a role that reads every field of every item (`cannot_review_hidden`). A
+  rollback carries at most 190 pins — the most whose recorded answer fits the 300,000-byte
+  idempotency record with every field at its longest — and its preview's `ETag` is the pins'
+  hash, which `POST …/rollback` takes as `If-Match`.
 - **Allowlists:** only documented filters, sorts and projections are accepted. Relation expansion depth is at most 2,
   and ordinary queries have a 2 s deadline.
 

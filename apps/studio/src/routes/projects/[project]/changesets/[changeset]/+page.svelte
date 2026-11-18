@@ -62,6 +62,8 @@
 	// Undo, rollback or neither: undo first, since an undo also carries rollback_generation (D-184).
 	const origin = $derived(set.data === undefined ? null : releaseOrigin(set.data));
 	const originTarget = $derived(originRelease(origin));
+	// Items this role can't read, or can't read the title of: it may not approve them (D-185).
+	const blind = $derived(set.data !== undefined && (set.data.hidden_items > 0 || set.data.items.some((item) => item.title_hidden)));
 	// The role comes from the project itself: me().projects lists at most 1,000 projects. Reviewing
 	// and publishing need the permission in every collection the changeset touches (D-058).
 	const mine = createQuery(() => projectQuery(project));
@@ -464,7 +466,10 @@
 						<Textarea id="review-comment" bind:value={comment} rows={3} maxlength={2000} />
 					</div>
 					<div class="mt-3 grid gap-2">
-						{#if step?.kind === 'decide'}
+						{#if step?.kind === 'decide' && blind}
+							<!-- An approval covers every version; the server refuses one made unseen (D-185). -->
+							<p class="text-sm text-muted-foreground" data-testid="cannot-approve-hidden">Your role can't read everything this request publishes, so you can ask for changes but not approve it.</p>
+						{:else if step?.kind === 'decide'}
 							<Button onclick={() => act(shown, 'reviews', 'approve')} disabled={busy}>{ACTION.approve}</Button>
 						{/if}
 						<Button variant="outline" onclick={() => act(shown, 'reviews', 'request_changes')} disabled={busy}>{ACTION.requestChanges}</Button>

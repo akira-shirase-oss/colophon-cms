@@ -10,6 +10,25 @@ through `--version` and `GET /version`.
 
 ### Changed — read before upgrading
 
+- **A release's receipt no longer embeds what it changed** (D-185). `GET …/releases/{n}` drops
+  `changes`; page them with `GET …/releases/{n}/changes?limit=&cursor=` (publishes first, then
+  takedowns, each by entry id).
+- **Lists name only entries your role reads** (D-185). A release's changes, a rollback preview
+  and a publish request's `items` leave out entries the caller's role can't read (a request says
+  how many in `hidden_items`) and blank titles it can't read (`title_hidden: true`), as the
+  entries API does. Before, a role scoped to one collection or to its own entries could read
+  other entries' titles and ids there. An approval now needs a role that reads every field of
+  every item (`403 cannot_review_hidden`); asking for changes doesn't.
+- **A rollback changes at most 190 entries** (D-185): past that `POST …/rollback` is refused
+  `422 rollback_too_large` and the preview answers `too_large` with the totals. Before, a
+  rollback of a few hundred entries failed with a 500 (its answer outgrew the idempotency
+  record) and nothing was made.
+- **A rollback preview is a promise**: `GET …/releases/{n}/rollback` carries the pins' hash as
+  its `ETag` (and `hash`); `POST …/rollback` with that `If-Match` is refused `409
+  stale_changeset` if anything moved since. The Studio always sends it.
+- A `{generation}` that isn't a positive whole number answers `404` on release reads and `422
+  invalid_generation` on rollbacks, in the usual error envelope.
+
 - **Images inside rich text must name real uploads** (D-177). A rich-text `image` whose
   `assetId` isn't an upload of the environment is refused `422 asset_not_found` at that
   image's pointer. Drafts made with the old Studio dialog hold random placeholder ids, so they
@@ -22,6 +41,12 @@ through `--version` and `GET /version`.
   `RENDER_VERSION` is 2, so cached delivery answers are refetched once.
 
 ### Performance
+
+- Reads of what was live at a release use two index ranges instead of scanning publication
+  history, and a rollback's pins are cut to the page before they meet the revisions; a new
+  partial index (migration 0072) keeps the open set index-only. At 100k publication rows a
+  rollback to a recent release read 50k buffers (60 ms) before; at 48k live entries a fitting
+  rollback's pins took 1.2 s and now take under 100 ms (D-185).
 
 - Making an API token holds the project's creation lock for two statements instead of eight:
   the count of active tokens stays exact (one creator at a time per project), but queued

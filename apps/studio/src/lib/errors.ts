@@ -32,6 +32,8 @@ const BY_REASON: Record<string, string> = {
 	// 409: the state moved on, or the request clashes with it.
 	stale_changeset: `This ${PUBLISH_REQUEST} changed since you loaded it. Look at the current one, then try again.`,
 	generation_moved: 'Another release went live first. Look at what is live now, then try again.',
+	// 403: an approval covers every version, and this role can't read them all (D-185).
+	cannot_review_hidden: "Your role can't read everything this request publishes, so it can't approve it. You can still ask for changes.",
 	// A rollback's own refusals (D-097, D-185).
 	already_at: 'Readers already get what that release gave them, as far as a rollback can bring back.',
 	rollback_too_large: 'That rollback would change more entries than one publish request can carry. Roll back to a more recent release first, or take entries down in smaller requests.',

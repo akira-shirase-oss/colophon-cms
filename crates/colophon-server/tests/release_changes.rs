@@ -1052,7 +1052,8 @@ async fn a_rollback_is_capped_where_its_answer_fits_and_its_changes_page_complet
     assert_eq!(data["unpublish_total"], 191);
     assert_eq!(data["hash"], Value::Null);
     assert!(preview.etag().is_none());
-    assert_eq!(data["restore"].as_array().map(Vec::len), Some(100));
+    // Nothing to name: it can't be made, and reading that many pins would cost the live set.
+    assert_eq!(data["restore"], json!([]));
     let before = send(
         &owner,
         Method::GET,
@@ -1287,5 +1288,128 @@ fn report(what: &str, timings: &mut [Duration]) {
         p99.as_secs_f64() * 1000.0,
         max.as_secs_f64() * 1000.0
     );
-    assert!(p50 < Duration::from_millis(500), "{what}: p50 {p50:?} (p99 {p99:?})");
+    assert!(
+        p50 < Duration::from_millis(500),
+        "{what}: p50 {p50:?} (p99 {p99:?})"
+    );
+}
+
+/// R6 (D-185): a reviewer approves exactly what the request publishes, so a role that holds
+/// `content.review` but can't read an item — an own-only reader on someone else's article, or a
+/// role that reads only some fields — can't approve it (403 `cannot_review_hidden`); it can still
+/// ask for changes. A reviewer who reads everything approves as before. Before the fix both
+/// approvals were accepted: an approval of versions the request page hid from them.
+#[tokio::test]
+#[ignore = "needs the stack and scripts/migrate.sh"]
+#[expect(
+    clippy::too_many_lines,
+    reason = "three roles, each one approval and one request for changes"
+)]
+async fn a_reviewer_cannot_approve_what_their_role_cannot_read() {
+    let _server = Server::start().await;
+    let owner = sign_in("dev-owner").await;
+    let project = project(&owner).await;
+    new_role(
+        &owner,
+        &project,
+        "own-reviewer",
+        &json!([
+            {"action": "content.read", "subject": "articles", "condition": "own"},
+            {"action": "content.review", "subject": "articles"}
+        ]),
+    )
+    .await;
+    new_role(
+        &owner,
+        &project,
+        "title-reviewer",
+        &json!([
+            {"action": "content.read", "subject": "articles", "fields": ["title"]},
+            {"action": "content.review", "subject": "articles"}
+        ]),
+    )
+    .await;
+    new_role(
+        &owner,
+        &project,
+        "full-reviewer",
+        &json!([
+            {"action": "content.read", "subject": "articles"},
+            {"action": "content.review", "subject": "articles"}
+        ]),
+    )
+    .await;
+    let entry = create_article(&owner, &project, "Owner's piece").await;
+    let made = send(
+        &owner,
+        Method::POST,
+        &format!("{}/changesets", base(&project)),
+        Some(&json!({"title": "To review", "entries": [entry]})),
+        &[("idempotency-key", &key())],
+    )
+    .await;
+    assert_eq!(made.status, StatusCode::CREATED, "{}", made.body);
+    let path = format!(
+        "{}/changesets/{}",
+        base(&project),
+        made.body["data"]["id"].as_str().expect("an id")
+    );
+    let hash = format!(
+        "\"{}\"",
+        made.body["data"]["hash"].as_str().expect("a hash")
+    );
+    let submitted = send(
+        &owner,
+        Method::POST,
+        &format!("{path}/submit"),
+        None,
+        &[("if-match", &hash)],
+    )
+    .await;
+    assert_eq!(submitted.status, StatusCode::OK, "{}", submitted.body);
+    for role in ["own-reviewer", "title-reviewer"] {
+        let reviewer = member(&owner, &project, role).await;
+        let approve = send(
+            &reviewer,
+            Method::POST,
+            &format!("{path}/reviews"),
+            Some(&json!({"decision": "approve"})),
+            &[("if-match", &hash)],
+        )
+        .await;
+        assert_eq!(
+            approve.status,
+            StatusCode::FORBIDDEN,
+            "{role}: {}",
+            approve.body
+        );
+        assert_eq!(
+            approve.body["error"]["details"]["reason"], "cannot_review_hidden",
+            "{role}"
+        );
+        let changes = send(
+            &reviewer,
+            Method::POST,
+            &format!("{path}/reviews"),
+            Some(&json!({"decision": "request_changes", "comment": "Can't see it all"})),
+            &[("if-match", &hash)],
+        )
+        .await;
+        assert_eq!(changes.status, StatusCode::OK, "{role}: {}", changes.body);
+    }
+    let full = member(&owner, &project, "full-reviewer").await;
+    let approve = send(
+        &full,
+        Method::POST,
+        &format!("{path}/reviews"),
+        Some(&json!({"decision": "approve"})),
+        &[("if-match", &hash)],
+    )
+    .await;
+    assert_eq!(approve.status, StatusCode::OK, "{}", approve.body);
+    assert_eq!(
+        approve.body["data"]["status"]["state"], "approved",
+        "{}",
+        approve.body
+    );
 }

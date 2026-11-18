@@ -120,6 +120,7 @@
 			{#if moved}
 				<p role="status" class="rounded-lg border border-pending/40 bg-pending-soft/60 px-3 py-2 text-sm" data-testid="rollback-moved">
 					Something was published while this was open, so the rollback changed. This is what it would do now.
+					<a class="underline underline-offset-2" href={resolve('/projects/[project]/releases', { project })} data-testid="see-what-changed">See what changed</a>
 				</p>
 			{/if}
 			<div class="grid min-w-0 gap-5">

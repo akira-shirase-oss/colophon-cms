@@ -186,6 +186,20 @@ pub async fn published_pins(
     .map_err(DbError::from_query)
 }
 
+/// Plans this transaction's statements for the values they run with (D-185): "live at a
+/// generation" is two index ranges whose better half depends on the generation — an old one is
+/// found by `valid_from`, a recent one by `valid_to` — and a cached generic plan, which Postgres
+/// switches to after five runs of a prepared statement, picks one half for every generation and
+/// scans half the history for the rest (measured: 8 ms custom, 126–260 ms generic, at 100k
+/// publications). Transaction-local, so it ends with the transaction.
+async fn plan_for_values(tx: &mut ProjectTransaction) -> Result<(), DbError> {
+    sqlx::query!("SET LOCAL plan_cache_mode = force_custom_plan")
+        .execute(&mut *tx.transaction)
+        .await
+        .map_err(DbError::from_query)?;
+    Ok(())
+}
+
 /// The most pins one rollback changeset may carry (D-185). A release changes at most
 /// [`MAX_ITEMS`] entries, but a rollback restores a whole publication set, so it may change more;
 /// past this many it is refused as `rollback_too_large`, and a nearer release is the way back.
@@ -214,6 +228,7 @@ pub async fn rollback_pins(
     tx: &mut ProjectTransaction,
     generation: i64,
 ) -> Result<Vec<Pin>, DbError> {
+    plan_for_values(tx).await?;
     sqlx::query_as!(
         Pin,
         r#"WITH at AS (
@@ -233,29 +248,31 @@ pub async fn rollback_pins(
                SELECT p.entry_id, p.revision_id
                FROM publications p
                WHERE p.project_id = $1 AND p.environment_id = $2 AND p.valid_to IS NULL
+           ), diff AS MATERIALIZED (
+               -- What differs, cut to the page first: only these rows meet the revisions
+               -- (D-185; joining first fetched every revision live then, at 48k live entries
+               -- most of half a second).
+               SELECT 'publish' AS kind, at.entry_id, at.revision_id
+               FROM at
+               WHERE NOT EXISTS (
+                   SELECT 1 FROM now WHERE now.entry_id = at.entry_id AND now.revision_id = at.revision_id
+               )
+               UNION ALL
+               SELECT 'unpublish', now.entry_id, now.revision_id
+               FROM now
+               WHERE NOT EXISTS (SELECT 1 FROM at WHERE at.entry_id = now.entry_id)
+               ORDER BY 1, 2
+               LIMIT $4
            )
-           SELECT 'publish' AS "kind!", at.entry_id AS "entry_id!", r.id AS "revision_id!",
+           SELECT d.kind AS "kind!", d.entry_id AS "entry_id!", r.id AS "revision_id!",
                   r.collection AS "collection!", r.content_hash AS "content_hash!",
                   r.schema_version AS "schema_version!", v.definition_hash AS "definition_hash!"
-           FROM at
+           FROM diff d
            JOIN revisions r ON r.project_id = $1 AND r.environment_id = $2
-                           AND r.id = at.revision_id
+                           AND r.id = d.revision_id
            JOIN content_type_versions v ON v.project_id = r.project_id AND v.environment_id = r.environment_id
                                        AND v.collection = r.collection AND v.version = r.schema_version
-           WHERE NOT EXISTS (
-               SELECT 1 FROM now WHERE now.entry_id = at.entry_id AND now.revision_id = at.revision_id
-           )
-           UNION ALL
-           SELECT 'unpublish', now.entry_id, r.id, r.collection, r.content_hash,
-                  r.schema_version, v.definition_hash
-           FROM now
-           JOIN revisions r ON r.project_id = $1 AND r.environment_id = $2
-                           AND r.id = now.revision_id
-           JOIN content_type_versions v ON v.project_id = r.project_id AND v.environment_id = r.environment_id
-                                       AND v.collection = r.collection AND v.version = r.schema_version
-           WHERE NOT EXISTS (SELECT 1 FROM at WHERE at.entry_id = now.entry_id)
-           ORDER BY 1, 2
-           LIMIT $4"#,
+           ORDER BY 1, 2"#,
         tx.project,
         tx.environment,
         generation,
@@ -273,6 +290,7 @@ pub async fn rollback_counts(
     tx: &mut ProjectTransaction,
     generation: i64,
 ) -> Result<(i64, i64), DbError> {
+    plan_for_values(tx).await?;
     let row = sqlx::query!(
         r#"WITH at AS (
                -- Live at $3: still open, or closed after it. Two halves, each on its own
@@ -376,6 +394,7 @@ pub async fn kept_down(
     tx: &mut ProjectTransaction,
     generation: i64,
 ) -> Result<Vec<KeptDown>, DbError> {
+    plan_for_values(tx).await?;
     sqlx::query_as!(
         KeptDown,
         r#"SELECT p.entry_id, p.collection, p.title, p.revision_id,

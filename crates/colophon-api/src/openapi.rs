@@ -6483,7 +6483,7 @@ fn release_change_parts() -> Value {
                 "too_large": { "type": "boolean", "description": "it would change more than `max_items`, so `POST` refuses it `rollback_too_large`; roll back to a nearer release first" },
                 "publish_total": { "type": "integer", "description": "entries it would put back" },
                 "unpublish_total": { "type": "integer", "description": "entries it would take down" },
-                "restore": { "type": "array", "items": { "$ref": "#/components/schemas/RollbackLineView" }, "description": "the first 100 of the pins a rollback made now would carry, publishes first, each by entry id, less those your role can't read; empty when it would be refused `already_at`" },
+                "restore": { "type": "array", "items": { "$ref": "#/components/schemas/RollbackLineView" }, "description": "the first 100 of the pins a rollback made now would carry, publishes first, each by entry id, less those your role can't read; empty when it would be refused `already_at`, and when `too_large`" },
                 "kept_down": { "type": "array", "items": { "$ref": "#/components/schemas/KeptDownView" }, "description": "up to 100 entries readers had at that release that it won't bring back, because they were taken down since (D-049), by title, less those your role can't read" },
                 "kept_down_total": { "type": "integer" },
             },

@@ -597,6 +597,44 @@ async fn may_change_entries(tx: &mut ProjectTransaction, entries: &[Uuid]) -> Re
     }
 }
 
+/// Refuses unless the caller's role may change content somewhere: a rollback preview too large
+/// to name its pins is told only to such a role (D-185).
+fn may_change_some(tx: &ProjectTransaction) -> Result<(), ApiError> {
+    if tx
+        .policy
+        .permissions()
+        .iter()
+        .any(|permission| permission.action == Action::ContentUpdate)
+    {
+        Ok(())
+    } else {
+        Err(ApiError::missing(
+            Action::ContentUpdate,
+            "your role can't change content in this changeset",
+        ))
+    }
+}
+
+/// Refuses an approval unless the caller's role reads every field of every item (D-185, R6):
+/// an approval approves every pinned version, and the request page leaves out or blanks what the
+/// role can't read, so anything less would be an approval made unseen.
+fn reads_all(tx: &ProjectTransaction, items: &[changesets::Item]) -> Result<(), ApiError> {
+    let all = items.iter().all(|item| {
+        let own = item.created_by == Some(tx.identity);
+        tx.policy
+            .fields(Action::ContentRead, &item.pin.collection, own)
+            .is_some_and(|read| read == colophon_domain::policy::Fields::All)
+    });
+    if all {
+        Ok(())
+    } else {
+        Err(ApiError::forbidden(
+            "cannot_review_hidden",
+            "your role can't read everything this changeset publishes, so it can't approve it; it can still ask for changes",
+        ))
+    }
+}
+
 /// `GET {P}/changesets`.
 pub(crate) async fn list(
     State(state): State<AppState>,
@@ -928,7 +966,7 @@ pub(crate) struct RollbackPreviewView {
     too_large: bool,
     /// The first [`PREVIEW_LINES`] of the pins `POST` would build now — publishes first, then
     /// takedowns, each by entry id — less those the role can't read; empty when it would be
-    /// refused `already_at`.
+    /// refused `already_at`, and when it is `too_large` (only the totals are read then).
     restore: Vec<RollbackLineView>,
     /// Up to [`PREVIEW_LINES`] entries the rollback leaves down, by title, less those the role
     /// can't read.
@@ -1011,16 +1049,25 @@ pub(crate) async fn rollback_preview(
         .await
         .map_err(ApiError::from_db)?;
     let generation = rollback_target(&path.generation, latest)?;
-    let pins = changesets::rollback_pins(&mut tx, generation)
+    // Counted first: past the cap there is nothing to name or hash — `POST` refuses it — and
+    // reading the pins of a set that large costs what the live set costs (D-185, R8).
+    let (publish, unpublish) = changesets::rollback_counts(&mut tx, generation)
         .await
         .map_err(ApiError::from_db)?;
-    let too_large = within_rollback_cap(&pins).is_err();
-    let pinned: Vec<Uuid> = pins.iter().map(|pin| pin.entry_id).collect();
-    may_change_entries(&mut tx, &pinned).await?;
-    let (hash, publish_total, unpublish_total) = if too_large {
-        let (publish, unpublish) = changesets::rollback_counts(&mut tx, generation)
+    let too_large = usize::try_from(publish.saturating_add(unpublish))
+        .map_or(true, |total| total > changesets::MAX_ROLLBACK_ITEMS);
+    let pins = if too_large {
+        may_change_some(&tx)?;
+        Vec::new()
+    } else {
+        let pins = changesets::rollback_pins(&mut tx, generation)
             .await
             .map_err(ApiError::from_db)?;
+        let pinned: Vec<Uuid> = pins.iter().map(|pin| pin.entry_id).collect();
+        may_change_entries(&mut tx, &pinned).await?;
+        pins
+    };
+    let (hash, publish_total, unpublish_total) = if too_large {
         (None, publish, unpublish)
     } else {
         let publish = pins
@@ -1237,11 +1284,16 @@ pub(crate) async fn review(
             "an API token can't approve a changeset an API token submitted; it needs a person's approval",
         ));
     }
-    let edited = changesets::items(&mut tx, head.id)
+    let items = changesets::items(&mut tx, head.id)
         .await
-        .map_err(ApiError::from_db)?
-        .iter()
-        .any(changesets::Item::moved);
+        .map_err(ApiError::from_db)?;
+    // An approval approves every pinned version (D-185, R6): one whose entry, or any field of it,
+    // the reviewer's role can't read would be approved unseen — the request page leaves such an
+    // item out or blanks its title. Asking for changes stays open to them.
+    if decision == Decision::Approve {
+        reads_all(&tx, &items)?;
+    }
+    let edited = items.iter().any(changesets::Item::moved);
     if edited {
         return Err(ApiError::conflict(
             "entries_moved_on",
