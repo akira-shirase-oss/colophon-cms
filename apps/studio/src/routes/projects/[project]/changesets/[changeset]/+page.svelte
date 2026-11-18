@@ -31,7 +31,7 @@
 		changesetAction,
 		createChangeset,
 		getChangeset,
-		getReceipt,
+		allReleaseChanges,
 		may,
 		mayOn,
 		newKey,
@@ -47,6 +47,7 @@
 	import SchedulePanel, { readsShort, schedulesQuery } from '#lib/SchedulePanel.svelte';
 	import { ago, meQuery, membersQuery, projectQuery, releasesQuery, tasksQuery, typesQuery } from '#lib/queries.ts';
 	import { ACTION, actionsOf, names, nextStep, type Viewer } from '#lib/requestState.ts';
+	import { originRelease, originText, releaseOrigin } from '#lib/releaseOrigin.ts';
 	import ChangesetBadge from '#lib/shell/ChangesetBadge.svelte';
 	import StatusBadge from '#lib/shell/StatusBadge.svelte';
 	import PageHeader from '#lib/shell/PageHeader.svelte';
@@ -58,6 +59,9 @@
 	const id = $derived(page.params.changeset ?? '');
 	const queryClient = useQueryClient();
 	const set = createQuery(() => ({ queryKey: ['changeset', project, id], queryFn: () => getChangeset(project, id) }));
+	// Undo, rollback or neither: undo first, since an undo also carries rollback_generation (D-184).
+	const origin = $derived(set.data === undefined ? null : releaseOrigin(set.data));
+	const originTarget = $derived(originRelease(origin));
 	// The role comes from the project itself: me().projects lists at most 1,000 projects. Reviewing
 	// and publishing need the permission in every collection the changeset touches (D-058).
 	const mine = createQuery(() => projectQuery(project));
@@ -98,13 +102,13 @@
 	// Once published, "what readers had" is the release's own record (its receipt), not what is
 	// live now, which is this request's own versions.
 	const generation = $derived(set.data?.status.state === 'published' ? set.data.status.generation : null);
-	const receipt = createQuery(() => ({
-		queryKey: ['receipt', project, generation ?? 0],
-		queryFn: () => getReceipt(project, generation ?? 0),
+	const releaseChanges = createQuery(() => ({
+		queryKey: ['receipt', project, generation ?? 0, 'changes', 'all'],
+		queryFn: () => allReleaseChanges(project, generation ?? 0),
 		enabled: generation !== null
 	}));
 	const before = (entry: string, fallback: string | null) =>
-		receipt.data === undefined ? fallback : (receipt.data.changes.find((change) => change.entry_id === entry)?.previous_revision_id ?? null);
+		releaseChanges.data === undefined ? fallback : (releaseChanges.data.find((change) => change.entry_id === entry)?.previous_revision_id ?? null);
 	// One key per publish attempt: pressing Publish now again after a lost answer is safe.
 	let publishKey = newKey();
 	// Which items show their comparison; the first few open by default.
@@ -290,8 +294,11 @@
 				{:else}
 					<ChangesetBadge state={shown.status.state} />
 				{/if}
-				{#if shown.rollback_generation != null}
-					<span>restores <a class="underline underline-offset-2" href={resolve('/projects/[project]/releases/[generation]', { project, generation: String(shown.rollback_generation) })} data-testid="restores-link">{releaseName(shown.rollback_generation)}</a></span>
+				{#if origin !== null && originTarget !== null}
+					<!-- Undo before rollback: an undo of release N also carries rollback_generation N-1 (D-184). -->
+					<a class="underline underline-offset-2" href={resolve('/projects/[project]/releases/[generation]', { project, generation: String(originTarget) })} data-testid="restores-link" data-origin={origin.kind}
+						>{originText(origin)}</a
+					>
 				{/if}
 				{#if step?.kind === 'waiting' || (step?.kind === 'decide' && shown.status.state === 'awaiting_review')}
 					<span data-testid="waiting-for">{waitingFor === '' ? 'Waiting for someone who can approve it' : `Waiting for ${waitingFor}`}</span>
@@ -370,7 +377,12 @@
 
 	<div class="grid gap-10 lg:grid-cols-[minmax(0,1fr)_20rem]">
 		<section aria-labelledby="items-heading">
-			<h2 id="items-heading" class="mb-3 text-base font-semibold">Entries <span class="font-normal text-muted-foreground tabular">{shown.items.length}</span></h2>
+			<h2 id="items-heading" class="mb-3 text-base font-semibold">Entries <span class="font-normal text-muted-foreground tabular">{shown.items.length + shown.hidden_items}</span></h2>
+			{#if shown.hidden_items > 0}
+				<p class="mb-3 text-sm text-muted-foreground" data-testid="hidden-items">
+					{shown.hidden_items === 1 ? 'One entry' : `${shown.hidden_items} entries`} in it {shown.hidden_items === 1 ? "isn't" : "aren't"} shown: your role can't open {shown.hidden_items === 1 ? 'it' : 'them'}.
+				</p>
+			{/if}
 			<ul class="space-y-3" data-testid="changeset-items">
 				{#each shown.items as item, index (item.entry_id)}
 					{@const expanded = open[item.entry_id] ?? index < 3}
@@ -378,9 +390,13 @@
 					<li class="overflow-hidden rounded-xl border border-border bg-card">
 						<div class="flex flex-wrap items-center gap-x-3 gap-y-1 px-4 py-3">
 							<span class="min-w-0 flex-1">
-								<a class="block truncate font-medium hover:underline" href={resolve('/projects/[project]/[collection]/[entry]', { project, collection: item.collection, entry: item.entry_id })}
-									>{item.title}</a
-								>
+								{#if item.title_hidden}
+									<span class="block truncate font-medium text-muted-foreground italic" data-testid="title-hidden">Title hidden for your role</span>
+								{:else}
+									<a class="block truncate font-medium hover:underline" href={resolve('/projects/[project]/[collection]/[entry]', { project, collection: item.collection, entry: item.entry_id })} title={item.title} data-user-content
+										>{item.title}</a
+									>
+								{/if}
 								<span class="text-xs text-muted-foreground">{typeName(item.collection)}</span>
 							</span>
 							{#if item.kind === 'unpublish'}
@@ -407,7 +423,7 @@
 						</div>
 						{#if expanded}
 							<div id="diff-{item.entry_id}" class="unfold border-t border-dotted border-border bg-background/60 px-4 py-4">
-								{#if generation !== null && receipt.data === undefined && !receipt.isError}
+								{#if generation !== null && releaseChanges.data === undefined && !releaseChanges.isError}
 									<p class="text-sm text-muted-foreground">Loading the comparison…</p>
 								{:else}
 									<ItemDiff {project} item={{ ...item, published_revision_id: had }} done={shown.status.state === 'published'} />

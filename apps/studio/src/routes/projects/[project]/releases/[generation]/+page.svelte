@@ -12,11 +12,12 @@
 	import { resolve } from '$app/paths';
 	import { page } from '$app/state';
 	import { goto } from '$app/navigation';
-	import { createQuery } from '@tanstack/svelte-query';
+	import { createInfiniteQuery, createQuery } from '@tanstack/svelte-query';
 	import { Button } from '@colophon/ui/ui/button';
 	import { Skeleton } from '@colophon/ui/ui/skeleton';
 	import ChevronDownIcon from '@lucide/svelte/icons/chevron-down';
-	import { type Delivery, getReceipt, may } from '#lib/api.ts';
+	import { type Delivery, getReceipt, listReleaseChanges, may } from '#lib/api.ts';
+	import { originRelease, originText, releaseOrigin } from '#lib/releaseOrigin.ts';
 	import ItemDiff from '#lib/ItemDiff.svelte';
 	import RollbackDialog from '#lib/RollbackDialog.svelte';
 	import StatusBadge from '#lib/shell/StatusBadge.svelte';
@@ -38,6 +39,16 @@
 		queryFn: () => getReceipt(project, generation)
 	}));
 
+	// What it changed for readers, 100 at a time (D-185): only the entries this role reads, so the
+	// count of the rest comes from the release's own totals once the last page is in.
+	type ChangesPage = Awaited<ReturnType<typeof listReleaseChanges>>;
+	const changes = createInfiniteQuery(() => ({
+		queryKey: ['receipt', project, generation, 'changes'],
+		queryFn: ({ pageParam }: { pageParam: string | null }) => listReleaseChanges(project, generation, pageParam),
+		initialPageParam: null as string | null,
+		getNextPageParam: (last: ChangesPage) => last.nextCursor
+	}));
+	const rows = $derived((changes.data?.pages ?? []).flatMap((one) => one.changes));
 	const when = (at: string) => new Intl.DateTimeFormat(undefined, { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(at));
 	const mine = createQuery(() => projectQuery(project));
 	const releases = createQuery(() => releasesQuery(project));
@@ -53,6 +64,9 @@
 	// Which rows show their changes: none until asked, so the list reads as a list.
 	let open = $state<Record<string, boolean>>({});
 	const listed = $derived(receipt.data === undefined ? 0 : receipt.data.entries + receipt.data.unpublished);
+	// Entries this role can't open: known once every page is in.
+	const unseen = $derived(changes.hasNextPage || changes.data === undefined ? 0 : Math.max(0, listed - rows.length));
+	const origin = $derived(receipt.data === undefined ? null : releaseOrigin(receipt.data));
 	const failed = $derived((receipt.data?.deliveries ?? []).filter((delivery) => delivery.state === 'failed'));
 	const named = (id: string) => receipt.data?.deliveries.find((delivery) => delivery.destination_id === id)?.name ?? 'a site check';
 	const deliveryTextShort = (delivery: Delivery) => (delivery.last_error ? failureText(delivery.last_error) : 'it failed');
@@ -74,6 +88,10 @@
 		{#snippet eyebrow()}Receipt{/snippet}
 		{#snippet meta()}
 			<span>Published by {shown.published_by_name ?? shown.published_by}, {when(shown.published_at)}</span>
+			{#if origin !== null}
+				{@const target = originRelease(origin)}
+				<span data-testid="release-origin">· {#if target !== null}<a class="underline underline-offset-2" href={at(target)}>{originText(origin)}</a>{/if}</span>
+			{/if}
 		{/snippet}
 		{#snippet actions()}
 			{#if restores}
@@ -109,42 +127,65 @@
 		<h2 id="went-live-heading" class="mb-3 flex items-baseline gap-2 text-base font-semibold">
 			What went live <span class="text-sm font-normal text-muted-foreground tabular">{count(listed, 'entry', 'entries')}</span>
 		</h2>
-		{#if shown.changes.length === 0}
+		{#if changes.isPending}
+			<div class="grid gap-2" aria-busy="true" data-testid="receipt-rows-loading">
+				<Skeleton class="h-14 w-full rounded-xl" />
+				<Skeleton class="h-14 w-full rounded-xl" />
+			</div>
+		{:else if changes.isError}
+			<Problem error={changes.error} what="what this release changed" retry={() => changes.refetch()} />
+		{:else if rows.length === 0 && unseen === 0}
 			<p class="text-sm text-muted-foreground">This release changed nothing readers get.</p>
 		{:else}
-			<ul class="overflow-hidden rounded-xl border border-border bg-card" data-testid="receipt-rows">
-				{#each shown.changes as change (change.entry_id)}
-					{@const expanded = open[change.entry_id] ?? false}
-					{@const badge = change.kind === 'unpublish' ? 'taken_down' : change.previous_revision_id === null ? 'new' : 'updated'}
-					<li class="rule-dotted last:border-b-0" data-testid="receipt-row" data-entry={change.entry_id} data-change={badge}>
-						<div class="flex flex-wrap items-center gap-x-3 gap-y-1 px-4 py-3">
-							<span class="min-w-0 flex-1">
-								{#if change.entry_deleted}
-									<span class="block truncate font-medium" title={change.title} data-user-content>{change.title}</span>
-								{:else}
-									<a class="block truncate font-medium hover:underline" href={resolve('/projects/[project]/[collection]/[entry]', { project, collection: change.collection, entry: change.entry_id })} title={change.title} data-user-content
-										>{change.title}</a
-									>
+			{#if rows.length > 0}
+				<ul class="overflow-hidden rounded-xl border border-border bg-card" data-testid="receipt-rows">
+					{#each rows as change (change.entry_id)}
+						{@const expanded = open[change.entry_id] ?? false}
+						{@const badge = change.kind === 'unpublish' ? 'taken_down' : change.previous_revision_id === null ? 'new' : 'updated'}
+						<li class="rule-dotted last:border-b-0" data-testid="receipt-row" data-entry={change.entry_id} data-change={badge}>
+							<div class="flex flex-wrap items-center gap-x-3 gap-y-1 px-4 py-3">
+								<span class="min-w-0 flex-1">
+									{#if change.title_hidden}
+										<span class="block truncate font-medium text-muted-foreground italic" data-testid="title-hidden">Title hidden for your role</span>
+									{:else if change.entry_deleted}
+										<span class="block truncate font-medium" title={change.title} data-user-content>{change.title}</span>
+									{:else}
+										<a class="block truncate font-medium hover:underline" href={resolve('/projects/[project]/[collection]/[entry]', { project, collection: change.collection, entry: change.entry_id })} title={change.title} data-user-content
+											>{change.title}</a
+										>
+									{/if}
+									<span class="text-xs text-muted-foreground">{typeName(change.collection)}{change.entry_deleted ? ' · deleted since' : ''}</span>
+								</span>
+								<StatusBadge state={badge} testid="receipt-change" />
+								{#if !change.entry_deleted}
+									<Button variant="ghost" size="xs" aria-expanded={expanded} aria-controls="change-{change.entry_id}" onclick={() => (open[change.entry_id] = !expanded)} data-testid="see-changes">
+										See changes<ChevronDownIcon class="transition-transform {expanded ? 'rotate-180' : ''}" />
+									</Button>
 								{/if}
-								<span class="text-xs text-muted-foreground">{typeName(change.collection)}{change.entry_deleted ? ' · deleted since' : ''}</span>
-							</span>
-							<StatusBadge state={badge} testid="receipt-change" />
-							{#if !change.entry_deleted}
-								<Button variant="ghost" size="xs" aria-expanded={expanded} aria-controls="change-{change.entry_id}" onclick={() => (open[change.entry_id] = !expanded)} data-testid="see-changes">
-									See changes<ChevronDownIcon class="transition-transform {expanded ? 'rotate-180' : ''}" />
-								</Button>
-							{/if}
-						</div>
-						{#if expanded}
-							<div id="change-{change.entry_id}" class="unfold border-t border-dotted border-border bg-background/60 px-4 py-4">
-								<ItemDiff {project} item={{ kind: change.kind, entry_id: change.entry_id, collection: change.collection, revision_id: change.revision_id, published_revision_id: change.previous_revision_id }} done />
 							</div>
-						{/if}
-					</li>
-				{/each}
-			</ul>
-			{#if listed > shown.changes.length}
-				<p class="mt-2 text-xs text-muted-foreground">The first {shown.changes.length} are listed; its {PUBLISH_REQUEST} has them all.</p>
+							{#if expanded}
+								<div id="change-{change.entry_id}" class="unfold border-t border-dotted border-border bg-background/60 px-4 py-4">
+									<ItemDiff {project} item={{ kind: change.kind, entry_id: change.entry_id, collection: change.collection, revision_id: change.revision_id, published_revision_id: change.previous_revision_id }} done />
+								</div>
+							{/if}
+						</li>
+					{/each}
+				</ul>
+			{/if}
+			{#if changes.hasNextPage || changes.isFetchingNextPage || changes.isFetchNextPageError}
+				<div class="mt-3 flex flex-wrap items-center gap-3">
+					<Button variant="outline" size="sm" onclick={() => changes.fetchNextPage()} disabled={changes.isFetchingNextPage} data-testid="receipt-more">
+						{changes.isFetchingNextPage ? 'Loading more…' : `Show more (${rows.length} of ${listed})`}
+					</Button>
+					{#if changes.isFetchNextPageError}
+						<p role="alert" class="text-sm text-destructive">Couldn't load more. Try again.</p>
+					{/if}
+				</div>
+			{/if}
+			{#if unseen > 0}
+				<p class="mt-2 text-xs text-muted-foreground" data-testid="receipt-unseen">
+					And {count(unseen, 'entry', 'entries')} your role can't open.
+				</p>
 			{/if}
 		{/if}
 	</section>

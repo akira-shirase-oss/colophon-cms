@@ -32,6 +32,10 @@ const BY_REASON: Record<string, string> = {
 	// 409: the state moved on, or the request clashes with it.
 	stale_changeset: `This ${PUBLISH_REQUEST} changed since you loaded it. Look at the current one, then try again.`,
 	generation_moved: 'Another release went live first. Look at what is live now, then try again.',
+	// A rollback's own refusals (D-097, D-185).
+	already_at: 'Readers already get what that release gave them, as far as a rollback can bring back.',
+	rollback_too_large: 'That rollback would change more entries than one publish request can carry. Roll back to a more recent release first, or take entries down in smaller requests.',
+	invalid_generation: 'Only a release before the live one can be rolled back to.',
 	stale_revision: 'Someone else saved this entry first. Reload it to see their version.',
 	stale_version: 'Someone changed this while you were editing it. Load the latest version, then make your change again.',
 	stale_role: 'Someone changed this role while you were editing it. Load the latest version, then make your change again.',

@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "SELECT p.entry_id, p.collection, p.title, p.revision_id,\n                  p.revoked_in AS \"taken_down_in!\", e.created_by AS \"created_by?\",\n                  count(*) OVER () AS \"total!\"\n           FROM publications p\n           LEFT JOIN entries e ON e.project_id = p.project_id AND e.environment_id = p.environment_id\n                              AND e.id = p.entry_id\n           WHERE p.project_id = $1 AND p.environment_id = $2\n             AND p.valid_from <= $3 AND coalesce(p.valid_to, $3 + 1) > $3\n             AND p.revoked_in IS NOT NULL\n             AND NOT EXISTS (SELECT 1 FROM publications now\n                             WHERE now.project_id = p.project_id AND now.environment_id = p.environment_id\n                               AND now.entry_id = p.entry_id AND now.valid_to IS NULL)\n           ORDER BY p.title, p.entry_id\n           LIMIT $4",
+  "query": "SELECT p.entry_id, p.collection, p.title, p.revision_id,\n                  p.revoked_in AS \"taken_down_in!\", e.created_by AS \"created_by?\",\n                  count(*) OVER () AS \"total!\"\n           FROM publications p\n           LEFT JOIN entries e ON e.project_id = p.project_id AND e.environment_id = p.environment_id\n                              AND e.id = p.entry_id\n           WHERE p.project_id = $1 AND p.environment_id = $2\n             -- A revoked publication is always closed (its takedown closed it): live at $3\n             -- is closed after it, which the closed-by-release index finds (D-185).\n             AND p.valid_to > $3 AND p.valid_from <= $3\n             AND p.revoked_in IS NOT NULL\n             AND NOT EXISTS (SELECT 1 FROM publications now\n                             WHERE now.project_id = p.project_id AND now.environment_id = p.environment_id\n                               AND now.entry_id = p.entry_id AND now.valid_to IS NULL)\n           ORDER BY p.title, p.entry_id\n           LIMIT $4",
   "describe": {
     "columns": [
       {
@@ -94,5 +94,5 @@
       null
     ]
   },
-  "hash": "3b0c63e5d808fb308a2cb486bf2974914487d0a2d78190250ab3e75767f37f82"
+  "hash": "4e54c457348a6bf77b348d94d0f5fe1c5a70470d757d9f155c6ad7c80d770fb9"
 }

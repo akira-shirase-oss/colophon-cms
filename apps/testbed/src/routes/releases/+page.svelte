@@ -45,6 +45,12 @@
 	let restoreOf = $state('');
 	let restoreTitle = $state('');
 	let restored = $state('');
+	let previewed = $state('');
+	let previewHash = $state<string | null>(null);
+	let changesOf = $state('');
+	let changesSize = $state('');
+	let changesCursor = $state<string | null>(null);
+	let changesRead = $state('');
 	let pageSize = $state('');
 	let pageCursor = $state<string | null>(null);
 	let paged = $state('');
@@ -109,10 +115,32 @@
 			: `HTTP ${response.status}, generation ${response.headers.get('colophon-generation') ?? '?'}: ${titles}`;
 	}
 
+	// What a rollback would do, before it is made (D-185): its totals, what stays down, its hash.
+	async function preview() {
+		const reply = await call('GET', `${api}/releases/${restoreOf.trim()}/rollback`);
+		if (reply.status !== 200) {
+			previewHash = null;
+			previewed = describe(reply);
+			return;
+		}
+		const shown = (reply.body as { data: { publish_total: number; unpublish_total: number; kept_down_total: number; too_large: boolean; max_items: number; hash: string | null } }).data;
+		previewHash = shown.hash;
+		previewed = `puts back ${shown.publish_total}, takes down ${shown.unpublish_total}, keeps down ${shown.kept_down_total}${shown.too_large ? `, too large (over ${shown.max_items})` : ''}`;
+	}
+
+	// Rolls back as previewed: the preview's hash in If-Match, refused 409 if the pins moved.
+	async function rollbackAsPreviewed() {
+		await rollbackWith(previewHash === null ? {} : { 'If-Match': `"${previewHash}"` });
+	}
+
 	async function rollback(event: SubmitEvent) {
 		event.preventDefault();
+		await rollbackWith({});
+	}
+
+	async function rollbackWith(extra: Record<string, string>) {
 		const reply = await call('POST', `${api}/releases/${restoreOf.trim()}/rollback`, {
-			headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrfToken(), 'Idempotency-Key': crypto.randomUUID() },
+			headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrfToken(), 'Idempotency-Key': crypto.randomUUID(), ...extra },
 			body: JSON.stringify({ title: restoreTitle })
 		});
 		if (reply.status !== 201) {
@@ -153,6 +181,29 @@
 		pageCursor = shown.next_cursor;
 		const generations = shown.data.map((release) => release.generation).join(', ');
 		paged = `generations ${generations || 'none'}; ${pageCursor === null ? 'last page' : 'more'}`;
+	}
+
+	// A release's changes a page at a time (D-185): which entries each page held, and whether
+	// another follows.
+	async function readChanges(next: boolean) {
+		const query = new URLSearchParams();
+		if (changesSize.trim() !== '') query.set('limit', changesSize.trim());
+		if (next && changesCursor !== null) query.set('cursor', changesCursor);
+		const reply = await call('GET', `${api}/releases/${changesOf.trim()}/changes${query.size > 0 ? `?${query}` : ''}`);
+		if (reply.status !== 200) {
+			changesCursor = null;
+			changesRead = describe(reply);
+			return;
+		}
+		const shown = reply.body as { data: { kind: string; title: string; title_hidden: boolean }[]; next_cursor: string | null };
+		changesCursor = shown.next_cursor;
+		const rows = shown.data.map((change) => `${change.title_hidden ? '(title hidden)' : change.title} (${change.kind})`).join(', ');
+		changesRead = `${rows || 'none'}; ${changesCursor === null ? 'last page' : 'more'}`;
+	}
+
+	async function firstChanges(event: SubmitEvent) {
+		event.preventDefault();
+		await readChanges(false);
 	}
 
 	async function firstPage(event: SubmitEvent) {
@@ -221,8 +272,21 @@
 		<label class="field">Roll back to generation <input bind:value={restoreOf} name="restore-of" /></label>
 		<label class="field">Restore changeset title <input bind:value={restoreTitle} name="restore-title" /></label>
 		<button type="submit">Roll back to this release</button>
+		<button type="button" onclick={preview}>Preview the rollback</button>
+		<button type="button" onclick={rollbackAsPreviewed}>Roll back as previewed</button>
 	</form>
+	{#if previewed}<p data-testid="previewed">{previewed}</p>{/if}
 	{#if restored}<p data-testid="restored">{restored}</p>{/if}
+
+	<form onsubmit={firstChanges}>
+		<label class="field">Changes of generation <input bind:value={changesOf} name="changes-of" /></label>
+		<label class="field">Changes per page (empty for the default, 100) <input bind:value={changesSize} name="changes-size" /></label>
+		<button type="submit">Read its changes</button>
+	</form>
+	{#if changesRead}
+		<p data-testid="changes">{changesRead}</p>
+		{#if changesCursor !== null}<button type="button" onclick={() => readChanges(true)}>Next changes</button>{/if}
+	{/if}
 
 	<form onsubmit={firstPage}>
 		<label class="field">Releases per page (empty for the default, 100) <input bind:value={pageSize} name="page-size" /></label>

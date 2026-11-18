@@ -1,0 +1,32 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "WITH at AS (\n               -- Live at $3: still open, or closed after it. Two halves, each on its own\n               -- index (open rows; closed by release), so the read follows what was live\n               -- then, not the whole history (D-185).\n               SELECT p.entry_id, p.revision_id\n               FROM publications p\n               WHERE p.project_id = $1 AND p.environment_id = $2\n                 AND p.valid_to IS NULL AND p.valid_from <= $3 AND p.revoked_in IS NULL\n               UNION ALL\n               SELECT p.entry_id, p.revision_id\n               FROM publications p\n               WHERE p.project_id = $1 AND p.environment_id = $2\n                 AND p.valid_to > $3 AND p.valid_from <= $3 AND p.revoked_in IS NULL\n           ), now AS (\n               SELECT p.entry_id, p.revision_id\n               FROM publications p\n               WHERE p.project_id = $1 AND p.environment_id = $2 AND p.valid_to IS NULL\n           )\n           SELECT (SELECT count(*) FROM at\n                   WHERE NOT EXISTS (SELECT 1 FROM now\n                                     WHERE now.entry_id = at.entry_id AND now.revision_id = at.revision_id)\n                  ) AS \"publish!\",\n                  (SELECT count(*) FROM now\n                   WHERE NOT EXISTS (SELECT 1 FROM at WHERE at.entry_id = now.entry_id)\n                  ) AS \"unpublish!\"",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "publish!",
+        "type_info": "Int8",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 1,
+        "name": "unpublish!",
+        "type_info": "Int8",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid",
+        "Int8"
+      ]
+    },
+    "nullable": [
+      null,
+      null
+    ]
+  },
+  "hash": "d29d37e9e24db1ce7a4668a4f47e72811d59a7c5319202ad31cf386793b50d75"
+}

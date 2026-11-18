@@ -16,8 +16,7 @@ mod common;
 use std::time::{Duration, Instant};
 
 use common::{
-    ORIGIN, Reply, Server, Session, app, article, call, create_article, entries, join, key,
-    project, release, sign_in,
+    ORIGIN, Reply, Server, Session, app, call, create_article, join, key, project, release, sign_in,
 };
 use reqwest::{Method, StatusCode, header};
 use serde_json::{Value, json};
@@ -936,61 +935,26 @@ async fn a_stale_preview_never_becomes_a_request() {
     assert_eq!(garbled.status, StatusCode::BAD_REQUEST, "{}", garbled.body);
 }
 
-/// R2, R3 and the bounds: a rollback that takes 5,000 entries down. Its preview lists at most 100
-/// with the totals; its request and release are made; the release's changes come back 100 a page
-/// by cursor, every one exactly once, past the old 500 cut — publishes and takedowns alike — and
-/// each page and the preview answer within budget on this machine (p99 printed for the report).
-#[tokio::test]
-#[ignore = "needs the stack and scripts/migrate.sh; makes 5,000 entries"]
-#[expect(clippy::too_many_lines, reason = "set up 5,000 entries, then measure")]
-async fn a_rollback_of_five_thousand_entries_stays_bounded_and_pages_completely() {
-    let _server = Server::start().await;
-    let owner = sign_in("dev-owner").await;
-    let project = project(&owner).await;
-    // Release 1: one article at version one, which release 2 replaces — so the rollback both
-    // publishes (version one again) and takes down (the 5,000 since).
-    let anchor = create_article(&owner, &project, "Anchor").await;
-    assert_eq!(
-        release(
-            &owner,
-            &project,
-            &json!({"title": "One", "entries": [anchor]})
-        )
-        .await,
-        1
-    );
-    let path = format!("{}/{anchor}", entries(&project));
-    let current = send(&owner, Method::GET, &path, None, &[]).await;
-    let saved = send(
-        &owner,
-        Method::PUT,
-        &path,
-        Some(&article("Anchor", "version two")),
-        &[
-            ("if-match", &current.etag().expect("an ETag")),
-            ("idempotency-key", &key()),
-        ],
-    )
-    .await;
-    assert_eq!(saved.status, StatusCode::OK, "{}", saved.body);
-    assert_eq!(
-        release(
-            &owner,
-            &project,
-            &json!({"title": "Two", "entries": [anchor]})
-        )
-        .await,
-        2
-    );
+/// The longest collection slug (63) and the longest title in the longest UTF-8 (200 four-byte
+/// characters): the worst-case item the rollback cap is sized from (D-185).
+const WIDE: &str = "wwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwww";
 
-    // 5,000 articles, imported 500 a file, published 100 a release (releases 3 to 52).
-    let import = format!("{}/collections/articles/import", base(&project));
-    for batch in 0..10 {
-        let file: Vec<String> = (0..500)
-            .map(|index| json!({"title": format!("Bulk {batch:02}-{index:03}")}).to_string())
+fn wide_title(index: usize) -> String {
+    // 200 characters: a 4-digit number, then 196 four-byte emoji.
+    format!("{index:04}{}", "\u{1F600}".repeat(196))
+}
+
+/// Imports `count` worst-case entries into the wide collection, 500 a file; their ids.
+async fn import_wide(owner: &Session, project: &str, from: usize, count: usize) -> Vec<String> {
+    let collection = format!("{}/collections/{WIDE}", base(project));
+    let mut at = from;
+    while at < from + count {
+        let batch = (from + count - at).min(500);
+        let file: Vec<String> = (at..at + batch)
+            .map(|index| json!({"title": wide_title(index)}).to_string())
             .collect();
         let response = app()
-            .post(format!("{ORIGIN}{import}"))
+            .post(format!("{ORIGIN}{collection}/import"))
             .header(header::COOKIE, &owner.cookie)
             .header("x-csrf-token", &owner.csrf)
             .header(header::ORIGIN, ORIGIN)
@@ -1006,61 +970,98 @@ async fn a_rollback_of_five_thousand_entries_stays_bounded_and_pages_completely(
             "{:?}",
             response.text().await
         );
+        at += batch;
     }
-    let mut bulk = Vec::new();
+    let mut ids = Vec::new();
     let mut cursor: Option<String> = None;
     loop {
         let path = match &cursor {
-            Some(at) => format!("{}?limit=100&cursor={at}", entries(&project)),
-            None => format!("{}?limit=100", entries(&project)),
+            Some(next) => format!("{collection}/entries?limit=100&cursor={next}"),
+            None => format!("{collection}/entries?limit=100"),
         };
-        let page = send(&owner, Method::GET, &path, None, &[]).await;
+        let page = send(owner, Method::GET, &path, None, &[]).await;
         for row in page.body["data"].as_array().expect("a page") {
-            let id = row["id"].as_str().expect("an id");
-            if id != anchor {
-                bulk.push(id.to_owned());
-            }
+            ids.push(row["id"].as_str().expect("an id").to_owned());
         }
         match page.body["next_cursor"].as_str() {
             Some(next) => cursor = Some(next.to_owned()),
             None => break,
         }
     }
-    assert_eq!(bulk.len(), 5_000);
-    let mut latest = 2;
-    for chunk in bulk.chunks(100) {
-        latest = release(
+    ids.sort();
+    ids
+}
+
+/// R2, R3, A2 and the bounds (D-185): a rollback is capped at 190 entries, the most whose answer
+/// fits the idempotency record with every field at its longest. Worst-case entries (the longest
+/// collection slug and title): at 191 the preview says `too_large` with the totals and `POST`
+/// refuses `rollback_too_large`, making nothing — never the 500 it gave before; at 190 it is
+/// made, recorded (a replay answers it) and published, and that release's 190 changes page by
+/// cursor, each exactly once. Then a rollback 5,000 entries wide still previews in bounded time.
+/// p50/p99 are printed for the report.
+#[tokio::test]
+#[ignore = "needs the stack and scripts/migrate.sh; makes 5,000 entries"]
+#[expect(
+    clippy::too_many_lines,
+    reason = "set up, the cap from both sides, then 5,000"
+)]
+async fn a_rollback_is_capped_where_its_answer_fits_and_its_changes_page_completely() {
+    let _server = Server::start().await;
+    let owner = sign_in("dev-owner").await;
+    let project = project(&owner).await;
+    let made = send(
+        &owner,
+        Method::POST,
+        &format!("{}/content-types", base(&project)),
+        Some(&json!({"slug": WIDE, "definition": {
+            "name": "Wide", "title_field": "title",
+            "fields": [{"id": "title", "label": "Title", "type": "text", "required": true}]
+        }})),
+        &[("idempotency-key", &key())],
+    )
+    .await;
+    assert_eq!(made.status, StatusCode::CREATED, "{}", made.body);
+    let anchor = create_article(&owner, &project, "Anchor").await;
+    assert_eq!(
+        release(
             &owner,
             &project,
-            &json!({"title": "Bulk", "entries": chunk}),
+            &json!({"title": "One", "entries": [anchor]})
+        )
+        .await,
+        1
+    );
+    let wide = import_wide(&owner, &project, 0, 191).await;
+    assert_eq!(wide.len(), 191);
+    for chunk in wide.chunks(100) {
+        release(
+            &owner,
+            &project,
+            &json!({"title": "Wide", "entries": chunk}),
         )
         .await;
     }
-    assert_eq!(latest, 52);
-
-    // The preview: at most 100 lines, with the totals, measured.
     let rollback = format!("{}/releases/1/rollback", base(&project));
-    let mut timings = Vec::new();
-    let mut preview = Value::Null;
-    for _ in 0..50 {
-        let started = Instant::now();
-        let reply = send(&owner, Method::GET, &rollback, None, &[]).await;
-        timings.push(started.elapsed());
-        assert_eq!(reply.status, StatusCode::OK, "{}", reply.body);
-        preview = reply.body;
-    }
-    let data = &preview["data"];
-    assert_eq!(data["publish_total"], 1, "{data}");
-    assert_eq!(data["unpublish_total"], 5_000);
-    assert_eq!(data["restore"].as_array().map(Vec::len), Some(100));
-    assert_eq!(
-        data["restore"][0]["kind"], "publish",
-        "publishes come first"
-    );
-    report("rollback preview, 5,001 pins", &mut timings);
 
-    // The request carries all 5,001 (under the 10,000 cap) and publishes as release 53.
-    let made = send(
+    // 191: too large. The preview says so, with the totals; POST refuses by name; nothing made.
+    let preview = send(&owner, Method::GET, &rollback, None, &[]).await;
+    assert_eq!(preview.status, StatusCode::OK, "{}", preview.body);
+    let data = &preview.body["data"];
+    assert_eq!(data["too_large"], true, "{data}");
+    assert_eq!(data["max_items"], 190);
+    assert_eq!(data["unpublish_total"], 191);
+    assert_eq!(data["hash"], Value::Null);
+    assert!(preview.etag().is_none());
+    assert_eq!(data["restore"].as_array().map(Vec::len), Some(100));
+    let before = send(
+        &owner,
+        Method::GET,
+        &format!("{}/changesets", base(&project)),
+        None,
+        &[],
+    )
+    .await;
+    let refused = send(
         &owner,
         Method::POST,
         &rollback,
@@ -1068,18 +1069,74 @@ async fn a_rollback_of_five_thousand_entries_stays_bounded_and_pages_completely(
         &[("idempotency-key", &key())],
     )
     .await;
-    assert_eq!(made.status, StatusCode::CREATED);
+    assert_eq!(
+        refused.status,
+        StatusCode::UNPROCESSABLE_ENTITY,
+        "{}",
+        refused.body
+    );
+    assert_eq!(
+        refused.body["error"]["details"]["reason"],
+        "rollback_too_large"
+    );
+    let after = send(
+        &owner,
+        Method::GET,
+        &format!("{}/changesets", base(&project)),
+        None,
+        &[],
+    )
+    .await;
+    assert_eq!(
+        after.body["data"].as_array().map(Vec::len),
+        before.body["data"].as_array().map(Vec::len)
+    );
+
+    // Take one down: 190, exactly the cap. Made, recorded, replayed, published.
+    assert_eq!(
+        release(
+            &owner,
+            &project,
+            &json!({"title": "One down", "unpublish": [wide[0]]})
+        )
+        .await,
+        4
+    );
+    let preview = send(&owner, Method::GET, &rollback, None, &[]).await;
+    assert_eq!(preview.body["data"]["too_large"], false, "{}", preview.body);
+    assert_eq!(preview.body["data"]["unpublish_total"], 190);
+    let seen = preview.etag().expect("a hash");
+    let once = key();
+    let made = send(
+        &owner,
+        Method::POST,
+        &rollback,
+        Some(&json!({"title": "Back to one"})),
+        &[("idempotency-key", &once), ("if-match", &seen)],
+    )
+    .await;
+    assert_eq!(made.status, StatusCode::CREATED, "{}", made.body);
     assert_eq!(
         made.body["data"]["items"].as_array().map(Vec::len),
-        Some(5_001)
+        Some(190)
     );
+    let again = send(
+        &owner,
+        Method::POST,
+        &rollback,
+        Some(&json!({"title": "Back to one"})),
+        &[("idempotency-key", &once), ("if-match", &seen)],
+    )
+    .await;
+    assert_eq!(again.status, StatusCode::CREATED, "{}", again.body);
+    assert!(again.replayed(), "the 190-item answer was recorded");
+    assert_eq!(again.body["data"]["id"], made.body["data"]["id"]);
     let request = made.body["data"]["id"].as_str().expect("an id").to_owned();
-    let hash = made.body["data"]["hash"]
-        .as_str()
-        .expect("a hash")
-        .to_owned();
+    let if_match = format!(
+        "\"{}\"",
+        made.body["data"]["hash"].as_str().expect("a hash")
+    );
     let changeset = format!("{}/changesets/{request}", base(&project));
-    let if_match = format!("\"{hash}\"");
     for (step, body) in [
         ("submit", None),
         ("reviews", Some(json!({"decision": "approve"}))),
@@ -1098,85 +1155,131 @@ async fn a_rollback_of_five_thousand_entries_stays_bounded_and_pages_completely(
         &owner,
         Method::POST,
         &format!("{changeset}/publish"),
-        Some(&json!({"base_generation": 52})),
+        Some(&json!({"base_generation": 4})),
         &[("if-match", &if_match), ("idempotency-key", &key())],
     )
     .await;
     assert_eq!(published.status, StatusCode::CREATED, "{}", published.body);
-    assert_eq!(published.body["data"]["generation"], 53);
+    assert_eq!(published.body["data"]["generation"], 5);
 
-    // Every change exactly once, 100 a page, past the old cut at 500.
-    let rows = all_changes(&owner, &project, 53, 100).await;
-    assert_eq!(rows.len(), 5_001);
-    let mut seen = ids(&rows);
-    seen.sort();
-    seen.dedup();
-    assert_eq!(seen.len(), 5_001, "no entry twice");
-    assert_eq!(rows[0]["kind"], "publish");
-    assert_eq!(rows[0]["entry_id"], anchor.as_str());
-    assert_eq!(
-        rows.iter().filter(|row| row["kind"] == "unpublish").count(),
-        5_000,
-        "the takedowns past 500 are all there"
-    );
-    let receipt = send(
+    // Its 190 changes, 100 a page and 7 a page: each exactly once, the last page short.
+    for limit in [100, 7] {
+        let rows = all_changes(&owner, &project, 5, limit).await;
+        let mut ids = ids(&rows);
+        assert_eq!(ids.len(), 190, "limit {limit}");
+        ids.sort();
+        ids.dedup();
+        assert_eq!(ids.len(), 190, "limit {limit}: no entry twice");
+    }
+    let first = send(
         &owner,
         Method::GET,
-        &format!("{}/releases/53", base(&project)),
+        &format!("{}/releases/5/changes?limit=100", base(&project)),
         None,
         &[],
     )
     .await;
-    assert_eq!(receipt.body["data"]["unpublished"], 5_000);
-    assert!(
-        receipt.body["data"].get("changes").is_none(),
-        "the receipt pages its changes elsewhere"
-    );
+    assert_eq!(first.body["data"].as_array().map(Vec::len), Some(100));
+    let next = first.body["next_cursor"]
+        .as_str()
+        .expect("a second page")
+        .to_owned();
+    let last = send(
+        &owner,
+        Method::GET,
+        &format!(
+            "{}/releases/5/changes?limit=100&cursor={next}",
+            base(&project)
+        ),
+        None,
+        &[],
+    )
+    .await;
+    assert_eq!(last.body["data"].as_array().map(Vec::len), Some(90));
+    assert_eq!(last.body["next_cursor"], Value::Null);
 
-    // Page timings: first, middle and last pages, measured.
-    let mut cursors = vec![None];
-    let mut cursor: Option<String> = None;
-    for _ in 0..50 {
-        let path = match &cursor {
-            Some(at) => format!(
-                "{}/releases/53/changes?limit=100&cursor={at}",
-                base(&project)
-            ),
-            None => format!("{}/releases/53/changes?limit=100", base(&project)),
-        };
-        let page = send(&owner, Method::GET, &path, None, &[]).await;
-        cursor = page.body["next_cursor"].as_str().map(str::to_owned);
-        if cursor.is_none() {
-            break;
-        }
-        cursors.push(cursor.clone());
+    // 5,000 wide: the preview stays bounded (191 pins read, the rest counted), measured.
+    let more = import_wide(&owner, &project, 191, 4_810).await;
+    let fresh: Vec<&String> = more.iter().filter(|id| !wide.contains(id)).collect();
+    assert_eq!(fresh.len(), 4_810);
+    for chunk in fresh.chunks(100) {
+        release(
+            &owner,
+            &project,
+            &json!({"title": "More", "entries": chunk}),
+        )
+        .await;
+    }
+    // Five unmeasured first: the 49 releases just made still have delivery jobs and hints in
+    // flight on this server, and the first reads warm its caches. Said in the report.
+    for _ in 0..5 {
+        send(&owner, Method::GET, &rollback, None, &[]).await;
     }
     let mut timings = Vec::new();
-    for round in 0..4 {
-        for at in &cursors {
-            let path = match at {
-                Some(at) => format!(
-                    "{}/releases/53/changes?limit=100&cursor={at}",
-                    base(&project)
-                ),
-                None => format!("{}/releases/53/changes?limit=100", base(&project)),
-            };
-            let started = Instant::now();
-            let page = send(&owner, Method::GET, &path, None, &[]).await;
-            timings.push(started.elapsed());
-            assert_eq!(page.status, StatusCode::OK, "round {round}: {}", page.body);
-        }
+    for _ in 0..100 {
+        let started = Instant::now();
+        let reply = send(&owner, Method::GET, &rollback, None, &[]).await;
+        timings.push(started.elapsed());
+        assert_eq!(reply.status, StatusCode::OK, "{}", reply.body);
+        assert_eq!(reply.body["data"]["too_large"], true);
+        assert_eq!(
+            reply.body["data"]["unpublish_total"], 4_810,
+            "{}",
+            reply.body
+        );
     }
-    report("release changes page of 100, 5,001 changes", &mut timings);
+    report(
+        "rollback preview, 4,810 pins wide (too large)",
+        &mut timings,
+    );
+    let cursor = send(
+        &owner,
+        Method::GET,
+        &format!("{}/releases/5/changes?limit=100", base(&project)),
+        None,
+        &[],
+    )
+    .await;
+    let next = cursor.body["next_cursor"]
+        .as_str()
+        .expect("a cursor")
+        .to_owned();
+    let mut timings = Vec::new();
+    for round in 0..100 {
+        let path = if round % 2 == 0 {
+            format!("{}/releases/5/changes?limit=100", base(&project))
+        } else {
+            format!(
+                "{}/releases/5/changes?limit=100&cursor={next}",
+                base(&project)
+            )
+        };
+        let started = Instant::now();
+        let page = send(&owner, Method::GET, &path, None, &[]).await;
+        timings.push(started.elapsed());
+        assert_eq!(page.status, StatusCode::OK);
+    }
+    report(
+        "release changes page of 100 (190-change release)",
+        &mut timings,
+    );
 }
 
-/// Prints n, p50, p99 and max, and fails past a generous budget: these are laptop observations
-/// for the report, not capacity, and a busy machine shouldn't fail the suite — only an answer
-/// that grew with the release (an unbounded read) would.
+/// Prints n, p50, p99, max and the slowest three, and fails only on the median: these run on a
+/// debug build beside the worker still delivering the releases just made, so the tail measures
+/// the laptop; a read that grew with the release would move the median. The release-build p99
+/// is measured separately (D-185's evidence).
 fn report(what: &str, timings: &mut [Duration]) {
     timings.sort();
     let at = |percent: usize| timings[(timings.len() - 1) * percent / 100];
     let (p50, p99, max) = (at(50), at(99), timings[timings.len() - 1]);
+    let slowest: Vec<String> = timings
+        .iter()
+        .rev()
+        .take(3)
+        .map(|took| format!("{:.0}ms", took.as_secs_f64() * 1000.0))
+        .collect();
+    println!("TIMING {what}: slowest {}", slowest.join(", "));
     println!(
         "TIMING {what}: n={} p50={:.1}ms p99={:.1}ms max={:.1}ms",
         timings.len(),
@@ -1184,5 +1287,5 @@ fn report(what: &str, timings: &mut [Duration]) {
         p99.as_secs_f64() * 1000.0,
         max.as_secs_f64() * 1000.0
     );
-    assert!(p99 < Duration::from_secs(2), "{what}: p99 {p99:?}");
+    assert!(p50 < Duration::from_millis(500), "{what}: p50 {p50:?} (p99 {p99:?})");
 }

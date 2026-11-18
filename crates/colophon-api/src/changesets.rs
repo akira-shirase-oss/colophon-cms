@@ -915,11 +915,17 @@ pub(crate) struct RollbackPreviewView {
     /// The environment's current generation, which the rollback would follow.
     latest: i64,
     /// The hash a rollback made now would have — also the response's `ETag`. Sent back as
-    /// `If-Match`, it makes `POST` refuse if the pins moved since (D-185).
-    hash: String,
+    /// `If-Match`, it makes `POST` refuse if the pins moved since (D-185). `None` when it is too
+    /// large to make.
+    hash: Option<String>,
     /// How many entries it would put back, and how many it would take down.
-    publish_total: usize,
-    unpublish_total: usize,
+    publish_total: i64,
+    unpublish_total: i64,
+    /// The most entries one rollback may change ([`changesets::MAX_ROLLBACK_ITEMS`]).
+    max_items: usize,
+    /// It would change more than `max_items`, so `POST` refuses it `rollback_too_large`: the
+    /// totals say by how much, and a nearer release is the way back.
+    too_large: bool,
     /// The first [`PREVIEW_LINES`] of the pins `POST` would build now — publishes first, then
     /// takedowns, each by entry id — less those the role can't read; empty when it would be
     /// refused `already_at`.
@@ -984,9 +990,10 @@ fn kept_lines(kept: Vec<changesets::KeptDown>, shown: Vec<Shown>) -> Vec<KeptDow
 /// the same pins from the same query, counted, the first [`PREVIEW_LINES`] named — and the
 /// entries readers had at that release that it won't bring back, because they were taken down
 /// since (a takedown survives a rollback, D-049). Refused like `POST`: `invalid_generation`
-/// outside `1..latest`, `rollback_too_large` past [`changesets::MAX_ROLLBACK_ITEMS`] pins, and a
-/// role that can't change every entry it pins is told so before it asks. The lines name only
-/// what the role reads (D-185). Read in one snapshot; the `ETag` is the pins' hash.
+/// outside `1..latest`, and a role that can't change every entry it pins is told so before it
+/// asks. Past [`changesets::MAX_ROLLBACK_ITEMS`] pins it answers `too_large` with the totals,
+/// which `POST` refuses as `rollback_too_large`. The lines name only what the role reads
+/// (D-185). Read in one snapshot; the `ETag` is the pins' hash.
 pub(crate) async fn rollback_preview(
     State(state): State<AppState>,
     caller: SignedIn,
@@ -1007,15 +1014,26 @@ pub(crate) async fn rollback_preview(
     let pins = changesets::rollback_pins(&mut tx, generation)
         .await
         .map_err(ApiError::from_db)?;
-    within_rollback_cap(&pins)?;
+    let too_large = within_rollback_cap(&pins).is_err();
     let pinned: Vec<Uuid> = pins.iter().map(|pin| pin.entry_id).collect();
     may_change_entries(&mut tx, &pinned).await?;
-    let hash = content_hash(&hash_of(&pins));
-    let publish_total = pins
-        .iter()
-        .filter(|pin| pin.kind == Kind::Publish.as_str())
-        .count();
-    let unpublish_total = pins.len() - publish_total;
+    let (hash, publish_total, unpublish_total) = if too_large {
+        let (publish, unpublish) = changesets::rollback_counts(&mut tx, generation)
+            .await
+            .map_err(ApiError::from_db)?;
+        (None, publish, unpublish)
+    } else {
+        let publish = pins
+            .iter()
+            .filter(|pin| pin.kind == Kind::Publish.as_str())
+            .count();
+        let count = |n: usize| i64::try_from(n).unwrap_or(i64::MAX);
+        (
+            Some(content_hash(&hash_of(&pins))),
+            count(publish),
+            count(pins.len() - publish),
+        )
+    };
     let lines: Vec<Pin> = pins.into_iter().take(PREVIEW_LINES).collect();
     let revisions: Vec<Uuid> = lines.iter().map(|pin| pin.revision_id).collect();
     let titles: HashMap<Uuid, changesets::PinTitle> = changesets::pin_titles(&mut tx, &revisions)
@@ -1059,12 +1077,17 @@ pub(crate) async fn rollback_preview(
         hash: hash.clone(),
         publish_total,
         unpublish_total,
+        max_items: changesets::MAX_ROLLBACK_ITEMS,
+        too_large,
         restore,
         kept_down,
         kept_down_total,
     };
     let text = serde_json::to_string(&Data { data: view }).map_err(ApiError::internal)?;
-    Ok(respond(StatusCode::OK, text, &hash, false))
+    Ok(match hash {
+        Some(hash) => respond(StatusCode::OK, text, &hash, false),
+        None => json(StatusCode::OK, text, None, false),
+    })
 }
 
 /// `GET {P}/changesets/{changeset}`.
@@ -1821,4 +1844,138 @@ pub(crate) async fn stages_replace(
         .map_err(ApiError::from_db)?;
     tx.commit().await.map_err(ApiError::from_db)?;
     Ok(respond(StatusCode::OK, text, &etag, false))
+}
+
+#[cfg(test)]
+mod tests {
+    use colophon_db::{changesets::MAX_ROLLBACK_ITEMS, idempotency::MAX_RESPONSE_BYTES};
+
+    use super::*;
+
+    /// A title as long as a revision or changeset title may be (200 characters) in the character
+    /// whose UTF-8 is longest: single-line text has no control characters (schema.rs), so nothing
+    /// serde would write as a 6-byte `\u00XX` escape, and a 4-byte character beats `"` or `\`
+    /// (2 bytes each, escaped).
+    fn longest_title() -> String {
+        "\u{1F600}".repeat(200)
+    }
+
+    /// A display name as long as `identities` allows (200), escaped as badly as JSON can (6 bytes
+    /// a character): nothing validates a provider's names for control characters.
+    fn longest_name() -> String {
+        "\u{1}".repeat(200)
+    }
+
+    fn worst_item() -> ItemView {
+        ItemView {
+            kind: "unpublish".to_owned(),
+            entry_id: Uuid::max(),
+            collection: "c".repeat(63),
+            revision_id: Uuid::max(),
+            title: longest_title(),
+            content_hash: format!("sha256:{}", "f".repeat(64)),
+            schema_version: i32::MAX,
+            current_revision_id: Some(Uuid::max()),
+            edited: false,
+            title_hidden: false,
+            published_revision_id: Some(Uuid::max()),
+            created_by: Some(Uuid::max()),
+            entry_deleted: false,
+        }
+    }
+
+    /// A rollback changeset as `POST …/rollback` answers it, and records it under its idempotency
+    /// key: just made, so no reviews, but every stage the environment may configure.
+    fn worst_rollback(items: usize) -> ChangesetView {
+        let stage = StageStateView {
+            key: "k".repeat(63),
+            name: "\u{1F600}".repeat(100),
+            different_reviewer: true,
+            state: "approval_expired",
+            by: Some(Uuid::max()),
+            by_name: Some(longest_name()),
+            at: Some("2026-11-18T00:00:00.000000000Z".to_owned()),
+        };
+        ChangesetView {
+            id: Uuid::max(),
+            title: longest_title(),
+            hash: format!("sha256:{}", "f".repeat(64)),
+            status: StatusView {
+                state: "changes_requested",
+                generation: Some(i64::MAX),
+                by: Some(longest_name()),
+                self_review: true,
+                edited_items: usize::MAX,
+            },
+            created_by: Uuid::max(),
+            created_at: "2026-11-18T00:00:00.000000000Z".to_owned(),
+            submitted_by: Some(Uuid::max()),
+            submitted_at: Some("2026-11-18T00:00:00.000000000Z".to_owned()),
+            updated_at: "2026-11-18T00:00:00.000000000Z".to_owned(),
+            rollback_generation: Some(i64::MAX),
+            items: (0..items).map(|_| worst_item()).collect(),
+            hidden_items: usize::MAX,
+            reviews: Vec::new(),
+            stages: (0..changeset::MAX_STAGES)
+                .map(|_| stage_clone(&stage))
+                .collect(),
+        }
+    }
+
+    fn stage_clone(stage: &StageStateView) -> StageStateView {
+        StageStateView {
+            key: stage.key.clone(),
+            name: stage.name.clone(),
+            different_reviewer: stage.different_reviewer,
+            state: stage.state,
+            by: stage.by,
+            by_name: stage.by_name.clone(),
+            at: stage.at.clone(),
+        }
+    }
+
+    /// D-185 (the coordinator's A2): the largest rollback answer — `MAX_ROLLBACK_ITEMS` items of
+    /// the longest serialisation each field allows — fits the idempotency record, so a rollback at
+    /// the cap is recorded, never a 500. And one more item's worth of room would not be left over
+    /// for a much higher cap: the cap is sized from this, not guessed.
+    #[test]
+    fn the_largest_rollback_answer_fits_its_idempotency_record() {
+        let one = serde_json::to_string(&worst_item()).expect("an item serialises");
+        let empty = body(&worst_rollback(0)).expect("a view serialises");
+        let full = body(&worst_rollback(MAX_ROLLBACK_ITEMS)).expect("a view serialises");
+        println!(
+            "worst item {} bytes, fixed part {} bytes, at the cap of {MAX_ROLLBACK_ITEMS}: {} of {MAX_RESPONSE_BYTES}",
+            one.len(),
+            empty.len(),
+            full.len()
+        );
+        assert!(full.len() <= MAX_RESPONSE_BYTES, "{} bytes", full.len());
+        // The cap uses the room: within ten worst-case items of the record's limit.
+        assert!(
+            full.len() + 10 * (one.len() + 1) > MAX_RESPONSE_BYTES,
+            "{} bytes",
+            full.len()
+        );
+    }
+
+    /// Past the cap a rollback is refused by name; at the cap it isn't.
+    #[test]
+    fn a_rollback_past_the_cap_is_refused_rollback_too_large() {
+        let pin = Pin {
+            kind: "unpublish".to_owned(),
+            entry_id: Uuid::nil(),
+            revision_id: Uuid::nil(),
+            collection: "articles".to_owned(),
+            content_hash: vec![0; 32],
+            schema_version: 1,
+            definition_hash: vec![0; 32],
+        };
+        let at_cap = vec![pin.clone(); MAX_ROLLBACK_ITEMS];
+        assert!(within_rollback_cap(&at_cap).is_ok());
+        let past = vec![pin; MAX_ROLLBACK_ITEMS + 1];
+        match within_rollback_cap(&past) {
+            Err(ApiError::InvalidField { reason, .. }) => assert_eq!(reason, "rollback_too_large"),
+            other => panic!("expected rollback_too_large, got {other:?}"),
+        }
+    }
 }

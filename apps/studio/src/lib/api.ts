@@ -1084,6 +1084,8 @@ export interface ChangesetItem {
 	published_revision_id: string | null;
 	/** Who created the entry, for permissions limited to one's own entries. */
 	created_by: string;
+	/** Your role doesn't read the entry's title field, so `title` is blank (D-058, D-185). */
+	title_hidden: boolean;
 }
 
 export interface ChangesetReview {
@@ -1132,7 +1134,13 @@ export interface Changeset {
 	updated_at: string;
 	/** The release it restores, when a rollback built it (D-097). */
 	rollback_generation: number | null;
+	/** The release it undoes, when Undo built it (D-184): it republishes what that release took
+	 *  down. Read before `rollback_generation`, which an undo also carries. */
+	undo_of?: number | null;
+	/** The items your role reads; an entry it can't read is left out and counted in
+	 *  `hidden_items` (D-185). The hash still covers every item. */
 	items: ChangesetItem[];
+	hidden_items: number;
 	reviews: ChangesetReview[];
 	/** Each configured review stage and where it stands, in order; empty when the environment
 	 *  names none and the single implicit review decides (D-104). */
@@ -1154,6 +1162,8 @@ export interface ChangesetSummary {
 	updated_at: string;
 	/** The release it restores, when a rollback built it (D-097). */
 	rollback_generation: number | null;
+	/** The release it undoes, when Undo built it (D-184). */
+	undo_of?: number | null;
 }
 
 const changesets = (project: string) => `${base(project)}/changesets`;
@@ -1181,12 +1191,15 @@ export async function createChangeset(
 
 /** Builds a changeset that restores what `generation` published — publish pins for what was live
  *  then, unpublish pins for what is live now and wasn't (D-097). It is a changeset like any other
- *  from here: submitted, reviewed on its hash, published on a base generation. Refused with
- *  `invalid_generation`, `already_at`, or 422 if a body carries entries. */
-export async function rollbackRelease(project: string, generation: number, title: string, key: string): Promise<Changeset> {
+ *  from here: submitted, reviewed on its hash, published on a base generation. `previewed` is the
+ *  hash of the preview the person confirmed: the request is made only if it would pin exactly
+ *  that, else it is refused `stale_changeset` (409) and nothing is made (D-185). Refused with
+ *  `invalid_generation`, `already_at`, `rollback_too_large`, or 422 if a body carries entries. */
+export async function rollbackRelease(project: string, generation: number, title: string, key: string, previewed?: string): Promise<Changeset> {
 	const body = { title };
-	return ((await (await send('POST', `${base(project)}/releases/${generation}/rollback`, body, { 'Idempotency-Key': key })).json()) as { data: Changeset })
-		.data;
+	const headers: Record<string, string> = { 'Idempotency-Key': key };
+	if (previewed !== undefined) headers['If-Match'] = `"${previewed}"`;
+	return ((await (await send('POST', `${base(project)}/releases/${generation}/rollback`, body, headers)).json()) as { data: Changeset }).data;
 }
 
 /** What rolling back to `generation` would do, before anything is made: exactly the pins
@@ -1198,21 +1211,35 @@ export interface RollbackPreview {
 	generation: number;
 	/** The live release, which the rollback would follow. */
 	latest: number;
+	/** The pins' hash: what confirming sends back, so a rollback that moved since is refused.
+	 *  `null` when it is too large to make. */
+	hash: string | null;
+	/** How many entries it would put back and take down, listed or not. */
+	publish_total: number;
+	unpublish_total: number;
+	/** The most entries one rollback may change (one request's worth, D-185). */
+	max_items: number;
+	/** It would change more than `max_items`: the rollback can't be made from here. */
+	too_large: boolean;
+	/** The first 100 pins, publishes first, less those your role can't read (D-185). */
 	restore: {
 		/** `publish` puts back the version readers had then; `unpublish` takes down what they didn't have. */
 		kind: 'publish' | 'unpublish';
 		entry_id: string;
 		collection: string;
 		title: string;
+		/** Your role doesn't read its title field, so `title` is blank. */
+		title_hidden: boolean;
 		revision_id: string;
 		/** What readers get of it now, if anything. */
 		live_revision_id: string | null;
 	}[];
-	/** Up to 100, by title. */
+	/** Up to 100, by title, less those your role can't read; `kept_down_total` counts them all. */
 	kept_down: {
 		entry_id: string;
 		collection: string;
 		title: string;
+		title_hidden: boolean;
 		revision_id: string;
 		/** The release that took it down. */
 		taken_down_in: number;
@@ -1263,6 +1290,8 @@ export interface Release {
 	label: 'published' | 'pending' | 'verified' | 'needs_attention';
 	/** How many distinct locations a probe saw this release, or a later one, from. */
 	locations: number;
+	/** The release it undid, when Undo made it (D-184). */
+	undo_of?: number | null;
 }
 
 /** One destination's part in delivering a release. */
@@ -1306,12 +1335,42 @@ export interface ReleaseChange {
 	previous_revision_id: string | null;
 	/** Deleted since (D-080): its versions can't be opened any more. */
 	entry_deleted: boolean;
+	/** Your role doesn't read the entry's title field, so `title` is blank (D-185). */
+	title_hidden: boolean;
 }
 
-/** A release's receipt: its label, what it changed for readers (at most 500; `entries` and
- *  `unpublished` count them all), each destination's part and every probe look, oldest first. */
+/** One page of what release `generation` changed for readers — publishes first, then takedowns —
+ *  as far as your role reads it: an entry it can't read is left out, so a page may hold fewer than
+ *  `limit`. `entries` and `unpublished` on the release count every change. Pass `nextCursor` back
+ *  as `cursor` for the next page; it is `null` on the last. */
+export async function listReleaseChanges(
+	project: string,
+	generation: number,
+	cursor: string | null = null,
+	limit = 100
+): Promise<{ changes: ReleaseChange[]; nextCursor: string | null }> {
+	const query = `?limit=${limit}${cursor === null ? '' : `&cursor=${encodeURIComponent(cursor)}`}`;
+	const page = (await (await send('GET', `${base(project)}/releases/${generation}/changes${query}`)).json()) as { data: ReleaseChange[]; next_cursor: string | null };
+	return { changes: page.data, nextCursor: page.next_cursor };
+}
+
+/** Every change of a release this role reads, following the pages — at most `maxPages` of them
+ *  (a release changes at most a publish request's worth of entries, so a few pages hold it all). */
+export async function allReleaseChanges(project: string, generation: number, maxPages = 10): Promise<ReleaseChange[]> {
+	const all: ReleaseChange[] = [];
+	let cursor: string | null = null;
+	for (let pageNumber = 0; pageNumber < maxPages; pageNumber += 1) {
+		const page = await listReleaseChanges(project, generation, cursor);
+		all.push(...page.changes);
+		if (page.nextCursor === null) break;
+		cursor = page.nextCursor;
+	}
+	return all;
+}
+
+/** A release's receipt: its label, each destination's part and every probe look, oldest first.
+ *  What it changed for readers pages separately (`listReleaseChanges`). */
 export interface Receipt extends Release {
-	changes: ReleaseChange[];
 	deliveries: Delivery[];
 	observations: Observation[];
 }

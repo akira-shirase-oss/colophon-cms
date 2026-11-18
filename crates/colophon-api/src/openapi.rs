@@ -3150,11 +3150,6 @@ pub(crate) static TABLE: &[Route] = &[
                             "invalid_generation",
                             "only an earlier release than the live one",
                         ),
-                        refusal(
-                            422,
-                            "rollback_too_large",
-                            "it would change more than 10,000 entries",
-                        ),
                     ],
                     ..MIN
                 },
@@ -3186,7 +3181,7 @@ pub(crate) static TABLE: &[Route] = &[
                         refusal(
                             422,
                             "invalid_generation, already_at, rollback_too_large",
-                            "not an earlier release, nothing to restore, or more than 10,000 entries",
+                            "not an earlier release, nothing to restore, or more than 190 entries",
                         ),
                         P428,
                         BAD_MATCH,
@@ -6479,11 +6474,13 @@ fn release_change_parts() -> Value {
         "RollbackPreviewView": {
             "type": "object",
             "description": "what `POST` would build now (the same pins), and what it would leave down",
-            "required": ["generation", "latest", "hash", "publish_total", "unpublish_total", "restore", "kept_down", "kept_down_total"],
+            "required": ["generation", "latest", "hash", "publish_total", "unpublish_total", "max_items", "too_large", "restore", "kept_down", "kept_down_total"],
             "properties": {
                 "generation": { "type": "integer", "description": "the release it restores" },
                 "latest": { "type": "integer", "description": "the environment's current generation" },
-                "hash": { "type": "string", "description": "`sha256:<hex>` of the pins a rollback made now would carry — the `ETag`; send it as `If-Match` on `POST`" },
+                "hash": { "type": ["string", "null"], "description": "`sha256:<hex>` of the pins a rollback made now would carry — the `ETag`; send it as `If-Match` on `POST`. Null when `too_large`" },
+                "max_items": { "type": "integer", "description": "the most entries one rollback may change" },
+                "too_large": { "type": "boolean", "description": "it would change more than `max_items`, so `POST` refuses it `rollback_too_large`; roll back to a nearer release first" },
                 "publish_total": { "type": "integer", "description": "entries it would put back" },
                 "unpublish_total": { "type": "integer", "description": "entries it would take down" },
                 "restore": { "type": "array", "items": { "$ref": "#/components/schemas/RollbackLineView" }, "description": "the first 100 of the pins a rollback made now would carry, publishes first, each by entry id, less those your role can't read; empty when it would be refused `already_at`" },
