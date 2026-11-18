@@ -761,48 +761,75 @@ pub struct Change {
     /// What readers had of the entry just before this release: the version it replaced, the one
     /// it took down, or `None` when the entry was new to them.
     pub previous_revision_id: Option<Uuid>,
-    /// The entry was deleted since (D-080): its history stays, its draft is gone.
-    pub entry_deleted: bool,
+    /// Who created the entry; `None` once it was deleted (D-080): its history stays, its draft
+    /// is gone. What a role reads of it follows from this (D-058).
+    pub created_by: Option<Uuid>,
 }
 
-/// The most changes a receipt lists; its release's `entries` and `unpublished` count them all.
-pub const MAX_CHANGES: i64 = 500;
+/// The most changes one page of a release's changes holds.
+pub const MAX_CHANGES_PAGE: i64 = 100;
+
+/// Where a page of [`changes`] starts: after this `(kind, entry)`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ChangesAfter {
+    /// `publish` or `unpublish`.
+    pub kind: String,
+    /// The last entry of the page before.
+    pub entry_id: Uuid,
+}
 
 /// What the release at `generation` changed for readers, from the publication history itself:
-/// each publication it opened (with the one it closed, if any) and each tombstone it left,
-/// what went live first, then what was taken down, each by title. Read in the receipt's own
-/// snapshot, so it agrees with the release row's counts.
-pub async fn changes(tx: &mut ProjectTransaction, generation: i64) -> Result<Vec<Change>, DbError> {
+/// each publication it opened (with the one it closed, if any) and each tombstone it left —
+/// what went live first, then what was taken down, each by entry id — a page of at most `limit`
+/// after `after`. Each half reads its own release index range from where the page starts, so a
+/// page costs the same wherever it falls.
+pub async fn changes(
+    tx: &mut ProjectTransaction,
+    generation: i64,
+    after: Option<&ChangesAfter>,
+    limit: i64,
+) -> Result<Vec<Change>, DbError> {
+    let limit = limit.clamp(1, MAX_CHANGES_PAGE + 1);
+    let (kind, from) = after.map_or((None, None), |after| {
+        (Some(after.kind.as_str()), Some(after.entry_id))
+    });
     sqlx::query_as!(
         Change,
         r#"SELECT kind AS "kind!", entry_id AS "entry_id!", collection AS "collection!", title AS "title!",
-                  revision_id AS "revision_id!", previous_revision_id, entry_deleted AS "entry_deleted!"
+                  revision_id AS "revision_id!", previous_revision_id, created_by
            FROM (
-               SELECT 'publish' AS kind, p.entry_id, p.collection, p.title, p.revision_id,
-                      prev.revision_id AS previous_revision_id,
-                      NOT EXISTS (SELECT 1 FROM entries e
-                                  WHERE e.project_id = p.project_id AND e.environment_id = p.environment_id
-                                    AND e.id = p.entry_id) AS entry_deleted
-               FROM publications p
-               LEFT JOIN publications prev ON prev.project_id = p.project_id AND prev.environment_id = p.environment_id
-                                          AND prev.entry_id = p.entry_id AND prev.valid_to = p.valid_from
-               WHERE p.project_id = $1 AND p.environment_id = $2 AND p.valid_from = $3
+               (SELECT 'publish' AS kind, p.entry_id, p.collection, p.title, p.revision_id,
+                       prev.revision_id AS previous_revision_id, e.created_by
+                FROM publications p
+                LEFT JOIN publications prev ON prev.project_id = p.project_id AND prev.environment_id = p.environment_id
+                                           AND prev.entry_id = p.entry_id AND prev.valid_to = p.valid_from
+                LEFT JOIN entries e ON e.project_id = p.project_id AND e.environment_id = p.environment_id
+                                   AND e.id = p.entry_id
+                WHERE p.project_id = $1 AND p.environment_id = $2 AND p.valid_from = $3
+                  AND ($4::text IS NULL OR ($4 = 'publish' AND p.entry_id > $5))
+                ORDER BY p.entry_id
+                LIMIT $6)
                UNION ALL
-               SELECT 'unpublish', t.entry_id, t.collection, r.title, t.revision_id, t.revision_id,
-                      NOT EXISTS (SELECT 1 FROM entries e
-                                  WHERE e.project_id = t.project_id AND e.environment_id = t.environment_id
-                                    AND e.id = t.entry_id)
-               FROM tombstones t
-               JOIN revisions r ON r.project_id = t.project_id AND r.environment_id = t.environment_id
-                               AND r.id = t.revision_id
-               WHERE t.project_id = $1 AND t.environment_id = $2 AND t.generation = $3
+               (SELECT 'unpublish', t.entry_id, t.collection, r.title, t.revision_id, t.revision_id,
+                       e.created_by
+                FROM tombstones t
+                JOIN revisions r ON r.project_id = t.project_id AND r.environment_id = t.environment_id
+                                AND r.id = t.revision_id
+                LEFT JOIN entries e ON e.project_id = t.project_id AND e.environment_id = t.environment_id
+                                   AND e.id = t.entry_id
+                WHERE t.project_id = $1 AND t.environment_id = $2 AND t.generation = $3
+                  AND ($4::text IS NULL OR $4 = 'publish' OR t.entry_id > $5)
+                ORDER BY t.entry_id
+                LIMIT $6)
            ) changed
-           ORDER BY kind, title, entry_id
-           LIMIT $4"#,
+           ORDER BY kind, entry_id
+           LIMIT $6"#,
         tx.project,
         tx.environment,
         generation,
-        MAX_CHANGES
+        kind,
+        from,
+        limit
     )
     .fetch_all(&mut *tx.transaction)
     .await

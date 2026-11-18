@@ -1037,9 +1037,9 @@ async fn read(session: &Session, path: &str) -> Value {
     reply.body
 }
 
-/// A receipt's changes as `(kind, entry, revision, previous)` rows, in the order it lists them.
+/// A release's changes page as `(kind, entry, revision, previous)` rows, in the order it lists them.
 fn changes(receipt: &Value) -> Vec<(String, String, String, Option<String>)> {
-    receipt["data"]["changes"]
+    receipt["data"]
         .as_array()
         .expect("changes")
         .iter()
@@ -1065,6 +1065,10 @@ fn changes(receipt: &Value) -> Vec<(String, String, String, Option<String>)> {
 /// for readers: new, a newer version (with the one it replaced) or taken down.
 #[tokio::test]
 #[ignore = "needs the stack and scripts/migrate.sh"]
+#[expect(
+    clippy::too_many_lines,
+    reason = "one story in order: three releases, their changes, the preview, the rollback"
+)]
 async fn a_rollback_preview_and_receipts_say_what_changes_for_readers() {
     let _server = Server::start().await;
     let owner = sign_in("dev-owner").await;
@@ -1084,7 +1088,7 @@ async fn a_rollback_preview_and_receipts_say_what_changes_for_readers() {
 
     // Each receipt: A new in 1, A taken down in 2 (what readers had is what went), B new in 3.
     let first_revision = |receipt: &Value| changes(receipt)[0].2.clone();
-    let one = read(&owner, &format!("{}/releases/1", base(&project))).await;
+    let one = read(&owner, &format!("{}/releases/1/changes", base(&project))).await;
     assert_eq!(
         changes(&one),
         [(
@@ -1094,9 +1098,9 @@ async fn a_rollback_preview_and_receipts_say_what_changes_for_readers() {
             None
         )]
     );
-    assert_eq!(one["data"]["changes"][0]["title"], "Harbour notes");
-    assert_eq!(one["data"]["changes"][0]["collection"], "articles");
-    let two = read(&owner, &format!("{}/releases/2", base(&project))).await;
+    assert_eq!(one["data"][0]["title"], "Harbour notes");
+    assert_eq!(one["data"][0]["collection"], "articles");
+    let two = read(&owner, &format!("{}/releases/2/changes", base(&project))).await;
     let a_revision = first_revision(&one);
     assert_eq!(
         changes(&two),
@@ -1107,7 +1111,7 @@ async fn a_rollback_preview_and_receipts_say_what_changes_for_readers() {
             Some(a_revision.clone())
         )]
     );
-    let three = read(&owner, &format!("{}/releases/3", base(&project))).await;
+    let three = read(&owner, &format!("{}/releases/3/changes", base(&project))).await;
     let b_revision = first_revision(&three);
     assert_eq!(
         changes(&three),
@@ -1151,7 +1155,7 @@ async fn a_rollback_preview_and_receipts_say_what_changes_for_readers() {
         data["restore"],
         json!([{
             "kind": "unpublish", "entry_id": second, "collection": "articles", "title": "Ferry times",
-            "revision_id": b_revision, "live_revision_id": b_revision,
+            "title_hidden": false, "revision_id": b_revision, "live_revision_id": b_revision,
         }]),
         "{preview}"
     );
@@ -1159,7 +1163,7 @@ async fn a_rollback_preview_and_receipts_say_what_changes_for_readers() {
         data["kept_down"],
         json!([{
             "entry_id": first, "collection": "articles", "title": "Harbour notes",
-            "revision_id": a_revision, "taken_down_in": 2, "entry_deleted": false,
+            "title_hidden": false, "revision_id": a_revision, "taken_down_in": 2, "entry_deleted": false,
         }]),
         "{preview}"
     );
@@ -1199,7 +1203,7 @@ async fn a_rollback_preview_and_receipts_say_what_changes_for_readers() {
     let (path, hash) = approved(&owner, &owner, &project, &[&second]).await;
     let released = publish(&owner, &path, &hash, 3, &key()).await;
     assert_eq!(released.body["data"]["generation"], 4, "{}", released.body);
-    let four = read(&owner, &format!("{}/releases/4", base(&project))).await;
+    let four = read(&owner, &format!("{}/releases/4/changes", base(&project))).await;
     let newer = first_revision(&four);
     assert_ne!(newer, b_revision);
     assert_eq!(
@@ -1216,7 +1220,7 @@ async fn a_rollback_preview_and_receipts_say_what_changes_for_readers() {
         preview["data"]["restore"],
         json!([{
             "kind": "publish", "entry_id": second, "collection": "articles", "title": "Ferry times",
-            "revision_id": b_revision, "live_revision_id": newer,
+            "title_hidden": false, "revision_id": b_revision, "live_revision_id": newer,
         }]),
         "{preview}"
     );

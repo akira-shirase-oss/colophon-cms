@@ -186,12 +186,27 @@ pub async fn published_pins(
     .map_err(DbError::from_query)
 }
 
+/// The most pins one rollback changeset may carry (D-185). A release changes at most
+/// [`MAX_ITEMS`] entries, but a rollback restores a whole publication set, so it may change many
+/// more; past this many it is refused as `rollback_too_large`, and a nearer release is the way
+/// back. It keeps a rollback's request, its preview, its review page and its release bounded.
+pub const MAX_ROLLBACK_ITEMS: usize = 10_000;
+
+/// What [`rollback_pins`] reads at most: one past [`MAX_ROLLBACK_ITEMS`], so a caller can tell a
+/// set that fits from one that doesn't without reading the rest.
+const ROLLBACK_PINS_READ: i64 = 10_001;
+const _: () = assert!(
+    ROLLBACK_PINS_READ == 10_001 && MAX_ROLLBACK_ITEMS == 10_000,
+    "ROLLBACK_PINS_READ is one past MAX_ROLLBACK_ITEMS"
+);
+
 /// The publication set as it stood at `generation`, as the pins a rollback changeset would carry:
 /// a publish pin for every entry published then (matching the delivery read at that generation,
 /// which leaves out anything since revoked), and an unpublish pin for every entry published now
 /// that wasn't published then. An entry publishing the same revision already is not in the set —
 /// the changeset that follows restores the past as a new release; the generation still moves
-/// forward (module 01, D4; docs/modules/06, "rollback is a new generation").
+/// forward (module 01, D4; docs/modules/06, "rollback is a new generation"). Publish pins
+/// first, then unpublish pins, each by entry id; at most one more than [`MAX_ROLLBACK_ITEMS`].
 pub async fn rollback_pins(
     tx: &mut ProjectTransaction,
     generation: i64,
@@ -228,10 +243,13 @@ pub async fn rollback_pins(
                            AND r.id = now.revision_id
            JOIN content_type_versions v ON v.project_id = r.project_id AND v.environment_id = r.environment_id
                                        AND v.collection = r.collection AND v.version = r.schema_version
-           WHERE NOT EXISTS (SELECT 1 FROM at WHERE at.entry_id = now.entry_id)"#,
+           WHERE NOT EXISTS (SELECT 1 FROM at WHERE at.entry_id = now.entry_id)
+           ORDER BY 1, 2
+           LIMIT $4"#,
         tx.project,
         tx.environment,
-        generation
+        generation,
+        ROLLBACK_PINS_READ
     )
     .fetch_all(&mut *tx.transaction)
     .await
@@ -288,8 +306,9 @@ pub struct KeptDown {
     pub revision_id: Uuid,
     /// The release that took it down (and revoked that publication).
     pub taken_down_in: i64,
-    /// The entry was deleted since (D-080), so it can't be published again.
-    pub entry_deleted: bool,
+    /// Who created the entry; `None` once it was deleted (D-080), when it can't be published
+    /// again. What a role reads of it follows from this (D-058).
+    pub created_by: Option<Uuid>,
     /// How many entries a rollback to the generation keeps down, however many are listed.
     pub total: i64,
 }
@@ -307,12 +326,11 @@ pub async fn kept_down(
     sqlx::query_as!(
         KeptDown,
         r#"SELECT p.entry_id, p.collection, p.title, p.revision_id,
-                  p.revoked_in AS "taken_down_in!",
-                  NOT EXISTS (SELECT 1 FROM entries e
-                              WHERE e.project_id = p.project_id AND e.environment_id = p.environment_id
-                                AND e.id = p.entry_id) AS "entry_deleted!",
+                  p.revoked_in AS "taken_down_in!", e.created_by AS "created_by?",
                   count(*) OVER () AS "total!"
            FROM publications p
+           LEFT JOIN entries e ON e.project_id = p.project_id AND e.environment_id = p.environment_id
+                              AND e.id = p.entry_id
            WHERE p.project_id = $1 AND p.environment_id = $2
              AND p.valid_from <= $3 AND coalesce(p.valid_to, $3 + 1) > $3
              AND p.revoked_in IS NOT NULL
