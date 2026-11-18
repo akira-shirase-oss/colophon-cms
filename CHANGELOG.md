@@ -23,9 +23,16 @@ through `--version` and `GET /version`.
 
 ### Performance
 
+- Making an API token holds the project's creation lock for two statements instead of eight:
+  the count of active tokens stays exact (one creator at a time per project), but queued
+  creators no longer hold pooled connections long enough to starve reads.
 - Watched writes no longer take PostgreSQL's NOTIFY lock (D-180): their live-list hints are
   queued in an unlogged table and sent by a pump every 100 ms, so concurrent saves commit in
   groups again instead of one at a time. A live list may hear a change up to 100 ms later.
+- Lists of schedules and releases, and the changesets that stop an entry's deletion, read only the rows they
+  return: titles and names are looked up after the limit, so a plan that misjudged a project's size can no
+  longer pair every row with every changeset (a 120-row schedule list read 16,203 changeset rows, a 100-release
+  page 10,150; the schedules load smoke's lists took three seconds).
 
 ### Added
 
@@ -61,7 +68,8 @@ through `--version` and `GET /version`.
   `deploy/quickstart/compose.yaml` — `docker compose up -d --wait` brings up Colophon with
   PostgreSQL, Valkey and Garage, secrets generated on first start, only `127.0.0.1:8080`
   published (D-174, D-175). The Studio's first-run screens say where a container's setup code
-  is. Operator guide: `deploy/runbooks/install.md`.
+  is. Operator guide: `deploy/runbooks/install.md`; without containers, `deploy/production/`
+  (a hardened systemd unit with secrets as credentials, a Caddyfile, the steps).
 - **Releases carry the image and the Studio:** the release workflow builds the image for amd64
   and arm64 from the release's own checked binaries, scans it (Trivy: no fixable critical CVE),
   and on a tag pushes it to `ghcr.io/akira-shirase-oss/colophon` with signed provenance; it
