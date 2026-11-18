@@ -386,11 +386,16 @@ else
     if [[ "$endpoint" == "spike" ]]; then
       export COLOPHON_RATE_LIMIT_DELIVERY="${COLOPHON_RATE_LIMIT_DELIVERY:-1000/2000}"
     fi
+    # password-flood measures production's password limit (D-213: 5 a second, a burst of 10).
+    if [[ "$endpoint" == "password-flood" ]]; then
+      export COLOPHON_RATE_LIMIT_PASSWORD="${COLOPHON_RATE_LIMIT_PASSWORD:-5/10}"
+    fi
     # One machine sends every request: rate limits (D-076) that never refuse, so each request
     # still pays for its check and the run measures it.
     export COLOPHON_RATE_LIMIT_PER_ADDRESS="${COLOPHON_RATE_LIMIT_PER_ADDRESS:-1000000/1000000}" \
       COLOPHON_RATE_LIMIT_PER_CREDENTIAL="${COLOPHON_RATE_LIMIT_PER_CREDENTIAL:-1000000/1000000}" \
-      COLOPHON_RATE_LIMIT_DELIVERY="${COLOPHON_RATE_LIMIT_DELIVERY:-1000000/1000000}"
+      COLOPHON_RATE_LIMIT_DELIVERY="${COLOPHON_RATE_LIMIT_DELIVERY:-1000000/1000000}" \
+      COLOPHON_RATE_LIMIT_PASSWORD="${COLOPHON_RATE_LIMIT_PASSWORD:-1000000/1000000}"
     if [[ -n "$studio_dir" ]]; then export COLOPHON_STUDIO_DIR="$studio_dir"; fi
     # The live scenario's subscribers hold each stream to its clean end: a 15-second lifetime
     # keeps a hold in seconds (the 30-minute default is past the client's 90-second timeout).

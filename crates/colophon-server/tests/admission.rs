@@ -247,11 +247,11 @@ async fn password_work_is_limited_per_address_and_another_address_still_signs_in
         statuses.contains(&StatusCode::TOO_MANY_REQUESTS),
         "{statuses:?}"
     );
-    // Staff login shares the address's password limit.
+    // Staff sign-in shares the address's password limit.
     assert_eq!(
         post_as(
             &format!("{block}::ff"),
-            "/auth/login",
+            "/auth/signin",
             &serde_json::json!({"email": "nobody@example.test", "password": "a guess at it"}),
         )
         .await,

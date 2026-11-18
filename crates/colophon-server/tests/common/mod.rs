@@ -82,6 +82,9 @@ impl Server {
             .env("COLOPHON_LISTEN_ADDR", format!("127.0.0.1:{port}"))
             .env("COLOPHON_PUBLIC_URL", ORIGIN)
             .env("COLOPHON_LOG", "warn")
+            // Every test signs its people up and in from loopback; the password limit (D-213)
+            // is tested where a test sets its own, which `extra` then overrides.
+            .env("COLOPHON_RATE_LIMIT_PASSWORD", "1000/2000")
             .envs(extra.iter().copied());
         let server = Self(command.spawn().expect("the server starts"));
         let deadline = Instant::now() + Duration::from_secs(10);

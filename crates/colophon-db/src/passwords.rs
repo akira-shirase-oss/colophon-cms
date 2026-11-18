@@ -267,6 +267,9 @@ mod tests {
     #[test]
     fn the_default_leaves_a_core_for_everything_else() {
         let cores = std::thread::available_parallelism().map_or(2, std::num::NonZeroUsize::get);
-        assert_eq!(PasswordGate::default_slots(), cores.saturating_sub(1).clamp(1, 64));
+        assert_eq!(
+            PasswordGate::default_slots(),
+            cores.saturating_sub(1).clamp(1, 64)
+        );
     }
 }
