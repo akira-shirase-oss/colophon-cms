@@ -1,9 +1,10 @@
 function renderToHtml(value: RichTextValue, options: RenderOptions): string;
-const RENDERER_VERSION = 1
+const RENDERER_VERSION = 2
 class UnrenderableContent extends Error
   name: string;
 interface RenderOptions
   assetUrl: (assetId: string) => string;
+  media?: ((assetId: string) => ImageSource | undefined) | undefined;
 const RICH_TEXT_SCHEMA = "colophon/rich-text"
 const RICH_TEXT_VERSION = 1
 interface RichTextValue

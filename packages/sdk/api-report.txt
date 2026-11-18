@@ -85,6 +85,20 @@ interface ReplyMeta
 type RequestJson<O extends keyof operations> = operations[O] extends { requestBody: { content: { 'application/json': infer B; }; }; } ? B : never;
 type ReplyJson<O extends keyof operations> = operations[O]['responses'] extends { 200: { content: { 'application/json': infer B; }; }; } ? B : operations[O]['responses'] extends { 201: { content: { 'application/json': infer B; }; }; } ? B : never;
 type QueryOf<O extends keyof operations> = operations[O]['parameters'] extends { query?: infer Q; } ? NonNullable<Q> : Record<string, never>;
+function mediaFor(row: { media?: MediaSidecar | null | undefined; } | null | undefined, options?: MediaOptions): (assetId: string) => ImageSource | undefined;
+function imageSource(media: PublishedMedia, options?: MediaOptions): ImageSource;
+const DEFAULT_SIZES = "(max-width: 1280px) 100vw, 1280px"
+type PublishedMedia = components['schemas']['PublishedMedia'];
+type MediaSidecar = Record<string, PublishedMedia>;
+interface ImageSource
+  src: string;
+  width?: number | undefined;
+  height?: number | undefined;
+  srcset?: string | undefined;
+  sizes?: string | undefined;
+interface MediaOptions
+  current?: boolean;
+  sizes?: string;
 class ApiError extends Error
   readonly status: number;
   readonly code: ErrorCode | ClientCode;
