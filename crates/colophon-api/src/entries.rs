@@ -1585,7 +1585,7 @@ async fn import_one(
     tx: &mut ProjectTransaction,
     item: &Value,
 ) -> Result<ItemPlan, ApiError> {
-    let mut mapped = transfer::map(item, target.content_type).map_err(ApiError::Invalid)?;
+    let mapped = transfer::map(item, target.content_type).map_err(ApiError::Invalid)?;
     let mut plan = ItemPlan {
         status: "created",
         entry: None,
@@ -1665,9 +1665,7 @@ async fn import_create(
             "your role can't create entries here",
         ))?;
     // A Strapi `locale` maps to the entry's tag (D-087), shape-checked before it writes.
-    if let Some(locale) = mapped.locale.as_deref() {
-        mapped.locale = Some(locale_tag(locale)?);
-    }
+    let locale = mapped.locale.as_deref().map(locale_tag).transpose()?;
     // A single type holds one entry: a create into an occupied one is refused — an update of
     // that entry, by its id, is how it changes.
     if target.content_type.single()
@@ -1701,7 +1699,7 @@ async fn import_create(
         id.unwrap_or_else(Uuid::now_v7),
         target.collection,
         new_revision(&content, &hash, target.version, &unique, None),
-        mapped.locale.as_deref(),
+        locale.as_deref(),
     )
     .await
     .map_err(ApiError::from_db)?;
@@ -2331,11 +2329,7 @@ fn list_query(query: &ListQuery) -> Result<ListArgs<'_>, ApiError> {
                 .map_err(|_| ApiError::InvalidHeader("created_by must be an identity id"))
         })
         .transpose()?;
-    let locale = query
-        .locale
-        .as_deref()
-        .map(locale_tag)
-        .transpose()?;
+    let locale = query.locale.as_deref().map(locale_tag).transpose()?;
     Ok(ListArgs {
         limit,
         search,
@@ -2454,7 +2448,7 @@ pub(crate) async fn list(
         limit + 1,
         search,
         by,
-        locale,
+        locale.as_deref(),
     )
     .await
     .map_err(ApiError::from_db)?;

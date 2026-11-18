@@ -346,8 +346,16 @@ async fn a_locale_is_one_language_in_any_case() {
             None,
         )
         .await;
-        assert_eq!(again.status, StatusCode::CONFLICT, "{spelling}: {}", again.body);
-        assert_eq!(again.body["error"]["details"]["reason"], "locale_taken", "{spelling}");
+        assert_eq!(
+            again.status,
+            StatusCode::CONFLICT,
+            "{spelling}: {}",
+            again.body
+        );
+        assert_eq!(
+            again.body["error"]["details"]["reason"], "locale_taken",
+            "{spelling}"
+        );
     }
     let mixed = send(
         &owner,

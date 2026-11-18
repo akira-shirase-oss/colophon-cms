@@ -32,7 +32,11 @@ async fn create(tx: &mut ProjectTransaction, title: &str, locale: &str) -> Uuid 
     let entry = Uuid::now_v7();
     let revision = Uuid::now_v7();
     let text = format!(r#"{{"title":"{title}","body":{{}}}}"#);
-    let hash = *revision.as_bytes().repeat(2).first_chunk().expect("32 bytes");
+    let hash = *revision
+        .as_bytes()
+        .repeat(2)
+        .first_chunk()
+        .expect("32 bytes");
     entries::create(
         tx,
         entry,
@@ -93,14 +97,21 @@ async fn case_only_duplicates_stop_the_migration_until_one_is_deleted() {
         .await
         .expect("read");
     assert_eq!(kept, "pt-br", "a refused migration rewrites nothing");
+    // sqlx keeps its migration lock on a connection when a migration fails (the CLI's process exits
+    // and drops it); this test goes on in-process, so it starts again on a fresh pool.
+    owner.close().await;
+    let owner = db.owner().await;
 
     // One of the two is deleted (as the API's delete tombstones it); the migrations then finish.
-    sqlx::query("UPDATE entries SET deleted_at = now() WHERE id = $1")
+    sqlx::query("UPDATE entries SET deleted_at = now(), deleted_by = $2 WHERE id = $1")
         .bind(shouting)
+        .bind(alice)
         .execute(&owner)
         .await
         .expect("tombstoned");
-    colophon_db::migrate(&owner).await.expect("the migrations finish");
+    colophon_db::migrate(&owner)
+        .await
+        .expect("the migrations finish");
     let tags: Vec<String> = sqlx::query_scalar(
         "SELECT locale FROM entries WHERE localization_id = $1 AND deleted_at IS NULL ORDER BY locale",
     )
@@ -152,7 +163,16 @@ async fn case_only_duplicates_stop_the_migration_until_one_is_deleted() {
 async fn the_database_and_the_domain_agree_on_every_tag() {
     let db = TestDb::new().await;
     let owner = db.owner().await;
-    for tag in ["EN", "pt-br", "ZH-HANT-tw", "es-419", "de-ch-1901", "EN-us-U-CA-Gregory", "en-X-Legal", "iw"] {
+    for tag in [
+        "EN",
+        "pt-br",
+        "ZH-HANT-tw",
+        "es-419",
+        "de-ch-1901",
+        "EN-us-U-CA-Gregory",
+        "en-X-Legal",
+        "iw",
+    ] {
         let stored: String = sqlx::query_scalar("SELECT colophon_canonical_locale($1)")
             .bind(tag)
             .fetch_one(&owner)

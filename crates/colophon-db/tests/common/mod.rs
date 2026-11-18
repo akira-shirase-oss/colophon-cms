@@ -84,7 +84,10 @@ impl TestDb {
             ),
             ..sqlx::migrate::Migrator::DEFAULT
         };
-        earlier.run(&owner).await.expect("the earlier migrations apply");
+        earlier
+            .run(&owner)
+            .await
+            .expect("the earlier migrations apply");
         owner.close().await;
         let app = PgPoolOptions::new()
             .max_connections(1)

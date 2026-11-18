@@ -117,7 +117,10 @@ mod tests {
     fn only_case_changes_never_the_subtags() {
         for (tag, _) in TAGS {
             for spelling in spellings(tag) {
-                assert!(canonical(&spelling).eq_ignore_ascii_case(&spelling), "{spelling}");
+                assert!(
+                    canonical(&spelling).eq_ignore_ascii_case(&spelling),
+                    "{spelling}"
+                );
             }
         }
         // No alias mapping: `iw` is not rewritten to `he`.
