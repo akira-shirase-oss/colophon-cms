@@ -12,6 +12,9 @@ mod common;
 
 use std::time::{Duration, Instant};
 
+/// Long enough for a server's pump (every 100 ms, D-180) to send what the setup queued.
+const SETTLE: Duration = Duration::from_millis(400);
+
 use common::{
     PORT, Receiver, Server, Session, app, call, create_article, destination, finished_job, join,
     key, project, publish_article, sign_in,
@@ -81,6 +84,10 @@ impl Sse {
 
     /// A signed-in stream on the test origin.
     async fn subscribe(session: &Session, project: &str) -> Self {
+        // Writes queue their hints and a server's pump sends them within 100 ms (D-180):
+        // let the setup's own hints (the project's creation) go out before listening, so the
+        // stream hears only what the test does next.
+        tokio::time::sleep(SETTLE).await;
         Self::open(
             common::ORIGIN,
             &events(project),
@@ -114,6 +121,19 @@ impl Sse {
 
     /// The next `change` or `resync` frame's data, skipping comments and `hello` once seen.
     /// Fails on `Ended`/`Quiet` after `within`.
+    /// The next change hint of kind `kind`, skipping others — a write's companion hints (its
+    /// audit event, say) may arrive in any order around it.
+    async fn change_of(&mut self, kind: &str, within: Duration) -> String {
+        let deadline = Instant::now() + within;
+        loop {
+            let left = deadline.saturating_duration_since(Instant::now());
+            let data = self.change(left).await;
+            if data.contains(&format!(r#""k":"{kind}""#)) {
+                return data;
+            }
+        }
+    }
+
     async fn change(&mut self, within: Duration) -> String {
         let deadline = Instant::now() + within;
         loop {
@@ -175,6 +195,7 @@ async fn a_committed_write_reaches_a_signed_in_stream_and_other_projects_hear_no
     );
 
     // `Last-Event-ID` is accepted and ignored: there is no replay to resume.
+    tokio::time::sleep(SETTLE).await;
     let mut stream = Sse::open(
         common::ORIGIN,
         &events(&project),
@@ -199,7 +220,7 @@ async fn a_committed_write_reaches_a_signed_in_stream_and_other_projects_hear_no
 
     // A write in this one arrives as a hint naming the kind and collection, nothing more.
     create_article(&owner, &project, "Live").await;
-    let data = stream.change(Duration::from_secs(5)).await;
+    let data = stream.change_of("entries", Duration::from_secs(5)).await;
     let hint: serde_json::Value = serde_json::from_str(&data).expect("the hint is JSON");
     assert_eq!(
         (hint["k"].as_str(), hint["c"].as_str()),
@@ -275,7 +296,7 @@ async fn a_write_on_a_second_server_reaches_this_ones_streams() {
         .await
         .expect("request");
     assert_eq!(write.status(), StatusCode::CREATED);
-    let data = stream.change(Duration::from_secs(5)).await;
+    let data = stream.change_of("entries", Duration::from_secs(5)).await;
     assert!(data.contains(r#""k":"entries""#), "{data}");
 }
 
@@ -336,7 +357,7 @@ async fn an_idle_stream_stays_open_past_ten_seconds() {
     }
     assert!(comments >= 4, "keep-alives held the stream: {comments}");
     create_article(&owner, &project, "After ten seconds").await;
-    let data = stream.change(Duration::from_secs(5)).await;
+    let data = stream.change_of("entries", Duration::from_secs(5)).await;
     assert!(data.contains(r#""k":"entries""#), "{data}");
 }
 

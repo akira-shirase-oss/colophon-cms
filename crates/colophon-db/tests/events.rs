@@ -1,7 +1,8 @@
-//! Change hints on the `colophon_events` channel (D-108, migration 0044), against real
-//! PostgreSQL: a committed write notifies, a rolled-back one never does, identical payloads of
-//! one transaction fold into one notification, and the wire format decodes into `Hint`. Needs
-//! the local stack.
+//! Change hints on the `colophon_events` channel (D-108, migrations 0044 and 0068), against
+//! real PostgreSQL: a committed write queues its hint and the pump sends it once, a writer
+//! never notifies by itself, a rolled-back write sends nothing, identical hints fold into one
+//! notification however many rows or statements queued them, and the wire format decodes into
+//! `Hint`. Needs the local stack.
 #![expect(
     clippy::expect_used,
     reason = "database tests: a failed connection or setup step is a test failure"
@@ -14,7 +15,7 @@ use std::time::Duration;
 use colophon_db::{
     PgListener, PgPool, destinations,
     entries::{self, NewRevision},
-    events::{CHANNEL, Hint, Kind},
+    events::{self, CHANNEL, Hint, Kind},
     projects,
     scope::{self, ProjectTransaction},
 };
@@ -69,6 +70,12 @@ async fn enter(pool: &PgPool, identity: Uuid, project: Uuid) -> ProjectTransacti
         .expect("a member, in an environment that exists")
 }
 
+/// Runs one pump pass, as a server's pump does every 100 ms (D-180): what writers queued is
+/// sent now.
+async fn pump(pool: &PgPool) -> u64 {
+    events::pump(pool).await.expect("the pump runs")
+}
+
 /// The next decoded hint; fails if none arrives or the payload doesn't parse.
 async fn next_hint(listener: &mut PgListener) -> Hint {
     let notification = tokio::time::timeout(RECEIVE, listener.try_recv())
@@ -100,6 +107,8 @@ async fn a_commit_notifies_and_a_rollback_does_not() {
         .await
         .expect("created")
         .id;
+    // The project's own hints were queued before anyone listened: send them now.
+    pump(&db.app).await;
 
     let mut listener = db.listener().await;
     listener.listen(CHANNEL).await.expect("subscribed");
@@ -112,6 +121,10 @@ async fn a_commit_notifies_and_a_rollback_does_not() {
         .await
         .expect("entry");
     tx.commit().await.expect("commit");
+    // The writer queued its hint and notified nothing itself (D-180): the commit never took
+    // PostgreSQL's notify lock. The pump sends it.
+    quiet(&mut listener).await;
+    assert!(pump(&db.app).await >= 1);
     assert_eq!(
         next_hint(&mut listener).await,
         Hint {
@@ -140,12 +153,15 @@ async fn a_commit_notifies_and_a_rollback_does_not() {
     .await
     .expect("destination");
     tx.commit().await.expect("commit");
+    pump(&db.app).await;
     let hint = next_hint(&mut listener).await;
     assert_eq!(
         (hint.project, hint.environment, hint.kind),
         (project, Some(environment), Kind::Destinations),
         "the rolled-back entry said nothing: {hint:?}"
     );
+    // Nothing is left to send: a second pass is empty.
+    assert_eq!(pump(&db.app).await, 0);
     quiet(&mut listener).await;
     db.drop().await;
 }
@@ -159,6 +175,8 @@ async fn one_transaction_folds_identical_hints() {
         .await
         .expect("created")
         .id;
+    // The project's own hints were queued before anyone listened: send them now.
+    pump(&db.app).await;
 
     let mut listener = db.listener().await;
     listener.listen(CHANNEL).await.expect("subscribed");
@@ -173,6 +191,7 @@ async fn one_transaction_folds_identical_hints() {
             .expect("entry");
     }
     tx.commit().await.expect("commit");
+    pump(&db.app).await;
     assert_eq!(
         next_hint(&mut listener).await,
         Hint {
@@ -207,6 +226,7 @@ async fn creating_a_project_hints_types_roles_and_members() {
         tx.commit().await.expect("commit");
         id
     };
+    pump(&db.app).await;
     for expected in [
         (Some(environment), Kind::Types),
         (None, Kind::Roles),
@@ -219,6 +239,95 @@ async fn creating_a_project_hints_types_roles_and_members() {
             "{hint:?}"
         );
     }
+    quiet(&mut listener).await;
+    db.drop().await;
+}
+
+#[tokio::test]
+#[ignore = "needs the local stack: scripts/stack.sh up"]
+async fn a_thousand_row_write_queues_one_hint_and_sends_one_notification() {
+    let db = TestDb::new().await;
+    let alice = db.administrator("alice").await;
+    let project = projects::create(&db.app, alice, "alpha", "Alpha")
+        .await
+        .expect("created")
+        .id;
+    pump(&db.app).await;
+    let mut listener = db.listener().await;
+    listener.listen(CHANNEL).await.expect("subscribed");
+
+    // One statement, 1,000 audit events: one queued hint, not 1,000 (the statement-level
+    // trigger writes each distinct hint once).
+    let tx = enter(&db.app, alice, project).await;
+    let mut transaction = tx.transaction;
+    sqlx::query(
+        "INSERT INTO audit_events (project_id, id, actor_id, action, subject, detail)
+         SELECT $1, gen_random_uuid(), $2, 'test.bulk', 'row ' || n, '{}'::jsonb
+         FROM generate_series(1, 1000) AS n",
+    )
+    .bind(project)
+    .bind(alice)
+    .execute(&mut *transaction)
+    .await
+    .expect("1,000 rows");
+    let queued: i64 = sqlx::query_scalar("SELECT count(*) FROM change_hints")
+        .fetch_one(&mut *transaction)
+        .await
+        .expect("count");
+    assert_eq!(queued, 1, "one hint for the statement");
+    transaction.commit().await.expect("commit");
+    quiet(&mut listener).await;
+    assert_eq!(pump(&db.app).await, 1);
+    let hint = next_hint(&mut listener).await;
+    assert_eq!(
+        (hint.project, hint.environment, hint.kind),
+        (project, None, Kind::Audit)
+    );
+    quiet(&mut listener).await;
+
+    // A rolled-back write leaves nothing queued.
+    let tx = enter(&db.app, alice, project).await;
+    let mut transaction = tx.transaction;
+    sqlx::query(
+        "INSERT INTO audit_events (project_id, id, actor_id, action, subject, detail)
+         VALUES ($1, gen_random_uuid(), $2, 'test.rolled', 'back', '{}'::jsonb)",
+    )
+    .bind(project)
+    .bind(alice)
+    .execute(&mut *transaction)
+    .await
+    .expect("a row");
+    transaction.rollback().await.expect("rollback");
+    assert_eq!(pump(&db.app).await, 0);
+    quiet(&mut listener).await;
+    db.drop().await;
+}
+
+#[tokio::test]
+#[ignore = "needs the local stack: scripts/stack.sh up"]
+async fn many_transactions_of_one_hint_become_one_notification_per_pass() {
+    let db = TestDb::new().await;
+    let alice = db.administrator("alice").await;
+    let project = projects::create(&db.app, alice, "alpha", "Alpha")
+        .await
+        .expect("created")
+        .id;
+    pump(&db.app).await;
+    let mut listener = db.listener().await;
+    listener.listen(CHANNEL).await.expect("subscribed");
+    // Ten separate commits of the same kind between two passes: ten queued rows, one
+    // notification — the pump folds across transactions too.
+    for n in 0..10 {
+        let mut tx = enter(&db.app, alice, project).await;
+        let content = Content::new(&format!("Entry {n}"));
+        entries::create(&mut tx, Uuid::now_v7(), ARTICLES, content.revision(), None)
+            .await
+            .expect("entry");
+        tx.commit().await.expect("commit");
+    }
+    assert!(pump(&db.app).await >= 10);
+    let hint = next_hint(&mut listener).await;
+    assert_eq!(hint.kind, Kind::Entries);
     quiet(&mut listener).await;
     db.drop().await;
 }

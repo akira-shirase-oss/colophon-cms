@@ -1,0 +1,28 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "DELETE FROM change_hints\n           WHERE ctid IN (SELECT ctid FROM change_hints LIMIT $1 FOR UPDATE SKIP LOCKED)\n           RETURNING payload AS \"payload!\"",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "payload!",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "change_hints",
+            "name": "payload"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8"
+      ]
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "86f1e318f673d0c861143be638b55634b27db887c6fe584201d49a62bb77341a"
+}
