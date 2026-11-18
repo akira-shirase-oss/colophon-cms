@@ -137,6 +137,8 @@ jobs:
         run: scripts/test-stack-guard.sh
       - name: Backup keys are created mode 600 (scripts/test-backup-key-mode.sh)
         run: scripts/test-backup-key-mode.sh
+      - name: Backups and restores leave no plaintext on failure or kill (scripts/test-backup-plaintext.sh)
+        run: scripts/test-backup-plaintext.sh
 
   # The testing rule (D-018) from a clean clone: the real stack, the real binary, real outages,
   # the testbed in a browser, and a load smoke run.
