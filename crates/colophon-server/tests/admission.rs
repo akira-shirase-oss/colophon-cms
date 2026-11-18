@@ -169,3 +169,107 @@ async fn without_valkey_each_server_still_limits_on_its_own() {
     assert!((4..=5).contains(&admitted), "{statuses:?}");
     assert!(statuses.ends_with(&[429, 429]), "{statuses:?}");
 }
+
+/// `POST {path}` on [`PORT`] with `body`, as `client` behind the trusted proxy.
+async fn post_as(client: &str, path: &str, body: &Value) -> StatusCode {
+    reqwest::Client::new()
+        .post(format!("http://127.0.0.1:{PORT}{path}"))
+        .header("x-forwarded-for", client)
+        .json(body)
+        .send()
+        .await
+        .expect("request")
+        .status()
+}
+
+/// Password work is limited per client address before any of it is done (D-213): the
+/// management limit allows hundreds a second, which one address could spend keeping every
+/// Argon2 slot busy. A flood from one IPv6 /64 — a different address each request — is
+/// admitted only its burst's worth (so it never holds more slots than that) and refused 429
+/// with `Retry-After` past it, on site sign-in and staff login alike; another address meanwhile
+/// signs up and signs in.
+#[tokio::test]
+#[ignore = "needs the local stack and migrations: scripts/stack.sh up && scripts/migrate.sh"]
+async fn password_work_is_limited_per_address_and_another_address_still_signs_in() {
+    let _server = Server::start_with(&[
+        ("COLOPHON_RATE_LIMIT_PASSWORD", "1/3"),
+        ("COLOPHON_TRUSTED_PROXIES", "127.0.0.1"),
+    ])
+    .await;
+    let owner = common::sign_in("dev-owner").await;
+    let project = common::project(&owner).await;
+    let role = common::call(
+        &owner,
+        reqwest::Method::POST,
+        &format!("/api/v1/projects/{project}/audience/roles"),
+        Some(&serde_json::json!({"name": "member", "self_assign": true})),
+        &[],
+    )
+    .await
+    .expect("request");
+    assert_eq!(role.status, StatusCode::CREATED, "{}", role.body);
+
+    let nanos = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("after 1970")
+        .subsec_nanos();
+    let block = format!("2001:db8:{:x}:{:x}", nanos >> 16, nanos & 0xffff);
+    let signin = format!("/audience/v1/{project}/signin");
+    let started = Instant::now();
+    let flood: Vec<_> = (1..=12)
+        .map(|n| {
+            let (client, path) = (format!("{block}::{n:x}"), signin.clone());
+            tokio::spawn(async move {
+                post_as(
+                    &client,
+                    &path,
+                    &serde_json::json!({"email": "nobody@example.test", "password": "a guess at it"}),
+                )
+                .await
+            })
+        })
+        .collect();
+    let mut statuses = Vec::new();
+    for request in flood {
+        statuses.push(request.await.expect("joined"));
+    }
+    let admitted = statuses
+        .iter()
+        .filter(|status| **status != StatusCode::TOO_MANY_REQUESTS)
+        .count();
+    // The burst, plus what one a second earns back while the flood runs.
+    let earned = usize::try_from(started.elapsed().as_secs()).expect("small") + 1;
+    assert!(
+        (1..=3 + earned).contains(&admitted),
+        "one /64 got {admitted} password attempts through: {statuses:?}"
+    );
+    assert!(
+        statuses.contains(&StatusCode::TOO_MANY_REQUESTS),
+        "{statuses:?}"
+    );
+    // Staff login shares the address's password limit.
+    assert_eq!(
+        post_as(
+            &format!("{block}::ff"),
+            "/auth/login",
+            &serde_json::json!({"email": "nobody@example.test", "password": "a guess at it"}),
+        )
+        .await,
+        StatusCode::TOO_MANY_REQUESTS
+    );
+
+    // Meanwhile another address signs up and signs in.
+    let other = fresh_address();
+    let email = format!("visitor-{}@example.test", common::key());
+    let credentials = serde_json::json!({"email": email, "password": "a-long-enough-password"});
+    assert_eq!(
+        post_as(
+            &other,
+            &format!("/audience/v1/{project}/signup"),
+            &credentials
+        )
+        .await,
+        StatusCode::CREATED
+    );
+    assert_eq!(post_as(&other, &signin, &credentials).await, StatusCode::OK);
+}
