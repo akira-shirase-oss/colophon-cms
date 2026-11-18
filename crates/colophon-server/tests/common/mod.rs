@@ -127,6 +127,8 @@ impl Drop for Server {
     }
 }
 
+pub(crate) mod stack_guard;
+
 /// Stops a stack service and starts it again when dropped, whatever the test did.
 pub(crate) struct Stopped(&'static str);
 
@@ -146,6 +148,7 @@ impl Stopped {
 
     /// `docker compose stop <service>`; the service comes back on drop.
     pub(crate) fn new(service: &'static str) -> Self {
+        stack_guard::require_own_stack(&format!("stop {service}"));
         Self::compose(&["stop", service]);
         Self(service)
     }

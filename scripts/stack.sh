@@ -312,6 +312,16 @@ check() {
   echo "stack ok: $checks checks passed"
 }
 
+# Each subcommand starts, writes to (role DDL, a forced WAL switch) or removes the stack's
+# services, so it runs only on a stack that is this run's own (D-187, scripts/stack-guard.sh).
+case "${1:-}" in
+  up | check | down | reset)
+    # shellcheck source=scripts/stack-guard.sh
+    . scripts/stack-guard.sh
+    require_own_stack "run 'scripts/stack.sh $1' (it starts, writes to or removes the stack's services)"
+    ;;
+esac
+
 case "${1:-}" in
   up)
     compose up --detach --wait --wait-timeout 300

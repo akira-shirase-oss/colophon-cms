@@ -310,6 +310,7 @@ struct ValkeyStopped;
 
 impl ValkeyStopped {
     fn compose(action: &str) {
+        common::stack_guard::require_own_stack(&format!("{action} valkey"));
         let file = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../deploy/compose.yaml");
         let status = Command::new("docker")
             .args(["compose", "-f"])
