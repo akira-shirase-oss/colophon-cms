@@ -82,6 +82,8 @@ test('a translation that would copy a unique value is refused by the server, as 
 	const translate = page.getByTestId('translate');
 	await expect(translate).toHaveAttribute('aria-disabled', 'true');
 	await expect(translate).toHaveAccessibleDescription(/A translation would copy Stock code, which no two entries may share\./);
-	await translate.click();
+	// Pressing it anyway opens nothing. (Playwright won't click an aria-disabled control unless forced; a
+	// person still can, which is what this checks.)
+	await translate.click({ force: true });
 	await expect(page.getByTestId('language-dialog')).toHaveCount(0);
 });

@@ -256,7 +256,7 @@ test('the panel’s surfaces read on a phone in light and dark: More, the confir
 	const project = await newProject(page);
 	const entry = await newEntry(page, project, '', 'articles', { title: 'Lighthouse tours resume', body: body('Tours run on the hour from April.') });
 	await publishThroughApi(page, project, 'Tours', [entry]);
-	const phone = await (await browser.newContext({ baseURL: new URL(page.url()).origin, viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true })).newPage();
+	const phone = await (await browser.newContext({ baseURL: new URL(page.url()).origin, viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true, reducedMotion: 'reduce' })).newPage(); // settled pages, as the config's own `use` (its smooth scrolls otherwise move the page under the clicks)
 	await phone.context().addCookies(await page.context().cookies());
 	await phone.goto(`/studio/projects/${project}/articles/${entry}`);
 	await expect(phone.getByTestId('save-status')).toHaveAttribute('data-status', 'saved');

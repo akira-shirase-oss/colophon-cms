@@ -39,9 +39,10 @@ test("a member's commit lands in the owner's list live, and a moved draft opens 
 	);
 	expect(moved.status, JSON.stringify(moved.body)).toBe(200);
 
-	// The draft's own read refreshed live: the header names the member's version. The form's
-	// contents are untouched — an editor's work is never swapped out under their hands.
-	await expect(page.getByRole('heading', { name: 'Member note — moved on' })).toBeVisible();
+	// The draft's own read refreshed live: the page says a newer version was saved and names it. The
+	// form's contents, the title in the heading included, are untouched — an editor's work is never
+	// swapped out under their hands (D-184: the title is the heading and the form).
+	await expect(page.getByTestId('newer-version')).toContainText('Member note — moved on');
 
 	// The owner's next autosave goes against the revision it read and is refused: the
 	// conflict screen shows both versions — theirs and mine — so nobody is overwritten.

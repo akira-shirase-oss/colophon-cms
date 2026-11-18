@@ -45,12 +45,12 @@ test('Translate… names the entry’s language and makes the translation in one
 	await language.getByTestId('translate').click();
 	const dialog = page.getByTestId('language-dialog');
 	await expect(dialog.getByRole('heading', { name: 'Translate “Welcome”' })).toBeVisible();
-	await expect(dialog.getByTestId('language-source').locator('select')).toHaveValue('en');
+	await expect(dialog.getByTestId('language-source')).toHaveValue('en');
 	// Languages are offered by name, with the tag after.
 	await expect(dialog.getByTestId('language-target').locator('option', { hasText: 'French — fr' })).toHaveCount(1);
 	// Not into the entry's own language.
 	await expect(dialog.getByTestId('language-target').locator('option[value="en"]')).toHaveCount(0);
-	await dialog.getByTestId('language-target').locator('select').selectOption('fr');
+	await dialog.getByTestId('language-target').selectOption('fr');
 	expect(await violations(page)).toEqual([]);
 	await dialog.getByTestId('language-go').click();
 
@@ -76,7 +76,7 @@ test('Translate… names the entry’s language and makes the translation in one
 	await expect(dialog.getByTestId('language-target').locator('option[value="fr"]')).toHaveCount(0);
 	await expect(dialog.getByTestId('language-target').locator('option[value="en"]')).toHaveCount(0);
 	// A typed tag is checked as the server checks it before the button is enabled.
-	await dialog.getByTestId('language-target').locator('select').selectOption('*');
+	await dialog.getByTestId('language-target').selectOption('*');
 	await dialog.getByTestId('language-tag').fill('not a tag');
 	await expect(dialog.getByTestId('language-go')).toBeDisabled();
 	await expect(dialog.getByTestId('language-waiting')).toContainText('Write a language tag');
@@ -112,7 +112,7 @@ test('an entry’s language changes through the menu and saves with the draft; o
 	await page.getByTestId('language-menu').click();
 	await page.getByTestId('change-language').click();
 	const dialog = page.getByTestId('language-dialog');
-	await dialog.getByTestId('language-target').locator('select').selectOption('de');
+	await dialog.getByTestId('language-target').selectOption('de');
 	await dialog.getByTestId('language-go').click();
 	await expect(dialog).toBeHidden();
 	await expect(page.getByTestId('entry-locale')).toHaveText('German — de');

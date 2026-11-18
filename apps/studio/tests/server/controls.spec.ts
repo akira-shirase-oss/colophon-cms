@@ -117,7 +117,7 @@ test('a role that may edit only its own entries is offered Ask for review only o
 	await expect(writer.getByRole('button', { name: 'Ask for review' })).toBeVisible();
 
 	await writer.goto(`/studio/projects/${project}/articles/${theirs}`);
-	await expect(writer.getByTestId('publish-entry')).toContainText("Your role can't publish or ask for review here.");
+	await expect(writer.getByTestId('publish-entry')).toContainText('Your role can’t publish or ask for review here.');
 	await expect(writer.getByTestId('publish-button')).toHaveCount(0);
 	await writer.goto(`/studio/projects/${project}/articles/${mine}`);
 	await expect(writer.getByTestId('publish-button')).toHaveText('Ask for review');
