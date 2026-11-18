@@ -574,17 +574,22 @@ pub async fn list(tx: &mut ProjectTransaction, window: Window) -> Result<Vec<Rel
     sqlx::query_as!(
         Release,
         r#"WITH page AS MATERIALIZED (
-               SELECT r.project_id, r.environment_id, r.generation, r.epoch, r.changeset_id, c.title,
-                      r.changeset_hash, r.review_id, r.published_by, i.display_name AS published_by_name,
+               -- The page's rows from releases alone, then each one's title and publisher by
+               -- primary key: joined first, a misjudged plan paired every release with every
+               -- changeset of the environment before the limit (as schedules::read did).
+               SELECT r.project_id, r.environment_id, r.generation, r.epoch, r.changeset_id,
+                      (SELECT c.title FROM changesets c
+                       WHERE c.project_id = r.project_id AND c.environment_id = r.environment_id
+                         AND c.id = r.changeset_id) AS title,
+                      r.changeset_hash, r.review_id, r.published_by,
+                      (SELECT i.display_name FROM identities i WHERE i.id = r.published_by)
+                          AS published_by_name,
                       r.published_at
-               FROM releases r
-               JOIN changesets c ON c.project_id = r.project_id AND c.environment_id = r.environment_id
-                                AND c.id = r.changeset_id
-               JOIN identities i ON i.id = r.published_by
-               WHERE r.project_id = $1 AND r.environment_id = $2
-                 AND r.generation >= $3 AND r.generation < $4
-               ORDER BY r.generation DESC
-               LIMIT $5
+               FROM (SELECT * FROM releases
+                     WHERE project_id = $1 AND environment_id = $2
+                       AND generation >= $3 AND generation < $4
+                     ORDER BY generation DESC
+                     LIMIT $5) r
            ), latest AS MATERIALIZED (
                SELECT d.id, d.kind,
                       (SELECT max(j.generation) FROM jobs j

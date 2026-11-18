@@ -557,3 +557,64 @@ async fn a_snapshot_transaction_reads_one_moment() {
     owner.close().await;
     db.drop().await;
 }
+
+/// Changeset rows this transaction has read so far, by any kind of scan (an index scan's rows
+/// are counted against the index).
+async fn changesets_read(tx: &mut ProjectTransaction) -> i64 {
+    sqlx::query_scalar::<_, i64>(
+        "SELECT pg_stat_get_xact_tuples_fetched('changesets'::regclass)
+              + pg_stat_get_xact_tuples_returned('changesets'::regclass)
+              + (SELECT coalesce(sum(pg_stat_get_xact_tuples_fetched(indexrelid)), 0)::bigint
+                 FROM pg_index WHERE indrelid = 'changesets'::regclass)",
+    )
+    .fetch_one(&mut *tx.transaction)
+    .await
+    .expect("counters")
+}
+
+/// A page of releases reads one changeset row per release it shows, however many the
+/// environment has: the page's rows come from `releases` first, and only then their titles.
+#[tokio::test]
+#[ignore = "needs the local stack: scripts/stack.sh up"]
+async fn a_page_of_releases_reads_only_the_changesets_it_shows() {
+    const MANY: i64 = 150;
+    let db = TestDb::new().await;
+    let (alice, project, entry, _, _) = ready(&db).await;
+    for base in 0..MANY {
+        let mut tx = enter(&db.app, alice, project).await;
+        let pins = changesets::pins(&mut tx, &[entry]).await.expect("pins");
+        let (changeset, review) = approved(&mut tx, &pins).await;
+        let committed = releases::commit(&mut tx, base, changeset, &[6; 32], review, HOUR)
+            .await
+            .expect("commit");
+        assert!(matches!(committed, Committed::Done { .. }), "{committed:?}");
+        tx.commit().await.expect("commit");
+    }
+    // As the server runs it after a few calls: one generic plan for every project.
+    let mut tx = enter(&db.app, alice, project).await;
+    sqlx::query("SET LOCAL plan_cache_mode = force_generic_plan")
+        .execute(&mut *tx.transaction)
+        .await
+        .expect("set");
+    let before = changesets_read(&mut tx).await;
+    let page = releases::list(
+        &mut tx,
+        releases::Window::Page {
+            before: None,
+            limit: releases::MAX_PAGE,
+        },
+    )
+    .await
+    .expect("page");
+    let read = changesets_read(&mut tx).await - before;
+    let shown = i64::try_from(page.len()).expect("small");
+    assert_eq!(shown, releases::MAX_PAGE);
+    assert_eq!(page[0].generation, MANY, "newest first");
+    assert!(
+        read <= shown,
+        "a page of {shown} releases read {read} changeset rows (the environment has {})",
+        MANY + 1
+    );
+    drop(tx);
+    db.drop().await;
+}

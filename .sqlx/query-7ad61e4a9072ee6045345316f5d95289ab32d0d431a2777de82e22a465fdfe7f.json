@@ -1,0 +1,87 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "WITH active AS (\n               SELECT count(*) AS n FROM api_tokens\n               WHERE project_id = $1 AND revoked_at IS NULL AND expires_at > now()\n           ), room AS (\n               SELECT 1 FROM active WHERE n < $2\n           ), ident AS (\n               INSERT INTO identities (id, issuer, subject, display_name)\n               SELECT $3, $4, $5, $6 FROM room\n               RETURNING id\n           ), made AS (\n               INSERT INTO api_tokens (id, project_id, identity_id, name, description, kind,\n                                       token_hash, created_by, expires_at)\n               SELECT $7, $1, ident.id, $6, $8, $9, $10, $11, $12 FROM ident\n               RETURNING id, created_at, expires_at\n           ), granted AS (\n               INSERT INTO api_token_permissions (project_id, token_id, action, subject, fields,\n                                                  condition)\n               SELECT $1, made.id, p.action, p.subject, string_to_array(p.fields, ','),\n                      p.condition\n               FROM made, unnest($13::text[], $14::text[], $15::text[], $16::text[])\n                    AS p (action, subject, fields, condition)\n               RETURNING action, subject, fields, condition\n           )\n           SELECT (SELECT created_at FROM made) AS created_at,\n                  (SELECT expires_at FROM made) AS expires_at,\n                  (SELECT display_name FROM identities WHERE id = $11) AS created_by_name,\n                  (SELECT count(*) FROM granted) AS \"granted!\",\n                  -- The permissions as stored, aggregated exactly as `read` aggregates them, so\n                  -- the answer is what a later read of the token returns.\n                  (SELECT coalesce(array_agg(action ORDER BY action, subject), '{}')\n                   FROM granted) AS \"actions!\",\n                  (SELECT coalesce(array_agg(subject ORDER BY action, subject), '{}')\n                   FROM granted) AS \"subjects!\",\n                  (SELECT coalesce(array_agg(array_to_string(fields, ',')\n                                             ORDER BY action, subject), '{}')\n                   FROM granted) AS \"fields!: Vec<Option<String>>\",\n                  (SELECT coalesce(array_agg(condition ORDER BY action, subject), '{}')\n                   FROM granted) AS \"conditions!: Vec<Option<String>>\"",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "created_at",
+        "type_info": "Timestamptz",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 1,
+        "name": "expires_at",
+        "type_info": "Timestamptz",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 2,
+        "name": "created_by_name",
+        "type_info": "Text",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 3,
+        "name": "granted!",
+        "type_info": "Int8",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 4,
+        "name": "actions!",
+        "type_info": "TextArray",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 5,
+        "name": "subjects!",
+        "type_info": "TextArray",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 6,
+        "name": "fields!: Vec<Option<String>>",
+        "type_info": "TextArray",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 7,
+        "name": "conditions!: Vec<Option<String>>",
+        "type_info": "TextArray",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Int8",
+        "Uuid",
+        "Text",
+        "Text",
+        "Text",
+        "Uuid",
+        "Text",
+        "Text",
+        "Bytea",
+        "Uuid",
+        "Timestamptz",
+        "TextArray",
+        "TextArray",
+        "TextArray",
+        "TextArray"
+      ]
+    },
+    "nullable": [
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null
+    ]
+  },
+  "hash": "7ad61e4a9072ee6045345316f5d95289ab32d0d431a2777de82e22a465fdfe7f"
+}
