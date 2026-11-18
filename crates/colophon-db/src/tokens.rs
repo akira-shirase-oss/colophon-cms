@@ -250,6 +250,10 @@ pub async fn get(tx: &mut MemberTransaction, id: Uuid) -> Result<Option<StoredTo
 /// previous holder committed — then the count check and every insert in one statement. The
 /// answer is built from what was written, not read back. Before, eight round trips under the
 /// lock let creators queue, each holding a pooled connection, until reads starved.
+#[expect(
+    clippy::too_many_lines,
+    reason = "the lock, then one statement holding every write, kept together on purpose"
+)]
 pub async fn create(tx: &mut MemberTransaction, token: &NewToken<'_>) -> Result<Created, DbError> {
     // Statement 1: queue behind any other creation of a role or token in the project.
     sqlx::query_scalar!(
@@ -290,7 +294,7 @@ pub async fn create(tx: &mut MemberTransaction, token: &NewToken<'_>) -> Result<
                INSERT INTO api_tokens (id, project_id, identity_id, name, description, kind,
                                        token_hash, created_by, expires_at)
                SELECT $7, $1, ident.id, $6, $8, $9, $10, $11, $12 FROM ident
-               RETURNING id, created_at
+               RETURNING id, created_at, expires_at
            ), granted AS (
                INSERT INTO api_token_permissions (project_id, token_id, action, subject, fields,
                                                   condition)
@@ -298,11 +302,23 @@ pub async fn create(tx: &mut MemberTransaction, token: &NewToken<'_>) -> Result<
                       p.condition
                FROM made, unnest($13::text[], $14::text[], $15::text[], $16::text[])
                     AS p (action, subject, fields, condition)
-               RETURNING 1
+               RETURNING action, subject, fields, condition
            )
            SELECT (SELECT created_at FROM made) AS created_at,
+                  (SELECT expires_at FROM made) AS expires_at,
                   (SELECT display_name FROM identities WHERE id = $11) AS created_by_name,
-                  (SELECT count(*) FROM granted) AS "granted!""#,
+                  (SELECT count(*) FROM granted) AS "granted!",
+                  -- The permissions as stored, aggregated exactly as `read` aggregates them, so
+                  -- the answer is what a later read of the token returns.
+                  (SELECT coalesce(array_agg(action ORDER BY action, subject), '{}')
+                   FROM granted) AS "actions!",
+                  (SELECT coalesce(array_agg(subject ORDER BY action, subject), '{}')
+                   FROM granted) AS "subjects!",
+                  (SELECT coalesce(array_agg(array_to_string(fields, ',')
+                                             ORDER BY action, subject), '{}')
+                   FROM granted) AS "fields!: Vec<Option<String>>",
+                  (SELECT coalesce(array_agg(condition ORDER BY action, subject), '{}')
+                   FROM granted) AS "conditions!: Vec<Option<String>>""#,
         tx.project,
         MAX_TOKENS,
         token.identity_id,
@@ -323,7 +339,7 @@ pub async fn create(tx: &mut MemberTransaction, token: &NewToken<'_>) -> Result<
     .fetch_one(&mut *tx.transaction)
     .await
     .map_err(DbError::from_write)?;
-    let Some(created_at) = made.created_at else {
+    let (Some(created_at), Some(expires_at)) = (made.created_at, made.expires_at) else {
         return Ok(Created::TooMany);
     };
     if usize::try_from(made.granted).ok() != Some(permissions.len()) {
@@ -334,17 +350,19 @@ pub async fn create(tx: &mut MemberTransaction, token: &NewToken<'_>) -> Result<
     if let Some(limits) = token.limits {
         crate::budgets::set_limits(tx, token.id, limits).await?;
     }
+    // Every stored field as the database wrote it (`RETURNING`), so the answer is what a later
+    // read returns; the rest as given.
     Ok(Created::Done(Box::new(StoredToken {
         id: token.id,
         identity_id: token.identity_id,
         name: token.name.to_owned(),
         description: token.description.to_owned(),
         kind: token.kind,
-        policy: token.policy.clone(),
+        policy: crate::scope::policy(made.actions, made.subjects, made.fields, made.conditions)?,
         created_by: tx.identity,
         created_by_name: made.created_by_name,
         created_at,
-        expires_at: token.expires_at,
+        expires_at,
         last_used_at: None,
         revoked_at: None,
         limits: token.limits.copied(),
