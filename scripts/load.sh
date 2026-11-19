@@ -110,8 +110,14 @@ cd "$(dirname "$0")/.."
 
 endpoint="${1:-}"
 scenario="${2:-}"
-if [[ ! -f "perf/k6/$endpoint.js" ]] || [[ "$scenario" != throughput && "$scenario" != steady && "$scenario" != stress ]]; then
-  echo "usage: scripts/load.sh health|rich-text|openapi|session|accounts|cli|members|roles|tokens|quotas|noisy-agent|schedules|projects|setup|changesets|stages|collaboration|live|migrations|delivery|audience|audience-sites|publishing|cache-down|postgres-trouble|purge-trouble|smoke|warm-baseline|cold-cache|stampede|mixed|spike|import-scale|cdn-warm|media-load|entries|content-types|modelling|inverses|transfer|graphql|locales|deletion|collection-delete|site-starter|assets|rich-text-media|bulk|studio|site|preview throughput|steady|stress [--baseline]" >&2
+# uploads-slow (D-215) isn't k6, which can't pace a request body: perf/uploads-slow.mjs drives it.
+if [[ "$endpoint" == "uploads-slow" ]]; then
+  [[ "$scenario" == stress ]] && script_ok=0 || script_ok=1
+else
+  [[ -f "perf/k6/$endpoint.js" ]] && script_ok=1 || script_ok=0
+fi
+if (( script_ok == 0 )) || [[ "$scenario" != throughput && "$scenario" != steady && "$scenario" != stress ]]; then
+  echo "usage: scripts/load.sh health|rich-text|openapi|session|accounts|cli|members|roles|tokens|quotas|noisy-agent|schedules|projects|setup|changesets|stages|collaboration|live|migrations|delivery|audience|audience-sites|publishing|cache-down|postgres-trouble|purge-trouble|smoke|warm-baseline|cold-cache|stampede|mixed|spike|import-scale|cdn-warm|media-load|entries|content-types|modelling|inverses|transfer|graphql|locales|deletion|collection-delete|site-starter|assets|rich-text-media|bulk|studio|site|preview|uploads-slow throughput|steady|stress [--baseline]" >&2
   exit 2
 fi
 save_baseline=0
@@ -589,6 +595,17 @@ if [[ "$scenario" == "stress" ]]; then
   fi
   [[ "$healthy" == true ]]
   exit
+fi
+
+# uploads-slow (D-215): slow uploads held against the upload memory budget while a small one
+# must still be stored. The scenario argument is accepted for the CLI's shape; the script runs
+# one fixed shape (perf/uploads-slow.mjs says which env tunes it) and exits non-zero on
+# passed:false. Its JSON line is the result.
+if [[ "$endpoint" == "uploads-slow" ]]; then
+  echo "running uploads-slow (node, not k6: k6 can't pace a body)"
+  uploads_status=0
+  BASE_URL="$public_url" node perf/uploads-slow.mjs | tee "$work/uploads-slow.json" || uploads_status=$?
+  exit "$uploads_status"
 fi
 
 echo "running k6: $endpoint $scenario"
