@@ -6,6 +6,7 @@
 	import type { Snippet } from 'svelte';
 	import { resolve } from '$app/paths';
 	import { page } from '$app/state';
+	import { Badge } from '@colophon/ui/ui/badge';
 	import AccountMenu from './AccountMenu.svelte';
 	import ThemeToggle from './ThemeToggle.svelte';
 	import Mark from './Mark.svelte';
@@ -19,7 +20,7 @@
 			<Mark />
 			<span class="font-title font-normal" data-testid="wordmark">Colophon Studio</span>
 		</a>
-		<span class="rounded-full border border-border bg-card px-2 py-0.5 text-xs text-muted-foreground" title="Colophon is not released yet">preview</span>
+		<Badge variant="outline" class="text-muted-foreground" title="Colophon is not released yet">preview</Badge>
 		<div class="ml-auto flex items-center gap-1"><ThemeToggle /><AccountMenu /></div>
 	</header>
 	<main class="mx-2 mb-2 flex-1 rounded-2xl border border-sidebar-border bg-background">

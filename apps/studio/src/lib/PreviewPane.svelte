@@ -22,6 +22,7 @@
 	import SettingsIcon from '@lucide/svelte/icons/settings-2';
 	import XIcon from '@lucide/svelte/icons/x';
 	import { toast } from 'svelte-sonner';
+	import { Badge } from '@colophon/ui/ui/badge';
 	import { Button } from '@colophon/ui/ui/button';
 	import { Skeleton } from '@colophon/ui/ui/skeleton';
 	import { ApiError } from './api.ts';
@@ -273,12 +274,7 @@
 				return { text: 'Didn’t open', tone: 'attention' } as const;
 		}
 	});
-	const TONE = {
-		neutral: 'bg-muted text-muted-foreground',
-		live: 'bg-live-soft text-live-ink',
-		pending: 'bg-pending-soft text-pending-ink',
-		attention: 'bg-attention-soft text-attention-ink'
-	} as const;
+	const TONE = { neutral: 'secondary', live: 'live', pending: 'pending', attention: 'attention' } as const;
 	const DOT = { neutral: 'bg-draft', live: 'bg-live', pending: 'bg-pending', attention: 'bg-attention' } as const;
 
 	/** What the frame shows compared with the editor: only while a site is open. */
@@ -313,14 +309,14 @@
 	     not the screen's). -->
 	<header class="@container border-b border-border px-3 py-2">
 		<div class="grid grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-x-2 gap-y-1">
-			<span class="col-start-1 row-start-1 inline-flex shrink-0 items-center gap-1.5 rounded-full px-2.5 py-0.5 text-xs font-medium {TONE[pill.tone]}" role="status" data-testid="preview-pill">
+			<Badge variant={TONE[pill.tone]} class="col-start-1 row-start-1" role="status" data-testid="preview-pill">
 				{#if pane.kind === 'opening'}
 					<LoaderIcon class="size-3 animate-spin" aria-hidden="true" />
 				{:else}
 					<span class="size-1.5 rounded-full {DOT[pill.tone]}" aria-hidden="true"></span>
 				{/if}
 				{pill.text}
-			</span>
+			</Badge>
 			<p class="col-span-3 col-start-1 row-start-2 min-h-4 min-w-0 truncate text-xs text-muted-foreground @md:col-span-1 @md:col-start-2 @md:row-start-1">
 				{#if host !== ''}<span class="font-medium text-foreground" data-testid="preview-host">{host}</span>{/if}{#if host !== '' && expiresAt !== null}<span class="mx-1" aria-hidden="true">·</span><span
 						title="Renews by itself while this stays open"
