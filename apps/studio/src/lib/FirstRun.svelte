@@ -11,8 +11,8 @@
 	import { type ChangesetSummary, type ContentType, listInvitations, listMembers, may, type Project, type Release, type Summary } from './api.ts';
 	import { hide, isHidden, mainCollection, oneOf, receiptSeen } from './firstRun.ts';
 	import { destinationsQuery } from './queries.ts';
-	import LightLine from './proposal/LightLine.svelte';
-	import PixelIcon, { type PixelName } from './proposal/PixelIcon.svelte';
+	import LightLine from './shell/LightLine.svelte';
+	import PixelIcon, { type PixelName } from './shell/PixelIcon.svelte';
 
 	let {
 		project,
@@ -163,19 +163,19 @@
 </script>
 
 {#if !hidden}
-	<!-- Studio v2 proposal: the website hero's inverted panel (white on dark, black on light), a pixel icon for
-	     each step that wiggles on hover or tap, the one next step in the primary blue and the rest as outlines in
-	     the panel's ink, and a first-run line that lights up once (lib/proposal). -->
-	<section class="v2-inverted v2-firstrun mb-10" aria-labelledby="first-run-heading" data-testid="first-run">
+	<!-- Studio v2 (D-210 addendum): the website hero's inverted panel (white on dark, black on light), a pixel
+	     icon for each step that wiggles on hover or tap, the one next step in the primary blue and the rest as
+	     outlines in the panel's ink, and a first-run line that lights up once (shell/LightLine). -->
+	<section class="first-run mb-10" aria-labelledby="first-run-heading" data-testid="first-run">
 		<div class="mb-6 flex flex-wrap items-start justify-between gap-3">
 			<div class="space-y-2">
-				<h2 id="first-run-heading" class="v2-firstrun-title">{remaining === 0 ? "You're all set" : 'Get started'}</h2>
-				<p class="v2-firstrun-muted text-sm" data-testid="first-run-count">
+				<h2 id="first-run-heading" class="first-run-title">{remaining === 0 ? "You're all set" : 'Get started'}</h2>
+				<p class="first-run-muted text-sm" data-testid="first-run-count">
 					{remaining === 0 ? 'Every step is done. You can hide this list.' : `${items.length - remaining} of ${items.length} done`}
 				</p>
 				{#if remaining > 0}
 					<LightLine
-						class="v2-firstrun-line"
+						class="first-run-line"
 						text="Decide what you’ll write, write it, publish it, and Colophon prints a receipt of what went live."
 						rest="var(--hero-muted)"
 						on="var(--hero-fg)"
@@ -185,28 +185,28 @@
 			<Button
 				variant="ghost"
 				size="sm"
-				class="v2-hero-ghost"
+				class="hero-ghost"
 				onclick={() => {
 					hide(identity, project);
 					hidden = true;
 				}}>Hide this list</Button
 			>
 		</div>
-		<ol class="v2-steps">
+		<ol class="steps">
 			{#each items as item (item.id)}
-				<li class="v2-step" data-testid="first-run-item" data-item={item.id} data-done={item.done}>
+				<li class="step" data-testid="first-run-item" data-item={item.id} data-done={item.done}>
 					<span class="flex items-center gap-3">
 						<PixelIcon name={item.done ? 'check' : (ICON[item.id] ?? 'pen')} size="2rem" wiggle />
-						<span class="text-sm font-medium" class:v2-firstrun-muted={item.done}>
+						<span class="text-sm font-medium" class:first-run-muted={item.done}>
 							{item.title}<span class="sr-only">{item.done ? ' (done)' : ' (to do)'}</span>
 						</span>
 					</span>
-					<span class="v2-firstrun-muted block flex-1 text-sm">{item.detail}</span>
+					<span class="first-run-muted block flex-1 text-sm">{item.detail}</span>
 					{#if !item.done}
 						<Button
 							variant={item.id === next ? 'default' : 'outline'}
 							size="sm"
-							class={item.id === next ? '' : 'v2-hero-outline'}
+							class={item.id === next ? '' : 'hero-outline'}
 							href={item.href}
 							aria-label="{item.action}: {item.title}">{item.action}</Button
 						>
@@ -218,46 +218,45 @@
 {/if}
 
 <style>
-	.v2-firstrun {
+	.first-run {
+		/* the pixel icons' outline takes the panel's ink, so it reads on it */
+		--px-outline: var(--hero-fg);
 		padding: var(--card-padding);
 		border-radius: var(--radius-card);
 		background: var(--hero-bg);
 		color: var(--hero-fg);
 	}
-	.v2-firstrun-title {
+	.first-run-title {
 		font-family: var(--font-title);
 		font-weight: 400;
-		font-size: 1.75rem;
+		font-size: 2.5rem;
 		line-height: 1.1;
 		letter-spacing: 0;
 	}
-	:global(:root[data-direction='b']) .v2-firstrun-title {
-		font-size: 2.5rem;
-	}
-	.v2-firstrun-muted {
+	.first-run-muted {
 		color: var(--hero-muted);
 	}
-	:global(.v2-firstrun-line) {
+	:global(.first-run-line) {
 		max-width: 40rem;
 		font-size: 1.125rem;
 		line-height: 1.4;
 		font-weight: 500;
 	}
-	.v2-steps {
+	.steps {
 		display: grid;
 		gap: 0.75rem;
 	}
 	@media (min-width: 48rem) {
-		.v2-steps {
+		.steps {
 			grid-template-columns: repeat(2, minmax(0, 1fr));
 		}
 	}
 	@media (min-width: 80rem) {
-		.v2-steps {
+		.steps {
 			grid-template-columns: repeat(3, minmax(0, 1fr));
 		}
 	}
-	.v2-step {
+	.step {
 		display: flex;
 		flex-direction: column;
 		gap: 0.75rem;
@@ -265,21 +264,21 @@
 		border: 1px solid var(--hero-line);
 		border-radius: var(--radius-control);
 	}
-	.v2-step :global([data-slot='button']) {
+	.step :global([data-slot='button']) {
 		align-self: flex-start;
 	}
 	/* The outline and ghost buttons in the panel's ink: a 1px edge and the label, a 9% ink ground on hover. */
-	.v2-firstrun :global(a.v2-hero-outline[data-slot='button']),
-	.v2-firstrun :global(button.v2-hero-ghost[data-slot='button']) {
+	.first-run :global(a.hero-outline[data-slot='button']),
+	.first-run :global(button.hero-ghost[data-slot='button']) {
 		border-color: var(--hero-fg);
 		background: transparent;
 		color: var(--hero-fg);
 	}
-	.v2-firstrun :global(button.v2-hero-ghost[data-slot='button']) {
+	.first-run :global(button.hero-ghost[data-slot='button']) {
 		border-color: transparent;
 	}
-	.v2-firstrun :global(a.v2-hero-outline[data-slot='button']:hover),
-	.v2-firstrun :global(button.v2-hero-ghost[data-slot='button']:hover) {
+	.first-run :global(a.hero-outline[data-slot='button']:hover),
+	.first-run :global(button.hero-ghost[data-slot='button']:hover) {
 		background: var(--hero-hover);
 	}
 </style>

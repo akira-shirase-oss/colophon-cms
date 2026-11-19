@@ -2,8 +2,6 @@
  * dependencies, so name the package whose components use its classes. */
 @import '@colophon/ui/styles.css';
 @source '../../../packages/ui/src';
-/* Studio v2, a proposal: two directions to choose between (lib/proposal/studio-v2.css). */
-@import './lib/proposal/studio-v2.css';
 
 /* Rich text, in the editor and in previews: Inter at a comfortable measure, callouts in the
  * registration colours, placeholder images as dashed frames until media arrives (P4). */

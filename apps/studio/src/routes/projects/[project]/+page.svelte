@@ -74,7 +74,7 @@
 
 <svelte:head><title>{mine.data?.name ?? 'Overview'} · Colophon Studio</title></svelte:head>
 
-<PageHeader title={mine.data?.name ?? 'Overview'}>
+<PageHeader title={mine.data?.name ?? 'Overview'} display>
 	{#snippet meta()}
 		{#if mine.data}
 			<span>{mine.data.slug}</span>
@@ -145,14 +145,14 @@
 	<div class="mt-10 grid gap-10 lg:grid-cols-[minmax(0,1fr)_20rem]">
 		<section aria-labelledby="recent">
 			<div class="mb-3 flex items-baseline justify-between">
-				<h2 id="recent" class="v2-section-title text-base font-semibold">Recently edited</h2>
+				<h2 id="recent" class="text-base font-semibold">Recently edited</h2>
 			</div>
 			{#if failed.length > 0}
 				<div class="mb-3" data-testid="lists-problem">
 					<Problem error={firstError ?? new Error('')} what={failed.map((type) => type.definition.name).join(', ')} retry={() => lists.forEach((list) => list.isError && list.refetch())} />
 				</div>
 			{/if}
-			<div class="stagger v2-surface overflow-hidden rounded-xl border border-border" class:hidden={recent.length === 0}>
+			<div class="stagger section-ground overflow-hidden rounded-xl border border-border" class:hidden={recent.length === 0}>
 				{#each recent as { type, entry }, index (entry.id)}
 					<a
 						class="rule-dotted flex items-center gap-3 px-4 py-3 transition-colors last:border-b-0 hover:bg-[var(--surface-section-hover)]"
@@ -186,7 +186,7 @@
 
 		<div class="space-y-10">
 			<section aria-labelledby="waiting">
-				<h2 id="waiting" class="v2-section-title mb-3 text-base font-semibold">In review</h2>
+				<h2 id="waiting" class="mb-3 text-base font-semibold">In review</h2>
 				{#if sets.isError}
 					<Problem error={sets.error} what={PUBLISH_REQUESTS} retry={() => sets.refetch()} />
 				{:else if sets.isPending}
@@ -195,7 +195,7 @@
 				<ul class="space-y-2">
 					{#each waiting.slice(0, 5) as set (set.id)}
 						<li>
-							<a class="lift v2-surface block rounded-lg border border-border p-3 hover:border-foreground/20" href={resolve('/projects/[project]/changesets/[changeset]', { project, changeset: set.id })}>
+							<a class="lift section-ground block rounded-lg border border-border p-3 hover:border-foreground/20" href={resolve('/projects/[project]/changesets/[changeset]', { project, changeset: set.id })}>
 								<span class="block truncate text-sm font-medium">{set.title}</span>
 								<span class="mt-1.5 flex items-center justify-between gap-2">
 									<ChangesetBadge state={set.status.state} />
@@ -214,7 +214,7 @@
 			</section>
 
 			<section aria-labelledby="content-heading">
-				<h2 id="content-heading" class="v2-section-title mb-3 text-base font-semibold">Content</h2>
+				<h2 id="content-heading" class="mb-3 text-base font-semibold">Content</h2>
 				{#if types.isError}
 					<Problem error={types.error} />
 				{:else}
@@ -240,7 +240,7 @@
 
 <style>
 	/* The design system's card (D-182): its padding and radius tokens, a hairline, flat; on the website's
-	   section ground (Studio v2 proposal). */
+	   section ground (D-210 addendum, Studio v2). */
 	.stat {
 		display: flex;
 		flex-direction: column;
@@ -251,7 +251,7 @@
 		background: var(--surface-section);
 		align-items: flex-start;
 	}
-	.v2-surface {
+	.section-ground {
 		background: var(--surface-section);
 	}
 	a.stat:hover {
@@ -275,8 +275,8 @@
 	/* The figures in Geist Pixel, the website's display face: "None yet", "0", "Never" read as display type. */
 	.stat-value {
 		font-family: var(--font-title);
-		font-size: 2.25rem;
-		line-height: 1.1;
+		font-size: 3rem;
+		line-height: 1;
 		font-weight: 400;
 		font-synthesis: none;
 		letter-spacing: 0;
