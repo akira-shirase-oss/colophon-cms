@@ -18,6 +18,7 @@ mkdir -p "$work/bin" "$work/creds"
 cat >"$work/bin/rclone" <<STUB
 #!/usr/bin/env bash
 echo "rclone \$*" >>"$work/calls"
+echo "region=\${RCLONE_CONFIG_R2_REGION:-}" >>"$work/rclone-env"
 case "\$1" in
   lsf) cat "$work/listing" 2>/dev/null ;;
   copyto) echo "\$2" >>"$work/uploaded"; basename "\$2" >>"$work/listing" ;;
@@ -36,7 +37,7 @@ STUB
 cat >"$work/bin/pg_dump" <<STUB
 #!/usr/bin/env bash
 echo "argv: \$*" >>"$work/pg_dump"
-echo "env: PGPASSWORD=\${PGPASSWORD:-} PGSSLMODE=\${PGSSLMODE:-} PGHOST=\${PGHOST:-} PGUSER=\${PGUSER:-} PGDATABASE=\${PGDATABASE:-}" >>"$work/pg_dump"
+echo "env: PGPASSWORD=\${PGPASSWORD:-} PGSSLMODE=\${PGSSLMODE:-} PGHOST=\${PGHOST:-} PGUSER=\${PGUSER:-} PGDATABASE=\${PGDATABASE:-} PGSSLROOTCERT=\${PGSSLROOTCERT:-}" >>"$work/pg_dump"
 printf 'PGDMP-fake'
 STUB
 printf '#!/usr/bin/env bash\necho "age $*" >>"%s/calls"\nprintf "AGE:"; cat\n' "$work" >"$work/bin/age"
@@ -54,6 +55,15 @@ grep '^argv:' "$work/pg_dump" | grep -q 's3cr' && fail "the password reached pg_
 grep -q 'PGPASSWORD=s3cr@t PGSSLMODE=verify-full PGHOST=ep-x.us-east-2.aws.neon.tech PGUSER=owner PGDATABASE=colophon' "$work/pg_dump" \
   || fail "pg_dump's environment: $(cat "$work/pg_dump")"
 grep -qE '\.dump\.age$' "$work/uploaded" || fail "nothing uploaded: $(cat "$work/calls")"
+# Neon's certificate is checked against the system's public roots, and R2's region is "auto".
+grep -q 'PGSSLROOTCERT=system' "$work/pg_dump" || fail "pg_dump's root certificates: $(cat "$work/pg_dump")"
+! grep -qv '^region=auto$' "$work/rclone-env" || fail "rclone's R2 region isn't auto: $(sort -u "$work/rclone-env")"
+# A URL naming its own CA (a private Postgres, or the rehearsal's stand-in) is verified against it.
+: >"$work/pg_dump"
+echo 'postgres://owner:pw@db.internal/colophon?sslmode=verify-full&sslrootcert=/etc/colophon/db-ca.pem' >"$work/creds/migration_database_url"
+backup run >/dev/null
+grep -q 'PGSSLROOTCERT=/etc/colophon/db-ca.pem' "$work/pg_dump" || fail "the URL's sslrootcert was ignored: $(cat "$work/pg_dump")"
+echo 'postgres://owner:s3cr%40t@ep-x.us-east-2.aws.neon.tech/colophon?sslmode=verify-full' >"$work/creds/migration_database_url"
 grep -qE 'rclone copyto .* r2:colophon-backups/logical/[0-9TZ-]+\.dump\.age' "$work/calls" || fail "the upload's key: $(cat "$work/calls")"
 grep -q 'age --encrypt --recipients-file' "$work/calls" || fail "not encrypted to the recipient file"
 grep -q 'PGDMP' "$(head -1 "$work/uploaded")" 2>/dev/null && fail "an unencrypted dump was uploaded"
