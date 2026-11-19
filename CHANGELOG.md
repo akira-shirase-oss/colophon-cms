@@ -151,6 +151,11 @@ closes and carries a test that failed without it.
 
 ### Fixed
 
+- Integration tests that stop, pause or restart a local-stack service now refuse the shared stack
+  before any `docker` call: they run in CI, under a compose project of your own, or with
+  `COLOPHON_STACK_OWNER=1` (D-187b). Every such call goes through one guarded helper, and a test
+  keeps it that way.
+
 - The releases list pages: `GET {P}/releases` takes `?limit=` (1–100, default 100, what it
   answered before) and `?cursor=`, and its `next_cursor` is real. It used to stop at the
   newest 100 while the OpenAPI document advertised a cursor. The MCP `list_releases` tool
