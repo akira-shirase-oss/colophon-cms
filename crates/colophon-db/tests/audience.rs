@@ -749,6 +749,103 @@ async fn magic_links_are_single_use_superseded_expiring_and_project_scoped() {
     db.drop().await;
 }
 
+/// A distinct token hash for the `n`th link a test asks for.
+fn token(n: u16) -> [u8; 32] {
+    let mut hash = [7; 32];
+    hash[..2].copy_from_slice(&n.to_be_bytes());
+    hash
+}
+
+/// The shipped bounds themselves (D-153, D-161), not a test's override: under
+/// `MagicLinkLimits::DEFAULT` one client address gets five links in a project — each for
+/// someone new, so no recipient's cooldown is what stops it — and the sixth waits out the
+/// ten-minute window while another address is served; and three hundred links in a minute,
+/// every address together, fill the project, so the next waits at most the minute even from
+/// an address that never asked.
+#[tokio::test]
+#[ignore = "needs the local stack: scripts/stack.sh up"]
+async fn the_default_link_bounds_are_five_an_address_and_three_hundred_a_project() {
+    let db = TestDb::new().await;
+    let (owner, project) = project(&db).await;
+    let origin = "http://site.test";
+    let return_to = "http://site.test/welcome";
+    let mut tx = staff(&db.app, owner, project).await;
+    audience::set_origins(&mut tx, &[origin.to_owned()])
+        .await
+        .expect("listed");
+    tx.commit().await.expect("commit");
+    let limits = audience::MagicLinkLimits::DEFAULT;
+    let mut asked: u16 = 0;
+    let mut ask = async |address: String| {
+        asked += 1;
+        audience::request_magic_link(
+            &db.app,
+            &limits,
+            project,
+            &format!("v{asked}@example.test"),
+            &address,
+            &token(asked),
+            return_to,
+            origin,
+        )
+        .await
+        .expect("request")
+    };
+
+    let flooder = "198.51.100.40".to_owned();
+    for n in 1..=5 {
+        assert_eq!(
+            ask(flooder.clone()).await,
+            audience::LinkRequest::Recorded,
+            "link {n} from one address"
+        );
+    }
+    match ask(flooder.clone()).await {
+        audience::LinkRequest::Wait(seconds) => {
+            assert!(
+                (1..=600).contains(&seconds),
+                "waits out ten minutes at most: {seconds}"
+            );
+        }
+        other => panic!("the sixth link from one address waits: {other:?}"),
+    }
+    assert_eq!(
+        ask("198.51.100.41".to_owned()).await,
+        audience::LinkRequest::Recorded,
+        "another address is served at once"
+    );
+
+    // Six recorded so far; 294 more from addresses of their own fill the project's minute.
+    for n in 0..294_u16 {
+        let address = format!("203.0.{}.{}", n / 200, n % 200 + 1);
+        assert_eq!(
+            ask(address).await,
+            audience::LinkRequest::Recorded,
+            "project link {n}"
+        );
+    }
+    match ask("192.0.2.200".to_owned()).await {
+        audience::LinkRequest::Wait(seconds) => {
+            assert!(
+                (1..=60).contains(&seconds),
+                "waits out the minute at most: {seconds}"
+            );
+        }
+        other => panic!("the 301st link in a minute waits: {other:?}"),
+    }
+    let owner_pool = db.owner().await;
+    let recorded =
+        sqlx::query("SELECT count(*) AS n FROM audience_magic_links WHERE project_id = $1")
+            .bind(project)
+            .fetch_one(&owner_pool)
+            .await
+            .expect("count")
+            .get::<i64, _>("n");
+    assert_eq!(recorded, 300, "every refusal recorded nothing");
+    owner_pool.close().await;
+    db.drop().await;
+}
+
 #[tokio::test]
 #[ignore = "needs the local stack: scripts/stack.sh up"]
 async fn a_session_beyond_the_bound_pushes_the_oldest_out() {
