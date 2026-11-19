@@ -100,7 +100,10 @@ jobs:
           node-version: 24
           cache: npm
       - run: npm ci
-      - run: npx -w @colophon/studio playwright install --with-deps chromium
+      - name: Chromium and its system packages (retried — Ubuntu's mirrors fail intermittently)
+        run: |
+          echo 'Acquire::Retries "5";' | sudo tee /etc/apt/apt.conf.d/80-retries >/dev/null
+          RETRY_DELAY=45 scripts/retry.sh 3 npx -w @colophon/studio playwright install --with-deps chromium
       - run: scripts/frontend.sh
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: failure()
@@ -131,6 +134,14 @@ jobs:
         run: scripts/test-install.sh
       - name: The Homebrew formula, rendered from a SHA256SUMS
         run: scripts/test-homebrew-formula.sh
+      - name: CI's retry wrapper (scripts/test-retry.sh)
+        run: scripts/test-retry.sh
+      - name: The droplet's logical backup (deploy/droplet/test-backup-logical.sh)
+        run: deploy/droplet/test-backup-logical.sh
+      - name: The droplet's Neon URL fix (deploy/droplet/test-neon-url.sh)
+        run: deploy/droplet/test-neon-url.sh
+      - name: The droplet's edge channel refuses what it can't prove (deploy/droplet/test-upgrade-edge.sh, D-211)
+        run: deploy/droplet/test-upgrade-edge.sh
 
   # The testing rule (D-018) from a clean clone: the real stack, the real binary, real outages,
   # the testbed in a browser, and a load smoke run.
@@ -155,7 +166,7 @@ jobs:
         run: >-
           docker run --rm -v "$PWD:/mnt:ro" -w /mnt
           koalaman/shellcheck:v0.11.0@sha256:61862eba1fcf09a484ebcc6feea46f1782532571a34ed51fedf90dd25f925a8d
-          scripts/*.sh
+          scripts/*.sh deploy/droplet/*.sh
       - name: Start the stack and run its checks
         run: scripts/stack.sh up
       - name: Install the pinned toolchain
@@ -187,7 +198,10 @@ jobs:
           SQLX_OFFLINE: "false"
           DATABASE_URL: postgres://colophon:colophon-dev@127.0.0.1:55432/colophon
         run: cargo test -p colophon-server --features fault-injection --test faults --locked -- --ignored --test-threads=1
-      - run: npx -w @colophon/testbed playwright install --with-deps chromium
+      - name: Chromium and its system packages (retried — Ubuntu's mirrors fail intermittently)
+        run: |
+          echo 'Acquire::Retries "5";' | sudo tee /etc/apt/apt.conf.d/80-retries >/dev/null
+          RETRY_DELAY=45 scripts/retry.sh 3 npx -w @colophon/testbed playwright install --with-deps chromium
       - name: Testbed in Chromium (scripts/testbed.sh)
         run: scripts/testbed.sh
       - name: The Studio against the real server (scripts/studio.sh)
@@ -333,24 +347,59 @@ jobs:
           node-version: 24
           cache: npm
       - run: npm ci
-      - run: npx -w @colophon/studio playwright install --with-deps chromium
+      - name: Chromium and its system packages (retried — Ubuntu's mirrors fail intermittently)
+        run: |
+          echo 'Acquire::Retries "5";' | sudo tee /etc/apt/apt.conf.d/80-retries >/dev/null
+          RETRY_DELAY=45 scripts/retry.sh 3 npx -w @colophon/studio playwright install --with-deps chromium
       - name: Install k6 (pinned)
         run: |
           scripts/install-k6.sh "$RUNNER_TEMP/bin"
           echo "$RUNNER_TEMP/bin" >>"$GITHUB_PATH"
       - name: The quick start, as documented (scripts/quickstart.sh)
         run: QUICKSTART_SHOTS="$PWD/apps/studio/test-results/screens" scripts/quickstart.sh --image colophon:local --browser --load --record
-      - name: The production files (deploy/production) pass systemd-analyze and caddy validate
+      - name: The production and droplet files (deploy/production, deploy/droplet) pass systemd-analyze and caddy validate
         run: |
           set -euo pipefail
           # verify checks that ExecStart's binary exists: the image's own.
           id=$(docker create colophon:local)
           sudo docker cp "$id:/usr/local/bin/colophon-server" /usr/local/bin/colophon-server
+          sudo docker cp "$id:/usr/local/bin/colophon" /usr/local/bin/colophon
           docker rm "$id" >/dev/null
           systemd-analyze verify deploy/production/colophon.service
           docker run --rm -e COLOPHON_DOMAIN=cms.example.com -v "$PWD/deploy/production:/etc/caddy:ro" \
             caddy:2.10.2@sha256:c3d7ee5d2b11f9dc54f947f68a734c84e9c9666c92c88a7f30b9cba5da182adb \
             caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile
+          # The S0 droplet's files (deploy/droplet): its units, and its Caddyfile with a throwaway
+          # certificate standing in for Cloudflare's origin certificate.
+          sudo install -m 0755 deploy/droplet/backup-logical.sh /usr/local/bin/colophon-backup-logical
+          systemd-analyze verify deploy/droplet/colophon-ledger-export.service deploy/droplet/colophon-ledger-export.timer \
+            deploy/droplet/colophon-backup-logical.service deploy/droplet/colophon-backup-logical.timer
+          caddy_dir=$(mktemp -d)
+          cp deploy/droplet/Caddyfile deploy/droplet/cloudflare-origin-pull-ca.pem "$caddy_dir/"
+          openssl req -x509 -newkey rsa:2048 -nodes -subj /CN=app.colophon.404human.dev -days 1 \
+            -keyout "$caddy_dir/origin.key" -out "$caddy_dir/origin.pem" 2>/dev/null
+          echo 'trusted_proxies static 173.245.48.0/20 2400:cb00::/32' >"$caddy_dir/cloudflare-trusted.caddy"
+          docker run --rm -v "$caddy_dir:/etc/caddy:ro" \
+            caddy:2.10.2@sha256:c3d7ee5d2b11f9dc54f947f68a734c84e9c9666c92c88a7f30b9cba5da182adb \
+            caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile
+      - name: The shipped unit reads its secrets through systemd credentials, over verify-full (deploy/droplet/test-unit-credentials.sh)
+        run: |
+          set -euo pipefail
+          out=$(mktemp -d)
+          id=$(docker create colophon:local)
+          docker cp "$id:/usr/local/bin/colophon-server" "$out/colophon-server"
+          docker cp "$id:/usr/local/bin/colophon" "$out/colophon"
+          docker cp "$id:/usr/share/colophon/studio" "$out/studio"
+          docker rm "$id" >/dev/null
+          sudo CI=true deploy/droplet/test-unit-credentials.sh "$out/colophon-server" "$out/colophon" "$out/studio"
+      - name: Every 'colophon admin' command the droplet runs exists in the CLI (deploy/droplet/test-unit-commands.sh)
+        run: |
+          set -euo pipefail
+          out=$(mktemp -d)
+          id=$(docker create colophon:local)
+          docker cp "$id:/usr/local/bin/colophon" "$out/colophon"
+          docker rm "$id" >/dev/null
+          deploy/droplet/test-unit-commands.sh "$out/colophon"
       - name: Timings and sizes
         if: always()
         run: |

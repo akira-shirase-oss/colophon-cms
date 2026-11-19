@@ -152,7 +152,7 @@ pub struct HeldJob {
 /// marks the in-flight attempts whose external effect is *unknown* — never assume the resend
 /// is safe. Final states (`succeeded`, `failed`, `superseded`) stay as the backup recorded them.
 pub async fn hold_jobs(pool: &PgPool) -> Result<Vec<HeldJob>, DbError> {
-    let mut transaction = pool.begin().await.map_err(DbError::from_query)?;
+    let mut transaction = crate::begin_tx(pool).await.map_err(DbError::from_query)?;
     let taken = sqlx::query_as!(
         HeldJob,
         "SELECT j.project_id, j.environment_id, j.id, j.destination_id, d.name AS destination_name,

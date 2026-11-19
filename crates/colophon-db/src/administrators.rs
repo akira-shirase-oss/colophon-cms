@@ -62,7 +62,9 @@ pub async fn bootstrap(
     issuer: &str,
     subject: &str,
 ) -> Result<Bootstrapped, DbError> {
-    let mut transaction = migrator.begin().await.map_err(DbError::from_query)?;
+    let mut transaction = crate::begin_tx(migrator)
+        .await
+        .map_err(DbError::from_query)?;
     let identity = sqlx::query_scalar!(
         "INSERT INTO identities (id, issuer, subject) VALUES ($1, $2, $3)
          ON CONFLICT (issuer, subject) DO UPDATE SET issuer = EXCLUDED.issuer
@@ -111,7 +113,9 @@ pub async fn bootstrap(
 /// `installation` row — an installation with an administrator is bootstrapped, and
 /// `standing` and a later `bootstrap` must agree about who owns it. Runs as the migrator.
 pub async fn ensure(migrator: &PgPool, identity: Uuid) -> Result<(), DbError> {
-    let mut transaction = migrator.begin().await.map_err(DbError::from_query)?;
+    let mut transaction = crate::begin_tx(migrator)
+        .await
+        .map_err(DbError::from_query)?;
     sqlx::query!(
         "INSERT INTO administrators (identity_id) VALUES ($1) ON CONFLICT DO NOTHING",
         identity

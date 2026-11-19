@@ -1,4 +1,4 @@
-// The design system's colours (D-182) keep their promises: every text colour reads on every
+// The design system's colours (D-182, D-210) keep their promises: every text colour reads on every
 // ground it is used on, at WCAG AA, and at AAA when the system asks for more contrast; the
 // accent's fill carries its label; status tags read in ink and in plain text; focus rings and
 // the edges of checkboxes and radios stand out (3:1); and the stylesheet stays self-contained (no
@@ -9,10 +9,12 @@ import { join } from 'node:path';
 import { describe, expect, test } from 'vitest';
 import { contrast, type Oklch, parseOklch } from './contrast.ts';
 
-const css = readFileSync(join(import.meta.dirname, '../src/lib/styles.css'), 'utf8');
+// D-210: light and dark live in the token source's copy (tokens.css); the more-contrast overrides stay in styles.css.
+const tokensCss = readFileSync(join(import.meta.dirname, '../src/lib/tokens.css'), 'utf8');
+const stylesCss = readFileSync(join(import.meta.dirname, '../src/lib/styles.css'), 'utf8');
 
 /** The declarations of the first block whose selector is exactly `selector`, after `from`. */
-function block(selector: string, from = 0): Record<string, string> {
+function block(selector: string, from = 0, css = stylesCss): Record<string, string> {
 	const start = css.indexOf(`\n${selector} {`, from) + 1 || css.indexOf(`\t${selector} {`, from) + 1;
 	if (start === 0) throw new Error(`no ${selector} block`);
 	const body = css.slice(css.indexOf('{', start) + 1, css.indexOf('}', start));
@@ -21,9 +23,9 @@ function block(selector: string, from = 0): Record<string, string> {
 	);
 }
 
-const media = css.indexOf('@media (prefers-contrast: more)');
-const light = block(':root');
-const dark = { ...light, ...block('.dark') };
+const media = stylesCss.indexOf('@media (prefers-contrast: more)');
+const light = block(':root', 0, tokensCss);
+const dark = { ...light, ...block('.dark', 0, tokensCss) };
 const lightMore = { ...light, ...block('\t:root:not(.dark)'.trim(), media) };
 const darkMore = { ...dark, ...block('.dark', media) };
 
@@ -49,7 +51,7 @@ const TEXT: [string, string[]][] = [
 	...STATUSES.map((status): [string, string[]] => [`${status}-ink`, [`${status}-soft`, 'card', 'background']]),
 	// The accent as text (links, the selection's label): never the brighter --brand itself.
 	['brand-ink', ['background', 'card', 'popover', 'sidebar', 'brand-soft']],
-	['destructive', ['card', 'background']],
+	['destructive', ['card', 'background', 'popover', 'muted', 'secondary']],
 	['destructive-foreground', ['destructive']]
 ];
 /** Marks that aren't text but must be seen (WCAG 1.4.11, 3:1): the focus ring and the edge of an
@@ -102,15 +104,17 @@ test('every status tone has its four tokens, in light and dark', () => {
 	for (const status of STATUSES) {
 		for (const part of ['', '-ring', '-soft', '-ink']) {
 			expect(light[`${status}${part}`], `--${status}${part}`).toBeDefined();
-			expect(block('.dark')[`${status}${part}`], `dark --${status}${part}`).toBeDefined();
+			expect(block('.dark', 0, tokensCss)[`${status}${part}`], `dark --${status}${part}`).toBeDefined();
 		}
 	}
 });
 
-test('the accent is one hue: its fill, mark, ink and ground agree', () => {
+// D-210: the fill is the maintainer's approved deeper blue (hue 262.881) and the mark the pasted blue (259.903), so
+// "one hue" means within 3 degrees: one blue to the eye, and still 30 degrees from every status (below).
+test('the accent is one hue: its fill, mark, ink and ground agree within 3 degrees', () => {
 	for (const tokens of [light, dark, lightMore, darkMore]) {
-		const hues = ['primary', 'brand', 'brand-ink', 'brand-soft'].map((name) => colour(tokens, name).h);
-		expect(new Set(hues).size).toBe(1);
+		const hues = ['primary', 'brand', 'brand-ink', 'brand-soft', 'link'].map((name) => colour(tokens, name).h);
+		expect(Math.max(...hues) - Math.min(...hues)).toBeLessThanOrEqual(3);
 	}
 });
 
@@ -124,6 +128,8 @@ test('the accent is no status: its hue stays clear of every status hue', () => {
 });
 
 test('the stylesheet loads nothing from another origin', () => {
-	expect(css).not.toMatch(/url\(\s*['"]?https?:/);
-	expect(css).not.toMatch(/@import\s+['"]https?:/);
+	for (const css of [stylesCss, tokensCss]) {
+		expect(css).not.toMatch(/url\(\s*['"]?https?:/);
+		expect(css).not.toMatch(/@import\s+['"]https?:/);
+	}
 });

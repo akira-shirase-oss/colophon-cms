@@ -123,8 +123,9 @@ pub enum PasswordSignIn {
     Refused,
 }
 
-/// Signs in with an email and a password, as a client at `address` (D-150, D-154). The slot
-/// comes first, so a request the password bound sheds costs nothing else. Then one short
+/// Signs in with an email and a password, as a client at `address` (D-150, D-154, D-213). A key
+/// already paused is refused first, with one read and no slot; then the slot, so a request the
+/// password bound sheds costs nothing else. Then one short
 /// transaction counts the attempt against the (staff, email, address) key — refusing at once,
 /// unverified, while that key is paused — and reads the account; Argon2 runs with no
 /// transaction open and no connection held; a match forgets the key. A guesser pauses only
@@ -137,8 +138,16 @@ pub async fn password_sign_in(
     password: &str,
 ) -> Result<PasswordSignIn, DbError> {
     use crate::throttle::{self, Counted, Realm};
+    // A key already paused is refused before it takes a slot (D-213): only work that will
+    // hash holds one.
+    let mut transaction = crate::begin_tx(pool).await.map_err(DbError::from_query)?;
+    let paused = throttle::paused(&mut transaction, Realm::Staff, email, address).await?;
+    transaction.commit().await.map_err(DbError::from_query)?;
+    if paused {
+        return Ok(PasswordSignIn::Refused);
+    }
     let slot = gate.slot().await?;
-    let mut transaction = pool.begin().await.map_err(DbError::from_query)?;
+    let mut transaction = crate::begin_tx(pool).await.map_err(DbError::from_query)?;
     if throttle::count(&mut transaction, Realm::Staff, email, address).await? == Counted::Paused {
         return Ok(PasswordSignIn::Refused);
     }
@@ -158,7 +167,7 @@ pub async fn password_sign_in(
     let Some(row) = row.filter(|_| right) else {
         return Ok(PasswordSignIn::Refused);
     };
-    let mut transaction = pool.begin().await.map_err(DbError::from_query)?;
+    let mut transaction = crate::begin_tx(pool).await.map_err(DbError::from_query)?;
     throttle::clear(&mut transaction, Realm::Staff, email, address).await?;
     sqlx::query!(
         "UPDATE identities SET last_sign_in_at = now() WHERE id = $1",

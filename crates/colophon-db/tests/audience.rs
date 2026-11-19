@@ -798,3 +798,51 @@ async fn a_session_beyond_the_bound_pushes_the_oldest_out() {
     owner.close().await;
     db.drop().await;
 }
+
+/// A paused audience key is refused before it takes a password slot (D-213), as staff's is.
+#[tokio::test]
+#[ignore = "needs the local stack: scripts/stack.sh up"]
+async fn a_paused_site_key_is_refused_without_taking_a_slot() {
+    let db = TestDb::new().await;
+    let (_owner, project) = project(&db).await;
+    let phc = passwords::hashed("correct horse battery")
+        .await
+        .expect("hash");
+    assert!(matches!(
+        audience::sign_up(&db.app, project, "a@b.c", &phc, None, None)
+            .await
+            .expect("sign_up"),
+        audience::SignedUp::Made(_)
+    ));
+    let guesser = "198.51.100.12";
+    for _ in 1..=colophon_db::identity::LOCK_AFTER {
+        audience::sign_in(
+            &db.app,
+            &common::gate(),
+            project,
+            "a@b.c",
+            guesser,
+            "a guess",
+        )
+        .await
+        .expect("sign_in");
+    }
+    let gate = passwords::PasswordGate::with_waiting(1, 0, std::time::Duration::from_millis(50));
+    let held = gate.slot().await.expect("the only slot");
+    assert_eq!(
+        audience::sign_in(
+            &db.app,
+            &gate,
+            project,
+            "a@b.c",
+            guesser,
+            "correct horse battery"
+        )
+        .await
+        .expect("a paused key answers without waiting for a slot"),
+        audience::SignIn::Refused
+    );
+    assert_eq!(gate.available(), 0, "the paused attempt took no slot");
+    drop(held);
+    db.drop().await;
+}

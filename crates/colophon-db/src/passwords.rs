@@ -118,13 +118,14 @@ impl PasswordGate {
         }
     }
 
-    /// The default number of slots: one a core (at least one, at most 64). Argon2 then never
-    /// has more jobs than cores to run them on — the bound is on memory (19 MiB a job) and on
-    /// blocking threads, while the scheduler still shares the cores with delivery, which since
-    /// D-150 never waits behind a verify for a database connection.
+    /// The default number of slots: one fewer than the cores (at least one, at most 64; D-213).
+    /// Argon2 then never has more jobs than cores, and a flood that fills every slot still
+    /// leaves a core for delivery and the rest of the server — the bound is on memory (19 MiB
+    /// a job) and blocking threads as well. `COLOPHON_PASSWORD_CONCURRENCY` overrides it.
     pub fn default_slots() -> usize {
         std::thread::available_parallelism()
             .map_or(2, std::num::NonZeroUsize::get)
+            .saturating_sub(1)
             .clamp(1, 64)
     }
 
@@ -258,6 +259,17 @@ mod tests {
             gate.verify("x", None).await.ok(),
             Some(false),
             "the dummy never matches"
+        );
+    }
+
+    /// Password work leaves a core free (D-213): a flood of sign-ins can take every slot, and
+    /// with one a core it then took every core from delivery.
+    #[test]
+    fn the_default_leaves_a_core_for_everything_else() {
+        let cores = std::thread::available_parallelism().map_or(2, std::num::NonZeroUsize::get);
+        assert_eq!(
+            PasswordGate::default_slots(),
+            cores.saturating_sub(1).clamp(1, 64)
         );
     }
 }

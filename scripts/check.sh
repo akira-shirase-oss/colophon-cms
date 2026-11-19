@@ -33,9 +33,9 @@ else
 fi
 
 if command -v shellcheck >/dev/null; then
-  shellcheck scripts/*.sh
+  shellcheck scripts/*.sh deploy/droplet/*.sh
 elif docker info >/dev/null 2>&1; then
-  docker run --rm -v "$PWD:/mnt:ro" -w /mnt "$SHELLCHECK_IMAGE" scripts/*.sh
+  docker run --rm -v "$PWD:/mnt:ro" -w /mnt "$SHELLCHECK_IMAGE" scripts/*.sh deploy/droplet/*.sh
 else
   echo "note: neither ShellCheck nor Docker is available here; CI runs ShellCheck" >&2
 fi
@@ -98,6 +98,8 @@ elif docker compose -f deploy/compose.yaml ps --quiet 2>/dev/null | grep -q .; t
     PATH="$PATH:$HOME/.local/bin" TOTAL=20000 P99_MS=200 KEEP=0 scripts/load.sh quotas throughput
     # L08's smoke: its arms are time-boxed, so DURATION (per phase) is the knob, not TOTAL.
     PATH="$PATH:$HOME/.local/bin" DURATION=8s P99_MS=500 KEEP=0 scripts/load.sh noisy-agent throughput
+    # D-213's smoke: one address floods sign-in beside anonymous readers; DURATION is per phase.
+    PATH="$PATH:$HOME/.local/bin" DURATION=8s P99_MS=250 KEEP=0 scripts/load.sh password-flood throughput
     PATH="$PATH:$HOME/.local/bin" TOTAL=20000 P99_MS=200 KEEP=0 scripts/load.sh schedules throughput
     PATH="$PATH:$HOME/.local/bin" TOTAL=20000 P99_MS=200 KEEP=0 scripts/load.sh projects throughput
     PATH="$PATH:$HOME/.local/bin" TOTAL=20000 P99_MS=200 KEEP=0 scripts/load.sh changesets throughput

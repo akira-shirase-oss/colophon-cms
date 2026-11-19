@@ -32,7 +32,7 @@ pub const PUMP_BATCH: i64 = 5_000;
 /// lock until its WAL flush, so only this pass takes it, a few times a second. Returns how
 /// many rows it drained.
 pub async fn pump(pool: &PgPool) -> Result<u64, DbError> {
-    let mut transaction = pool.begin().await.map_err(DbError::from_query)?;
+    let mut transaction = crate::begin_tx(pool).await.map_err(DbError::from_query)?;
     let payloads: Vec<String> = sqlx::query_scalar!(
         r#"DELETE FROM change_hints
            WHERE ctid IN (SELECT ctid FROM change_hints LIMIT $1 FOR UPDATE SKIP LOCKED)

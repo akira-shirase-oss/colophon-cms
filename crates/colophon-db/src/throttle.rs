@@ -55,6 +55,47 @@ pub(crate) enum Counted {
     Verify,
 }
 
+/// Whether the key is paused right now, read without a lock and without counting (D-213):
+/// asked before an attempt takes a password slot, so a paused key never holds one. [`count`]
+/// still decides under its lock; this only spares the slot when the answer is already known.
+pub(crate) async fn paused(
+    tx: &mut Transaction<'_, Postgres>,
+    realm: Realm,
+    email: &str,
+    address: &str,
+) -> Result<bool, DbError> {
+    let realm = realm.key();
+    let key = sqlx::query!(
+        r#"SELECT coalesce(locked_until > now(), false) AS "paused!", trusted
+           FROM sign_in_throttle
+           WHERE realm = $1 AND email = $2 AND address = $3"#,
+        realm,
+        email,
+        address
+    )
+    .fetch_optional(&mut **tx)
+    .await
+    .map_err(DbError::from_query)?;
+    if key.as_ref().is_some_and(|key| key.paused) {
+        return Ok(true);
+    }
+    if key.as_ref().is_some_and(|key| key.trusted) {
+        return Ok(false);
+    }
+    let recent = sqlx::query_scalar!(
+        r#"SELECT coalesce(sum(failures), 0)::bigint AS "misses!" FROM sign_in_throttle
+           WHERE realm = $1 AND email = $2 AND NOT trusted
+             AND updated_at > now() - make_interval(secs => $3)"#,
+        realm,
+        email,
+        f64::from(u32::try_from(ACCOUNT_WINDOW.whole_seconds()).unwrap_or(u32::MAX))
+    )
+    .fetch_one(&mut **tx)
+    .await
+    .map_err(DbError::from_query)?;
+    Ok(recent >= ACCOUNT_LOCK_AFTER)
+}
+
 /// Counts one attempt for the key inside `tx`, before any verify. A paused key's attempt
 /// isn't counted (the pause doesn't grow); a pause that ran out starts the count over; the
 /// [`LOCK_AFTER`]th attempt pauses the key for the attempts after it, whatever it turns out

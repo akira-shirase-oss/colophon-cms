@@ -781,7 +781,7 @@ pub struct Applied<'a> {
 /// worker's scan, as it finds due schedules. As `colophon_worker`: the login role's own
 /// policies show a plan only inside its project.
 pub async fn running(pool: &PgPool) -> Result<Vec<RunningPlan>, DbError> {
-    let mut tx = pool.begin().await.map_err(DbError::from_query)?;
+    let mut tx = crate::begin_tx(pool).await.map_err(DbError::from_query)?;
     sqlx::query("SET LOCAL ROLE colophon_worker")
         .execute(&mut *tx)
         .await

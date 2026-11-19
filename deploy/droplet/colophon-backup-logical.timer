@@ -1,0 +1,11 @@
+# Daily, after the ledger export; a missed run (the droplet was off) runs at boot.
+[Unit]
+Description=Daily Colophon logical backup
+
+[Timer]
+OnCalendar=*-*-* 03:47:00 UTC
+RandomizedDelaySec=20min
+Persistent=true
+
+[Install]
+WantedBy=timers.target
