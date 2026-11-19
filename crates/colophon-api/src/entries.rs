@@ -313,6 +313,13 @@ pub(crate) struct ImportQuery {
 /// A locale label is a BCP-47 tag: `en`, `en-US`, `pt-BR` — a language subtag of two or three
 /// letters, then subtags of one to eight letters or digits, at most 35 characters over all
 /// (BCP 47's own bound). The API shape-checks it; there is no locale table to join against.
+/// A locale the API was given, shape-checked and then in its one stored form (D-212): case only,
+/// per BCP 47, so `FR` and `fr` are one locale everywhere a tag is written, matched or listed.
+fn locale_tag(locale: &str) -> Result<String, ApiError> {
+    check_locale(locale)?;
+    Ok(colophon_domain::locale::canonical(locale))
+}
+
 fn check_locale(locale: &str) -> Result<(), ApiError> {
     let shape = locale.len() <= 35
         && locale.split('-').enumerate().all(|(index, tag)| {
@@ -1028,10 +1035,13 @@ pub(crate) async fn create(
     let Json(value) = body?;
     // `?locale=` names the entry's locale; an empty value leaves it unlocalized, like omitting
     // the parameter.
-    let locale = query.locale.as_deref().filter(|locale| !locale.is_empty());
-    if let Some(locale) = locale {
-        check_locale(locale)?;
-    }
+    let locale = query
+        .locale
+        .as_deref()
+        .filter(|locale| !locale.is_empty())
+        .map(locale_tag)
+        .transpose()?;
+    let locale = locale.as_deref();
     let mut tx = open(&state, caller, &path.project, &path.environment).await?;
     // A new entry is the creator's own.
     let create = tx
@@ -1324,7 +1334,8 @@ pub(crate) async fn localize(
         pointer: "/locale",
         message: "name the locale to add, like ?locale=fr".to_owned(),
     })?;
-    check_locale(locale)?;
+    let locale = locale_tag(locale)?;
+    let locale = locale.as_str();
     let mut tx = open(&state, caller, &path.project, &path.environment).await?;
     let create = tx
         .policy
@@ -1654,9 +1665,7 @@ async fn import_create(
             "your role can't create entries here",
         ))?;
     // A Strapi `locale` maps to the entry's tag (D-087), shape-checked before it writes.
-    if let Some(locale) = mapped.locale.as_deref() {
-        check_locale(locale)?;
-    }
+    let locale = mapped.locale.as_deref().map(locale_tag).transpose()?;
     // A single type holds one entry: a create into an occupied one is refused — an update of
     // that entry, by its id, is how it changes.
     if target.content_type.single()
@@ -1690,7 +1699,7 @@ async fn import_create(
         id.unwrap_or_else(Uuid::now_v7),
         target.collection,
         new_revision(&content, &hash, target.version, &unique, None),
-        mapped.locale.as_deref(),
+        locale.as_deref(),
     )
     .await
     .map_err(ApiError::from_db)?;
@@ -1954,10 +1963,9 @@ pub(crate) async fn save(
     let set = query
         .locale
         .as_deref()
-        .map(|locale| (!locale.is_empty()).then_some(locale));
-    if let Some(Some(locale)) = set {
-        check_locale(locale)?;
-    }
+        .map(|locale| (!locale.is_empty()).then(|| locale_tag(locale)).transpose())
+        .transpose()?;
+    let set = set.as_ref().map(|locale| locale.as_deref());
     let mut tx = open(&state, caller, &path.project, &path.environment).await?;
     // `?visibility=` rides the same write like `?locale=`: absent leaves the gate alone.
     let gate = gate(&mut tx, query.visibility.as_deref()).await?;
@@ -2293,8 +2301,8 @@ struct ListArgs<'a> {
     search: Option<&'a str>,
     /// Whose entries were asked for.
     asked: Option<Uuid>,
-    /// The locale to filter on.
-    locale: Option<&'a str>,
+    /// The locale to filter on, canonical (D-212).
+    locale: Option<String>,
 }
 
 /// A list's page size, title search, creator and locale, checked.
@@ -2321,11 +2329,7 @@ fn list_query(query: &ListQuery) -> Result<ListArgs<'_>, ApiError> {
                 .map_err(|_| ApiError::InvalidHeader("created_by must be an identity id"))
         })
         .transpose()?;
-    let locale = query
-        .locale
-        .as_deref()
-        .map(|locale| check_locale(locale).map(|()| locale))
-        .transpose()?;
+    let locale = query.locale.as_deref().map(locale_tag).transpose()?;
     Ok(ListArgs {
         limit,
         search,
@@ -2444,7 +2448,7 @@ pub(crate) async fn list(
         limit + 1,
         search,
         by,
-        locale,
+        locale.as_deref(),
     )
     .await
     .map_err(ApiError::from_db)?;
@@ -2814,6 +2818,17 @@ mod tests {
             map.insert(*name, HeaderValue::from_str(value).expect("ASCII"));
         }
         map
+    }
+
+    #[test]
+    fn a_locale_starts_with_its_language_never_a_singleton() {
+        // The API takes a language subtag first (2–3 letters), so tags that start with a singleton
+        // (`x-…` private use, `i-…` grandfathered) never reach storage through it (D-212).
+        for refused in ["x-ab", "X-AB", "i-klingon", "x", "e-n"] {
+            assert!(check_locale(refused).is_err(), "{refused}");
+        }
+        assert_eq!(locale_tag("PT-br").ok().as_deref(), Some("pt-BR"));
+        assert_eq!(locale_tag("x-ab").ok(), None);
     }
 
     #[test]
