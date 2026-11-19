@@ -204,19 +204,22 @@ pub async fn check_payload(tx: &mut ProjectTransaction) -> Result<(), DbError> {
 /// could take a lock another admission waits on (a content-type change lock, a token-limits
 /// row), the admission locks must come first.
 pub async fn admit(tx: &mut ProjectTransaction, adding: i64) -> Result<(), DbError> {
+    // The early byte refusal reads the unlocked total, so it runs before the project's lock: a
+    // round trip fewer under WA (on a remote database every one held under a lock costs its RTT
+    // to every admission queued behind it).
+    let pending = pending_payload(tx).await?;
+    if pending > MAX_PENDING_PAYLOAD {
+        return Err(DbError::PayloadFull {
+            pending,
+            limit: MAX_PENDING_PAYLOAD,
+        });
+    }
     admission(tx).await?;
     let open = open(tx).await?;
     if open.saturating_add(adding) > MAX_OPEN {
         return Err(DbError::WorkFull {
             open,
             limit: MAX_OPEN,
-        });
-    }
-    let pending = pending_payload(tx).await?;
-    if pending > MAX_PENDING_PAYLOAD {
-        return Err(DbError::PayloadFull {
-            pending,
-            limit: MAX_PENDING_PAYLOAD,
         });
     }
     Ok(())
