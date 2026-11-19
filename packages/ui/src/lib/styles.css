@@ -80,7 +80,7 @@
 		--link: oklch(0.46 0.245 262.881);
 		--brand-ink: oklch(0.46 0.245 262.881);
 		--live-ink: oklch(0.33 0.09 148);
-		--changed-ink: oklch(0.37 0.15 264);
+		--changed-ink: oklch(0.37 0.15 300);
 		--pending-ink: oklch(0.35 0.08 65);
 		--attention-ink: oklch(0.38 0.15 15);
 		--draft-ink: oklch(0.32 0.008 260);
@@ -95,7 +95,7 @@
 		--link: oklch(0.75 0.14 259.9027);
 		--brand-ink: oklch(0.75 0.14 259.9027);
 		--live-ink: oklch(0.93 0.07 148);
-		--changed-ink: oklch(0.92 0.05 264);
+		--changed-ink: oklch(0.92 0.05 300);
 		--pending-ink: oklch(0.94 0.07 88);
 		--attention-ink: oklch(0.93 0.05 15);
 		--draft-ink: oklch(0.94 0.003 260);

@@ -61,11 +61,11 @@
   /* The outline of a checkbox or radio: a control's edge, 3:1 against what it sits on. */
   --control: oklch(0.6650 0.0075 260.7315);
   /* Status: a mark (dot or icon), a ring around it, a ground for its tag, an ink for text. Always with a word:
-     colour is never the only signal. Green is live, blue live with changes, amber on its way, rose needs
+     colour is never the only signal. Green is live, violet live with changes (hue 300: 38° from the blue accent, D-182's 30° rule), amber on its way, rose needs
      attention or was taken down, grey a draft. The light amber mark is deeper than D-182's (0.75 → 0.67) so it
      meets 3:1 on white.  */
   --live: oklch(0.64 0.16 148); --live-ring: oklch(0.9 0.06 148); --live-soft: oklch(0.965 0.025 148); --live-ink: oklch(0.43 0.1 148);
-  --changed: oklch(0.56 0.19 264); --changed-ring: oklch(0.88 0.05 264); --changed-soft: oklch(0.96 0.017 264); --changed-ink: oklch(0.46 0.17 264);
+  --changed: oklch(0.56 0.19 300); --changed-ring: oklch(0.88 0.05 300); --changed-soft: oklch(0.96 0.017 300); --changed-ink: oklch(0.46 0.17 300);
   --pending: oklch(0.6700 0.15 75); --pending-ring: oklch(0.9 0.08 85); --pending-soft: oklch(0.97 0.035 85); --pending-ink: oklch(0.47 0.1 65);
   --attention: oklch(0.6 0.19 15); --attention-ring: oklch(0.89 0.05 15); --attention-soft: oklch(0.965 0.02 15); --attention-ink: oklch(0.49 0.17 15);
   --draft: oklch(0.62 0.01 260); --draft-ring: oklch(0.9 0.004 260); --draft-soft: oklch(0.958 0.003 260); --draft-ink: oklch(0.43 0.008 260);
@@ -96,7 +96,7 @@
   --brand-ink: oklch(0.6510 0.1861 259.9027); --brand-soft: oklch(0.2650 0.0500 259.9027);
   --control: oklch(0.5450 0 0);
   --live: oklch(0.74 0.15 148); --live-ring: oklch(0.38 0.07 148); --live-soft: oklch(0.26 0.04 148); --live-ink: oklch(0.86 0.1 148);
-  --changed: oklch(0.7 0.14 264); --changed-ring: oklch(0.38 0.08 264); --changed-soft: oklch(0.26 0.045 264); --changed-ink: oklch(0.86 0.07 264);
+  --changed: oklch(0.7 0.14 300); --changed-ring: oklch(0.38 0.08 300); --changed-soft: oklch(0.26 0.045 300); --changed-ink: oklch(0.86 0.07 300);
   --pending: oklch(0.82 0.14 80); --pending-ring: oklch(0.4 0.07 75); --pending-soft: oklch(0.28 0.045 75); --pending-ink: oklch(0.89 0.1 85);
   --attention: oklch(0.7 0.17 15); --attention-ring: oklch(0.4 0.08 15); --attention-soft: oklch(0.27 0.055 15); --attention-ink: oklch(0.87 0.08 15);
   --draft: oklch(0.66 0.01 260); --draft-ring: oklch(0.36 0.01 260); --draft-soft: oklch(0.25 0.008 260); --draft-ink: oklch(0.86 0.006 260);

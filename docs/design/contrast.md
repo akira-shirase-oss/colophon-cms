@@ -32,9 +32,9 @@ marks need 3:1 (1.4.11).
 | light | `--live-ink` #205E2E | `--live-soft` #E9F8EA | text | 7.06:1 | 4.5:1 | pass |
 | light | `--live-ink` #205E2E | `--background` #FFFFFF | text | 7.75:1 | 4.5:1 | pass |
 | light | `--live-ink` #205E2E | `--card` #FFFFFF | text | 7.75:1 | 4.5:1 | pass |
-| light | `--changed-ink` #244EB5 | `--changed-soft` #ECF2FE | text | 6.58:1 | 4.5:1 | pass |
-| light | `--changed-ink` #244EB5 | `--background` #FFFFFF | text | 7.39:1 | 4.5:1 | pass |
-| light | `--changed-ink` #244EB5 | `--card` #FFFFFF | text | 7.39:1 | 4.5:1 | pass |
+| light | `--changed-ink` #6938A7 | `--changed-soft` #F3EFFC | text | 6.87:1 | 4.5:1 | pass |
+| light | `--changed-ink` #6938A7 | `--background` #FFFFFF | text | 7.75:1 | 4.5:1 | pass |
+| light | `--changed-ink` #6938A7 | `--card` #FFFFFF | text | 7.75:1 | 4.5:1 | pass |
 | light | `--pending-ink` #804D0C | `--pending-soft` #FFF4DB | text | 6.41:1 | 4.5:1 | pass |
 | light | `--pending-ink` #804D0C | `--background` #FFFFFF | text | 7.01:1 | 4.5:1 | pass |
 | light | `--pending-ink` #804D0C | `--card` #FFFFFF | text | 7.01:1 | 4.5:1 | pass |
@@ -65,8 +65,8 @@ marks need 3:1 (1.4.11).
 | light | `--control` #919498 | `--card` #FFFFFF | non-text | 3.05:1 | 3:1 | pass |
 | light | `--live` #33A550 | `--background` #FFFFFF | non-text | 3.15:1 | 3:1 | pass |
 | light | `--live` #33A550 | `--card` #FFFFFF | non-text | 3.15:1 | 3:1 | pass |
-| light | `--changed` #386BE2 | `--background` #FFFFFF | non-text | 4.83:1 | 3:1 | pass |
-| light | `--changed` #386BE2 | `--card` #FFFFFF | non-text | 4.83:1 | 3:1 | pass |
+| light | `--changed` #8851D1 | `--background` #FFFFFF | non-text | 5.08:1 | 3:1 | pass |
+| light | `--changed` #8851D1 | `--card` #FFFFFF | non-text | 5.08:1 | 3:1 | pass |
 | light | `--pending` #CA8500 | `--background` #FFFFFF | non-text | 3.06:1 | 3:1 | pass |
 | light | `--pending` #CA8500 | `--card` #FFFFFF | non-text | 3.06:1 | 3:1 | pass |
 | light | `--attention` #D93F5A | `--background` #FFFFFF | non-text | 4.35:1 | 3:1 | pass |
@@ -99,9 +99,9 @@ marks need 3:1 (1.4.11).
 | dark | `--live-ink` #A4E4AC | `--live-soft` #162919 | text | 10.38:1 | 4.5:1 | pass |
 | dark | `--live-ink` #A4E4AC | `--background` #171717 | text | 12.14:1 | 4.5:1 | pass |
 | dark | `--live-ink` #A4E4AC | `--card` #262626 | text | 10.25:1 | 4.5:1 | pass |
-| dark | `--changed-ink` #BAD1FF | `--changed-soft` #19233A | text | 10.15:1 | 4.5:1 | pass |
-| dark | `--changed-ink` #BAD1FF | `--background` #171717 | text | 11.68:1 | 4.5:1 | pass |
-| dark | `--changed-ink` #BAD1FF | `--card` #262626 | text | 9.86:1 | 4.5:1 | pass |
+| dark | `--changed-ink` #D8C7F9 | `--changed-soft` #271F37 | text | 10.09:1 | 4.5:1 | pass |
+| dark | `--changed-ink` #D8C7F9 | `--background` #171717 | text | 11.50:1 | 4.5:1 | pass |
+| dark | `--changed-ink` #D8C7F9 | `--card` #262626 | text | 9.71:1 | 4.5:1 | pass |
 | dark | `--pending-ink` #F9D68C | `--pending-soft` #36250D | text | 10.51:1 | 4.5:1 | pass |
 | dark | `--pending-ink` #F9D68C | `--background` #171717 | text | 12.85:1 | 4.5:1 | pass |
 | dark | `--pending-ink` #F9D68C | `--card` #262626 | text | 10.84:1 | 4.5:1 | pass |
@@ -132,8 +132,8 @@ marks need 3:1 (1.4.11).
 | dark | `--control` #707070 | `--card` #262626 | non-text | 3.05:1 | 3:1 | pass |
 | dark | `--live` #60C473 | `--background` #171717 | non-text | 8.23:1 | 3:1 | pass |
 | dark | `--live` #60C473 | `--card` #262626 | non-text | 6.95:1 | 3:1 | pass |
-| dark | `--changed` #719CF5 | `--background` #171717 | non-text | 6.62:1 | 3:1 | pass |
-| dark | `--changed` #719CF5 | `--card` #262626 | non-text | 5.59:1 | 3:1 | pass |
+| dark | `--changed` #AC89E8 | `--background` #171717 | non-text | 6.39:1 | 3:1 | pass |
+| dark | `--changed` #AC89E8 | `--card` #262626 | non-text | 5.39:1 | 3:1 | pass |
 | dark | `--pending` #F3B94C | `--background` #171717 | non-text | 10.14:1 | 3:1 | pass |
 | dark | `--pending` #F3B94C | `--card` #262626 | non-text | 8.56:1 | 3:1 | pass |
 | dark | `--attention` #F56B7C | `--background` #171717 | non-text | 6.20:1 | 3:1 | pass |
