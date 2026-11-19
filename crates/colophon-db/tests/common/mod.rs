@@ -138,6 +138,8 @@ impl TestDb {
             .execute(&admin)
             .await
             .expect("create database");
+        // As in `new`: however the test ends, the database goes with it (D-195).
+        let guard = DropGuard::new(&name);
         let owner = PgPool::connect(&format!("postgres://colophon:colophon-dev@{host}/{name}"))
             .await
             .expect("connect as owner");
@@ -164,7 +166,12 @@ impl TestDb {
             ))
             .await
             .expect("connect as the application login");
-        Self { admin, name, app }
+        Self {
+            admin,
+            name,
+            app,
+            guard,
+        }
     }
 
     /// A pool for the table owner, which row-level security doesn't apply to.
