@@ -167,7 +167,7 @@ export default function (data) {
         // A delete of an upload still being verified is refused, honestly: not a failed request.
         responseCallback: http.expectedStatuses(202, 409),
       }));
-      const quarantined = gone.status === 409 && gone.json('error.code') === 'asset_quarantined';
+      const quarantined = gone.status === 409 && gone.json('error.details.reason') === 'asset_quarantined';
       if (quarantined) notYetVerified.add(1);
       check(gone, {
         'delete 202, or 409 asset_quarantined (not yet verified)': (r) => r.status === 202 || quarantined,
