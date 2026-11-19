@@ -82,7 +82,7 @@
 # served by its runner while a release is published every two seconds; needs node).
 #
 # Environment overrides: TOTAL, VUS, RATE, DURATION, P99_MS (the k6 latency threshold),
-# KEEP=0 (don't write a result file; for CI smoke runs), LOAD_LOG (the server's log level, default
+# KEEP=0 (don't write a result file; for CI smoke runs), RECORD_OUT (also write the run's record there), LOAD_LOG (the server's log level, default
 # warn; the warning gate counts WARN and ERROR lines either way), LOAD_PORT (default 58090),
 # SERVER_LOG=<path> (keep the server's log there); DRILL_WINDOWS=<path> names the
 # soak-sidecar.sh windows JSONL — with it, mixed.js excuses failures inside the drill
@@ -873,6 +873,8 @@ record=$(jq -c \
        ({}; . + {($e.key): $e.value}))' "$work/summary.json")
 
 echo "$record" | jq .
+# RECORD_OUT: the record as a file too, for a caller that judges it (CI's smoke verdict, D-209).
+if [[ -n "${RECORD_OUT:-}" ]]; then echo "$record" >"$RECORD_OUT"; fi
 
 if [[ "${KEEP:-1}" == "1" ]]; then
   mkdir -p perf/results perf/baselines

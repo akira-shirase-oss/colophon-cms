@@ -416,7 +416,7 @@ jobs:
             pgq -c "SELECT pg_stat_statements_reset()" >/dev/null || true
             (while :; do docker stats --no-stream --format '{{.CPUPerc}}' "$pgc" 2>/dev/null; sleep 1; done) >"$logs/$name.postgres-cpu.txt" &
             sampler=$!
-            if env SERVER_LOG="$logs/$name.server.log" "$@"; then echo "::endgroup::"; else
+            if env SERVER_LOG="$logs/$name.server.log" RECORD_OUT="$logs/$name.record.json" "$@"; then echo "::endgroup::"; else
               echo "::endgroup::"; echo "::warning::smoke failed: $* (the verdict below decides whether it was expected)"; failed+=("$name")
               # The work tables as the failure left them: what was queued, claimed, retried.
               docker compose -f deploy/compose.yaml exec -T postgres psql -U colophon -d colophon -XAq \
@@ -424,6 +424,10 @@ jobs:
                 -c "SELECT state, count(*) FROM assets GROUP BY 1" >"$logs/$name.work-tables.txt" 2>&1 || true
             fi
             kill "$sampler" 2>/dev/null || true
+            # What the verdict judges a flapping smoke by: its overall p99 and L08's worst noise/baseline ratio.
+            if [[ -s "$logs/$name.record.json" ]]; then
+              jq -r --arg n "$name" '[$n, (.latency_ms.p99 // ""), ([.l08.ratios[]?] | max // "")] | @tsv' "$logs/$name.record.json" >>"$logs/metrics.tsv"
+            fi
             echo "$(date -u +%FT%TZ) end $name" >>"$logs/windows.txt"
             pgq -c "SELECT round(total_exec_time::numeric, 1) AS total_ms, calls, round(mean_exec_time::numeric, 3) AS mean_ms, rows, left(regexp_replace(query, '\\s+', ' ', 'g'), 160) FROM pg_stat_statements ORDER BY total_exec_time DESC LIMIT 10" \
               >"$logs/$name.statements.txt" 2>&1 || true
@@ -454,9 +458,10 @@ jobs:
           smoke DURATION=15s P99_MS=250 scripts/load.sh stampede throughput
           smoke TOTAL=50000 P99_MS=350 scripts/load.sh warm-baseline throughput
           echo "| failed smokes | ${failed[*]:-none} (of ${#ran[@]} that ran) |" >>"$GITHUB_STEP_SUMMARY"
-          # STRICT (D-209 addendum): the failures must be exactly the listed debts, each with its decision and owner;
-          # an unlisted failure fails, and so does a listed smoke that passed (its fix removes its line).
-          scripts/smoke-verdict.sh perf/expected-smoke-failures.tsv "${ran[*]}" "${failed[*]:-}" | tee "$logs/verdict.txt"
+          # D-209 addendum: a strict entry must fail (its fix removes its line); a flapping one may pass or fail its limit
+          # but never its ceiling (2x); anything unlisted that fails, fails. Each listed smoke's outcome and margin print.
+          touch "$logs/metrics.tsv"
+          scripts/smoke-verdict.sh perf/expected-smoke-failures.tsv "${ran[*]}" "${failed[*]:-}" "$logs/metrics.tsv" | tee -a "$logs/verdict.txt" "$GITHUB_STEP_SUMMARY"
       - name: Service logs
         if: failure()
         run: docker compose -f deploy/compose.yaml logs --no-color --tail 300
