@@ -45,8 +45,11 @@ ARG COLOPHON_COMMIT=unknown
 ARG SOURCE_DATE_EPOCH
 # Cargo's own default (one job a core) unless a busy machine asks for fewer.
 ARG CARGO_BUILD_JOBS=default
+# SOURCE_DATE_EPOCH stays an ARG: set as ENV it would be an empty string when the build doesn't pass it, which
+# libmimalloc-sys's build refuses ("must expand to a non-negative integer"). The build below exports it only when
+# given, so a reproducible build (release.yml passes the commit's time) keeps it and the README's plain
+# `docker build` works without it. Never a default of 0: a 1970 build date would be a lie.
 ENV COLOPHON_COMMIT=$COLOPHON_COMMIT \
-    SOURCE_DATE_EPOCH=$SOURCE_DATE_EPOCH \
     CARGO_BUILD_JOBS=$CARGO_BUILD_JOBS \
     CARGO_TERM_COLOR=never
 # The image's compiler is the pinned one (D-013): refuse to build with anything else.
@@ -56,7 +59,8 @@ RUN channel=$(sed -n 's/^channel = "\(.*\)"$/\1/p' rust-toolchain.toml); \
     fi
 RUN --mount=type=cache,target=/usr/local/cargo/registry \
     --mount=type=cache,target=/src/target \
-    RUSTUP_TOOLCHAIN="$(sed -n 's/^channel = "\(.*\)"$/\1/p' rust-toolchain.toml)" \
+    if [ -n "${SOURCE_DATE_EPOCH:-}" ]; then export SOURCE_DATE_EPOCH; else unset SOURCE_DATE_EPOCH; fi \
+    && RUSTUP_TOOLCHAIN="$(sed -n 's/^channel = "\(.*\)"$/\1/p' rust-toolchain.toml)" \
     cargo build --release --locked -p colophon-cli -p colophon-server \
     && mkdir /out \
     && cp target/release/colophon target/release/colophon-server /out/ \

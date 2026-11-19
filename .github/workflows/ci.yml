@@ -553,15 +553,23 @@ jobs:
           < deploy/image/Dockerfile
       - name: The quick start's compose file is valid
         run: COLOPHON_IMAGE=colophon:local docker compose -f deploy/quickstart/compose.yaml config --quiet
-      - name: Build the image from source (deploy/image/Dockerfile)
+      # The README's own build command, read from README.md and run exactly as written, with no build arguments:
+      # the newcomer's path, so the docs and the test can't drift apart (a missing SOURCE_DATE_EPOCH broke it once;
+      # release.yml keeps building with the commit's time for reproducible images). The rest of this job uses this
+      # image.
+      - name: Build the image from source, with the README's exact command
         run: |
           set -euo pipefail
+          command=$(grep -m1 -E '^docker build -f deploy/image/Dockerfile ' README.md || true)
+          if [[ -z $command || $command =~ [\;\&\|\$\`\<\>] || $command != *" -t colophon:local ." ]]; then
+            echo "::error::README.md has no plain 'docker build -f deploy/image/Dockerfile ... -t colophon:local .' line (found '$command')"
+            exit 1
+          fi
+          echo "Running the README's command: $command"
           t0=$SECONDS
-          docker build -f deploy/image/Dockerfile \
-            --build-arg COLOPHON_COMMIT="$GITHUB_SHA" \
-            --build-arg SOURCE_DATE_EPOCH="$(git log -1 --format=%ct)" \
-            -t colophon:local .
-          echo "Image built from source in $((SECONDS - t0)) s" >>"$GITHUB_STEP_SUMMARY"
+          read -ra words <<<"$command"
+          "${words[@]}"
+          echo "Image built from source, as the README says, in $((SECONDS - t0)) s" >>"$GITHUB_STEP_SUMMARY"
           docker run --rm --entrypoint /usr/local/bin/colophon-server colophon:local --version
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
