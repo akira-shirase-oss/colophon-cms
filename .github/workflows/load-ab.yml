@@ -1,0 +1,116 @@
+name: load A/B (per-VU __ITER against the scenario-wide iteration)
+
+# On demand: re-measure load scenarios whose mix or targets were chosen from __ITER, which counts
+# per VU, against the same scenario choosing from exec.scenario.iterationInTest, on ONE runner, so
+# the only difference between the two numbers is the selection. The per-VU variant is the fixed
+# script with exec.scenario.iterationInTest turned back into __ITER (sed, in place, restored after),
+# so both carry the same instrumentation and scripts/load.sh's per-endpoint settings apply to both.
+# Each command runs per-vu, fixed, per-vu, fixed (ABAB), so an order effect (a warmer stack on a
+# later run) shows. cold-cache's corpus coverage is counted from k6's JSON output: the distinct
+# `entry` tags of l03_entry_reads.
+# A workflow can be dispatched only once it's on the default branch, so a push to a load-ab/** branch
+# runs it too, with the default commands.
+on:
+  push:
+    branches: ["load-ab/**"]
+  workflow_dispatch:
+    inputs:
+      commands:
+        description: "scripts/load.sh commands, one per line (env assignments first)"
+        default: |
+          TOTAL=30000 scripts/load.sh cold-cache throughput
+          scripts/load.sh noisy-agent steady
+        required: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: load-ab-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  ab:
+    name: load A/B on one runner
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      # As in ci.yml's integration job: outgoing ports below the stack's.
+      - name: Keep outgoing ports below the stack's
+        run: sudo sysctl -w net.ipv4.ip_local_port_range="20000 50999"
+      - name: Start the stack and run its checks
+        run: scripts/stack.sh up
+      - name: Install the pinned toolchain
+        run: |
+          channel=$(sed -n 's/^channel = "\(.*\)"$/\1/p' rust-toolchain.toml)
+          rustup toolchain install "$channel" --profile minimal
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+      - name: Migrate the stack's database
+        run: scripts/migrate.sh
+      - name: Per-VU and scenario-wide selection, ABAB
+        env:
+          COMMANDS: ${{ inputs.commands }}
+        run: |
+          set -o pipefail
+          scripts/install-k6.sh "$RUNNER_TEMP/bin"
+          export PATH="$RUNNER_TEMP/bin:$PATH" KEEP=0
+          out="$RUNNER_TEMP/load-ab"; mkdir -p "$out"
+          { echo "| runner | $(sed -n 's/^model name[[:space:]]*: //p' /proc/cpuinfo | head -1), $(nproc) CPUs |"
+            echo "| scenario | variant | run | requests | req/s | p95 ms | p99 ms | failed | evidence |"
+            echo "|---|---|---|---:|---:|---:|---:|---:|---|"; } >>"$GITHUB_STEP_SUMMARY"
+          status=0
+          # A push carries no inputs: the defaults, the two scenarios a published figure came from.
+          [[ -n "${COMMANDS// }" ]] || COMMANDS=$'TOTAL=30000 scripts/load.sh cold-cache throughput\nscripts/load.sh noisy-agent steady'
+          while IFS= read -r line; do
+            [[ -n "${line// }" ]] || continue
+            read -r -a words <<<"$line"
+            endpoint=${words[-2]} script="perf/k6/${words[-2]}.js"
+            [[ -f "$script" ]] || { echo "::error::no $script for: $line"; status=1; continue; }
+            cp "$script" "$out/$endpoint.fixed.js"
+            for run in 1 2; do
+              for variant in per-vu fixed; do
+                if [[ "$variant" == per-vu ]]; then
+                  sed 's/exec\.scenario\.iterationInTest/__ITER/g' "$out/$endpoint.fixed.js" >"$script"
+                else
+                  cp "$out/$endpoint.fixed.js" "$script"
+                fi
+                tag="$endpoint.$variant.$run"
+                echo "::group::$tag: $line"
+                env K6_OUT="json=$out/$tag.k6.json" RECORD_OUT="$out/$tag.record.json" SERVER_LOG="$out/$tag.server.log" \
+                  bash -c "$line" || echo "::warning::$tag failed its own verdict (recorded, not hidden)"
+                echo "::endgroup::"
+                evidence=""
+                if [[ "$endpoint" == cold-cache && -s "$out/$tag.k6.json" ]]; then
+                  distinct=$(jq -r 'select(.type == "Point" and .metric == "l03_entry_reads") | .data.tags.entry' "$out/$tag.k6.json" | sort -u | wc -l)
+                  corpus=$(jq -r '.l03.corpus_entries // empty' "$out/$tag.record.json" 2>/dev/null || true)
+                  evidence="entries read: $distinct${corpus:+ of $corpus}"
+                elif [[ "$endpoint" == noisy-agent && -s "$out/$tag.record.json" ]]; then
+                  evidence=$(jq -r '.l08.ratios | to_entries | map("\(.key) \(.value)") | join("; ")' "$out/$tag.record.json" 2>/dev/null || true)
+                fi
+                # The JSON stream is large and has served its count; the record and the log stay.
+                rm -f "$out/$tag.k6.json"
+                if [[ -s "$out/$tag.record.json" ]]; then
+                  jq -r --arg e "$endpoint" --arg v "$variant" --arg r "$run" --arg ev "$evidence" \
+                    '"| \($e) | \($v) | \($r) | \(.requests) | \(.rps) | \(.latency_ms.p95) | \(.latency_ms.p99) | \(.failed) | \($ev) |"' \
+                    "$out/$tag.record.json" >>"$GITHUB_STEP_SUMMARY"
+                else
+                  echo "| $endpoint | $variant | $run | no record | | | | | $evidence |" >>"$GITHUB_STEP_SUMMARY"; status=1
+                fi
+              done
+            done
+            cp "$out/$endpoint.fixed.js" "$script"
+          done <<<"$COMMANDS"
+          exit "$status"
+      - name: Keep the records
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: load-ab
+          path: ${{ runner.temp }}/load-ab
+          retention-days: 30

@@ -48,6 +48,10 @@ const fills = {
 };
 const coldReads = new Counter('l03_cold_reads');
 const bypassReads = new Counter('l03_bypass_reads');
+// Which corpus entries the cold reads asked for, one point per entry tagged with its index: the
+// corpus a run actually covered is the distinct `entry` tags in k6's JSON output (K6_OUT=json=...).
+// A run that reads the same few entries over and over warms Postgres's buffers and reads fast.
+const entryReads = new Counter('l03_entry_reads');
 // A cold read that came back `bypass` with rows: still one Postgres fill for a unique key,
 // but the cache was flapping (a >100 ms Valkey call drops the link for about a second —
 // valkey.rs) so the answer wasn't stored. Counted and bounded: a cold run must still
@@ -180,6 +184,8 @@ export default function (data) {
     const b = (exec.scenario.iterationInTest * 7 + 3) % data.corpus;
     const res = http.post(data.query, JSON.stringify({ filters: [{ field: 'headline', op: 'in', value: [`Post ${a}`, `Post ${b}`, decoy] }], limit: 5 }), params('cold'));
     coldReads.add(1);
+    entryReads.add(1, { entry: String(a) });
+    entryReads.add(1, { entry: String(b) });
     const ok = check(res, {
       'cold 200': (r) => r.status === 200,
       'cold answers the real posts': (r) => r.json('data').length === 2,
