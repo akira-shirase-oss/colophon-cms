@@ -6,7 +6,8 @@
 # `docker compose -f deploy/compose.yaml` reaches the same everyday stack. A gate run from a
 # worktree once restarted another person's Postgres that way. The stack counts as ours only when:
 #
-#   - CI is set (the job made its own stack), or
+#   - CI=true, exactly (the job made its own stack; GitHub sets it so — CI=false, 0 or 1 doesn't
+#     count, D-187b), or
 #   - COMPOSE_PROJECT_NAME names a project other than `colophon` (a stack of our own), or
 #   - COLOPHON_STACK_OWNER=1 (whoever owns the everyday stack says so, for their own runs).
 #
@@ -15,7 +16,7 @@
 
 # 0 when the stack this checkout's compose file reaches is ours to stop or reconfigure.
 stack_is_ours() {
-  [[ -n "${CI:-}" ]] && return 0
+  [[ "${CI:-}" == true ]] && return 0
   [[ -n "${COMPOSE_PROJECT_NAME:-}" && "${COMPOSE_PROJECT_NAME}" != colophon ]] && return 0
   [[ "${COLOPHON_STACK_OWNER:-}" == 1 ]] && return 0
   return 1
