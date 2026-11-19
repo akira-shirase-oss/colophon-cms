@@ -1331,8 +1331,6 @@ export interface Release {
 	label: 'published' | 'pending' | 'verified' | 'needs_attention';
 	/** How many distinct locations a probe saw this release, or a later one, from. */
 	locations: number;
-	/** The release it undid, when Undo made it (D-184). */
-	undo_of: number | null;
 }
 
 /** One destination's part in delivering a release. */
