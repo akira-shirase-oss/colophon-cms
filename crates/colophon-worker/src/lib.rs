@@ -1871,6 +1871,13 @@ impl Worker {
                 }
                 continue;
             }
+            // D-218's evidence: how many each claim took against the slots free for it.
+            tracing::debug!(
+                claimed = claimed.len(),
+                free,
+                slots = IMAGE_SLOTS,
+                "asset jobs claimed"
+            );
             let mut permit = Some(first);
             for job in claimed {
                 let held = match permit.take() {
@@ -1903,17 +1910,33 @@ impl Worker {
         let Some(store) = self.settings.assets.clone() else {
             return;
         };
+        let started = std::time::Instant::now();
+        self.attempt_asset_kind(&job, attempts, &store, asked_at)
+            .await;
+        // D-218's evidence: the attempt's own time, joined by job id with the job's
+        // created-to-finished time in asset_jobs, splits the wait from the work.
+        tracing::debug!(job = %job.id, kind = %job.kind, attempt = attempts, work_ms = started.elapsed().as_millis(), "asset attempt done");
+    }
+
+    /// The attempt itself, by the job's kind.
+    async fn attempt_asset_kind(
+        &self,
+        job: &colophon_db::assets::Claimed,
+        attempts: u32,
+        store: &colophon_media::Shared,
+        asked_at: std::time::Instant,
+    ) {
         match job.kind.as_str() {
             // A reverify is a verify: the job's own quarantine key and upload metadata are what
             // `claim` coalesced into the attempt, and the landing decides first- versus
             // replacement-version by the state it meets (D-136).
-            "verify" | "reverify" => self.verify(&job, attempts, &store, asked_at).await,
-            "delete" | "expire" => self.remove(&job, attempts, &store, asked_at).await,
+            "verify" | "reverify" => self.verify(job, attempts, store, asked_at).await,
+            "delete" | "expire" => self.remove(job, attempts, store, asked_at).await,
             other => {
                 tracing::warn!(job = %job.id, kind = %other, "an asset job kind this worker doesn't do");
                 let _ = self
                     .finish_asset(
-                        &job,
+                        job,
                         attempts,
                         "failed",
                         Some("an asset job kind this worker doesn't do"),
@@ -1934,9 +1957,12 @@ impl Worker {
         asked_at: std::time::Instant,
     ) {
         let budget = self.settings.attempt.saturating_sub(asked_at.elapsed());
+        let fetching = std::time::Instant::now();
         let Some(bytes) = self.quarantined(job, attempts, store, budget).await else {
             return;
         };
+        let fetch_ms = fetching.elapsed().as_millis();
+        let decoding = std::time::Instant::now();
         // The decode is CPU-bound and its own worst case is bounded (20 MiB in, strict limits
         // out); it runs on a blocking thread so a pathological file never stalls this worker.
         let checked =
@@ -1952,7 +1978,11 @@ impl Worker {
                     &job.asset_id.to_string(),
                     &colophon_media::sha_hex(&verified.sha256),
                 );
+                let decode_ms = decoding.elapsed().as_millis();
+                let landing = std::time::Instant::now();
                 self.promote(job, attempts, store, key, verified).await;
+                // D-218's evidence: where a verify's time goes.
+                tracing::debug!(job = %job.id, fetch_ms, decode_ms, land_ms = landing.elapsed().as_millis(), "asset verified");
             }
             Ok(Err(reason)) => {
                 let _ = self
