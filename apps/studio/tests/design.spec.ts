@@ -157,13 +157,13 @@ test("the Studio makes no requests to anyone else: the font is self-hosted", asy
   expect(
     await page.evaluate(() => getComputedStyle(document.body).fontFamily),
   ).toContain("Inter Variable");
-  // Page titles are Inter like everything else people read (D-210: DM Sans and JetBrains Mono are gone), and
-  // neither old face is loaded. Geist Pixel is the brand's title face: present, but only where the wordmark is.
+  // A page title the Studio names is Geist Pixel, the website's display face (D-210 addendum, Studio v2); the text
+  // people read is Inter, and neither old face (DM Sans, JetBrains Mono) is loaded.
   expect(
     await page.evaluate(
-      () => getComputedStyle(document.querySelector("h1") ?? document.body).fontFamily,
+      () => getComputedStyle(document.querySelector("h1.page-title") ?? document.body).fontFamily,
     ),
-  ).toMatch(/^"?Inter Variable"?,/);
+  ).toMatch(/^"?Geist Pixel"?,/);
   expect(
     await page.evaluate(async () => {
       await document.fonts.ready;

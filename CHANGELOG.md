@@ -31,6 +31,11 @@ through `--version` and `GET /version`.
 
 ### Performance
 
+- **An API token over its request quota no longer costs the database anything** (D-214). After
+  its first refusal, a token that keeps sending is refused from memory and the rate limiter alone
+  until its `Retry-After` runs out, so an agent stuck in a retry loop can't slow other projects'
+  requests by queuing for database connections. The answer is the same `429` with `Retry-After`.
+
 - Reads of what was live at a release use two index ranges instead of scanning publication
   history, and a rollback's pins are cut to the page before they meet the revisions; a new
   partial index (migration 0072) keeps the open set index-only. At 100k publication rows a

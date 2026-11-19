@@ -162,7 +162,9 @@
 	});
 </script>
 
-<Sidebar.Provider>
+<!-- One continuous surface (Studio v2): the sidebar takes the page's own ground, and the content no longer sits
+     in a bordered, rounded, inset panel; spacing alone separates them, and the top bar keeps its one hairline. -->
+<Sidebar.Provider style="--sidebar: var(--background)">
 	<Sidebar.Root variant="inset" collapsible="icon">
 		<!-- One landmark for the whole sidebar, so screen-reader users can jump to it. -->
 		<nav aria-label="Project" class="flex min-h-0 flex-1 flex-col">
@@ -369,8 +371,8 @@
 		</nav>
 	</Sidebar.Root>
 
-	<Sidebar.Inset class="min-w-0 border border-sidebar-border">
-		<header class="sticky top-0 z-10 flex h-14 shrink-0 items-center gap-2 rounded-t-2xl border-b border-border bg-background/90 px-4 backdrop-blur">
+	<Sidebar.Inset class="min-w-0 md:peer-data-[variant=inset]:m-0 md:peer-data-[variant=inset]:shadow-none md:peer-data-[variant=inset]:peer-data-[state=collapsed]:ml-0">
+		<header class="sticky top-0 z-10 flex h-14 shrink-0 items-center gap-2 border-b border-border bg-background/90 px-4 backdrop-blur">
 			<Sidebar.Trigger class="-ml-1 mr-1" aria-label="Toggle sidebar" />
 			<Breadcrumb.Root>
 				<Breadcrumb.List>

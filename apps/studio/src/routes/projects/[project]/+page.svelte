@@ -72,7 +72,7 @@
 
 <svelte:head><title>{mine.data?.name ?? 'Overview'} · Colophon Studio</title></svelte:head>
 
-<PageHeader title={mine.data?.name ?? 'Overview'}>
+<PageHeader title={mine.data?.name ?? 'Overview'} display>
 	{#snippet meta()}
 		{#if mine.data}
 			<span>{mine.data.slug}</span>
@@ -161,10 +161,10 @@
 					<Problem error={firstError ?? new Error('')} what={failed.map((type) => type.definition.name).join(', ')} retry={() => lists.forEach((list) => list.isError && list.refetch())} />
 				</div>
 			{/if}
-			<div class="stagger overflow-hidden rounded-xl border border-border bg-card" class:hidden={recent.length === 0}>
+			<div class="stagger section-ground overflow-hidden rounded-xl border border-border" class:hidden={recent.length === 0}>
 				{#each recent as { type, entry }, index (entry.id)}
 					<a
-						class="rule-dotted flex items-center gap-3 px-4 py-3 transition-colors last:border-b-0 hover:bg-muted/50"
+						class="rule-dotted flex items-center gap-3 px-4 py-3 transition-colors last:border-b-0 hover:bg-[var(--surface-section-hover)]"
 						style="--i: {index}"
 						href={resolve('/projects/[project]/[collection]/[entry]', { project, collection: type.slug, entry: entry.id })}
 					>
@@ -195,7 +195,7 @@
 						Everything written here appears in this list, newest first.
 						{#snippet action()}
 							{#if main && may(mine.data, 'content.create', main.slug)}
-								<Button href={resolve('/projects/[project]/[collection]', { project, collection: main.slug }) + '?new=1'}>Write the first {oneOf(main.definition.name)}</Button>
+								<Button variant="outline" href={resolve('/projects/[project]/[collection]', { project, collection: main.slug }) + '?new=1'}>Write the first {oneOf(main.definition.name)}</Button>
 							{/if}
 						{/snippet}
 					</EmptyState>
@@ -214,7 +214,7 @@
 				<ul class="space-y-2">
 					{#each waiting.slice(0, 5) as set (set.id)}
 						<li>
-							<a class="lift block rounded-lg border border-border bg-card p-3 hover:border-foreground/20" href={resolve('/projects/[project]/changesets/[changeset]', { project, changeset: set.id })}>
+							<a class="lift section-ground block rounded-lg border border-border p-3 hover:border-foreground/20" href={resolve('/projects/[project]/changesets/[changeset]', { project, changeset: set.id })}>
 								<span class="block truncate text-sm font-medium">{set.title}</span>
 								<span class="mt-1.5 flex items-center justify-between gap-2">
 									<ChangesetBadge state={set.status.state} />
@@ -258,16 +258,20 @@
 {/if}
 
 <style>
-	/* The design system's card (D-182): its padding and radius tokens, a hairline, flat. */
+	/* The design system's card (D-182): its padding and radius tokens, a hairline, flat; on the website's
+	   section ground (D-210 addendum, Studio v2). */
 	.stat {
 		display: flex;
 		flex-direction: column;
-		gap: 0.375rem;
-		padding: var(--card-padding-sm) var(--card-padding);
+		gap: 0.5rem;
+		padding: var(--card-padding);
 		border: 1px solid var(--border);
 		border-radius: var(--radius-card);
-		background: var(--card);
+		background: var(--surface-section);
 		align-items: flex-start;
+	}
+	.section-ground {
+		background: var(--surface-section);
 	}
 	a.stat:hover {
 		border-color: color-mix(in oklch, var(--foreground) 20%, transparent);
@@ -287,12 +291,13 @@
 		font-size: 0.875rem;
 		color: var(--muted-foreground);
 	}
+	/* The figures in Geist Pixel, the website's display face: "None yet", "0", "Never" read as display type. */
 	.stat-value {
-		font-family: var(--font-display);
-		font-size: 1.75rem;
-		line-height: 2.25rem;
-		font-weight: 560;
-		letter-spacing: -0.015em;
-		font-variant-numeric: tabular-nums;
+		font-family: var(--font-title);
+		font-size: 3rem;
+		line-height: 1;
+		font-weight: 400;
+		font-synthesis: none;
+		letter-spacing: 0;
 	}
 </style>
