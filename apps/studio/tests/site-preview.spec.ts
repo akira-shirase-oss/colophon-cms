@@ -359,6 +359,10 @@ test('keyboard only: open, resize, change width, reload and close, with focus al
 	const w = world();
 	await visit(page, w, baseURL);
 	await page.getByRole('tab', { name: 'Content' }).focus();
+	// The tabs, then the editor's two drawers in reading order: Comments, then Preview (workstream 2).
+	await page.keyboard.press('Tab');
+	await expect(page.getByTestId('comments-button')).toBeFocused();
+	expect(await ringed(page.getByTestId('comments-button'))).toBe(true);
 	await page.keyboard.press('Tab');
 	const button = page.getByTestId('preview-menu');
 	await expect(button).toBeFocused();

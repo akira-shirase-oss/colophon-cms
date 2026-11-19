@@ -98,6 +98,8 @@ SMOKES=(
   # USERS bounds the audience the smoke signs up, not the traffic share it drives.
   "TOTAL=10000 USERS=64 P99_MS=700 audience"
   "TOTAL=20000 P99_MS=500 publishing"
+  # D-184: takedowns, racing undos (exactly one commits), replays and reads back.
+  "TOTAL=8000 P99_MS=700 undo"
   # The dependency-failure evidence runs (L11-L13, D-127): each pauses or kills a real
   # stack dependency mid-run, so they run here one at a time like everywhere else.
   "DURATION=10s P99_MS=500 cache-down"

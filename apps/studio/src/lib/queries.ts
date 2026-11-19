@@ -19,14 +19,20 @@ import {
 	authProviders
 } from './api.ts';
 
-export const projectQuery = (project: string) => ({ queryKey: ['project', project], queryFn: () => getProject(project) });
-export const typesQuery = (project: string) => ({ queryKey: ['types', project], queryFn: () => listContentTypes(project) });
-export const meQuery = () => ({ queryKey: ['me'], queryFn: me });
+/** How long the reads every project screen shares stay fresh (P3-12): the layout, the sidebar and the page ask
+ *  for the same project, types, requests and releases, and with this the second asker reuses the first answer
+ *  instead of sending its own. A change still shows at once: the live stream's hints invalidate these keys. */
+export const SHARED_STALE_MS = 60_000;
+
+export const projectQuery = (project: string) => ({ queryKey: ['project', project], queryFn: () => getProject(project), staleTime: SHARED_STALE_MS });
+export const typesQuery = (project: string) => ({ queryKey: ['types', project], queryFn: () => listContentTypes(project), staleTime: SHARED_STALE_MS });
+export const meQuery = () => ({ queryKey: ['me'], queryFn: me, staleTime: SHARED_STALE_MS });
 /** Server configuration that never changes within a page's life: which sign-in methods exist. */
 export const providersQuery = () => ({ queryKey: ['auth-providers'], queryFn: authProviders, staleTime: Infinity });
-export const changesetsQuery = (project: string) => ({ queryKey: ['changesets', project], queryFn: () => listChangesets(project) });
-export const releasesQuery = (project: string) => ({ queryKey: ['releases', project], queryFn: () => listReleases(project) });
-export const rolesQuery = (project: string) => ({ queryKey: ['roles', project], queryFn: () => listRoles(project) });
+export const changesetsQuery = (project: string) => ({ queryKey: ['changesets', project], queryFn: () => listChangesets(project), staleTime: SHARED_STALE_MS });
+/** The newest page of releases. The Releases page's paged list reads its first page through this same key. */
+export const releasesQuery = (project: string) => ({ queryKey: ['releases', project], queryFn: () => listReleases(project), staleTime: SHARED_STALE_MS });
+export const rolesQuery = (project: string) => ({ queryKey: ['roles', project], queryFn: () => listRoles(project), staleTime: SHARED_STALE_MS });
 export const componentsQuery = (project: string) => ({ queryKey: ['components', project], queryFn: () => listComponents(project) });
 export const destinationsQuery = (project: string) => ({ queryKey: ['destinations', project], queryFn: () => listDestinations(project) });
 export const migrationsQuery = (project: string) => ({ queryKey: ['migrations', project], queryFn: () => listMigrations(project) });
@@ -38,7 +44,7 @@ export const entriesQuery = (project: string, collection: string, q = '') => ({
 
 /** The project's members, for assignee pickers and naming people (E1); the same key the Members
  *  page uses, so one fetch serves both and its invalidation refreshes both. */
-export const membersQuery = (project: string) => ({ queryKey: ['members', project], queryFn: () => listMembers(project) });
+export const membersQuery = (project: string) => ({ queryKey: ['members', project], queryFn: () => listMembers(project), staleTime: SHARED_STALE_MS });
 /** An entry's comments (E1): `state` narrows to the open or the resolved ones. */
 export const commentsQuery = (project: string, collection: string, entry: string, state?: 'open' | 'resolved') => ({
 	queryKey: ['comments', project, collection, entry, state ?? ''],

@@ -44,10 +44,18 @@ test('a release receipt walks its neighbours and rolls back to itself as a new g
 	await slider.getByRole('link', { name: 'Older release' }).click();
 	await expect(page).toHaveURL(new RegExp(`/studio/projects/${project}/releases/1$`));
 
-	// Rolling back to release 1 builds a publish request: it takes down what release 2 added.
+	// Rolling back to release 1 asks first (P1-2): the preview names what it takes down, and
+	// nothing is made until the person confirms. Then it builds a publish request.
+	const before = await api(page, 'GET', `${env(project)}/changesets`);
 	await page.getByTestId('rollback').click();
+	const dialog = page.getByTestId('rollback-preview');
+	await expect(dialog.getByTestId('rollback-down')).toContainText('Paradox');
+	const during = await api(page, 'GET', `${env(project)}/changesets`);
+	expect((during.body?.['data'] as unknown[]).length).toBe((before.body?.['data'] as unknown[]).length);
+	await dialog.getByTestId('create-rollback').click();
 	await expect(page).toHaveURL(new RegExp(`/studio/projects/${project}/changesets/[0-9a-f-]+$`));
-	await expect(page.getByRole('heading', { level: 1 })).toContainText('Rollback to release 1');
+	await expect(page.getByRole('heading', { level: 1 })).toContainText('Rollback to Release 1');
+	await expect(page.getByTestId('restores-link')).toHaveAttribute('data-origin', 'rollback');
 	await expect(status(page)).toHaveAttribute('data-state', 'open');
 	const items = page.getByTestId('changeset-items').getByRole('listitem');
 	await expect(items).toHaveCount(1);

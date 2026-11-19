@@ -4,6 +4,10 @@
 import { type Browser, expect, type Page, test } from '@playwright/test';
 import { newProject, signIn, violations } from './helpers.ts';
 
+/** How many saves the History tab lists: its rows are sittings (D-184), each carrying its count. */
+const saves = (page: Page) =>
+	page.getByTestId('history-row').evaluateAll((rows) => rows.reduce((sum, row) => sum + Number(row.getAttribute('data-saves') ?? 0), 0));
+
 /** Creates an article through the Studio; returns the editor's path. */
 async function newArticle(page: Page, project: string, title: string): Promise<string> {
 	await page.goto(`/studio/projects/${project}/articles`);
@@ -35,7 +39,9 @@ test('an article autosaves as you type, and is there after a reload', async ({ p
 
 	await typeInBody(page, 'Written in the Studio.');
 	await expect(status(page)).toHaveAttribute('data-status', 'saved');
-	await expect(page.getByTestId('history').locator('li')).toHaveCount(2);
+	await expect.poll(() => saves(page)).toBe(2);
+	// Its own saves never read as someone else's newer version.
+	await expect(page.getByTestId('newer-version')).toHaveCount(0);
 
 	await page.goto(path);
 	await expect(page.getByRole('textbox', { name: 'Body' })).toContainText('Written in the Studio.');
@@ -66,7 +72,7 @@ test('two editors, one article: the later save opens the conflict screen, and ke
 	await expect(status(second)).toHaveAttribute('data-status', 'saved');
 	await expect(second.getByTestId('conflict')).toHaveCount(0);
 	// Three revisions: the first, the first editor's, and the second's on top of it.
-	await expect(second.getByTestId('history').locator('li')).toHaveCount(3);
+	await expect.poll(() => saves(second)).toBe(3);
 });
 
 test('choosing their version discards mine and continues from theirs', async ({ browser }) => {
@@ -87,7 +93,7 @@ test('choosing their version discards mine and continues from theirs', async ({ 
 	const body = second.getByRole('textbox', { name: 'Body' });
 	await expect(body).toContainText('The version to keep.');
 	await expect(body).not.toContainText('A change to drop.');
-	await expect(second.getByTestId('history').locator('li')).toHaveCount(2);
+	await expect.poll(() => saves(second)).toBe(2);
 });
 
 test('offline, edits are kept and saved once the network is back', async ({ page, context }) => {
@@ -167,7 +173,7 @@ test('a save whose answer is lost is sent again with the same key, and replayed 
 	expect(answers[0]).toEqual({ status: 200, replayed: undefined });
 	expect(answers[1]).toEqual({ status: 200, replayed: 'true' });
 	expect(new Set(keys).size, 'the retry reused the key').toBe(1);
-	await expect(page.getByTestId('history').locator('li')).toHaveCount(2);
+	await expect.poll(() => saves(page)).toBe(2);
 });
 
 test('edits kept on this device expire after 30 days', async ({ page }) => {
@@ -252,7 +258,7 @@ test('a save that committed just before a reload is resent with its key on reope
 	await expect(page.getByTestId('conflict')).toHaveCount(0);
 	expect(answers[0]?.replayed, 'the reopened page resent the same request and got the recorded answer').toBe('true');
 	// The first revision, the committed edit once, and the other person's save: nothing twice.
-	await expect(page.getByTestId('history').locator('li')).toHaveCount(3);
+	await expect.poll(() => saves(page)).toBe(3);
 });
 
 test('an entry of a content type you define: every kind of field, saved and read back', async ({ page }) => {
@@ -369,7 +375,8 @@ test('an open entry stays open when a refresh of it is turned away', async ({ pa
 	const project = await newProject(page);
 	const path = await newArticle(page, project, 'Kept open');
 	const entry = path.split('/').pop() ?? '';
-	await expect(page.getByRole('heading', { level: 1 })).toHaveText('Kept open');
+	// The title is the heading, edited in place (D-184): its words are the text box's value.
+	await expect(page.getByRole('heading', { level: 1 }).getByRole('textbox')).toHaveValue('Kept open');
 
 	// From now on every read of this entry is refused for the rate limit.
 	let refused = 0;
@@ -402,7 +409,8 @@ test('an open entry stays open when a refresh of it is turned away', async ({ pa
 	await expect.poll(() => refused, { timeout: 10_000 }).toBeGreaterThanOrEqual(4);
 	await page.waitForTimeout(500);
 
-	await expect(page.getByRole('heading', { level: 1 })).toHaveText('Kept open');
+	// The title is the heading, edited in place (D-184): its words are the text box's value.
+	await expect(page.getByRole('heading', { level: 1 }).getByRole('textbox')).toHaveValue('Kept open');
 	await expect(status(page)).toHaveAttribute('data-status', 'saved');
 	expect(await violations(page)).toEqual([]);
 });

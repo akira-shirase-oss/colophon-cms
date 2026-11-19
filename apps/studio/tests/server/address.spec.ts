@@ -1,11 +1,11 @@
 // An entry's public address (gap audit, 2026-10-28): once published, the entry's page says where
 // readers get it, the delivery read anyone can make without signing in, with a way to open and
 // copy it, in Technical details (D-081); while there are newer changes it says readers get the
-// version live in a release, not them; a draft that was never published shows no address. A
-// visible Copy public link copies it without opening the drawer (D-147).
+// version live in a release, not them; a draft that was never published shows no address. Copy
+// public link is in ⋯ More and in Details, above Technical details (D-184, after D-147).
 
 import { expect, test } from '@playwright/test';
-import { internalTerms, newEntry, newProject, publishThroughApi, signIn, violations } from './helpers.ts';
+import { internalTerms, newEntry, newProject, openDetails, openTechnicalDetails, publishThroughApi, signIn, violations } from './helpers.ts';
 
 test('a published entry says where readers get it, and the address answers without signing in', async ({ page, context, request, baseURL }) => {
 	await context.grantPermissions(['clipboard-read', 'clipboard-write']);
@@ -16,25 +16,32 @@ test('a published entry says where readers get it, and the address answers witho
 	await expect(page.getByTestId('save-status')).toHaveAttribute('data-status', 'saved');
 	// Never published: no address, and nothing to copy.
 	await expect(page.getByTestId('public-address')).toHaveCount(0);
+	await page.getByTestId('more-menu').click();
+	await expect(page.getByTestId('technical-menu')).toBeVisible();
 	await expect(page.getByTestId('copy-public-link')).toHaveCount(0);
+	await page.keyboard.press('Escape');
+	await openDetails(page);
+	await expect(page.getByTestId('copy-public-link-details')).toHaveCount(0);
 
 	const generation = await publishThroughApi(page, project, 'Out it goes', [entry]);
 	await page.reload();
 	const address = `${baseURL}/content/v1/${project}/production/articles/${entry}`;
 	const shown = page.getByTestId('public-address');
-	// Copying the public link is one visible click, above Technical details (D-147).
-	const copyLink = page.getByTestId('copy-public-link');
+	// Copying the public link is in ⋯ More, and in Details above Technical details (D-184).
+	await page.getByTestId('more-menu').click();
+	await page.getByTestId('copy-public-link').click();
+	await expect(page.getByText('Copied')).toBeVisible();
+	expect(await page.evaluate(() => navigator.clipboard.readText())).toBe(`${baseURL}/content/v1/${project}/production/articles/${entry}`);
+	await openDetails(page);
+	const copyLink = page.getByTestId('copy-public-link-details');
 	await expect(copyLink).toBeVisible();
 	await expect(page.getByTestId('entry-details')).toContainText('Anyone can read it.');
 	const linkBox = await copyLink.boundingBox();
 	const drawerBox = await page.getByTestId('entry-details').getByTestId('technical-details').boundingBox();
 	expect(linkBox?.y ?? Infinity).toBeLessThan(drawerBox?.y ?? 0);
-	await copyLink.click();
-	await expect(page.getByText('Copied')).toBeVisible();
-	expect(await page.evaluate(() => navigator.clipboard.readText())).toBe(`${baseURL}/content/v1/${project}/production/articles/${entry}`);
 	// The address itself is for developers, so it waits in Technical details (D-081).
 	await expect(shown).toBeHidden();
-	await page.getByTestId('entry-details').getByTestId('technical-details').locator('summary').click();
+	await openTechnicalDetails(page);
 	await expect(shown.getByRole('link')).toHaveAttribute('href', address);
 	// Even the drawer says how readers get an entry without the internal word (D-147).
 	await expect(page.getByTestId('entry-details').getByTestId('technical-details')).toContainText('Readers get an entry only once a release with it is published.');
