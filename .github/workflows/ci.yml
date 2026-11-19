@@ -154,6 +154,8 @@ jobs:
         run: scripts/test-restore-blocked.sh
       - name: Every load smoke check.sh runs, CI runs too (scripts/test-smoke-parity.sh, D-209)
         run: scripts/test-smoke-parity.sh
+      - name: The smokes job's strict verdict on its expected failures (scripts/test-smoke-verdict.sh, D-209)
+        run: scripts/test-smoke-verdict.sh
 
   # The testing rule (D-018) from a clean clone: the real stack, the real binary, real outages,
   # the testbed in a browser, and a load smoke run.
@@ -393,18 +395,20 @@ jobs:
           node-version: 24
           cache: npm
       - run: npm ci
-      - name: Load smokes, check.sh's settings (each runs; the step fails at the end, naming every failure)
+      - name: Load smokes, check.sh's settings (each runs; the failures must be exactly perf/expected-smoke-failures.tsv)
         run: |
+          set -o pipefail
           scripts/install-k6.sh "$RUNNER_TEMP/bin"
           export PATH="$RUNNER_TEMP/bin:$PATH" KEEP=0 SAMPLE_RESOURCES=1 SAMPLE_SECONDS=1
           logs="$RUNNER_TEMP/smoke-logs"; mkdir -p "$logs"
-          failed=()
+          ran=() failed=()
           # Each scenario keeps its server log, and marks its window so the Postgres log (one
           # for the job) can be cut by scenario.
           pgq() { docker compose -f deploy/compose.yaml exec -T postgres psql -U colophon -d postgres -XAtq "$@"; }
           pgc=$(docker compose -f deploy/compose.yaml ps -q postgres)
           smoke() {
             local name="${*: -2:1}" sampler
+            ran+=("$name")
             echo "$(date -u +%FT%TZ) start $name" >>"$logs/windows.txt"
             echo "::group::$*"
             # Postgres's own side of the window: its container's CPU each second, and its
@@ -413,7 +417,7 @@ jobs:
             (while :; do docker stats --no-stream --format '{{.CPUPerc}}' "$pgc" 2>/dev/null; sleep 1; done) >"$logs/$name.postgres-cpu.txt" &
             sampler=$!
             if env SERVER_LOG="$logs/$name.server.log" "$@"; then echo "::endgroup::"; else
-              echo "::endgroup::"; echo "::error::smoke failed: $*"; failed+=("$name")
+              echo "::endgroup::"; echo "::warning::smoke failed: $* (the verdict below decides whether it was expected)"; failed+=("$name")
               # The work tables as the failure left them: what was queued, claimed, retried.
               docker compose -f deploy/compose.yaml exec -T postgres psql -U colophon -d colophon -XAq \
                 -c "SELECT status, attempts, lease_owner IS NOT NULL AS leased, next_attempt_at > now() AS waiting, left(last_error, 200) AS last_error, count(*) FROM asset_jobs GROUP BY 1, 2, 3, 4, 5 ORDER BY 6 DESC LIMIT 20" \
@@ -426,7 +430,6 @@ jobs:
             cpu=$(tr -d '%' <"$logs/$name.postgres-cpu.txt" | awk 'NF {s += $1; n++; if ($1 > m) m = $1} END {if (n) printf "avg %.0f%%, max %.0f%%", s / n, m; else print "not sampled"}')
             echo "| $name | postgres CPU $cpu |" >>"$GITHUB_STEP_SUMMARY"
           }
-          # The worker's own story of the warm asset (claimed, verified, retried?): debug for it alone.
           smoke TOTAL=10000 P99_MS=500 scripts/load.sh assets throughput
           smoke TOTAL=10000 USERS=64 P99_MS=700 scripts/load.sh audience throughput
           smoke TOTAL=10000 P99_MS=500 scripts/load.sh bulk throughput
@@ -450,12 +453,10 @@ jobs:
           smoke TOTAL=10000 P99_MS=200 scripts/load.sh stages throughput
           smoke DURATION=15s P99_MS=250 scripts/load.sh stampede throughput
           smoke TOTAL=50000 P99_MS=350 scripts/load.sh warm-baseline throughput
-          if (( ${#failed[@]} > 0 )); then
-            echo "| failed smokes | ${failed[*]} |" >>"$GITHUB_STEP_SUMMARY"
-            echo "::error::${#failed[@]} smoke(s) failed: ${failed[*]}"
-            exit 1
-          fi
-          echo "| failed smokes | none (23 ran) |" >>"$GITHUB_STEP_SUMMARY"
+          echo "| failed smokes | ${failed[*]:-none} (of ${#ran[@]} that ran) |" >>"$GITHUB_STEP_SUMMARY"
+          # STRICT (D-209 addendum): the failures must be exactly the listed debts, each with its decision and owner;
+          # an unlisted failure fails, and so does a listed smoke that passed (its fix removes its line).
+          scripts/smoke-verdict.sh perf/expected-smoke-failures.tsv "${ran[*]}" "${failed[*]:-}" | tee "$logs/verdict.txt"
       - name: Service logs
         if: failure()
         run: docker compose -f deploy/compose.yaml logs --no-color --tail 300

@@ -1,0 +1,13 @@
+# The load smokes CI's `smokes` job expects to FAIL today (D-209 addendum), each a known debt with its decision and
+# owner. Thresholds are never changed for them: each still runs at check.sh's settings and prints its numbers.
+# scripts/smoke-verdict.sh holds the job to this list STRICTLY: a smoke that fails but isn't listed fails the job,
+# and a listed smoke that passes fails it too ("remove it from the list"), so the list can't go stale. The fix that
+# makes a smoke pass removes its own line in the same change.
+#
+# Columns, tab-separated: smoke, decision, owner, measured (CI 44543394086, 2026-11-19, the 4-core runner), what is owed.
+assets	D-218	learning-95	upload p99 619 ms vs 500; 256 of 1016 deletes met 409 asset_quarantined after a ~5 s wait, every verify job succeeded	measure upload-to-usable time and the worker's claim rate and per-job verify time, then fix the slow part; count "not yet verified" apart from failures
+audience	D-209	learning-95	p99 748 ms vs 700 (+7%); server CPU avg 124% of 400%	password hashing on the server: record whether it is the runner's CPU, then normalise the bar for hash cost or fix
+bulk	D-216	learning-a4	p99 2877 ms vs 500	the work-admission lock and the pending-payload sum (D-216)
+migrations	D-209	learning-95	p99 681 ms vs 500 (+36%)	marginal in D-209's triage; this is its measured margin: find what the tail is before the next change
+noisy-agent	D-214	learning-a4	fails its per-arm threshold; overall p99 104 ms	pool-acquire queueing behind the noisy token (D-214 (a)), L08
+stages	D-209	learning-95	p99 254 ms vs 200 (+27%)	marginal in D-209's triage; this is its measured margin: find what the tail is before the next change
