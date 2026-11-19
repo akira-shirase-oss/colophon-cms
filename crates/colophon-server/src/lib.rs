@@ -326,6 +326,8 @@ pub async fn run(
         .await
         .with_context(|| format!("binding {}", config.listen_addr))?;
 
+    // Before any pool exists, so every pool logs statements past the configured threshold (D-221).
+    colophon_db::set_slow_statement_threshold(config.db_slow_statement);
     let pool = colophon_db::connect_lazy(
         config.database_url.expose(),
         PoolSettings {

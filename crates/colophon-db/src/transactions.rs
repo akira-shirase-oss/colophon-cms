@@ -48,9 +48,48 @@ async fn detached<F>(begin: F) -> Result<Transaction<'static, Postgres>, sqlx::E
 where
     F: Future<Output = Result<Transaction<'static, Postgres>, sqlx::Error>> + Send + 'static,
 {
-    tokio::spawn(begin)
+    let started = std::time::Instant::now();
+    let transaction = tokio::spawn(begin)
         .await
-        .map_err(|_| sqlx::Error::WorkerCrashed)?
+        .map_err(|_| sqlx::Error::WorkerCrashed)?;
+    // D-221's evidence: a request's time spent getting a connection and beginning, for its slow-request line.
+    let _ = PHASES.try_with(|phases| phases.begun(started.elapsed()));
+    transaction
+}
+
+/// What one request spent beginning transactions (D-221): the pool's wait for a connection and the `BEGIN`
+/// itself, summed, and how many. A request runs inside [`with_phases`]; outside one, nothing is counted.
+#[derive(Debug, Default)]
+pub struct Phases {
+    begin_micros: AtomicU64,
+    begins: AtomicU64,
+}
+
+impl Phases {
+    fn begun(&self, took: std::time::Duration) {
+        let micros = u64::try_from(took.as_micros()).unwrap_or(u64::MAX);
+        self.begin_micros.fetch_add(micros, Ordering::Relaxed);
+        self.begins.fetch_add(1, Ordering::Relaxed);
+    }
+
+    /// Microseconds spent getting a connection and beginning, over every transaction so far.
+    pub fn begin_micros(&self) -> u64 {
+        self.begin_micros.load(Ordering::Relaxed)
+    }
+
+    /// Transactions begun so far.
+    pub fn begins(&self) -> u64 {
+        self.begins.load(Ordering::Relaxed)
+    }
+}
+
+tokio::task_local! {
+    static PHASES: std::sync::Arc<Phases>;
+}
+
+/// Runs `work` with `phases` counting its transaction begins (D-221).
+pub async fn with_phases<F: Future>(phases: std::sync::Arc<Phases>, work: F) -> F::Output {
+    PHASES.scope(phases, work).await
 }
 
 /// Connections the pool closed because they came back inside a transaction.

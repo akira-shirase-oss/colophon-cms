@@ -66,6 +66,25 @@ with $'gone\tstrict\tD-000\tnobody\t-\tplanted\tnothing'
 label='a listed smoke that did not run'; want='lists gone, which did not run'
 expect_fail "$tmp/list.tsv" "$ran" "assets bulk gone" "$tmp/run2.tsv"
 
+# The integration job's scope (D-221): its smokes are integration/<endpoint>-<scenario>, read from its run_load lines.
+iran=$(grep -oE 'run_load .*scripts/load\.sh [a-z][a-z-]* [a-z]+' .github/workflows/ci.yml | awk '{print "integration/" $(NF-1) "-" $NF}' | sort -u | paste -sd' ' -)
+[[ $(wc -w <<<"$iran") -ge 15 ]] || { echo "FAIL: read only '$iran' from ci.yml's integration step" >&2; exit 1; }
+printf 'integration/members-steady\t3.3\t\nintegration/publishing-steady\t14.1\t\nintegration/schedules-steady\t5.5\t\nintegration/tokens-steady\t2.7\t\n' >"$tmp/irun.tsv"
+iverdict() { SMOKE_SCOPE=integration scripts/smoke-verdict.sh "$@" >"$tmp/out" 2>&1; }
+label='integration: a green run (its scope ignores the smokes job entries)'
+iverdict "$list" "$iran" "" "$tmp/irun.tsv" || { echo "FAIL: $label:"; cat "$tmp/out"; exit 1; }
+sed 's/^integration\/members-steady\t3.3/integration\/members-steady\t260/' "$tmp/irun.tsv" >"$tmp/iflap.tsv"
+label='integration: members stalls to 260 ms, under its ceiling'
+iverdict "$list" "$iran" "integration/members-steady" "$tmp/iflap.tsv" || { echo "FAIL: $label:"; cat "$tmp/out"; exit 1; }
+grep -q '^flap: integration/members-steady failed its limit, p99 260 ms, under its ceiling 400 ms' "$tmp/out" || { echo "FAIL: no members flap line:"; cat "$tmp/out"; exit 1; }
+sed 's/^integration\/members-steady\t3.3/integration\/members-steady\t500/' "$tmp/irun.tsv" >"$tmp/iover.tsv"
+label='integration mutant: members past its 2x ceiling'
+if iverdict "$list" "$iran" "integration/members-steady" "$tmp/iover.tsv"; then echo "FAIL: $label accepted"; cat "$tmp/out"; exit 1; fi
+grep -q 'integration/members-steady is past its CEILING: p99 500 ms > 400 ms' "$tmp/out" || { echo "FAIL: $label:"; cat "$tmp/out"; exit 1; }
+label='integration mutant: an unlisted integration smoke fails'
+if iverdict "$list" "$iran" "integration/roles-steady" "$tmp/irun.tsv"; then echo "FAIL: $label accepted"; cat "$tmp/out"; exit 1; fi
+grep -q 'smoke integration/roles-steady failed and is not on' "$tmp/out" || { echo "FAIL: $label:"; cat "$tmp/out"; exit 1; }
+
 refuse() {
   printf '%s\n' "$1" >"$tmp/bad.tsv"
   if verdict "$tmp/bad.tsv" "$ran" "assets" "$tmp/run2.tsv"; then echo "FAIL: $label accepted"; exit 1; fi
@@ -78,4 +97,4 @@ refuse $'stages\tflapping\tD-209\tlearning-95\t-\tp99 254 → 128\tsomething'
 label="a flapper with one run's numbers"; want="needs both runs' measurements"
 refuse $'stages\tflapping\tD-209\tlearning-95\tp99<=400\tp99 254 ms\tsomething'
 
-echo "smoke verdict: both runs judged as the list says (noisy-agent under its temporary ceiling, refused once D-214 merges); a deleted entry, a planted passing smoke, a flapper past its ceiling or unmeasured, a smoke that didn't run, and an entry missing its owner, ceiling or runs each fail"
+echo "smoke verdict: both scopes judged (the integration job's flappers under their ceilings, one past it failing, an unlisted one failing); both runs judged as the list says (noisy-agent under its temporary ceiling, refused once D-214 merges); a deleted entry, a planted passing smoke, a flapper past its ceiling or unmeasured, a smoke that didn't run, and an entry missing its owner, ceiling or runs each fail"

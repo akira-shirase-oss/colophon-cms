@@ -622,6 +622,7 @@ dependencies = [
  "base64 0.22.1",
  "colophon-domain",
  "colophon-sim",
+ "log",
  "serde_json",
  "sqlx",
  "thiserror",

@@ -8,6 +8,8 @@
 #             regression can't hide here. It leaves this list when D-209's normalised gate judges it by margin over the
 #             runner's measured baseline.
 # A smoke that fails and isn't listed fails the job.
+# Each job judges only its own entries (SMOKE_SCOPE): the smokes job's are plain names; the integration job's load
+# smokes are `integration/<endpoint>-<scenario>` (D-221).
 #
 # Columns, tab-separated: smoke, kind, decision, owner, ceiling, measured (CI 44543394086 → 44551888337, the 4-core
 # runner), what is owed. A ceiling is `p99<=MS` (the run's overall p99) or `l08<=RATIO` (L08's worst noise/baseline ratio).
@@ -21,3 +23,7 @@ audience	flapping	D-209	learning-95	p99<=1400	p99 748 ms → 581 ms (limit 700);
 migrations	flapping	D-209	learning-95	p99<=1000	p99 681 ms → 408 ms (limit 500)	judge by margin over the runner's measured commit latency (D-209 normalised gate)
 noisy-agent	flapping	D-214	learning-a4	l08<=8 EXPIRES-WITH D-214	L08 editorial 5.79x, project B 6.56x (limit 2x) → held; overall p99 104 → 18 ms	pool-acquire queueing behind the noisy token (D-214 (a))
 stages	flapping	D-209	learning-95	p99<=400	p99 254 ms → 128 ms (limit 200)	judge by margin over the runner's measured baseline (D-209 normalised gate)
+integration/members-steady	flapping	D-221	learning-95	p99<=400	p99 379 ms (CI 44452075879), 260 (44578161931) → 3.3 (44561341789); limit 200	D-221: find the stall (single-digit ms on most runs, 250–550 ms on some: bimodal, not runner speed)
+integration/publishing-steady	flapping	D-221	learning-95	p99<=1000	p99 514 ms (CI 44558667145), 550 → 14.1 (44561341789); limit 500	D-221: find the stall (single-digit ms on most runs, 250–550 ms on some: bimodal, not runner speed)
+integration/schedules-steady	flapping	D-221	learning-95	p99<=400	p99 253 ms (CI 44573857079) → 5.5 (44561341789); limit 200	D-221: find the stall (single-digit ms on most runs, 250–550 ms on some: bimodal, not runner speed)
+integration/tokens-steady	flapping	D-221	learning-95	p99<=400	p99 385 ms (CI 44456894675) → 2.7 (44561341789); limit 200	D-221: find the stall (single-digit ms on most runs, 250–550 ms on some: bimodal, not runner speed)
