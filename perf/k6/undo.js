@@ -91,10 +91,10 @@ export function setup() {
     if (project.status !== 201) fail(`project: HTTP ${project.status}`);
     const id = project.json('data.id');
     const base = `${BASE_URL}/api/v1/projects/${id}/environments/production`;
-    const entry = http.post(`${base}/collections/articles/entries`, JSON.stringify(article(`Undo ${i}`)), params('entry', { 'Idempotency-Key': `k6-${run}-${i}-e` }));
+    const entry = http.post(`${base}/collections/articles/entries`, JSON.stringify(article(`Undo ${i}`)), params('entry', { 'Idempotency-Key': `k6-undo-${run}-${i}-entry` }));
     if (entry.status !== 201) fail(`entry: HTTP ${entry.status} ${entry.body}`);
     const entryId = entry.json('data.id');
-    const generation = release(base, headers, { title: `Undo ${i}`, entries: [entryId] }, 0, `k6-${run}-${i}-first`, params);
+    const generation = release(base, headers, { title: `Undo ${i}`, entries: [entryId] }, 0, `k6-undo-${run}-${i}-first`, params);
     if (generation !== 1) fail(`first release of ${base}: ${generation}`);
     worlds.push({ base, read: `${BASE_URL}/content/v1/${id}/production/articles/${entryId}`, entry: entryId });
   }
@@ -108,7 +108,7 @@ export default function (data) {
   const world = data.worlds[(__VU - 1) % data.worlds.length];
   if (generation === null) generation = 1;
   const params = (endpoint, extra) => ({ headers: Object.assign({}, data.headers, extra || {}), redirects: 0, tags: { endpoint, name: endpoint } });
-  const key = `k6-${data.run}-${__VU}-${__ITER}`;
+  const key = `k6-undo-${data.run}-${__VU}-${__ITER}`;
 
   const down = release(world.base, data.headers, { title: `Unpublish ${__ITER}`, unpublish: [world.entry] }, generation, key, params);
   if (down === null) return;
