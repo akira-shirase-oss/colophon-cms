@@ -10,6 +10,7 @@
 
 import http from 'k6/http';
 import { check, fail } from 'k6';
+import exec from 'k6/execution';
 
 const BASE_URL = __ENV.BASE_URL || 'http://127.0.0.1:58000';
 const PUBLIC_URL = __ENV.PUBLIC_URL || 'http://localhost:58000';
@@ -81,7 +82,7 @@ export function setup() {
 }
 
 export default function (data) {
-  const slot = __ITER % 100;
+  const slot = exec.scenario.iterationInTest % 100;
   const params = (endpoint, extra) => ({ headers: Object.assign({}, data.headers, extra || {}), redirects: 0, tags: { endpoint } });
   if (slot < 45) {
     const filtered = slot % 3 === 0 ? '?state=done' : '';
@@ -95,7 +96,7 @@ export default function (data) {
     const res = http.get(`${data.base}/bulk/${data.job}/items${outcome}`, params('items'));
     check(res, { 'items 200': (r) => r.status === 200 && Array.isArray(r.json('data')) });
   } else {
-    const draft = data.drafts[__ITER % data.drafts.length];
+    const draft = data.drafts[exec.scenario.iterationInTest % data.drafts.length];
     const res = http.post(`${data.base}/bulk`, JSON.stringify({
       collection: 'articles', seal: true,
       items: [{ key: 'a', entry: draft.id, expected_revision: draft.revision, op: { op: 'set', path: 'title', value: 'loaded' } }],

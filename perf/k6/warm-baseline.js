@@ -141,27 +141,27 @@ function windowTag() {
 }
 
 export default function (data) {
-  const slot = __ITER % 10;
+  const slot = exec.scenario.iterationInTest % 10;
   const params = (endpoint) => ({ redirects: 0, tags: { endpoint, window: windowTag() } });
   let res;
   if (slot < 5) {
     res = http.get(data.content, params('latest'));
     check(res, { 'latest: 19 at generation 4': (r) => r.status === 200 && r.headers['Colophon-Generation'] === '4' && r.json('data').length === 19 });
   } else if (slot < 7) {
-    const generation = 1 + (__ITER % 3);
+    const generation = 1 + (exec.scenario.iterationInTest % 3);
     res = http.get(`${data.content}?generation=${generation}`, params('pinned'));
     check(res, { 'pinned: the generation asked for, without the one taken down': (r) => r.status === 200 && r.headers['Colophon-Generation'] === String(generation) && r.json('data').length === 19 });
   } else if (slot < 8) {
-    res = http.get(`${data.content}/${data.live[__ITER % 19]}`, params('entry'));
+    res = http.get(`${data.content}/${data.live[exec.scenario.iterationInTest % 19]}`, params('entry'));
     check(res, { 'entry 200': (r) => r.status === 200 && r.json('data.published_in') >= 1 });
   } else if (slot < 9) {
-    res = http.get(`${data.content}/${data.edited[__ITER % 5]}?generation=1`, params('pinned_entry'));
+    res = http.get(`${data.content}/${data.edited[exec.scenario.iterationInTest % 5]}?generation=1`, params('pinned_entry'));
     check(res, {
       'pinned entry: generation 1 serves the revision published then': (r) =>
         r.status === 200 && r.headers['Colophon-Generation'] === '1' && r.json('data.content.body.doc.content')[0].content[0].text === 'first',
     });
   } else {
-    const pinned = __ITER % 20 < 10 ? '' : '?generation=1';
+    const pinned = exec.scenario.iterationInTest % 20 < 10 ? '' : '?generation=1';
     res = http.get(`${data.content}/${data.gone}${pinned}`, Object.assign(params('gone'), { responseCallback: http.expectedStatuses(410) }));
     check(res, { 'taken down: 410 at every generation': (r) => r.status === 410 && r.json('error.code') === 'gone' });
     return;

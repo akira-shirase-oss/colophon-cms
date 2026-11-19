@@ -171,7 +171,7 @@ export function editorial(data) {
   if (etag === null) etag = mine.etag;
   const url = `${data.entries}/${mine.id}`;
   const tags = { arm };
-  const roll = __ITER % 10;
+  const roll = exec.scenario.iterationInTest % 10;
   if (roll < 2) {
     const res = http.put(url, article(`Article by VU ${exec.vu.idInTest}`, `Iteration ${__ITER}`), {
       headers: Object.assign({ 'If-Match': etag, 'Idempotency-Key': key(), 'Content-Type': 'application/json', Cookie: data.session.cookie, 'X-CSRF-Token': data.session.csrf, Origin: PUBLIC_URL }),
@@ -237,7 +237,7 @@ function verdict(data, id, want) {
 }
 
 export function media(data) {
-  const roll = __ITER % 10;
+  const roll = exec.scenario.iterationInTest % 10;
   if (roll < 6) {
     // The real workload: ~11.5 MB in, quarantined, then the worker decodes it.
     const made = http.post(data.assets, BIG, {

@@ -27,6 +27,7 @@
 import http from 'k6/http';
 import { check, fail } from 'k6';
 import { Counter } from 'k6/metrics';
+import exec from 'k6/execution';
 
 const BASE_URL = __ENV.BASE_URL || 'http://127.0.0.1:58000';
 const PUBLIC_URL = __ENV.PUBLIC_URL || 'http://localhost:58000';
@@ -159,7 +160,7 @@ export default function (data) {
   // The decoy is unique per request — the query hash differs, so the cache key is new.
   const decoy = `decoy-${__VU}-${__ITER}-${Math.random().toString(36).slice(2, 10)}`;
   const params = (endpoint) => ({ headers: { 'Content-Type': 'application/json' }, redirects: 0, tags: { endpoint } });
-  if (__ITER % 5 === 4) {
+  if (exec.scenario.iterationInTest % 5 === 4) {
     // A fill that finds nothing: an empty page is served once and never cached — bypass.
     const res = http.post(data.query, JSON.stringify({ filters: [{ field: 'headline', op: 'in', value: [decoy] }], limit: 5 }), params('bypass'));
     bypassReads.add(1);
@@ -175,8 +176,8 @@ export default function (data) {
     // A fill that finds two real posts beside its unique decoy — a Keep the cache would
     // store under a key no other request will ever ask (`miss`), unless a Valkey call
     // flapped and the answer is served once without storing (`bypass`, counted below).
-    const a = __ITER % data.corpus;
-    const b = (__ITER * 7 + 3) % data.corpus;
+    const a = exec.scenario.iterationInTest % data.corpus;
+    const b = (exec.scenario.iterationInTest * 7 + 3) % data.corpus;
     const res = http.post(data.query, JSON.stringify({ filters: [{ field: 'headline', op: 'in', value: [`Post ${a}`, `Post ${b}`, decoy] }], limit: 5 }), params('cold'));
     coldReads.add(1);
     const ok = check(res, {

@@ -215,8 +215,8 @@ function note(res) {
 export function read(data) {
   const tags = { phase: phase() };
   let res;
-  if (__ITER % 4 === 0) {
-    res = http.get(`${data.content}/${data.live[__ITER % data.live.length]}`, { redirects: 0, tags: Object.assign({ name: 'content/{entry}' }, tags) });
+  if (exec.scenario.iterationInTest % 4 === 0) {
+    res = http.get(`${data.content}/${data.live[exec.scenario.iterationInTest % data.live.length]}`, { redirects: 0, tags: Object.assign({ name: 'content/{entry}' }, tags) });
   } else {
     res = http.get(data.content, { redirects: 0, tags: Object.assign({ name: 'content' }, tags) });
   }
@@ -258,7 +258,7 @@ export function write(data) {
     return;
   }
   const url = `${data.entries}/${mine}`;
-  if (__ITER % 3 === 0) {
+  if (exec.scenario.iterationInTest % 3 === 0) {
     const res = http.put(url, JSON.stringify(article(`Article by VU ${exec.vu.idInTest}`, `iteration ${__ITER}`)), {
       headers: Object.assign({ 'If-Match': etag, 'Idempotency-Key': `k6-l11-${data.run}-${exec.vu.idInTest}-${__ITER}` }, headers),
       redirects: 0, tags: Object.assign({ name: 'entries/{entry}', endpoint: 'save' }, tags),

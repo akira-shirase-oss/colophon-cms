@@ -15,6 +15,7 @@
 
 import http from 'k6/http';
 import { check, fail, sleep } from 'k6';
+import exec from 'k6/execution';
 
 const BASE_URL = __ENV.BASE_URL || 'http://127.0.0.1:58000';
 const PUBLIC_URL = __ENV.PUBLIC_URL || 'http://localhost:58000';
@@ -101,7 +102,7 @@ export default function (data) {
 
   const entry = http.post(`${base}/collections/articles/entries`, JSON.stringify(article(`Article ${__VU}-${__ITER}`)), params('entry', { 'Idempotency-Key': key('e') }));
   if (!check(entry, { 'entry 201': (r) => r.status === 201 })) return;
-  const unpublish = previous !== null && __ITER % 10 === 9 ? [previous] : [];
+  const unpublish = previous !== null && exec.scenario.iterationInTest % 10 === 9 ? [previous] : [];
   const changes = { title: `k6 ${__ITER}`, entries: [entry.json('data.id')], unpublish };
   const set = http.post(`${base}/changesets`, JSON.stringify(changes), params('changeset', { 'Idempotency-Key': key('c') }));
   if (!check(set, { 'changeset 201': (r) => r.status === 201 })) return;

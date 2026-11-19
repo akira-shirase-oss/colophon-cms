@@ -11,6 +11,7 @@
 import http from 'k6/http';
 import { check, fail, sleep } from 'k6';
 import { Counter } from 'k6/metrics';
+import exec from 'k6/execution';
 
 const releasesPublished = new Counter('releases_published');
 
@@ -133,8 +134,8 @@ export default function (data) {
     lastPublish = Date.now();
     publish(data);
   }
-  const article = __ITER % 2 === 1;
-  const path = article ? `/articles/${data.entries[__ITER % data.entries.length]}/` : '/';
+  const article = exec.scenario.iterationInTest % 2 === 1;
+  const path = article ? `/articles/${data.entries[exec.scenario.iterationInTest % data.entries.length]}/` : '/';
   const response = http.get(`${SITE_URL}${path}`, { tags: { page: article ? 'article' : 'home', kind: 'read' } });
   check(response, {
     'a whole page, marked with one release': (r) =>

@@ -16,6 +16,7 @@
 import http from 'k6/http';
 import { check, fail, sleep } from 'k6';
 import { Counter } from 'k6/metrics';
+import exec from 'k6/execution';
 
 const BASE_URL = __ENV.BASE_URL || 'http://127.0.0.1:58000';
 const PUBLIC_URL = __ENV.PUBLIC_URL || 'http://localhost:58000';
@@ -123,9 +124,9 @@ export function walk(data) {
   if (generation === -1) generation = data.generation;
   const write = { Cookie: data.session.cookie, 'X-CSRF-Token': data.session.csrf, Origin: PUBLIC_URL, 'Content-Type': 'application/json' };
   const read = { Cookie: data.session.cookie };
-  const article_ = data.articles[__ITER % ARTICLES];
+  const article_ = data.articles[exec.scenario.iterationInTest % ARTICLES];
   const url = `${data.entries}/${article_.id}`;
-  const turn = __ITER % 10;
+  const turn = exec.scenario.iterationInTest % 10;
 
   // Every turn begins by reading the article — the revision this user last saved, or the
   // walk is broken.
@@ -139,7 +140,7 @@ export function walk(data) {
   if (turn < 3) {
     // A save: the new revision must come back by ETag and by id.
     const text = `turn ${__ITER}`;
-    const saved = http.put(url, article(`Smoke ${__ITER % ARTICLES}`, text), {
+    const saved = http.put(url, article(`Smoke ${exec.scenario.iterationInTest % ARTICLES}`, text), {
       headers: Object.assign({ 'If-Match': article_.etag, 'Idempotency-Key': key() }, write),
       redirects: 0, tags: { endpoint: 'save', name: 'entries/{entry}' },
     });

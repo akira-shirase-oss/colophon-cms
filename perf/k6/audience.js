@@ -21,6 +21,7 @@
 import http from 'k6/http';
 import { check, fail } from 'k6';
 import { Rate } from 'k6/metrics';
+import exec from 'k6/execution';
 
 const anonCacheHits = new Rate('anon_cache_hits');
 
@@ -141,7 +142,7 @@ export default function (data) {
   }
   const params = (endpoint, headers) => ({ redirects: 0, tags: { endpoint }, headers });
   const bearer = { Authorization: `Bearer ${mine.token}` };
-  const slot = __ITER % 100;
+  const slot = exec.scenario.iterationInTest % 100;
   let res;
   if (slot < 65) {
     res = http.get(data.list, params('member_list', bearer));

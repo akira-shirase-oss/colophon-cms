@@ -225,7 +225,7 @@ export function warm(data) {
     [data.a.list, 'A', warmSeen.A], [data.b.list, 'B', warmSeen.B],
     [data.a.entry, 'A', warmSeen.A], [data.b.entry, 'B', warmSeen.B],
   ];
-  const [url, mark, seen] = picks[__ITER % picks.length];
+  const [url, mark, seen] = picks[exec.scenario.iterationInTest % picks.length];
   const res = http.get(url, { redirects: 0, tags: { arm: 'warm', endpoint: 'warm', name: 'warm-read' } });
   if (!check(res, { 'warm read 200': (r) => r.status === 200 })) { errors.add(1); console.log(`warm read: ${res.status} ${String(res.body).slice(0, 160)}`); }
   account(res, mark, seen);

@@ -137,8 +137,8 @@ export function setup() {
 
 function read(data, arm) {
   // 80% the latest list, 20% a random entry — the same warm shape L02 measures.
-  const url = __ITER % 5 === 4
-    ? `${data.delivery}/${data.ids[__ITER % data.ids.length]}`
+  const url = exec.scenario.iterationInTest % 5 === 4
+    ? `${data.delivery}/${data.ids[exec.scenario.iterationInTest % data.ids.length]}`
     : `${data.delivery}?limit=50`;
   const res = http.get(url, {
     redirects: 0,

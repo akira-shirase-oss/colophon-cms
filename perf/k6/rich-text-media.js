@@ -18,6 +18,7 @@
 
 import http from 'k6/http';
 import { check, fail, sleep } from 'k6';
+import exec from 'k6/execution';
 
 const BASE_URL = __ENV.BASE_URL || 'http://127.0.0.1:58000';
 const PUBLIC_URL = __ENV.PUBLIC_URL || 'http://localhost:58000';
@@ -73,7 +74,7 @@ const WIDE = new Uint8Array([
 // __VU and __ITER exist only in iterations; setup() counts its own keys.
 let setupKeys = 0;
 function key() {
-  const where = typeof __ITER === 'undefined' ? `setup-${(setupKeys += 1)}` : `${__VU}-${__ITER}`;
+  const where = typeof exec.scenario.iterationInTest === 'undefined' ? `setup-${(setupKeys += 1)}` : `${__VU}-${__ITER}`;
   return `k6-rtm-${where}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
 }
 
@@ -154,7 +155,7 @@ function carriesEveryImage(row, images) {
 }
 
 export default function (data) {
-  const slot = __ITER % 10;
+  const slot = exec.scenario.iterationInTest % 10;
   const params = (endpoint) => ({ redirects: 0, tags: { endpoint } });
   if (slot < 5) {
     const res = http.get(`${data.content}?limit=20`, params('list'));
@@ -162,13 +163,13 @@ export default function (data) {
       'list: 20 posts, each with every image version': (r) => r.status === 200 && r.json('data').length === 20 && r.json('data').every((row) => carriesEveryImage(row, data.images)),
     });
   } else if (slot < 7) {
-    const res = http.get(`${data.content}/${data.entries[__ITER % 20]}?generation=1`, params('entry'));
+    const res = http.get(`${data.content}/${data.entries[exec.scenario.iterationInTest % 20]}?generation=1`, params('entry'));
     check(res, { 'entry: every image version': (r) => r.status === 200 && carriesEveryImage(r.json('data'), data.images) });
   } else if (slot < 9) {
     const res = http.post(`${data.base}/collections/posts/entries`, JSON.stringify(post(`Draft ${__VU}-${__ITER}`, data.images)), Object.assign({ headers: Object.assign({ 'Idempotency-Key': key() }, data.headers) }, params('save')));
     check(res, { 'save: 201': (r) => r.status === 201 });
   } else {
-    const ghost = `00000000-0000-4000-8000-${(__ITER % 1e12).toString(16).padStart(12, '0')}`;
+    const ghost = `00000000-0000-4000-8000-${(exec.scenario.iterationInTest % 1e12).toString(16).padStart(12, '0')}`;
     const res = http.post(`${data.base}/collections/posts/entries`, JSON.stringify(post('Ghost', [data.images[0], ghost])), Object.assign({ headers: Object.assign({ 'Idempotency-Key': key() }, data.headers) }, params('refused')));
     check(res, {
       'refused: asset_not_found at the image': (r) => r.status === 422 && r.json('error.details.reason') === 'asset_not_found' && r.json('error.details.pointer') === '/body/doc/content/2/attrs/assetId',

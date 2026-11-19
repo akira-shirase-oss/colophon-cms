@@ -243,7 +243,7 @@ export function editorial(data) {
   const etag = etags[mine.id] ?? mine.etag;
   const url = `${project.entries}/${mine.id}`;
   const tags = { arm: which.arm, w: which.w };
-  const roll = __ITER % 10;
+  const roll = exec.scenario.iterationInTest % 10;
 
   if (roll < 2) {
     const headers = {

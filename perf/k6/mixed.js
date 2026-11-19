@@ -252,19 +252,19 @@ function account(res, params) {
 
 export function reads(data) {
   const params = (endpoint) => ({ redirects: 0, tags: { arm: 'read', endpoint } });
-  const slot = __ITER % 10;
+  const slot = exec.scenario.iterationInTest % 10;
   let res; let pinned = false;
   if (slot < 4) {
     res = http.get(`${data.delivery}?limit=50`, params('latest'));
   } else if (slot < 6) {
     pinned = true;
-    const generation = 1 + (__ITER % data.generation);
+    const generation = 1 + (exec.scenario.iterationInTest % data.generation);
     res = http.get(`${data.delivery}?limit=50&generation=${generation}`, params('pinned'));
     verify(res, {
       'pinned list answers at the release asked for': (r) => r.status === 200 && r.headers['Colophon-Generation'] === String(generation),
     });
   } else if (slot < 8) {
-    res = http.get(`${data.delivery}/${data.ids[__ITER % data.ids.length]}`, params('entry'));
+    res = http.get(`${data.delivery}/${data.ids[exec.scenario.iterationInTest % data.ids.length]}`, params('entry'));
   } else {
     pinned = true;
     // Pin at the entry's OWN release: ids publish in 100-entry changesets, so ids[i]
@@ -272,7 +272,7 @@ export function reads(data) {
     // legitimate 404 (the 2026-11-11 v3 run stamped it ~320k times). Pinned to its
     // own release the entry always exists, so 200 plus the echoed generation is
     // still the contract.
-    const idx = __ITER % data.ids.length;
+    const idx = exec.scenario.iterationInTest % data.ids.length;
     const want = 1 + Math.floor(idx / 100);
     res = http.get(`${data.delivery}/${data.ids[idx]}?generation=${want}`, params('pinned_entry'));
     verify(res, {

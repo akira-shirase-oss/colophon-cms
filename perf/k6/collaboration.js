@@ -9,6 +9,7 @@
 
 import http from 'k6/http';
 import { check, fail } from 'k6';
+import exec from 'k6/execution';
 
 const BASE_URL = __ENV.BASE_URL || 'http://127.0.0.1:58000';
 const PUBLIC_URL = __ENV.PUBLIC_URL || 'http://localhost:58000';
@@ -91,7 +92,7 @@ export default function (data) {
   const mine = data.entries[(__VU - 1) % data.entries.length];
   const entryPath = `${data.base}/collections/articles/entries/${mine.id}`;
   const write = () => ({ headers: Object.assign({ 'Idempotency-Key': uuid() }, data.owner), redirects: 0 });
-  const slot = __ITER % 10;
+  const slot = exec.scenario.iterationInTest % 10;
   if (slot < 4) {
     const res = http.get(`${entryPath}/comments?limit=100`, Object.assign({ tags: { endpoint: 'list' } }, params));
     check(res, { 'list 200': (r) => r.status === 200 });
@@ -126,7 +127,7 @@ export default function (data) {
     }
   } else {
     // Between done and open, on the etag the task was last read at.
-    const task = tasks[__ITER % tasks.length];
+    const task = tasks[exec.scenario.iterationInTest % tasks.length];
     const status = task.status === 'done' ? 'open' : 'done';
     const res = http.patch(`${data.base}/tasks/${task.id}`, JSON.stringify({ status }),
       { headers: Object.assign({ 'If-Match': `"${task.etag}"` }, write().headers), tags: { endpoint: 'patch' } });
