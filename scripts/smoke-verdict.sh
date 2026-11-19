@@ -79,6 +79,16 @@ for smoke in ${ran[@]+"${ran[@]}"}; do
     problem "smoke $smoke has hard failures ($hard: $(metric "$smoke" 5)): correctness is never tolerated, listed or not, flapping or not"
   fi
 done
+# Below half the reference speed (D-221, SMOKE_LATENCY_JUDGED=no) latency is not judged on this runner: a too-slow
+# runner can't fail us on latency, and can't hide errors either, so only the hard failures above count.
+if [[ "${SMOKE_LATENCY_JUDGED:-yes}" == no ]]; then
+  echo "latency not judged on this runner (under half the reference speed, D-221): only hard failures count"
+  if ((problems > 0)); then
+    exit 1
+  fi
+  echo "smoke-verdict: ${#ran[@]} ran; no hard failures; latency not judged on this runner"
+  exit 0
+fi
 for smoke in ${failed[@]+"${failed[@]}"}; do
   in_set "$smoke" "$listed" || problem "smoke $smoke failed and is not on $list"
 done

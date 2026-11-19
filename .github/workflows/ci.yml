@@ -302,39 +302,58 @@ jobs:
             fi
           }
           run_load TOTAL=200000 P99_MS=50 scripts/load.sh health throughput
+          # D-221: the steady smokes run at rates scaled to this runner's measured speed, so the relative load is the
+          # same on every runner class (fixed rates sat near capacity on the slower ones: publishing p99 502 ms on an
+          # EPYC 7763 at 17k health req/s, 14 ms on a 6975P at 39k). REFERENCE_RPS is where today's rates are clean;
+          # a faster runner keeps them (scale capped at 1). Below half the reference the job says so, loudly.
+          REFERENCE_RPS=38000
+          # The runner's speed: the median of three short back-to-back health runs, so a noisy one can't set the scale.
+          IFS=$'\t' read -r health_rps runner_cpu < <(scripts/runner-speed.sh 2>"$logs/runner-speed.log")
+          if [[ -z "$health_rps" ]]; then
+            echo "::warning::no health req/s measured: the steady smokes run at their reference rates (scale 1)"
+            health_rps=$REFERENCE_RPS
+          fi
+          scale=$(awk -v h="$health_rps" -v r="$REFERENCE_RPS" 'BEGIN {s = h / r; if (s > 1) s = 1; printf "%.3f", s}')
+          if awk -v s="$scale" 'BEGIN {exit !(s < 0.5)}'; then
+            echo "::warning::this runner measured $health_rps health req/s, $(awk -v s="$scale" 'BEGIN {printf "%.0f", s * 100}')% of the reference $REFERENCE_RPS: the steady smokes' rates are scaled to it, and their numbers say little about the code"
+          fi
+          echo "| runner | ${runner_cpu:-unknown}: health $health_rps req/s (median of 3), scale $scale of $REFERENCE_RPS |" >>"$GITHUB_STEP_SUMMARY"
+          # Steady smokes are judged at their scaled rates even below the floor: the scaling keeps their relative load.
+          export RUNNER_HEALTH_RPS=$health_rps RUNNER_REFERENCE_RPS=$REFERENCE_RPS RUNNER_SCALE=$scale RUNNER_JUDGED=yes
+          rate() { awk -v r="$1" -v s="$scale" 'BEGIN {v = int(r * s + 0.5); if (v < 1) v = 1; print v}'; }
           run_load TOTAL=100000 P99_MS=50 scripts/load.sh rich-text throughput
-          run_load RATE=400 P99_MS=200 scripts/load.sh session steady
-          run_load RATE=500 P99_MS=200 scripts/load.sh cli steady
-          run_load RATE=500 P99_MS=200 scripts/load.sh members steady
-          run_load RATE=450 P99_MS=200 scripts/load.sh roles steady
-          run_load RATE=200 P99_MS=200 scripts/load.sh tokens steady
-          run_load RATE=500 P99_MS=200 scripts/load.sh schedules steady
-          run_load RATE=500 P99_MS=200 scripts/load.sh projects steady
-          run_load RATE=400 P99_MS=200 scripts/load.sh changesets steady
-          run_load RATE=1500 P99_MS=200 scripts/load.sh delivery steady
+          run_load RATE=$(rate 400) P99_MS=200 scripts/load.sh session steady
+          run_load RATE=$(rate 500) P99_MS=200 scripts/load.sh cli steady
+          run_load RATE=$(rate 500) P99_MS=200 scripts/load.sh members steady
+          run_load RATE=$(rate 450) P99_MS=200 scripts/load.sh roles steady
+          run_load RATE=$(rate 200) P99_MS=200 scripts/load.sh tokens steady
+          run_load RATE=$(rate 500) P99_MS=200 scripts/load.sh schedules steady
+          run_load RATE=$(rate 500) P99_MS=200 scripts/load.sh projects steady
+          run_load RATE=$(rate 400) P99_MS=200 scripts/load.sh changesets steady
+          run_load RATE=$(rate 1500) P99_MS=200 scripts/load.sh delivery steady
           # Draft preview reads (D-172): never cached, each re-checked as its issuer — the
           # spec's 200/s budget, at the drafts smoke's p99 until a runner baseline exists.
-          run_load RATE=200 P99_MS=500 scripts/load.sh preview steady
+          run_load RATE=$(rate 200) P99_MS=500 scripts/load.sh preview steady
           # RATE counts publishes here, five requests each.
-          run_load RATE=60 P99_MS=500 scripts/load.sh publishing steady
+          run_load RATE=$(rate 60) P99_MS=500 scripts/load.sh publishing steady
           # Step 3.5 made the drafts mix heavier (title searches walk the collection, lists read
           # each entry's live state, revision reads are new): at 400/s a runner whose health ran
           # 21,982/s fell behind (p99 1.47 s on every endpoint, 224 iterations dropped; run
           # 40526045207), while the same code passed its million-request run locally. 300/s until a
           # back-to-back run on the slowest runner sets it at half, as above; END_GOAL's draft
           # workload is 20 writes and 100 reads a second.
-          run_load RATE=300 P99_MS=500 scripts/load.sh entries steady
-          run_load RATE=400 P99_MS=500 scripts/load.sh content-types steady
+          run_load RATE=$(rate 300) P99_MS=500 scripts/load.sh entries steady
+          run_load RATE=$(rate 400) P99_MS=500 scripts/load.sh content-types steady
           # Structures and references (M.1 to M.3): about 1,156 a second back to back on the
           # laptop, so about 600 on a 7763; half is 300.
-          run_load RATE=300 P99_MS=500 scripts/load.sh modelling steady
+          run_load RATE=$(rate 300) P99_MS=500 scripts/load.sh modelling steady
           # Deleting entries (D-080): RATE counts iterations, about 2.3 requests each. About 590
           # a second back to back on the laptop (1,284 requests), so about 300 on a 7763; half
           # is 150.
-          run_load RATE=150 P99_MS=500 scripts/load.sh deletion steady
+          run_load RATE=$(rate 150) P99_MS=500 scripts/load.sh deletion steady
           # Images inside rich text (D-177, D-178): cached image-heavy reads, saves naming 20
           # images, refused saves. A first smoke; its rate is set from a runner's run.
-          run_load RATE=100 P99_MS=700 scripts/load.sh rich-text-media steady
+          run_load RATE=$(rate 100) P99_MS=700 scripts/load.sh rich-text-media steady
           run_load TOTAL=50000 P99_MS=50 scripts/load.sh studio throughput
           touch "$logs/metrics.tsv"
           SMOKE_SCOPE=integration scripts/smoke-verdict.sh perf/expected-smoke-failures.tsv "${ran[*]}" "${failed[*]:-}" "$logs/metrics.tsv" \
@@ -458,6 +477,26 @@ jobs:
           # for the job) can be cut by scenario.
           pgq() { docker compose -f deploy/compose.yaml exec -T postgres psql -U colophon -d postgres -XAtq "$@"; }
           pgc=$(docker compose -f deploy/compose.yaml ps -q postgres)
+          # D-221: this runner's speed (the median of three short back-to-back health runs) normalises the smokes. A
+          # back-to-back smoke's p99 limit is scaled by max(1, REFERENCE / health) (fixed VUs: latency ≈ VUs / throughput);
+          # a fixed-rate one runs at its rate × min(1, health / REFERENCE). Below half the reference the latency verdict
+          # is not judged on this runner (said loudly), but hard failures are still enforced.
+          REFERENCE_RPS=38000
+          IFS=$'\t' read -r health_rps runner_cpu < <(scripts/runner-speed.sh 2>"$logs/runner-speed.log")
+          if [[ -z "$health_rps" ]]; then
+            echo "::warning::no health req/s measured: the smokes run at their reference rates and limits (scale 1)"
+            health_rps=$REFERENCE_RPS
+          fi
+          scale=$(awk -v h="$health_rps" -v r="$REFERENCE_RPS" 'BEGIN {s = h / r; if (s > 1) s = 1; printf "%.3f", s}')
+          judged=yes
+          if awk -v s="$scale" 'BEGIN {exit !(s < 0.5)}'; then
+            judged=no
+            echo "::warning::this runner (${runner_cpu:-unknown}) measured $health_rps health req/s, under half the reference $REFERENCE_RPS: latency is not judged on it; hard failures still are"
+          fi
+          echo "| runner | ${runner_cpu:-unknown}: health $health_rps req/s (median of 3), scale $scale of $REFERENCE_RPS, latency judged: $judged |" >>"$GITHUB_STEP_SUMMARY"
+          export RUNNER_HEALTH_RPS=$health_rps RUNNER_REFERENCE_RPS=$REFERENCE_RPS RUNNER_SCALE=$scale RUNNER_JUDGED=$judged SMOKE_LATENCY_JUDGED=$judged
+          rate() { awk -v r="$1" -v s="$scale" 'BEGIN {v = int(r * s + 0.5); if (v < 1) v = 1; print v}'; }
+          limit() { awk -v l="$1" -v s="$scale" 'BEGIN {printf "%d", l / s + 0.5}'; }
           smoke() {
             local name="${*: -2:1}" sampler
             ran+=("$name")
@@ -487,29 +526,29 @@ jobs:
             cpu=$(awk '{print $2}' "$logs/$name.postgres-cpu.txt" | tr -d '%' | awk 'NF {s += $1; n++; if ($1 > m) m = $1} END {if (n) printf "avg %.0f%%, max %.0f%%", s / n, m; else print "not sampled"}')
             echo "| $name | postgres CPU $cpu |" >>"$GITHUB_STEP_SUMMARY"
           }
-          smoke TOTAL=10000 P99_MS=500 scripts/load.sh assets throughput
-          smoke TOTAL=10000 USERS=64 P99_MS=700 scripts/load.sh audience throughput
-          smoke TOTAL=10000 P99_MS=500 scripts/load.sh bulk throughput
-          smoke DURATION=10s P99_MS=500 scripts/load.sh cache-down throughput
-          smoke DURATION=10s RATE=300 PUBLISH_SECONDS=5 P99_MS=400 scripts/load.sh cdn-warm throughput
-          smoke TOTAL=5000 CORPUS=512 P99_MS=750 scripts/load.sh cold-cache throughput
-          smoke TOTAL=20000 P99_MS=200 scripts/load.sh collaboration throughput
-          smoke TOTAL_RECORDS=1024 P99_MS=15000 scripts/load.sh import-scale throughput
-          smoke TOTAL=10000 P99_MS=500 scripts/load.sh live throughput
-          smoke DURATION=10s MEDIA_VUS=2 P99_MS=700 scripts/load.sh media-load throughput
-          smoke TOTAL=10000 P99_MS=500 scripts/load.sh migrations throughput
-          smoke DURATION=15s RATE=50 PUBLISH_SECONDS=5 P99_MS=700 scripts/load.sh mixed throughput
-          smoke DURATION=8s P99_MS=500 scripts/load.sh noisy-agent throughput
-          smoke DURATION=8s P99_MS=250 scripts/load.sh password-flood throughput
-          smoke DURATION=10s P99_MS=500 scripts/load.sh postgres-trouble throughput
-          smoke DURATION=10s P99_MS=500 scripts/load.sh purge-trouble throughput
-          smoke TOTAL=20000 P99_MS=200 scripts/load.sh quotas throughput
-          smoke TOTAL=10000 P99_MS=500 scripts/load.sh site-starter throughput
-          smoke DURATION=10s P99_MS=700 scripts/load.sh smoke throughput
-          smoke DURATION=8s RATE=300 SPIKE_SECONDS=10 P99_MS=250 scripts/load.sh spike throughput
-          smoke TOTAL=10000 P99_MS=200 scripts/load.sh stages throughput
-          smoke DURATION=15s P99_MS=250 scripts/load.sh stampede throughput
-          smoke TOTAL=50000 P99_MS=350 scripts/load.sh warm-baseline throughput
+          smoke TOTAL=10000 P99_MS=$(limit 500) scripts/load.sh assets throughput
+          smoke TOTAL=10000 USERS=64 P99_MS=$(limit 700) scripts/load.sh audience throughput
+          smoke TOTAL=10000 P99_MS=$(limit 500) scripts/load.sh bulk throughput
+          smoke DURATION=10s P99_MS=$(limit 500) scripts/load.sh cache-down throughput
+          smoke DURATION=10s RATE=$(rate 300) PUBLISH_SECONDS=5 P99_MS=400 scripts/load.sh cdn-warm throughput
+          smoke TOTAL=5000 CORPUS=512 P99_MS=$(limit 750) scripts/load.sh cold-cache throughput
+          smoke TOTAL=20000 P99_MS=$(limit 200) scripts/load.sh collaboration throughput
+          smoke TOTAL_RECORDS=1024 P99_MS=$(limit 15000) scripts/load.sh import-scale throughput
+          smoke TOTAL=10000 P99_MS=$(limit 500) scripts/load.sh live throughput
+          smoke DURATION=10s MEDIA_VUS=2 P99_MS=$(limit 700) scripts/load.sh media-load throughput
+          smoke TOTAL=10000 P99_MS=$(limit 500) scripts/load.sh migrations throughput
+          smoke DURATION=15s RATE=$(rate 50) PUBLISH_SECONDS=5 P99_MS=700 scripts/load.sh mixed throughput
+          smoke DURATION=8s P99_MS=$(limit 500) scripts/load.sh noisy-agent throughput
+          smoke DURATION=8s P99_MS=$(limit 250) scripts/load.sh password-flood throughput
+          smoke DURATION=10s P99_MS=$(limit 500) scripts/load.sh postgres-trouble throughput
+          smoke DURATION=10s P99_MS=$(limit 500) scripts/load.sh purge-trouble throughput
+          smoke TOTAL=20000 P99_MS=$(limit 200) scripts/load.sh quotas throughput
+          smoke TOTAL=10000 P99_MS=$(limit 500) scripts/load.sh site-starter throughput
+          smoke DURATION=10s P99_MS=$(limit 700) scripts/load.sh smoke throughput
+          smoke DURATION=8s RATE=$(rate 300) SPIKE_SECONDS=10 P99_MS=250 scripts/load.sh spike throughput
+          smoke TOTAL=10000 P99_MS=$(limit 200) scripts/load.sh stages throughput
+          smoke DURATION=15s P99_MS=$(limit 250) scripts/load.sh stampede throughput
+          smoke TOTAL=50000 P99_MS=$(limit 350) scripts/load.sh warm-baseline throughput
           echo "| failed smokes | ${failed[*]:-none} (of ${#ran[@]} that ran) |" >>"$GITHUB_STEP_SUMMARY"
           # D-209 addendum: a strict entry must fail (its fix removes its line); a flapping one may pass or fail its limit
           # but never its ceiling (2x); anything unlisted that fails, fails. Each listed smoke's outcome and margin print.
