@@ -9,6 +9,7 @@
 	import { page } from '$app/state';
 	import { createInfiniteQuery, createQuery, keepPreviousData } from '@tanstack/svelte-query';
 	import { Button } from '@colophon/ui/ui/button';
+	import * as NativeSelect from '@colophon/ui/ui/native-select';
 	import { Skeleton } from '@colophon/ui/ui/skeleton';
 	import { type AuditEvent, listAudit, listMembers, may, type Page } from '#lib/api.ts';
 	import { KINDS, type Names, sentence } from '#lib/activity.ts';
@@ -84,8 +85,6 @@
 		}
 		return groups;
 	});
-	const select =
-		'h-9 w-full rounded-md border border-input bg-popover px-3 text-sm outline-none focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/40 sm:w-60';
 </script>
 
 <svelte:head><title>Activity · Colophon Studio</title></svelte:head>
@@ -109,17 +108,17 @@
 		<div class="mb-6 flex max-w-3xl flex-col gap-3 sm:flex-row sm:items-end" role="search" aria-label="Narrow the activity">
 			<label class="grid gap-1.5 text-sm">
 				<span class="font-medium">Kind of change</span>
-				<select class={select} bind:value={action} data-testid="activity-kind">
-					<option value="">Every kind</option>
-					{#each KINDS as kind (kind.action)}<option value={kind.action}>{kind.label}</option>{/each}
-				</select>
+				<NativeSelect.Root size="sm" class="w-full sm:w-60" bind:value={action} data-testid="activity-kind">
+					<NativeSelect.Option value="">Every kind</NativeSelect.Option>
+					{#each KINDS as kind (kind.action)}<NativeSelect.Option value={kind.action}>{kind.label}</NativeSelect.Option>{/each}
+				</NativeSelect.Root>
 			</label>
 			<label class="grid gap-1.5 text-sm">
 				<span class="font-medium">Person</span>
-				<select class={select} bind:value={actor} data-testid="activity-person">
-					<option value="">Anyone</option>
-					{#each members.data ?? [] as member (member.identity_id)}<option value={member.identity_id}>{member.display_name ?? 'Someone without a name'}</option>{/each}
-				</select>
+				<NativeSelect.Root size="sm" class="w-full sm:w-60" bind:value={actor} data-testid="activity-person">
+					<NativeSelect.Option value="">Anyone</NativeSelect.Option>
+					{#each members.data ?? [] as member (member.identity_id)}<NativeSelect.Option value={member.identity_id}>{member.display_name ?? 'Someone without a name'}</NativeSelect.Option>{/each}
+				</NativeSelect.Root>
 			</label>
 			{#if action !== '' || actor !== ''}
 				<Button

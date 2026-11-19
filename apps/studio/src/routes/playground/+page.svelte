@@ -10,6 +10,7 @@
 	import { LIMITS, measure, openEditor, type RichTextValue, serialize, toStored } from '@colophon/editor';
 	import RichText from '@colophon/content-renderer/RichText.svelte';
 	import { Button } from '@colophon/ui/ui/button';
+	import * as NativeSelect from '@colophon/ui/ui/native-select';
 	import * as Tabs from '@colophon/ui/ui/tabs';
 	import { fixtures } from '#lib/fixtures.ts';
 	import RichTextToolbar from '#lib/RichTextToolbar.svelte';
@@ -69,8 +70,6 @@
 		if (fixture) load(fixture.value, fixture.id);
 	}
 
-	const select =
-		'h-9 min-w-0 flex-1 rounded-md border border-input bg-popover px-3 text-sm outline-none focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/40';
 </script>
 
 <svelte:head><title>Editor playground · Colophon Studio</title></svelte:head>
@@ -92,16 +91,16 @@
 		<div>
 			<h2 class="mb-2 text-sm font-semibold">Load a shared fixture</h2>
 			<div class="flex items-center gap-2">
-				<select class={select} bind:value={selectedFixture} aria-label="Fixture" data-testid="fixture-select">
-					<option value="">Choose…</option>
+				<NativeSelect.Root size="sm" class="min-w-0 flex-1" bind:value={selectedFixture} aria-label="Fixture" data-testid="fixture-select">
+					<NativeSelect.Option value="">Choose…</NativeSelect.Option>
 					{#each ['valid', 'invalid'] as kind (kind)}
-						<optgroup label={kind}>
+						<NativeSelect.OptGroup label={kind}>
 							{#each fixtures.filter((fixture) => fixture.kind === kind) as fixture (fixture.id)}
-								<option value={fixture.id}>{fixture.name}</option>
+								<NativeSelect.Option value={fixture.id}>{fixture.name}</NativeSelect.Option>
 							{/each}
-						</optgroup>
+						</NativeSelect.OptGroup>
 					{/each}
-				</select>
+				</NativeSelect.Root>
 				<Button variant="outline" onclick={loadFixture} disabled={selectedFixture === ''}>Open</Button>
 			</div>
 			{#if status}

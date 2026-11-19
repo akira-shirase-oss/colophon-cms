@@ -13,6 +13,7 @@
 	import { Button } from '@colophon/ui/ui/button';
 	import * as Dialog from '@colophon/ui/ui/dialog';
 	import { Input } from '@colophon/ui/ui/input';
+	import * as NativeSelect from '@colophon/ui/ui/native-select';
 	import * as Tabs from '@colophon/ui/ui/tabs';
 	import { Textarea } from '@colophon/ui/ui/textarea';
 	import { type Component, type ContentType, type FieldDefinition, type FieldType, type ItemKind, MAX_DEPTH } from './api.ts';
@@ -73,8 +74,6 @@
 	const nameOf = (slug: string) => collections.find((item) => item.slug === slug)?.definition.name ?? slug;
 	const target = $derived(collections.find((item) => item.slug !== self)?.slug ?? self);
 	const Icon = $derived(iconOf(field));
-	const select =
-		'h-9 rounded-xl border border-input bg-popover px-3 text-sm outline-none focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/40 disabled:opacity-60';
 
 	// Where the last save's refusal lands on this field, if it does: its tab opens first.
 	// svelte-ignore state_referenced_locally
@@ -204,23 +203,23 @@
 	{:else if def.type === 'slug'}
 		<label class="grid gap-1.5 text-sm">
 			<span class="font-medium">Suggested from</span>
-			<select class={select} value={def.source ?? ''} onchange={(event) => ((def as { source?: string }).source = event.currentTarget.value === '' ? undefined : event.currentTarget.value)} disabled={!editable}>
-				<option value="">Nothing</option>
-				{#each singleLineText as other (other.id)}<option value={other.id}>{other.label}</option>{/each}
-			</select>
+			<NativeSelect.Root size="sm" class="w-full" value={def.source ?? ''} onchange={(event) => ((def as { source?: string }).source = event.currentTarget.value === '' ? undefined : event.currentTarget.value)} disabled={!editable}>
+				<NativeSelect.Option value="">Nothing</NativeSelect.Option>
+				{#each singleLineText as other (other.id)}<NativeSelect.Option value={other.id}>{other.label}</NativeSelect.Option>{/each}
+			</NativeSelect.Root>
 			<span class="text-xs text-muted-foreground">Editors get a button that makes the URL name from it, like lemon-tart from Lemon tart.</span>
 		</label>
 	{:else if def.type === 'reference'}
 		<div class="grid gap-3 text-sm" data-testid="reference-options">
 			<label class="grid gap-1.5">
 				<span class="font-medium">Links to</span>
-				<select class={select} value={def.to} onchange={(event) => ((def as { to: string }).to = event.currentTarget.value)} disabled={!editable || !isNew}>
+				<NativeSelect.Root size="sm" class="w-full" value={def.to} onchange={(event) => ((def as { to: string }).to = event.currentTarget.value)} disabled={!editable || !isNew}>
 					{#each collections as item (item.slug)}
-						<option value={item.slug}>{item.definition.name}{item.slug === self ? ' (this one)' : ''}</option>
+						<NativeSelect.Option value={item.slug}>{item.definition.name}{item.slug === self ? ' (this one)' : ''}</NativeSelect.Option>
 					{:else}
-						<option value={def.to}>{nameOf(def.to)}</option>
+						<NativeSelect.Option value={def.to}>{nameOf(def.to)}</NativeSelect.Option>
 					{/each}
-				</select>
+				</NativeSelect.Root>
 				{#if !isNew}<span class="text-xs text-muted-foreground">It keeps pointing at {nameOf(def.to)}: what it holds are {nameOf(def.to)} entries.</span>{/if}
 			</label>
 			{#if !isItem}
@@ -242,8 +241,9 @@
 					{@const backs = (collections.find((item) => item.slug === def.to)?.definition.fields ?? []).filter((other) => other.type === 'reference' && other.to === self)}
 					<label class="grid gap-1.5">
 						<span class="font-medium">Mirrored on {nameOf(def.to)} by</span>
-						<select
-							class={select}
+						<NativeSelect.Root
+							size="sm"
+							class="w-full"
 							value={def.inverse ?? ''}
 							onchange={(event) => {
 								const chosen = event.currentTarget.value;
@@ -253,12 +253,12 @@
 							disabled={!editable}
 							data-testid="inverse"
 						>
-							<option value="">No field</option>
-							{#each backs as back (back.id)}<option value={back.id}>{back.label}</option>{/each}
+							<NativeSelect.Option value="">No field</NativeSelect.Option>
+							{#each backs as back (back.id)}<NativeSelect.Option value={back.id}>{back.label}</NativeSelect.Option>{/each}
 							{#if def.inverse !== undefined && !backs.some((back) => back.id === def.inverse)}
-								<option value={def.inverse}>{def.inverse} (not on {nameOf(def.to)})</option>
+								<NativeSelect.Option value={def.inverse}>{def.inverse} (not on {nameOf(def.to)})</NativeSelect.Option>
 							{/if}
-						</select>
+						</NativeSelect.Root>
 						<span class="text-xs text-muted-foreground">The field you choose keeps its side of the link itself: a save here writes it there, in the same change. To offer one, add a link back to this type on {nameOf(def.to)} first.</span>
 					</label>
 				{/if}
@@ -289,9 +289,9 @@
 			{#if isNew && !isItem}
 				<label class="grid gap-1.5">
 					<span class="font-medium">Component</span>
-					<select class={select} value={def.component} onchange={(event) => setComponent(event.currentTarget.value)} disabled={!editable}>
-						{#each components.filter((shared) => componentFits(shared, depth)) as shared (shared.slug)}<option value={shared.slug}>{shared.definition.name}</option>{/each}
-					</select>
+					<NativeSelect.Root size="sm" class="w-full" value={def.component} onchange={(event) => setComponent(event.currentTarget.value)} disabled={!editable}>
+						{#each components.filter((shared) => componentFits(shared, depth)) as shared (shared.slug)}<NativeSelect.Option value={shared.slug}>{shared.definition.name}</NativeSelect.Option>{/each}
+					</NativeSelect.Root>
 				</label>
 			{/if}
 			<p class="text-xs text-muted-foreground">
@@ -309,18 +309,19 @@
 			<div class="flex flex-wrap items-end gap-4">
 				<label class="grid gap-1.5">
 					<span class="font-medium">Each item is</span>
-					<select
-						class={select}
+					<NativeSelect.Root
+						size="sm"
+						class="w-full"
 						value={def.of.type === 'object' && def.of.component !== undefined ? `component:${def.of.component}` : def.of.type}
 						onchange={(event) => setItem(event.currentTarget.value)}
 						disabled={!editable}
 						aria-label="What each item of {field.label || 'the list'} is"
 					>
-						{#each itemTypes as type (type)}<option value={type}>{NAMES[type]}</option>{/each}
+						{#each itemTypes as type (type)}<NativeSelect.Option value={type}>{NAMES[type]}</NativeSelect.Option>{/each}
 						{#each components.filter((shared) => componentFits(shared, depth + 1)) as shared (shared.slug)}
-							<option value="component:{shared.slug}">Component: {shared.definition.name}</option>
+							<NativeSelect.Option value="component:{shared.slug}">Component: {shared.definition.name}</NativeSelect.Option>
 						{/each}
-					</select>
+					</NativeSelect.Root>
 				</label>
 				<label class="flex items-center gap-2 pb-1.5">
 					At most
@@ -501,16 +502,16 @@
 							<label class="grid gap-1.5">
 								<span class="font-medium">{DEFAULT_VALUE}</span>
 								{#if kind === 'yes-no'}
-									<select class={select} value={field.default === true ? 'yes' : field.default === false ? 'no' : ''} onchange={(event) => setDefault({ yes: true, no: false }[event.currentTarget.value as 'yes' | 'no'])} disabled={!editable} aria-invalid={wrong || undefined}>
-										<option value="">No default</option>
-										<option value="yes">Yes</option>
-										<option value="no">No</option>
-									</select>
+									<NativeSelect.Root size="sm" class="w-full" value={field.default === true ? 'yes' : field.default === false ? 'no' : ''} onchange={(event) => setDefault({ yes: true, no: false }[event.currentTarget.value as 'yes' | 'no'])} disabled={!editable} aria-invalid={wrong || undefined}>
+										<NativeSelect.Option value="">No default</NativeSelect.Option>
+										<NativeSelect.Option value="yes">Yes</NativeSelect.Option>
+										<NativeSelect.Option value="no">No</NativeSelect.Option>
+									</NativeSelect.Root>
 								{:else if kind === 'choice' && field.type === 'enum'}
-									<select class={select} value={typeof field.default === 'string' ? field.default : ''} onchange={(event) => setDefault(event.currentTarget.value)} disabled={!editable} aria-invalid={wrong || undefined}>
-										<option value="">No default</option>
-										{#each field.values as option (option)}<option value={option}>{option}</option>{/each}
-									</select>
+									<NativeSelect.Root size="sm" class="w-full" value={typeof field.default === 'string' ? field.default : ''} onchange={(event) => setDefault(event.currentTarget.value)} disabled={!editable} aria-invalid={wrong || undefined}>
+										<NativeSelect.Option value="">No default</NativeSelect.Option>
+										{#each field.values as option (option)}<NativeSelect.Option value={option}>{option}</NativeSelect.Option>{/each}
+									</NativeSelect.Root>
 								{:else if kind === 'textarea'}
 									<Textarea rows={2} value={typeof field.default === 'string' ? field.default : ''} oninput={(event) => setDefault(event.currentTarget.value)} disabled={!editable} aria-invalid={wrong || undefined} />
 								{:else if kind === 'number'}
@@ -542,13 +543,13 @@
 							{:else}
 								<label class="grid gap-1.5">
 									<span class="font-medium">{SHOW_WHEN}</span>
-									<select class={select} value={field.when?.field ?? ''} onchange={(event) => setWhen(event.currentTarget.value)} disabled={!editable}>
-										<option value="">Always shown</option>
-										{#each choices as other (other.id)}<option value={other.id}>{other.label} is…</option>{/each}
+									<NativeSelect.Root size="sm" class="w-full" value={field.when?.field ?? ''} onchange={(event) => setWhen(event.currentTarget.value)} disabled={!editable}>
+										<NativeSelect.Option value="">Always shown</NativeSelect.Option>
+										{#each choices as other (other.id)}<NativeSelect.Option value={other.id}>{other.label} is…</NativeSelect.Option>{/each}
 										{#if field.when !== undefined && !choices.some((other) => other.id === field.when?.field)}
-											<option value={field.when.field}>{controller?.label ?? field.when.field} is…</option>
+											<NativeSelect.Option value={field.when.field}>{controller?.label ?? field.when.field} is…</NativeSelect.Option>
 										{/if}
-									</select>
+									</NativeSelect.Root>
 								</label>
 								{#if field.when !== undefined}
 									<div class="flex flex-wrap gap-x-4 gap-y-1" role="group" aria-label="Values of {controller?.label ?? field.when.field} that show {field.label}">

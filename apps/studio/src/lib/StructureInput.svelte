@@ -13,6 +13,7 @@
 	import PlusIcon from '@lucide/svelte/icons/plus';
 	import XIcon from '@lucide/svelte/icons/x';
 	import { Button } from '@colophon/ui/ui/button';
+	import * as NativeSelect from '@colophon/ui/ui/native-select';
 	import type { FieldDefinition } from './api.ts';
 	import { blockOf, type FormRecord, type FormValue, formValue, isRecord, itemField, sectionForm } from './content.ts';
 	import FieldInputs from './FieldInputs.svelte';
@@ -89,8 +90,6 @@
 	}
 	const sectionLabel = (item: FormValue, index: number) =>
 		`${(field.type === 'blocks' && isRecord(item) ? blockOf(field, item)?.label : undefined) ?? 'Section'} ${index + 1}`;
-	const select =
-		'h-9 rounded-md border border-input bg-popover px-3 text-sm outline-none focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/40';
 </script>
 
 {#if field.type === 'object'}
@@ -183,9 +182,9 @@
 				<p class="text-xs text-muted-foreground">At most {field.max} sections: remove one to add another.</p>
 			{:else}
 				<div class="flex flex-wrap items-center gap-2">
-					<select class={select} bind:value={adding} aria-label="Kind of section to add to {field.label}" data-testid="section-kind">
-						{#each field.blocks as block (block.name)}<option value={block.name}>{block.label}</option>{/each}
-					</select>
+					<NativeSelect.Root size="sm" bind:value={adding} aria-label="Kind of section to add to {field.label}" data-testid="section-kind">
+						{#each field.blocks as block (block.name)}<NativeSelect.Option value={block.name}>{block.label}</NativeSelect.Option>{/each}
+					</NativeSelect.Root>
 					<Button variant="outline" size="sm" onclick={addSection} data-testid="section-add"><PlusIcon data-icon="inline-start" />Add section</Button>
 				</div>
 			{/if}

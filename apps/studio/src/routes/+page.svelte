@@ -21,6 +21,7 @@
 	import * as Dialog from '@colophon/ui/ui/dialog';
 	import { Input } from '@colophon/ui/ui/input';
 	import { Label } from '@colophon/ui/ui/label';
+	import * as NativeSelect from '@colophon/ui/ui/native-select';
 	import { Skeleton } from '@colophon/ui/ui/skeleton';
 	import { ApiError, claimSetup, installation, me } from '#lib/api.ts';
 	import { providersQuery } from '#lib/queries.ts';
@@ -256,14 +257,15 @@
 				{#if projects.length > 1}
 					<label class="flex items-center gap-2 text-sm">
 						<span class="text-muted-foreground">Show work in</span>
-						<select
-							class="h-9 max-w-56 rounded-md border border-input bg-popover px-3 text-sm outline-none focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/40"
+						<NativeSelect.Root
+							size="sm"
+							class="max-w-56"
 							value={current.id}
 							onchange={(event) => (chosen = event.currentTarget.value)}
 							data-testid="work-picker"
 						>
-							{#each projects as project (project.id)}<option value={project.id}>{project.name}</option>{/each}
-						</select>
+							{#each projects as project (project.id)}<NativeSelect.Option value={project.id}>{project.name}</NativeSelect.Option>{/each}
+						</NativeSelect.Root>
 					</label>
 				{/if}
 			</div>

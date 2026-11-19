@@ -16,6 +16,7 @@
 	import { Badge } from '@colophon/ui/ui/badge';
 	import { Button } from '@colophon/ui/ui/button';
 	import { Label } from '@colophon/ui/ui/label';
+	import * as NativeSelect from '@colophon/ui/ui/native-select';
 	import { Skeleton } from '@colophon/ui/ui/skeleton';
 	import { Textarea } from '@colophon/ui/ui/textarea';
 	import { ApiError, type Changeset, type ChangesetStage, changesetAction, createChangeset, getChangeset, may, mayOn, newKey, publishChangeset } from '#lib/api.ts';
@@ -167,8 +168,6 @@
 	});
 
 	const STAGE_BADGE = { pending: 'pending', approved: 'live', changes_requested: 'attention', approval_expired: 'attention' } as const;
-	const select =
-		'h-8 rounded-md border border-input bg-popover px-2 text-sm outline-none focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/40 disabled:opacity-50';
 
 	const STEPS = ['Prepared', 'Sent for review', 'Approved', 'Live'] as const;
 	function reached(shown: Changeset): number {
@@ -340,16 +339,16 @@
 					{#if shown.stages.length > 0}
 						<div class="mt-4 grid gap-1.5">
 							<Label for="review-stage">Deciding</Label>
-							<select id="review-stage" class={select} bind:value={deciding} disabled={busy} data-testid="review-stage">
+							<NativeSelect.Root id="review-stage" size="sm" class="w-full" bind:value={deciding} disabled={busy} data-testid="review-stage">
 								{#each shown.stages as stage (stage.key)}
-									<option value={stage.key} data-user-content
+									<NativeSelect.Option value={stage.key} data-user-content
 										>{stage.name} — {STAGE_STATE[stage.state].toLowerCase()}{stage.different_reviewer &&
 										shown.submitted_by === who.data?.id
 											? ', someone other than you'
-											: ''}</option
+											: ''}</NativeSelect.Option
 									>
 								{/each}
-							</select>
+							</NativeSelect.Root>
 						</div>
 					{/if}
 					<div class="mt-4 grid gap-1.5">

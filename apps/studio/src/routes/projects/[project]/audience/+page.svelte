@@ -8,6 +8,7 @@
 	import { page } from '$app/state';
 	import { createQuery, useQueryClient } from '@tanstack/svelte-query';
 	import { Button } from '@colophon/ui/ui/button';
+	import * as NativeSelect from '@colophon/ui/ui/native-select';
 	import * as Table from '@colophon/ui/ui/table';
 	import EmptyState from '#lib/shell/EmptyState.svelte';
 	import PageHeader from '#lib/shell/PageHeader.svelte';
@@ -89,8 +90,6 @@
 		);
 	}
 
-	const select =
-		'h-8 rounded-md border border-input bg-popover px-2 text-sm outline-none focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/40 disabled:opacity-50';
 </script>
 
 <svelte:head><title>Audience · Colophon Studio</title></svelte:head>
@@ -137,15 +136,15 @@
 						</Table.Cell>
 						<Table.Cell>
 							{#if manages}
-								<select
-									class={select}
+								<NativeSelect.Root
+									size="sm"
 									aria-label="Role of {user.email}"
 									value={user.role}
 									disabled={busy}
 									onchange={(event) => setRole(event.currentTarget, user)}
 								>
-									{#each roles.data ?? [] as option (option.name)}<option value={option.name}>{option.name}</option>{/each}
-								</select>
+									{#each roles.data ?? [] as option (option.name)}<NativeSelect.Option value={option.name}>{option.name}</NativeSelect.Option>{/each}
+								</NativeSelect.Root>
 							{:else}
 								<span class="text-sm">{user.role}</span>
 							{/if}

@@ -13,6 +13,7 @@
 	import { toast } from 'svelte-sonner';
 	import { Button } from '@colophon/ui/ui/button';
 	import { Input } from '@colophon/ui/ui/input';
+	import * as NativeSelect from '@colophon/ui/ui/native-select';
 	import { Textarea } from '@colophon/ui/ui/textarea';
 	import { type Action, ApiError, type ContentType, deleteRole, type Grant, type RoleDefinition, updateRole } from '#lib/api.ts';
 	import PermissionGrid from '#lib/PermissionGrid.svelte';
@@ -226,16 +227,16 @@
 			<div class="flex flex-wrap gap-3">
 				<label class="grid gap-1 text-sm">
 					What
-					<select class="h-9 rounded-md border border-input bg-card px-2 text-sm" bind:value={limitAction}>
-						{#each LIMITABLE as kind (kind.action)}<option value={kind.action}>{kind.label}</option>{/each}
-					</select>
+					<NativeSelect.Root size="sm" class="w-full" bind:value={limitAction}>
+						{#each LIMITABLE as kind (kind.action)}<NativeSelect.Option value={kind.action}>{kind.label}</NativeSelect.Option>{/each}
+					</NativeSelect.Root>
 				</label>
 				<label class="grid gap-1 text-sm">
 					Where
-					<select class="h-9 rounded-md border border-input bg-card px-2 text-sm" bind:value={limitSubject} onchange={() => (limitFields = [])}>
-						<option value="*">Every content type</option>
-						{#each types as type (type.slug)}<option value={type.slug}>{type.definition.name}</option>{/each}
-					</select>
+					<NativeSelect.Root size="sm" class="w-full" bind:value={limitSubject} onchange={() => (limitFields = [])}>
+						<NativeSelect.Option value="*">Every content type</NativeSelect.Option>
+						{#each types as type (type.slug)}<NativeSelect.Option value={type.slug}>{type.definition.name}</NativeSelect.Option>{/each}
+					</NativeSelect.Root>
 				</label>
 				{#if limitKind?.own}
 					<label class="flex items-end gap-2 pb-2 text-sm">

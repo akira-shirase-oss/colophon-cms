@@ -9,6 +9,7 @@
 -->
 <script lang="ts">
 	import { Input } from '@colophon/ui/ui/input';
+	import * as NativeSelect from '@colophon/ui/ui/native-select';
 	import { Textarea } from '@colophon/ui/ui/textarea';
 	import { Button } from '@colophon/ui/ui/button';
 	import AssetPicker from './AssetPicker.svelte';
@@ -114,8 +115,6 @@
 		form[field.id] = suggestion(field);
 		onchange();
 	}
-	const select =
-		'h-9 w-full rounded-md border border-input bg-popover px-3 text-sm outline-none focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/40';
 </script>
 
 <div class={stacked ? 'grid gap-4' : ''}>
@@ -188,12 +187,12 @@
 						oninput={onchange}
 					/>
 				{:else if field.type === 'enum'}
-					<select id={input} disabled={locked.includes(field.id)} class="{select} max-w-72" bind:value={form[field.id] as string} {onchange}>
-						{#if !field.required}<option value="">None</option>{/if}
+					<NativeSelect.Root id={input} disabled={locked.includes(field.id)} size="sm" class="w-full max-w-72" bind:value={form[field.id] as string} {onchange}>
+						{#if !field.required}<NativeSelect.Option value="">None</NativeSelect.Option>{/if}
 						{#each field.values as option (option)}
-							<option value={option}>{option}</option>
+							<NativeSelect.Option value={option}>{option}</NativeSelect.Option>
 						{/each}
-					</select>
+					</NativeSelect.Root>
 				{:else if field.type === 'datetime'}
 					<Input id={input} disabled={locked.includes(field.id)} type="datetime-local" step="1" class="max-w-72" bind:value={form[field.id] as string} oninput={onchange} />
 				{:else if field.type === 'slug'}

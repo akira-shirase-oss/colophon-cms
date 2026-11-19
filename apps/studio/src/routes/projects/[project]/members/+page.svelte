@@ -16,6 +16,7 @@
 	import { Button } from '@colophon/ui/ui/button';
 	import * as Dialog from '@colophon/ui/ui/dialog';
 	import { Input } from '@colophon/ui/ui/input';
+	import * as NativeSelect from '@colophon/ui/ui/native-select';
 	import * as Table from '@colophon/ui/ui/table';
 	import EmptyState from '#lib/shell/EmptyState.svelte';
 	import FormRow from '#lib/shell/FormRow.svelte';
@@ -150,8 +151,6 @@
 		}
 	}
 
-	const select =
-		'h-8 rounded-md border border-input bg-popover px-2 text-sm outline-none focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/40 disabled:opacity-50';
 	const initials = (name: string) =>
 		name
 			.split(/\s+/)
@@ -209,15 +208,15 @@
 						</Table.Cell>
 						<Table.Cell>
 							{#if manages}
-								<select
-									class={select}
+								<NativeSelect.Root
+									size="sm"
 									aria-label="Role of {name}"
 									value={member.role}
 									disabled={busy}
 									onchange={(event) => setRole(event.currentTarget, member.identity_id, member.role)}
 								>
-									{#each roles.data ?? [] as option (option.key)}<option value={option.key}>{option.name}</option>{/each}
-								</select>
+									{#each roles.data ?? [] as option (option.key)}<NativeSelect.Option value={option.key}>{option.name}</NativeSelect.Option>{/each}
+								</NativeSelect.Root>
 							{:else}
 								<span class="text-sm">{nameOf(member.role)}</span>
 							{/if}
@@ -284,10 +283,10 @@
 					</FormRow>
 					<FormRow label="Role" hint={roles.data?.find((option) => option.key === role)?.description} for="invite-role">
 						<div class="flex flex-wrap items-center gap-x-3 gap-y-2">
-							<select id="invite-role" class="{select} h-9 min-w-0 flex-1" bind:value={role} onchange={(event) => chooseRole(event.currentTarget)}>
-								{#each roles.data ?? [] as option (option.key)}<option value={option.key}>{option.name}</option>{/each}
-								{#if managesRoles}<option value={NEW_ROLE}>Make a new role…</option>{/if}
-							</select>
+							<NativeSelect.Root id="invite-role" size="sm" class="min-w-0 flex-1" bind:value={role} onchange={(event) => chooseRole(event.currentTarget)}>
+								{#each roles.data ?? [] as option (option.key)}<NativeSelect.Option value={option.key}>{option.name}</NativeSelect.Option>{/each}
+								{#if managesRoles}<NativeSelect.Option value={NEW_ROLE}>Make a new role…</NativeSelect.Option>{/if}
+							</NativeSelect.Root>
 							<a
 								class="text-sm whitespace-nowrap underline decoration-border underline-offset-4 hover:decoration-foreground"
 								href={resolve('/projects/[project]/settings/roles', { project })}

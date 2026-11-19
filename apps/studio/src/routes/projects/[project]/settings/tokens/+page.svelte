@@ -18,6 +18,7 @@
 	import { Button } from '@colophon/ui/ui/button';
 	import * as Dialog from '@colophon/ui/ui/dialog';
 	import { Input } from '@colophon/ui/ui/input';
+	import * as NativeSelect from '@colophon/ui/ui/native-select';
 	import { Skeleton } from '@colophon/ui/ui/skeleton';
 	import { Textarea } from '@colophon/ui/ui/textarea';
 	import { type Action, type ApiToken, createToken, type Grant, listTokens, may, PEOPLE_ONLY, revokeToken } from '#lib/api.ts';
@@ -286,14 +287,15 @@
 			{/if}
 			<div class="grid gap-1.5 text-sm">
 				<label class="font-medium" for="token-days">Works for</label>
-				<select
+				<NativeSelect.Root
 					id="token-days"
-					class="h-9 w-full max-w-56 rounded-md border border-input bg-popover px-3 text-sm outline-none focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/40"
+					size="sm"
+					class="w-full max-w-56"
 					bind:value={days}
 					aria-describedby="token-days-hint"
 				>
-					{#each LASTS as last (last.days)}<option value={last.days}>{last.name}</option>{/each}
-				</select>
+					{#each LASTS as last (last.days)}<NativeSelect.Option value={last.days}>{last.name}</NativeSelect.Option>{/each}
+				</NativeSelect.Root>
 				<span id="token-days-hint" class="text-xs text-muted-foreground">It stops working by itself after this; you can revoke it sooner.</span>
 			</div>
 			{#if error}<p role="alert" class="text-sm text-destructive" data-testid="token-error">{error}</p>{/if}

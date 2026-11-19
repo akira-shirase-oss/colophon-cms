@@ -15,6 +15,7 @@
 	import { Button } from '@colophon/ui/ui/button';
 	import * as Dialog from '@colophon/ui/ui/dialog';
 	import { Input } from '@colophon/ui/ui/input';
+	import * as NativeSelect from '@colophon/ui/ui/native-select';
 	import { Skeleton } from '@colophon/ui/ui/skeleton';
 	import * as Table from '@colophon/ui/ui/table';
 	import * as Tabs from '@colophon/ui/ui/tabs';
@@ -251,8 +252,6 @@
 		if (!ok) control.value = was;
 	}
 
-	const select =
-		'h-8 rounded-md border border-input bg-popover px-2 text-sm outline-none focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/40 disabled:opacity-50';
 	const entryHref = (task: EditorialTask) => resolve('/projects/[project]/[collection]/[entry]', { project, collection: task.collection, entry: task.entry_id });
 	const statusBadge = (state: string) => (state === 'done' ? 'live' : state === 'cancelled' ? 'secondary' : 'pending') as 'live' | 'secondary' | 'pending';
 </script>
@@ -279,11 +278,11 @@
 	</Tabs.Root>
 	<label class="flex items-center gap-2 text-sm text-muted-foreground">
 		Waiting on
-		<select bind:value={waiting} class={select} data-testid="filter-assignee" aria-label="Waiting on">
-			<option value="any">Anyone</option>
-			<option value="me">Me</option>
-			<option value="none">Nobody</option>
-		</select>
+		<NativeSelect.Root bind:value={waiting} size="sm" data-testid="filter-assignee" aria-label="Waiting on">
+			<NativeSelect.Option value="any">Anyone</NativeSelect.Option>
+			<NativeSelect.Option value="me">Me</NativeSelect.Option>
+			<NativeSelect.Option value="none">Nobody</NativeSelect.Option>
+		</NativeSelect.Root>
 	</label>
 </div>
 
@@ -353,47 +352,48 @@
 				{:else if choices.isError}
 					<Problem error={choices.error} what="entries" retry={() => choices.refetch()} />
 				{:else}
-					<select id="task-entry" bind:value={pickedEntry} class="{select} w-full" required data-testid="task-entry" onchange={() => (pickedRevision = '')}>
-						<option value="" disabled>Choose an entry…</option>
+					<NativeSelect.Root id="task-entry" bind:value={pickedEntry} size="sm" class="w-full" required data-testid="task-entry" onchange={() => (pickedRevision = '')}>
+						<NativeSelect.Option value="" disabled>Choose an entry…</NativeSelect.Option>
 						{#each choices.data ?? [] as group (group.type.slug)}
-							<optgroup label={group.type.definition.name}>
+							<NativeSelect.OptGroup label={group.type.definition.name}>
 								{#each group.entries as item (item.id)}
-									<option value="{group.type.slug}/{item.id}" data-user-content>{shownTitle(item.revision.title)}</option>
+									<NativeSelect.Option value="{group.type.slug}/{item.id}" data-user-content>{shownTitle(item.revision.title)}</NativeSelect.Option>
 								{/each}
-							</optgroup>
+							</NativeSelect.OptGroup>
 						{/each}
-					</select>
+					</NativeSelect.Root>
 				{/if}
 			</FormRow>
 			<FormRow label="Waiting on" for="task-assignee" hint="A member of this project, or nobody yet.">
-				<select id="task-assignee" bind:value={pickedPerson} class="{select} w-full" data-testid="task-assignee">
-					<option value="">Nobody yet</option>
+				<NativeSelect.Root id="task-assignee" bind:value={pickedPerson} size="sm" class="w-full" data-testid="task-assignee">
+					<NativeSelect.Option value="">Nobody yet</NativeSelect.Option>
 					{#each people.data ?? [] as member (member.identity_id)}
-						<option value={member.identity_id} data-user-content>{member.identity_id === who.data?.id ? 'You' : (member.display_name ?? member.identity_id)}</option>
+						<NativeSelect.Option value={member.identity_id} data-user-content>{member.identity_id === who.data?.id ? 'You' : (member.display_name ?? member.identity_id)}</NativeSelect.Option>
 					{/each}
-				</select>
+				</NativeSelect.Root>
 			</FormRow>
 			<FormRow label="On version" for="task-revision" hint="Optional: the exact version it's about.">
-				<select
+				<NativeSelect.Root
 					id="task-revision"
 					bind:value={pickedRevision}
-					class="{select} w-full"
+					size="sm"
+					class="w-full"
 					disabled={pickedEntry === '' || versions.data === undefined || versions.data.length === 0}
 					data-testid="task-revision"
 				>
-					<option value="">None</option>
+					<NativeSelect.Option value="">None</NativeSelect.Option>
 					{#each versions.data ?? [] as revision (revision.id)}
-						<option value={revision.id} data-user-content>{revision.title} — {ago(revision.created_at)}</option>
+						<NativeSelect.Option value={revision.id} data-user-content>{revision.title} — {ago(revision.created_at)}</NativeSelect.Option>
 					{/each}
-				</select>
+				</NativeSelect.Root>
 			</FormRow>
 			<FormRow label="On publish request" for="task-changeset" hint="Optional: the {PUBLISH_REQUESTS} it's about.">
-				<select id="task-changeset" bind:value={pickedRequest} class="{select} w-full" disabled={requests.data === undefined || requests.data.length === 0} data-testid="task-changeset">
-					<option value="">None</option>
+				<NativeSelect.Root id="task-changeset" bind:value={pickedRequest} size="sm" class="w-full" disabled={requests.data === undefined || requests.data.length === 0} data-testid="task-changeset">
+					<NativeSelect.Option value="">None</NativeSelect.Option>
 					{#each requests.data ?? [] as item (item.id)}
-						<option value={item.id} data-user-content>{item.title}</option>
+						<NativeSelect.Option value={item.id} data-user-content>{item.title}</NativeSelect.Option>
 					{/each}
-				</select>
+				</NativeSelect.Root>
 			</FormRow>
 			{#if error !== ''}<p role="alert" class="text-sm text-destructive" data-testid="task-error">{error}</p>{/if}
 			<Dialog.Footer>
@@ -443,19 +443,19 @@
 					<div class="flex flex-wrap items-center gap-3">
 						<label class="flex items-center gap-2 text-sm">
 							Waiting on
-							<select
+							<NativeSelect.Root
 								value={open.assignee_id ?? ''}
 								onchange={changePerson}
-								class={select}
+								size="sm"
 								disabled={busy}
 								data-testid="edit-assignee"
 								aria-label="Waiting on"
 							>
-								<option value="">Unassigned</option>
+								<NativeSelect.Option value="">Unassigned</NativeSelect.Option>
 								{#each people.data ?? [] as member (member.identity_id)}
-									<option value={member.identity_id} data-user-content>{member.identity_id === who.data?.id ? 'You' : (member.display_name ?? member.identity_id)}</option>
+									<NativeSelect.Option value={member.identity_id} data-user-content>{member.identity_id === who.data?.id ? 'You' : (member.display_name ?? member.identity_id)}</NativeSelect.Option>
 								{/each}
-							</select>
+							</NativeSelect.Root>
 						</label>
 						<span class="flex-1"></span>
 						{#if open.status === 'open'}

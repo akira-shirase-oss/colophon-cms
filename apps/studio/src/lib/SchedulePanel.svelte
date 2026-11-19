@@ -12,6 +12,7 @@
 	import { Button } from '@colophon/ui/ui/button';
 	import { Input } from '@colophon/ui/ui/input';
 	import { Label } from '@colophon/ui/ui/label';
+	import * as NativeSelect from '@colophon/ui/ui/native-select';
 	import { ApiError, cancelSchedule, type Changeset, listSchedules, type Schedule, scheduleChangeset } from '#lib/api.ts';
 	import { plainError } from '#lib/errors.ts';
 	import { ago, meQuery } from '#lib/queries.ts';
@@ -165,14 +166,15 @@
 			</div>
 			<div class="grid gap-1.5">
 				<Label for="schedule-zone">Time zone</Label>
-				<select
+				<NativeSelect.Root
 					id="schedule-zone"
-					class="h-9 w-full rounded-md border border-input bg-popover px-3 text-sm outline-none focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/40"
+					size="sm"
+					class="w-full"
 					bind:value={zone}
 					onchange={() => (ask = null)}
 				>
-					{#each ZONES as name (name)}<option value={name}>{name}{name === here ? ' (yours)' : ''}</option>{/each}
-				</select>
+					{#each ZONES as name (name)}<NativeSelect.Option value={name}>{name}{name === here ? ' (yours)' : ''}</NativeSelect.Option>{/each}
+				</NativeSelect.Root>
 			</div>
 			{#if ask}
 				<fieldset class="grid gap-2 rounded-lg bg-pending-soft p-3 text-sm text-pending-ink" data-testid="schedule-choice">

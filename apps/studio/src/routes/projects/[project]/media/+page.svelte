@@ -20,6 +20,7 @@
 	import { Button } from '@colophon/ui/ui/button';
 	import * as Dialog from '@colophon/ui/ui/dialog';
 	import * as InputGroup from '@colophon/ui/ui/input-group';
+	import * as NativeSelect from '@colophon/ui/ui/native-select';
 	import { Skeleton } from '@colophon/ui/ui/skeleton';
 	import { ApiError, type Asset, type AssetFilter, type AssetPage, deleteAsset, listAssetPage, may, newKey } from '#lib/api.ts';
 	import { altOf, carriesFiles, deletable, MAX_CARDS, MAX_QUERY, measure, PAGE_SIZE, sentence, stateText, TAG, thumbnailUrl } from '#lib/library.ts';
@@ -182,8 +183,6 @@
 		{ value: 'rejected', label: 'Rejected' },
 		{ value: 'deleted', label: 'Deleted' }
 	];
-	const select =
-		'h-9 w-full rounded-md border border-input bg-popover px-3 text-sm outline-none focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/40 sm:w-44';
 </script>
 
 <svelte:head><title>Media · Colophon Studio</title></svelte:head>
@@ -258,9 +257,9 @@
 				data-testid="media-search"
 			/>
 		</InputGroup.Root>
-		<select class={select} bind:value={shown} aria-label="Show uploads in a state" data-testid="media-state">
-			{#each STATES as option (option.value)}<option value={option.value}>{option.label}</option>{/each}
-		</select>
+		<NativeSelect.Root size="sm" class="w-full sm:w-44" bind:value={shown} aria-label="Show uploads in a state" data-testid="media-state">
+			{#each STATES as option (option.value)}<NativeSelect.Option value={option.value}>{option.label}</NativeSelect.Option>{/each}
+		</NativeSelect.Root>
 		{#if tag !== ''}
 			<Badge variant="outline" class="h-9 gap-1 rounded-full pr-1 pl-3 text-sm" data-testid="media-tag">
 				Tagged #{tag}
