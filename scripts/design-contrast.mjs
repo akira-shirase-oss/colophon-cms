@@ -72,7 +72,7 @@ const TEXT = [
 	['foreground', 'background'], ['card-foreground', 'card'], ['popover-foreground', 'popover'],
 	['primary-foreground', 'primary'], ['secondary-foreground', 'secondary'], ['muted-foreground', 'muted'],
 	['muted-foreground', 'background'], ['muted-foreground', 'card'], ['accent-foreground', 'accent'],
-	['destructive-foreground', 'destructive'], ['link', 'background'], ['link', 'card'], ['link', 'muted'],
+	['destructive-foreground', 'destructive'], ['destructive', 'background'], ['destructive', 'card'], ['link', 'background'], ['link', 'card'], ['link', 'muted'],
 	['foreground', 'muted'], ['foreground', 'secondary'], ['foreground', 'accent'],
 	['sidebar-foreground', 'sidebar'], ['sidebar-primary-foreground', 'sidebar-primary'],
 	['sidebar-accent-foreground', 'sidebar-accent'],

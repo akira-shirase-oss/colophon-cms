@@ -16,6 +16,8 @@ marks need 3:1 (1.4.11).
 | light | `--muted-foreground` #677184 | `--card` #FFFFFF | text | 4.92:1 | 4.5:1 | pass |
 | light | `--accent-foreground` #0830A0 | `--accent` #DFF2FF | text | 9.42:1 | 4.5:1 | pass |
 | light | `--destructive-foreground` #FFFFFF | `--destructive` #E90F1F | text | 4.61:1 | 4.5:1 | pass |
+| light | `--destructive` #E90F1F | `--background` #FFFFFF | text | 4.61:1 | 4.5:1 | pass |
+| light | `--destructive` #E90F1F | `--card` #FFFFFF | text | 4.61:1 | 4.5:1 | pass |
 | light | `--link` #155DFC | `--background` #FFFFFF | text | 5.26:1 | 4.5:1 | pass |
 | light | `--link` #155DFC | `--card` #FFFFFF | text | 5.26:1 | 4.5:1 | pass |
 | light | `--link` #155DFC | `--muted` #F9FAFB | text | 5.03:1 | 4.5:1 | pass |
@@ -82,7 +84,9 @@ marks need 3:1 (1.4.11).
 | dark | `--muted-foreground` #A3A3A3 | `--background` #171717 | text | 7.11:1 | 4.5:1 | pass |
 | dark | `--muted-foreground` #A3A3A3 | `--card` #262626 | text | 6.00:1 | 4.5:1 | pass |
 | dark | `--accent-foreground` #BEDBFF | `--accent` #0657C9 | text | 4.60:1 | 4.5:1 | pass |
-| dark | `--destructive-foreground` #FFFFFF | `--destructive` #E90F1F | text | 4.61:1 | 4.5:1 | pass |
+| dark | `--destructive-foreground` #171717 | `--destructive` #F45A51 | text | 5.49:1 | 4.5:1 | pass |
+| dark | `--destructive` #F45A51 | `--background` #171717 | text | 5.49:1 | 4.5:1 | pass |
+| dark | `--destructive` #F45A51 | `--card` #262626 | text | 4.64:1 | 4.5:1 | pass |
 | dark | `--link` #458BFF | `--background` #171717 | text | 5.45:1 | 4.5:1 | pass |
 | dark | `--link` #458BFF | `--card` #262626 | text | 4.60:1 | 4.5:1 | pass |
 | dark | `--link` #458BFF | `--muted` #1F1F1F | text | 5.01:1 | 4.5:1 | pass |
