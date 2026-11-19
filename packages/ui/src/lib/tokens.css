@@ -13,6 +13,7 @@
  *   --muted-foreground  a hair darker in light (0.5471 → 0.5296): the pasted grey read 4.28:1 on a status ground
  *                       and 4.46:1 on --secondary; now ≥ 4.6:1 on every light ground.
  *   --input             form-field boundaries only, ≥ 3:1 against the background (WCAG 1.4.11); pasted 1.24:1.
+ *                       Studio v2 deepens it (and --control) 0.665 → 0.63 so a field on --surface-section reads 3.13:1.
  *                       --border stays as pasted for dividers and cards.
  *   fonts               Inter for text, Geist Pixel for brand titles, the system monospace stack for code; nothing
  *                       else is downloaded.
@@ -37,7 +38,7 @@
   --muted: oklch(0.9846 0.0017 247.8389); --muted-foreground: oklch(0.5296 0.0321 263.2921);
   --accent: oklch(0.9510 0.0267 237.5723); --accent-foreground: oklch(0.3742 0.1844 263.9420);
   --destructive: oklch(0.5475 0.2225 26.9032); --destructive-foreground: oklch(1.0000 0 0);
-  --border: oklch(0.9271 0.0075 260.7315); --input: oklch(0.6650 0.0075 260.7315); --ring: oklch(0.6225 0.2041 259.9027);
+  --border: oklch(0.9271 0.0075 260.7315); --input: oklch(0.6300 0.0075 260.7315); --ring: oklch(0.6225 0.2041 259.9027);
   --chart-1: oklch(0.6225 0.2041 259.9027); --chart-2: oklch(0.5469 0.2507 262.8085); --chart-3: oklch(0.4902 0.2693 263.7106);
   --chart-4: oklch(0.4234 0.2370 263.9162); --chart-5: oklch(0.3742 0.1844 263.9420);
   --sidebar: oklch(0.9846 0.0017 247.8389); --sidebar-foreground: oklch(0.3211 0 0);
@@ -63,7 +64,7 @@
   --primary-hover: oklch(0.4900 0.2450 262.8810);
   --brand-ink: oklch(0.5460 0.2450 262.8810); --brand-soft: oklch(0.9550 0.0250 259.9027);
   /* The outline of a checkbox or radio: a control's edge, 3:1 against what it sits on. */
-  --control: oklch(0.6650 0.0075 260.7315);
+  --control: oklch(0.6300 0.0075 260.7315);
   /* Status: a mark (dot or icon), a ring around it, a ground for its tag, an ink for text. Always with a word:
      colour is never the only signal. Green is live, violet live with changes (hue 300: 38° from the blue accent, D-182's 30° rule), amber on its way, rose needs
      attention or was taken down, grey a draft. The light amber mark is deeper than D-182's (0.75 → 0.67) so it
@@ -75,6 +76,15 @@
   --draft: oklch(0.62 0.01 260); --draft-ring: oklch(0.9 0.004 260); --draft-soft: oklch(0.958 0.003 260); --draft-ink: oklch(0.43 0.008 260);
   /* Named elevations, on the theme's shadow scale: only what floats over a page casts a shadow. */
   --shadow-press: var(--shadow-2xs); --shadow-hairline: var(--shadow-xs); --shadow-soft: var(--shadow-md); --shadow-float: var(--shadow-xl);
+  /* ---- Studio v2 (D-210 addendum, 2026-11-19): the website's moves, chosen by the maintainer ---- */
+  /* The ground of cards and rows set into a page (the website's section ground), and its hover. */
+  --surface-section: #f2f2f2; --surface-section-hover: #efefef;
+  /* The inverted panel (the website's hero move): near-black on the light theme, white on the dark one; its
+     ink, its muted ink, a mid-grey for marks on it, the edge of tiles inside it, and a 9% ink hover ground. */
+  --hero-bg: #141414; --hero-fg: #fafafa; --hero-muted: #c4c4c4; --hero-icon: #8a8a8a; --hero-line: #2e2e2e;
+  --hero-hover: color-mix(in srgb, var(--hero-fg) 9%, transparent);
+  /* The pixel icons' palette (the website's): a 1-cell outline and five fills. */
+  --px-outline: #14161c; --px-blue: #0061ff; --px-orange: #ff8a3d; --px-green: #3fbf6b; --px-pink: #ff7eb6; --px-cream: #fff1d0;
 }
 
 .dark {
@@ -107,4 +117,7 @@
   --shadow-press: 0 1px 1px hsl(0 0% 0% / 0.30); --shadow-hairline: 0 1px 2px hsl(0 0% 0% / 0.30);
   --shadow-soft: 0 1px 2px hsl(0 0% 0% / 0.30), 0 8px 24px -10px hsl(0 0% 0% / 0.50);
   --shadow-float: 0 1px 2px hsl(0 0% 0% / 0.30), 0 32px 64px -24px hsl(0 0% 0% / 0.70);
+  --surface-section: #1d1d1b; --surface-section-hover: #232321;
+  --hero-bg: #fafafa; --hero-fg: #141414; --hero-muted: #4d4d4d; --hero-icon: #8a8a8a; --hero-line: #e5e5e5;
+  --px-outline: #e9e7e1; --px-blue: #4d8dff; --px-orange: #ff9a55; --px-green: #55cf7f; --px-pink: #ff8fc0; --px-cream: #2b2924;
 }

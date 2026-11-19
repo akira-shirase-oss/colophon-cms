@@ -159,6 +159,11 @@
 	--color-input: var(--input);
 	--color-ring: var(--ring);
 	--color-brand: var(--brand);
+	--color-surface-section: var(--surface-section);
+	--color-surface-section-hover: var(--surface-section-hover);
+	--color-hero: var(--hero-bg);
+	--color-hero-foreground: var(--hero-fg);
+	--color-hero-muted: var(--hero-muted);
 	--color-brand-ink: var(--brand-ink);
 	--color-brand-soft: var(--brand-soft);
 	--color-live: var(--live);
@@ -297,17 +302,36 @@ select:not([multiple]) {
 }
 
 @layer components {
-	/* A page's title: DM Sans, the public site's display face, large and set a little tight. */
+	/* A page's title the Studio names: Geist Pixel, the website's display face (D-210 addendum, Studio v2), one
+	   weight, never a faked bold. A title that is someone's content (an entry's) carries data-user-content and
+	   stays in the text face. `page-title-display` is the Overview's larger scale. */
 	.page-title {
+		font-family: var(--font-title);
+		font-size: 2rem;
+		line-height: 1.1;
+		letter-spacing: 0;
+		font-weight: 400;
+		font-synthesis: none;
+		text-wrap: balance;
+	}
+	@media (min-width: 40rem) {
+		.page-title {
+			font-size: 2.25rem;
+		}
+		.page-title.page-title-display {
+			font-size: 3rem;
+		}
+	}
+	.page-title[data-user-content] {
 		font-family: var(--font-display);
 		font-size: 1.75rem;
 		line-height: 1.15;
 		letter-spacing: -0.015em;
 		font-weight: 560;
-		text-wrap: balance;
+		font-synthesis: weight;
 	}
 	@media (min-width: 40rem) {
-		.page-title {
+		.page-title[data-user-content] {
 			font-size: 2rem;
 		}
 	}

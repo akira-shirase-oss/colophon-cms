@@ -47,7 +47,7 @@
 	<Skeleton class="h-64 w-full rounded-xl" />
 {:else}
 	<!-- When it was saved is said once, beside the fields, where it stays current (D-081). -->
-	<PageHeader title={draft.data.draft.revision.title || 'Untitled'}>
+	<PageHeader title={draft.data.draft.revision.title || 'Untitled'} userContent>
 		{#snippet eyebrow()}{type.data.definition.name}{/snippet}
 	</PageHeader>
 	{#key entry}
