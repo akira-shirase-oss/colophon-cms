@@ -33,9 +33,9 @@ else
 fi
 
 if command -v shellcheck >/dev/null; then
-  shellcheck scripts/*.sh
+  shellcheck scripts/*.sh deploy/droplet/*.sh
 elif docker info >/dev/null 2>&1; then
-  docker run --rm -v "$PWD:/mnt:ro" -w /mnt "$SHELLCHECK_IMAGE" scripts/*.sh
+  docker run --rm -v "$PWD:/mnt:ro" -w /mnt "$SHELLCHECK_IMAGE" scripts/*.sh deploy/droplet/*.sh
 else
   echo "note: neither ShellCheck nor Docker is available here; CI runs ShellCheck" >&2
 fi
