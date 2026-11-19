@@ -36,6 +36,13 @@ through `--version` and `GET /version`.
 
 ### Added
 
+- **One look for the Studio, the website and the docs (D-210):** the Studio takes the website's
+  theme — white paper, one clear blue for the primary action, rounder corners — made readable:
+  every text and surface pair meets WCAG AA in light and dark (a table checked on every push,
+  `docs/design/contrast.md`), and form fields have a boundary you can see. Text is Inter
+  throughout; the product's name and empty states use the website's Geist Pixel; DM Sans and
+  JetBrains Mono are gone, so the Studio loads two font families instead of three. Statuses keep their
+  words and icons; "Live with changes" is violet now, so it never looks like a button.
 - **The TypeScript SDK is ready for npm (D-170):** `@colophon-cms/sdk` gains
   `client.compatibility()` and a `compat` option (`warn` by default, `throw`, `off`) that say
   plainly when the server is too old or too new, by the CLI's rule (D-062). A packaging gate
