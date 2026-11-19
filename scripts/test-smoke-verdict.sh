@@ -20,6 +20,10 @@ ran=$(grep -oE 'smoke .*scripts/load\.sh [a-z][a-z-]*' .github/workflows/ci.yml 
 printf 'audience\t580.731\t\nmigrations\t408.022\t\nstages\t128.171\t\nnoisy-agent\t18.466\t1.6\nassets\t300\t\nbulk\t2500\t\n' >"$tmp/run2.tsv"
 # The first run (CI 44543394086): all six failed; noisy-agent's L08 ratios were 5.79 and 6.56.
 printf 'audience\t747.707\t\nmigrations\t681.471\t\nstages\t254.202\t\nnoisy-agent\t103.657\t6.56\nassets\t619.375\t\nbulk\t2876.506\t\n' >"$tmp/run1.tsv"
+# D-216's run (CI 44585574138): every smoke passed; bulk and assets, once strict, flap under a 1000 ms ceiling now.
+printf 'audience\t549.583\t\nmigrations\t258.603\t\nstages\t101.837\t\nnoisy-agent\t10.036\t1.264\nassets\t306.718\t\nbulk\t188.31\t\n' >"$tmp/run3.tsv"
+# The first run's other smokes with D-216's bulk and assets, for the noisy-agent cases below.
+sed -e 's/^assets\t619.375/assets\t306.718/' -e 's/^bulk\t2876.506/bulk\t188.31/' "$tmp/run1.tsv" >"$tmp/run1b.tsv"
 
 verdict() { scripts/smoke-verdict.sh "$@" >"$tmp/out" 2>&1; }
 expect_pass() { verdict "$@" || { echo "FAIL: $label should pass:"; cat "$tmp/out"; exit 1; }; }
@@ -29,46 +33,47 @@ expect_fail() {
 }
 with() { { cat "$list"; printf '%s\n' "$1"; } >"$tmp/list.tsv"; }
 
-label='the second run'; expect_pass "$list" "$ran" "assets bulk" "$tmp/run2.tsv"
-grep -q '^pass: migrations, p99 408.022 ms (41% of its ceiling' "$tmp/out" || { echo "FAIL: no margin line:"; cat "$tmp/out"; exit 1; }
-label='the second run with every flapper failing its limit, under its ceiling'
-expect_pass "$list" "$ran" "assets bulk audience migrations stages noisy-agent" "$tmp/run2.tsv"
+# The second run is from before D-216: its bulk p99 of 2500 ms is past the ceiling the list now gives bulk.
+label='the second run, from before D-216'; want='bulk is past its CEILING: p99 2500 ms > 1000 ms'
+expect_fail "$list" "$ran" "assets bulk" "$tmp/run2.tsv"
+label="D-216's run"; expect_pass "$list" "$ran" "" "$tmp/run3.tsv"
+grep -q '^pass: migrations, p99 258.603 ms (26% of its ceiling' "$tmp/out" || { echo "FAIL: no margin line:"; cat "$tmp/out"; exit 1; }
+label="D-216's run with every flapper failing its limit, under its ceiling"
+expect_pass "$list" "$ran" "assets bulk audience migrations stages noisy-agent" "$tmp/run3.tsv"
 grep -q '^flap: stages failed its limit' "$tmp/out" || { echo "FAIL: no flap line:"; cat "$tmp/out"; exit 1; }
 # The first run: noisy-agent's L08 6.56x is under its temporary ceiling of 8 (D-214), so it flaps, and passes.
-label='the first run, under the temporary ceiling'; expect_pass "$list" "$ran" "assets audience bulk migrations noisy-agent stages" "$tmp/run1.tsv"
+label='the first run, under the temporary ceiling'; expect_pass "$list" "$ran" "assets audience bulk migrations noisy-agent stages" "$tmp/run1b.tsv"
 grep -q '^flap: noisy-agent failed its limit, l08 6.56x, under its ceiling 8x' "$tmp/out" || { echo "FAIL: no noisy-agent flap line:"; cat "$tmp/out"; exit 1; }
-sed 's/^noisy-agent\t103.657\t6.56/noisy-agent\t103.657\t9.1/' "$tmp/run1.tsv" >"$tmp/over8.tsv"
+sed 's/^noisy-agent\t103.657\t6.56/noisy-agent\t103.657\t9.1/' "$tmp/run1b.tsv" >"$tmp/over8.tsv"
 label='noisy-agent past even its temporary ceiling'; want='noisy-agent is past its CEILING: l08 9.1x > 8x'
 expect_fail "$list" "$ran" "assets audience bulk migrations noisy-agent stages" "$tmp/over8.tsv"
 # The expiry: once D-214's row is in DECISIONS (its fix merged), the temporary ceiling is refused.
 { cat docs/DECISIONS.md; printf '| D-214 | 2026-11-20 | merged | x | y |\n'; } >"$tmp/decisions.md"
 label='mutant: D-214 merged while noisy-agent keeps its temporary ceiling'; want="temporary ceiling expired with D-214"
-if SMOKE_DECISIONS="$tmp/decisions.md" scripts/smoke-verdict.sh "$list" "$ran" "assets bulk" "$tmp/run2.tsv" >"$tmp/out" 2>&1; then echo "FAIL: $label accepted"; cat "$tmp/out"; exit 1; fi
+if SMOKE_DECISIONS="$tmp/decisions.md" scripts/smoke-verdict.sh "$list" "$ran" "" "$tmp/run3.tsv" >"$tmp/out" 2>&1; then echo "FAIL: $label accepted"; cat "$tmp/out"; exit 1; fi
 grep -q -- "$want" "$tmp/out" || { echo "FAIL: $label: no '$want' in:"; cat "$tmp/out"; exit 1; }
 
-label='a strict entry that passed'; want='smoke bulk PASSED: remove it'
-expect_fail "$list" "$ran" "assets" "$tmp/run2.tsv"
 grep -v '^assets	' "$list" >"$tmp/deleted.tsv"
 label='mutant: assets deleted from the list'; want='smoke assets failed and is not on'
-expect_fail "$tmp/deleted.tsv" "$ran" "assets bulk" "$tmp/run2.tsv"
+expect_fail "$tmp/deleted.tsv" "$ran" "assets" "$tmp/run3.tsv"
 with $'warm-baseline\tstrict\tD-000\tnobody\t-\tplanted\tnothing'
 label='mutant: a passing smoke planted as strict'; want='smoke warm-baseline PASSED: remove it'
-expect_fail "$tmp/list.tsv" "$ran" "assets bulk" "$tmp/run2.tsv"
+expect_fail "$tmp/list.tsv" "$ran" "" "$tmp/run3.tsv"
 
-sed 's/^migrations\t408.022/migrations\t1200/' "$tmp/run2.tsv" >"$tmp/over.tsv"
+sed 's/^migrations\t258.603/migrations\t1200/' "$tmp/run3.tsv" >"$tmp/over.tsv"
 label='mutant: a flapper past its ceiling while PASSING its outcome'; want='migrations is past its CEILING: p99 1200 ms > 1000 ms'
-expect_fail "$list" "$ran" "assets bulk" "$tmp/over.tsv"
-grep -v '^stages	' "$tmp/run2.tsv" >"$tmp/unmeasured.tsv"
+expect_fail "$list" "$ran" "" "$tmp/over.tsv"
+grep -v '^stages	' "$tmp/run3.tsv" >"$tmp/unmeasured.tsv"
 label='a flapper with nothing measured'; want='stages has no p99 measured this run'
-expect_fail "$list" "$ran" "assets bulk" "$tmp/unmeasured.tsv"
+expect_fail "$list" "$ran" "" "$tmp/unmeasured.tsv"
 
 with $'gone\tstrict\tD-000\tnobody\t-\tplanted\tnothing'
 label='a listed smoke that did not run'; want='lists gone, which did not run'
-expect_fail "$tmp/list.tsv" "$ran" "assets bulk gone" "$tmp/run2.tsv"
+expect_fail "$tmp/list.tsv" "$ran" "gone" "$tmp/run3.tsv"
 
 refuse() {
   printf '%s\n' "$1" >"$tmp/bad.tsv"
-  if verdict "$tmp/bad.tsv" "$ran" "assets" "$tmp/run2.tsv"; then echo "FAIL: $label accepted"; exit 1; fi
+  if verdict "$tmp/bad.tsv" "$ran" "assets" "$tmp/run3.tsv"; then echo "FAIL: $label accepted"; exit 1; fi
   grep -q -- "$want" "$tmp/out" || { echo "FAIL: $label: no '$want' in:"; cat "$tmp/out"; exit 1; }
 }
 label='an entry without an owner'; want='needs a decision, an owner'

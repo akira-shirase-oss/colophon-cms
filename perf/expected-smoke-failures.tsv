@@ -15,8 +15,8 @@
 # docs/DECISIONS.md has D-NNN's row (its fix merged), and that fix removes the entry or restores the ordinary 2x ceiling.
 # noisy-agent's 8 (its measured worst, 6.56, plus about 25%) is the D-214 defect itself, pool-acquire queueing; at 2x it
 # would be 4.
-assets	strict	D-218	learning-95	-	upload p99 619 ms vs 500, 256 of 1016 deletes met 409 asset_quarantined → failed again	measure upload-to-usable time, the worker's claim rate and per-job verify time; fix the slow part; count "not yet verified" apart from failures
-bulk	strict	D-216	learning-a4	-	p99 2877 ms vs 500 → failed again	the work-admission lock and the pending-payload sum (D-216)
+assets	flapping	D-218	learning-95	p99<=1000	upload p99 836 ms (main 1e3eabad, CI 44585299397, EPYC 9V74) → 307 ms with D-216 (CI 44585574138, EPYC 9V45); runner types differ	remove once perf-compare on one runner confirms; then what D-218 still owes (upload-to-usable time, claim rate, verify time)
+bulk	flapping	D-216	learning-a4	p99<=1000	p99 2486 ms (main 1e3eabad, CI 44585299397, EPYC 9V74) → 188 ms with D-216 (CI 44585574138, EPYC 9V45); runner types differ	remove once perf-compare on one runner confirms D-216 holds bulk under 500 on both runner types
 audience	flapping	D-209	learning-95	p99<=1400	p99 748 ms → 581 ms (limit 700); server CPU avg 124% of 400%	password hashing on the runner's CPU: judge by margin over the runner's measured hash cost (D-209 normalised gate)
 migrations	flapping	D-209	learning-95	p99<=1000	p99 681 ms → 408 ms (limit 500)	judge by margin over the runner's measured commit latency (D-209 normalised gate)
 noisy-agent	flapping	D-214	learning-a4	l08<=8 EXPIRES-WITH D-214	L08 editorial 5.79x, project B 6.56x (limit 2x) → held; overall p99 104 → 18 ms	pool-acquire queueing behind the noisy token (D-214 (a))
