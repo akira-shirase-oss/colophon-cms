@@ -156,7 +156,7 @@
 	}
 	.lift:hover {
 		transform: translateY(-1px);
-		box-shadow: 0 6px 16px -10px rgb(0 0 0 / 0.18);
+		box-shadow: var(--shadow-soft);
 	}
 	.lift:active {
 		transform: translateY(0);

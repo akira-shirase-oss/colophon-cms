@@ -85,6 +85,12 @@ const EXCEPTIONS = [
 		match: /bg-black\/20/,
 		rule: 'palette',
 		why: 'the scrim: absolute black at 20%, deliberately the same in both themes (a light scrim in dark mode would glow); there is no --overlay token'
+	},
+	{
+		file: 'apps/studio/src/app.css',
+		match: /border-radius: 0\.25rem/,
+		rule: 'style',
+		why: 'the inline-code chip in prose: a 4px corner, deliberately under the radius scale (smallest step --radius-sm is ~14px — a pill on every word); typography detail, not a component corner'
 	}
 ];
 

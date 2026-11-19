@@ -101,7 +101,7 @@
 		This theme can't be rendered: {problem}
 	</p>
 {:else}
-	<iframe title="The site's design as you're editing it" srcdoc={markup} class="h-[30rem] w-full rounded-xl border border-border bg-white" data-testid="theme-canvas"></iframe>
+	<iframe title="The site's design as you're editing it" srcdoc={markup} class="h-[30rem] w-full rounded-xl border border-border bg-background" data-testid="theme-canvas"></iframe>
 {/if}
 {#if weak.length > 0}
 	<div class="mt-3 rounded-lg border border-attention/40 bg-attention-soft/60 px-4 py-3 text-sm text-attention-ink" data-testid="contrast-warnings">

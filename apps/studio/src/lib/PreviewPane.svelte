@@ -411,7 +411,7 @@
 					title={frameTitle}
 					sandbox="allow-scripts allow-same-origin allow-forms allow-popups"
 					referrerpolicy="no-referrer"
-					class="block origin-top-left border-0 bg-white {preset.px === null ? '' : 'rounded-md shadow-soft'}"
+					class="block origin-top-left border-0 bg-background {preset.px === null ? '' : 'rounded-md shadow-soft'}"
 					class:invisible={pane.kind === 'opening'}
 					style:width={preset.px === null ? '100%' : `${preset.px}px`}
 					style:height={preset.px === null ? '100%' : `${Math.max(0, (roomHeight - gutter) / scale)}px`}

@@ -116,6 +116,6 @@
 			This page can't be rendered: {problem}
 		</p>
 	{:else}
-		<iframe bind:this={frame} onload={attach} title="The page as you're editing it" srcdoc={markup} class="h-[36rem] w-full rounded-xl border border-border bg-white" data-testid="site-canvas"></iframe>
+		<iframe bind:this={frame} onload={attach} title="The page as you're editing it" srcdoc={markup} class="h-[36rem] w-full rounded-xl border border-border bg-background" data-testid="site-canvas"></iframe>
 	{/if}
 {/if}
