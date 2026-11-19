@@ -100,7 +100,10 @@ jobs:
           node-version: 24
           cache: npm
       - run: npm ci
-      - run: npx -w @colophon/studio playwright install --with-deps chromium
+      - name: Chromium and its system packages (retried — Ubuntu's mirrors fail intermittently)
+        run: |
+          echo 'Acquire::Retries "5";' | sudo tee /etc/apt/apt.conf.d/80-retries >/dev/null
+          RETRY_DELAY=45 scripts/retry.sh 3 npx -w @colophon/studio playwright install --with-deps chromium
       - run: scripts/frontend.sh
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: failure()
@@ -131,6 +134,8 @@ jobs:
         run: scripts/test-install.sh
       - name: The Homebrew formula, rendered from a SHA256SUMS
         run: scripts/test-homebrew-formula.sh
+      - name: CI's retry wrapper (scripts/test-retry.sh)
+        run: scripts/test-retry.sh
       - name: The droplet's logical backup (deploy/droplet/test-backup-logical.sh)
         run: deploy/droplet/test-backup-logical.sh
       - name: The droplet's Neon URL fix (deploy/droplet/test-neon-url.sh)
@@ -193,7 +198,10 @@ jobs:
           SQLX_OFFLINE: "false"
           DATABASE_URL: postgres://colophon:colophon-dev@127.0.0.1:55432/colophon
         run: cargo test -p colophon-server --features fault-injection --test faults --locked -- --ignored --test-threads=1
-      - run: npx -w @colophon/testbed playwright install --with-deps chromium
+      - name: Chromium and its system packages (retried — Ubuntu's mirrors fail intermittently)
+        run: |
+          echo 'Acquire::Retries "5";' | sudo tee /etc/apt/apt.conf.d/80-retries >/dev/null
+          RETRY_DELAY=45 scripts/retry.sh 3 npx -w @colophon/testbed playwright install --with-deps chromium
       - name: Testbed in Chromium (scripts/testbed.sh)
         run: scripts/testbed.sh
       - name: The Studio against the real server (scripts/studio.sh)
@@ -339,7 +347,10 @@ jobs:
           node-version: 24
           cache: npm
       - run: npm ci
-      - run: npx -w @colophon/studio playwright install --with-deps chromium
+      - name: Chromium and its system packages (retried — Ubuntu's mirrors fail intermittently)
+        run: |
+          echo 'Acquire::Retries "5";' | sudo tee /etc/apt/apt.conf.d/80-retries >/dev/null
+          RETRY_DELAY=45 scripts/retry.sh 3 npx -w @colophon/studio playwright install --with-deps chromium
       - name: Install k6 (pinned)
         run: |
           scripts/install-k6.sh "$RUNNER_TEMP/bin"
