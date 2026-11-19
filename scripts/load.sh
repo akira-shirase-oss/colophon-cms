@@ -889,10 +889,15 @@ record=$(jq -c '.hard_failures_total = ([.hard_failures | to_entries[] | select(
 # D-221: a run whose load or limit was scaled to the runner's measured speed says so, so every number stays
 # comparable across runners: RUNNER_HEALTH_RPS (this runner's back-to-back health req/s), RUNNER_REFERENCE_RPS and
 # RUNNER_SCALE (health / reference, capped at 1), RUNNER_JUDGED (no when below the floor) are set by the caller;
-# params already carry the rate or limit actually used.
+# params already carry the rate or limit actually used. RUNNER_LONG_HEALTH_RPS, where the job has a long health run,
+# sits beside the short probe with their ratio: REFERENCE_RPS came from long runs and the scale from the probe, so a
+# systematic gap between the two would bias the scale, and every record shows it.
 if [[ -n "${RUNNER_SCALE:-}" ]]; then
-  record=$(jq -c --arg health "${RUNNER_HEALTH_RPS:-}" --arg reference "${RUNNER_REFERENCE_RPS:-}" --arg scale "$RUNNER_SCALE" --arg p99 "${P99_MS:-}" --arg judged "${RUNNER_JUDGED:-yes}" \
-    '.runner = {cpu: .machine.cpu, judged: ($judged == "yes"), health_rps: ($health | tonumber? // null), reference_rps: ($reference | tonumber? // null), scale: ($scale | tonumber? // null), p99_limit_ms: ($p99 | tonumber? // null)}' <<<"$record")
+  record=$(jq -c --arg health "${RUNNER_HEALTH_RPS:-}" --arg long "${RUNNER_LONG_HEALTH_RPS:-}" --arg reference "${RUNNER_REFERENCE_RPS:-}" --arg scale "$RUNNER_SCALE" --arg p99 "${P99_MS:-}" --arg judged "${RUNNER_JUDGED:-yes}" \
+    '($health | tonumber? // null) as $h | ($long | tonumber? // null) as $l
+     | .runner = {cpu: .machine.cpu, judged: ($judged == "yes"), health_rps: $h, long_health_rps: $l,
+                  probe_to_long: (if $h and $l and $l > 0 then ($h / $l * 1000 | round / 1000) else null end),
+                  reference_rps: ($reference | tonumber? // null), scale: ($scale | tonumber? // null), p99_limit_ms: ($p99 | tonumber? // null)}' <<<"$record")
 fi
 echo "$record" | jq .
 # RECORD_OUT: the record as a file too, for a caller that judges it (CI's smoke verdict, D-209).
