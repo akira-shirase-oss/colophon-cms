@@ -29,7 +29,7 @@ use futures_util::StreamExt;
 use object_store::ObjectStoreExt;
 use serde_json::json;
 use time::OffsetDateTime;
-use tokio::sync::Semaphore;
+use tokio::sync::{Notify, Semaphore};
 use tokio_util::{sync::CancellationToken, task::TaskTracker};
 
 /// How often the worker fails jobs that ran out of time.
@@ -71,6 +71,94 @@ pub struct Settings {
 /// The most image verifications in flight at once (07-media: four image workers), on their own
 /// semaphore so media load can never take a delivery slot (L14).
 const IMAGE_SLOTS: usize = 4;
+
+/// The asset worker's listener connection's `application_name` (D-218): one per process, told apart from the
+/// API servers' change-hint listeners.
+pub const ASSET_LISTENER: &str = "colophon-asset-wake";
+/// The first and the longest wait before the asset listener tries again after failing (D-218): bounded, so a
+/// database that stays away can't spin it, and short, so uploads are woken for again soon after a blip.
+const ASSET_LISTEN_RETRY: Duration = Duration::from_millis(250);
+const ASSET_LISTEN_RETRY_MAX: Duration = Duration::from_secs(5);
+
+/// Whether a change hint names asset work (`k=assets`; migration 0068 maps `asset_jobs` to it).
+fn wakes_assets(payload: &str) -> bool {
+    payload.split('|').any(|field| field == "k=assets")
+}
+
+/// Listens for asset change hints and wakes the asset worker on each (D-218), until `cancel`. One listener per
+/// process, on a connection of its own. A hint only wakes the worker: the claim that follows is the usual
+/// `SKIP LOCKED` one, so workers woken together still take each job once. Losing the connection wakes the worker
+/// too (hints sent in the gap are gone); failing to listen is said once, the poll carries on, and the listener
+/// tries again after a backoff that doubles up to [`ASSET_LISTEN_RETRY_MAX`].
+async fn listen_for_assets(pool: PgPool, wake: Arc<Notify>, cancel: CancellationToken) {
+    let mut retry = ASSET_LISTEN_RETRY;
+    let mut down = false;
+    'connect: loop {
+        let connected = tokio::select! {
+            () = cancel.cancelled() => return,
+            connected = async {
+                let mut listener = colophon_db::listener_from(&pool, ASSET_LISTENER).await?;
+                listener
+                    .listen(colophon_db::events::CHANNEL)
+                    .await
+                    .map_err(colophon_db::DbError::Query)?;
+                Ok::<_, colophon_db::DbError>(listener)
+            } => connected,
+        };
+        let mut listener = match connected {
+            Ok(listener) => listener,
+            Err(error) => {
+                if !down {
+                    tracing::warn!(%error, "the asset worker can't listen for uploads; it polls until it can");
+                    down = true;
+                }
+                tokio::select! {
+                    () = cancel.cancelled() => return,
+                    () = tokio::time::sleep(retry) => {}
+                }
+                retry = (retry * 2).min(ASSET_LISTEN_RETRY_MAX);
+                continue 'connect;
+            }
+        };
+        if down {
+            tracing::info!("the asset worker listens for uploads again");
+            down = false;
+        }
+        retry = ASSET_LISTEN_RETRY;
+        // Anything queued while it wasn't listening.
+        wake.notify_one();
+        loop {
+            let message = tokio::select! {
+                () = cancel.cancelled() => return,
+                message = listener.try_recv() => message,
+            };
+            match message {
+                Ok(Some(notification)) => {
+                    if wakes_assets(notification.payload()) {
+                        wake.notify_one();
+                    }
+                }
+                // sqlx reconnected and listened again; whatever was hinted in the gap is lost.
+                Ok(None) => {
+                    tracing::info!("the asset worker's listener reconnected");
+                    wake.notify_one();
+                }
+                Err(error) => {
+                    if !down {
+                        tracing::warn!(%error, "the asset worker's listener failed; it polls until it listens again");
+                        down = true;
+                    }
+                    tokio::select! {
+                        () = cancel.cancelled() => return,
+                        () = tokio::time::sleep(retry) => {}
+                    }
+                    retry = (retry * 2).min(ASSET_LISTEN_RETRY_MAX);
+                    continue 'connect;
+                }
+            }
+        }
+    }
+}
 
 // The worker gets its own small database pool (colophon-server's COLOPHON_WORKER_DB_CONNECTIONS),
 // so delivering announcements can never starve editors' requests of connections.
@@ -1839,6 +1927,14 @@ impl Worker {
     /// pool's own semaphore so decodes can never take a delivery slot (L14). Runs only when the
     /// worker was built with an object store.
     async fn run_assets(self: Arc<Self>, cancel: CancellationToken, tracker: TaskTracker) {
+        // D-218: an upload wakes the worker through its change hint, so a verify waits for a pump pass (100 ms),
+        // not the poll. The poll stays as the fallback for a hint missed or a listener that is down.
+        let wake = Arc::new(Notify::new());
+        tracker.spawn(listen_for_assets(
+            self.pool.clone(),
+            Arc::clone(&wake),
+            cancel.clone(),
+        ));
         loop {
             let first = tokio::select! {
                 () = cancel.cancelled() => break,
@@ -1865,8 +1961,11 @@ impl Worker {
             };
             if claimed.is_empty() {
                 drop(first);
+                // `notified()` is cancel-safe: a wake that lands while this select isn't waiting stays stored
+                // (one permit, so a burst of hints is one wake) for the next.
                 tokio::select! {
                     () = cancel.cancelled() => break,
+                    () = wake.notified() => {}
                     () = tokio::time::sleep(self.settings.poll) => {}
                 }
                 continue;
@@ -2374,4 +2473,37 @@ fn sha256(bytes: &[u8]) -> [u8; 32] {
     let mut out = [0; 32];
     out.copy_from_slice(digest.as_ref());
     out
+}
+
+#[cfg(test)]
+mod asset_wake_tests {
+    use super::{Notify, wakes_assets};
+    use std::time::Duration;
+
+    #[test]
+    fn only_an_assets_hint_wakes_the_asset_worker() {
+        let p = "p=01a1f1d6-b4aa-73c9-9c7a-d6f828a1acc9|e=01a1f1d6-b4aa-73c9-9c7a-d6f828a1acc8";
+        assert!(wakes_assets(&format!("{p}|k=assets")));
+        assert!(!wakes_assets(&format!("{p}|k=entries|c=articles")));
+        assert!(!wakes_assets(&format!("{p}|k=assetsx")));
+        assert!(!wakes_assets("k=releases"));
+    }
+
+    /// A burst of hints is one wake (D-218): `notify_one` keeps a single permit, so nothing queues up.
+    #[tokio::test]
+    async fn a_burst_of_hints_is_one_wake() {
+        let wake = Notify::new();
+        for _ in 0..1_000 {
+            wake.notify_one();
+        }
+        tokio::time::timeout(Duration::from_millis(50), wake.notified())
+            .await
+            .expect("the burst's one wake");
+        assert!(
+            tokio::time::timeout(Duration::from_millis(50), wake.notified())
+                .await
+                .is_err(),
+            "a second wake out of one burst"
+        );
+    }
 }
