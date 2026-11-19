@@ -79,7 +79,7 @@
 			{#if listsFailed}
 				<div class="mb-3"><Problem error={lists.find((list) => list.isError)?.error ?? new Error('')} what="your drafts" retry={() => lists.forEach((list) => list.isError && list.refetch())} /></div>
 			{/if}
-			<ul class="grid -mx-2 gap-1" data-testid="my-drafts">
+			<ul class="grid grid-cols-1 -mx-2 gap-1" data-testid="my-drafts">
 				{#each drafts as { type, entry } (entry.id)}
 					<li>
 						<a class="flex min-w-0 items-center gap-3 rounded-control p-2 outline-none hover:bg-muted focus-visible:ring-[3px] focus-visible:ring-ring/40" href={resolve('/projects/[project]/[collection]/[entry]', { project, collection: type.slug, entry: entry.id })}>
@@ -109,7 +109,7 @@
 			<Problem error={sets.error} what={PUBLISH_REQUESTS} retry={() => sets.refetch()} />
 		{:else}
 			<h3 class="mt-0.5 mb-3 text-sm text-muted-foreground" id="waiting-heading">{reviews ? 'Waiting for your review' : 'Waiting for review: a publisher approves these'}</h3>
-			<ul class="grid -mx-2 gap-1" aria-labelledby="waiting-heading" data-testid="waiting-review">
+			<ul class="grid grid-cols-1 -mx-2 gap-1" aria-labelledby="waiting-heading" data-testid="waiting-review">
 				{#each waiting as set (set.id)}
 					<li>
 						<a class="flex min-w-0 items-center gap-3 rounded-control p-2 outline-none hover:bg-muted focus-visible:ring-[3px] focus-visible:ring-ring/40" href={resolve('/projects/[project]/changesets/[changeset]', { project, changeset: set.id })}>
@@ -123,7 +123,7 @@
 			</ul>
 			{#if yours.length > 0}
 				<h3 class="mt-4 mb-3 text-sm text-muted-foreground" id="yours-heading">Yours, still in progress</h3>
-				<ul class="grid -mx-2 gap-1" aria-labelledby="yours-heading" data-testid="my-requests-list">
+				<ul class="grid grid-cols-1 -mx-2 gap-1" aria-labelledby="yours-heading" data-testid="my-requests-list">
 					{#each yours as set (set.id)}
 						<li>
 							<a class="flex min-w-0 items-center gap-3 rounded-control p-2 outline-none hover:bg-muted focus-visible:ring-[3px] focus-visible:ring-ring/40" href={resolve('/projects/[project]/changesets/[changeset]', { project, changeset: set.id })}>
@@ -144,7 +144,7 @@
 		{:else if schedules.isError}
 			<Problem error={schedules.error} what="what is scheduled" retry={() => schedules.refetch()} />
 		{:else}
-			<ul class="grid -mx-2 gap-1" data-testid="my-schedules-list">
+			<ul class="grid grid-cols-1 -mx-2 gap-1" data-testid="my-schedules-list">
 				{#each upcoming.slice(0, 5) as item (item.id)}
 					<li>
 						<a class="flex min-w-0 items-center gap-3 rounded-control p-2 outline-none hover:bg-muted focus-visible:ring-[3px] focus-visible:ring-ring/40" href={resolve('/projects/[project]/changesets/[changeset]', { project, changeset: item.changeset_id })}>
@@ -183,7 +183,7 @@
 		{:else if releases.isError}
 			<Problem error={releases.error} what="releases" retry={() => releases.refetch()} />
 		{:else}
-			<ul class="grid -mx-2 gap-1" data-testid="my-releases-list">
+			<ul class="grid grid-cols-1 -mx-2 gap-1" data-testid="my-releases-list">
 				{#each latest as release (release.generation)}
 					<li>
 						<a class="flex min-w-0 items-center gap-3 rounded-control p-2 outline-none hover:bg-muted focus-visible:ring-[3px] focus-visible:ring-ring/40" href={resolve('/projects/[project]/releases/[generation]', { project, generation: String(release.generation) })}>
