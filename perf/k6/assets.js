@@ -10,6 +10,7 @@
 
 import http from 'k6/http';
 import { check, fail, sleep } from 'k6';
+import { Counter, Trend } from 'k6/metrics';
 
 const BASE_URL = __ENV.BASE_URL || 'http://127.0.0.1:58000';
 const PUBLIC_URL = __ENV.PUBLIC_URL || 'http://localhost:58000';
@@ -31,6 +32,12 @@ const scenarios = {
   steady: { executor: 'constant-arrival-rate', rate: RATE, timeUnit: '1s', duration: DURATION, preAllocatedVUs: VUS, maxVUs: VUS * 2 },
 };
 if (!(SCENARIO in scenarios)) throw new Error(`SCENARIO must be one of ${Object.keys(scenarios).join(', ')}`);
+
+// D-218's evidence: how long an upload waits to leave quarantine, as the delete arm sees it (from the
+// upload's answer to the first read that isn't quarantined, or to giving up), and how many deletes met an
+// upload still being verified — the server's honest `409 asset_quarantined`, counted apart from failures.
+const verifyWait = new Trend('verify_wait_ms', true);
+const notYetVerified = new Counter('not_yet_verified');
 
 const thresholds = { http_req_failed: ['rate==0'], checks: ['rate==1'], http_req_duration: [`p(99)<${P99_MS}`] };
 if (SCENARIO === 'steady') {
@@ -130,11 +137,13 @@ export default function (data) {
     check(made, { 'delete upload 202': (r) => r.status === 202 });
     const id = made.json('data.id');
     if (typeof id === 'string') {
+      const uploaded = Date.now();
       for (let waits = 0; waits < 100; waits += 1) {
         const one = http.get(`${data.assets}/${id}`, Object.assign({ tags: { endpoint: 'delete-wait', name: 'assets/{asset}' } }, read));
         if (one.json('data.state') !== 'quarantined') break;
         sleep(0.05);
       }
+      verifyWait.add(Date.now() - uploaded);
       const gone = http.del(`${data.assets}/${id}`, null, Object.assign({ tags: { endpoint: 'delete', name: 'assets/{asset}' } }, {
         headers: {
           Cookie: data.session.cookie,
@@ -143,10 +152,14 @@ export default function (data) {
           'Idempotency-Key': key(),
         },
         redirects: 0,
+        // A delete of an upload still being verified is refused, honestly: not a failed request.
+        responseCallback: http.expectedStatuses(202, 409),
       }));
+      const quarantined = gone.status === 409 && gone.json('error.code') === 'asset_quarantined';
+      if (quarantined) notYetVerified.add(1);
       check(gone, {
-        'delete 202': (r) => r.status === 202,
-        'delete names the asset': (r) => r.json('data.id') === id,
+        'delete 202, or 409 asset_quarantined (not yet verified)': (r) => r.status === 202 || quarantined,
+        'delete names the asset': (r) => r.status !== 202 || r.json('data.id') === id,
       });
     }
   } else if (roll === 5) {

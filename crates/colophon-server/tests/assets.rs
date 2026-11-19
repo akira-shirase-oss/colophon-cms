@@ -273,6 +273,155 @@ async fn a_valid_upload_is_verified_and_becomes_usable() {
     assert_eq!(status, StatusCode::CONFLICT, "{body}");
 }
 
+/// An upload wakes the asset worker (D-218): with the poll at 10 s, a verify still finishes within about a change
+/// hint's pump (100 ms) and a claim, not the poll — the worker listens for `assets` hints instead of only polling.
+/// The upload waits until the worker's first look found nothing and it is asleep, so only a wake explains a fast finish.
+#[tokio::test]
+#[ignore = "needs the stack and scripts/migrate.sh"]
+async fn an_upload_wakes_the_asset_worker_instead_of_waiting_for_its_poll() {
+    let _server = common::Server::start_with(&[("COLOPHON_WORKER_POLL_MS", "10000")]).await;
+    let owner = sign_in("dev-owner").await;
+    let project = project(&owner).await;
+    tokio::time::sleep(Duration::from_millis(500)).await;
+
+    let key = Uuid::now_v7().to_string();
+    let started = Instant::now();
+    let (status, body) = upload(&owner, &project, PNG, "dot.png", "image/png", &key).await;
+    assert_eq!(status, StatusCode::ACCEPTED, "{body}");
+    let id = body["data"]["id"].as_str().expect("id").to_owned();
+    let asset = settled(&owner, &project, &id, 15).await;
+    let took = started.elapsed();
+    assert_eq!(asset["state"], "usable", "{asset}");
+    assert!(
+        took < Duration::from_secs(2),
+        "the upload waited {took:?} for a verify the worker should have been woken for (poll 10 s)"
+    );
+}
+
+/// The asset worker's listener comes back after losing its connection (D-218): its backend, named
+/// `colophon-asset-wake`, is terminated; a new one appears, and an upload is still woken for (poll at 10 s).
+///
+/// CI only (like the outage tests, D-187): it terminates a Postgres backend, and the local stack's Postgres is shared
+/// with other databases. It refuses to run on a stack it doesn't own, and checks the backend it terminates in Rust
+/// first: the listener's name, in this test's own database.
+#[tokio::test]
+#[ignore = "CI only: terminates a Postgres backend, refused on a shared stack (D-187)"]
+async fn the_asset_worker_listens_again_after_losing_its_listener() {
+    if let Err(reason) = common::stack_guard(|key| std::env::var(key).ok()) {
+        panic!("{reason}");
+    }
+    let _server = common::Server::start_with(&[("COLOPHON_WORKER_POLL_MS", "10000")]).await;
+    let owner = sign_in("dev-owner").await;
+    let project = project(&owner).await;
+    let database = common::owner_database().await;
+    let listeners = async || -> i64 {
+        sqlx::query_scalar(
+            "SELECT count(*) FROM pg_stat_activity
+             WHERE application_name = 'colophon-asset-wake' AND datname = current_database()",
+        )
+        .fetch_one(&database)
+        .await
+        .expect("pg_stat_activity")
+    };
+    assert!(
+        common::until(5, async || listeners().await == 1).await,
+        "one asset listener per process"
+    );
+    // The pid first, then a terminate of exactly that pid: a terminate inside the filtering WHERE runs in whatever
+    // order the planner picks, and once took this database's other backends with it.
+    let (pid, application, database_name, ours): (i32, String, String, String) = sqlx::query_as(
+        "SELECT pid, application_name, datname::text, current_database()::text FROM pg_stat_activity
+         WHERE application_name = 'colophon-asset-wake' AND datname = current_database()",
+    )
+    .fetch_one(&database)
+    .await
+    .expect("the listener's backend");
+    // Checked here, in Rust, before anything is terminated: exactly the listener, in this test's own database.
+    assert_eq!(
+        application,
+        colophon_worker::ASSET_LISTENER,
+        "not the asset listener: pid {pid}"
+    );
+    assert_eq!(database_name, ours, "pid {pid} is in another database");
+    let killed: bool = sqlx::query_scalar("SELECT pg_terminate_backend($1)")
+        .bind(pid)
+        .fetch_one(&database)
+        .await
+        .expect("terminate");
+    assert!(killed, "the listener's backend was terminated");
+    assert!(
+        common::until(10, async || listeners().await == 1).await,
+        "the listener came back"
+    );
+    tokio::time::sleep(Duration::from_millis(500)).await;
+
+    let started = Instant::now();
+    let (status, body) = upload(
+        &owner,
+        &project,
+        PNG,
+        "dot.png",
+        "image/png",
+        &Uuid::now_v7().to_string(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::ACCEPTED, "{body}");
+    let id = body["data"]["id"].as_str().expect("id").to_owned();
+    let asset = settled(&owner, &project, &id, 15).await;
+    assert_eq!(asset["state"], "usable", "{asset}");
+    assert!(
+        started.elapsed() < Duration::from_secs(2),
+        "after the listener came back the upload waited {:?} (poll 10 s)",
+        started.elapsed()
+    );
+}
+
+/// Two processes woken by the same hints still verify each upload once (D-218): the hint only wakes, and the
+/// claim is the usual `SKIP LOCKED` one. Twenty uploads against two servers, each job finished in one attempt.
+#[tokio::test]
+#[ignore = "needs the stack and scripts/migrate.sh"]
+async fn two_woken_workers_verify_each_upload_once() {
+    let _first = common::Server::start_with(&[("COLOPHON_WORKER_POLL_MS", "10000")]).await;
+    let _second =
+        common::Server::start_on(common::PORT + 1, &[("COLOPHON_WORKER_POLL_MS", "10000")]).await;
+    let owner = sign_in("dev-owner").await;
+    let project = project(&owner).await;
+    tokio::time::sleep(Duration::from_millis(500)).await;
+
+    let mut ids = Vec::new();
+    for n in 0..20 {
+        let (status, body) = upload(
+            &owner,
+            &project,
+            PNG,
+            &format!("dot{n}.png"),
+            "image/png",
+            &Uuid::now_v7().to_string(),
+        )
+        .await;
+        assert_eq!(status, StatusCode::ACCEPTED, "{body}");
+        ids.push(body["data"]["id"].as_str().expect("id").to_owned());
+    }
+    for id in &ids {
+        assert_eq!(settled(&owner, &project, id, 15).await["state"], "usable");
+    }
+    let database = common::owner_database().await;
+    let attempts: Vec<(String, i32)> = sqlx::query_as(
+        "SELECT status, attempts FROM asset_jobs WHERE project_id = $1::uuid AND kind = 'verify' ORDER BY created_at",
+    )
+    .bind(&project)
+    .fetch_all(&database)
+    .await
+    .expect("asset_jobs");
+    assert_eq!(attempts.len(), 20, "{attempts:?}");
+    assert!(
+        attempts
+            .iter()
+            .all(|(status, attempts)| status == "succeeded" && *attempts == 1),
+        "every verify succeeded on its one attempt: {attempts:?}"
+    );
+}
+
 #[tokio::test]
 #[ignore = "needs the stack and scripts/migrate.sh"]
 async fn a_file_that_is_not_an_image_is_rejected() {

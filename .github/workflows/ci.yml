@@ -476,6 +476,13 @@ jobs:
                 -c "SELECT state, count(*) FROM assets GROUP BY 1" >"$logs/$name.work-tables.txt" 2>&1 || true
             fi
             kill "$sampler" 2>/dev/null || true
+            # D-218's evidence, pass or fail: each upload's created → finished time and the backlog from
+            # asset_jobs, and the worker's own work, fetch / decode / land times and claim sizes from its log.
+            if [[ "$name" == assets ]]; then
+              { echo "### assets: where an upload's time to usable goes (D-218)"; echo '```'
+                scripts/asset-evidence.sh "$logs/$name.server.log" 2>&1 || echo "asset-evidence failed"
+                echo '```'; } | tee "$logs/assets.evidence.txt" >>"$GITHUB_STEP_SUMMARY"
+            fi
             # What the verdict judges a flapping smoke by: its overall p99 and L08's worst noise/baseline ratio.
             if [[ -s "$logs/$name.record.json" ]]; then
               jq -r --arg n "$name" '[$n, (.latency_ms.p99 // ""), ([.l08.ratios[]?] | max // "")] | @tsv' "$logs/$name.record.json" >>"$logs/metrics.tsv"
@@ -486,7 +493,8 @@ jobs:
             cpu=$(awk '{print $2}' "$logs/$name.postgres-cpu.txt" | tr -d '%' | awk 'NF {s += $1; n++; if ($1 > m) m = $1} END {if (n) printf "avg %.0f%%, max %.0f%%", s / n, m; else print "not sampled"}')
             echo "| $name | postgres CPU $cpu |" >>"$GITHUB_STEP_SUMMARY"
           }
-          smoke TOTAL=10000 P99_MS=500 scripts/load.sh assets throughput
+          # The worker at debug for assets alone: its per-attempt and per-claim timing lines are D-218's evidence.
+          smoke LOAD_LOG=info,colophon_worker=debug TOTAL=10000 P99_MS=500 scripts/load.sh assets throughput
           smoke TOTAL=10000 USERS=64 P99_MS=700 scripts/load.sh audience throughput
           smoke TOTAL=10000 P99_MS=500 scripts/load.sh bulk throughput
           smoke DURATION=10s P99_MS=500 scripts/load.sh cache-down throughput
