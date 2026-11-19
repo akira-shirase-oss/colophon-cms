@@ -7,9 +7,12 @@
 #   scripts/test-smoke-parity.sh
 set -euo pipefail
 cd "$(dirname "$0")/.."
-endpoints() { grep -oE 'scripts/load\.sh [a-z][a-z-]*' "$1" | awk '{print $2}' | sort -u; }
-local_list=$(endpoints scripts/check.sh)
-ci_list=$(endpoints .github/workflows/ci.yml)
+# The scenarios a text names as `scripts/load.sh <endpoint>`; nothing found is an empty list, not an exit.
+endpoints() { { grep -oE 'scripts/load\.sh [a-z][a-z-]*' || true; } | awk '{print $2}' | sort -u; }
+# check.sh's list is read from the plan it runs (its smokes are data, SMOKES=(...), not literal commands), as
+# the stack's owner sees it: on a shared stack it leaves the two that pause services out, to CI.
+local_list=$(COLOPHON_STACK_OWNER=1 scripts/check.sh --integration-plan | endpoints)
+ci_list=$(endpoints <.github/workflows/ci.yml)
 [[ -n "$local_list" ]] || { echo "FAIL: no load.sh scenario found in scripts/check.sh" >&2; exit 1; }
 missing=$(comm -23 <(echo "$local_list") <(echo "$ci_list"))
 if [[ -n "$missing" ]]; then
