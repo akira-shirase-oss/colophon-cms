@@ -89,6 +89,16 @@ if [[ "$scope" == local ]]; then
 fi
 
 echo "through Cloudflare"
+# The server keys every per-address limit — the 5-a-second password limit above all (D-213) — by
+# the visitor X-Forwarded-For names past the proxies it trusts. Trusting only loopback, it would
+# see every visitor as a Cloudflare edge, and one visitor's flood would shut everyone out.
+proxies=$(sed -n 's/^COLOPHON_TRUSTED_PROXIES=//p' "${SMOKE_ENV_FILE:-/etc/colophon/colophon.env}" | tail -1)
+ranges=$(tr ',' '\n' <<<"$proxies" | grep -cv '^127\.0\.0\.1\(/32\)\?$\|^$' || true)
+if (( ranges >= 10 )); then
+  ok "the server trusts loopback and $ranges Cloudflare ranges, so limits key by the visitor"
+else
+  bad "COLOPHON_TRUSTED_PROXIES has $ranges Cloudflare ranges besides loopback: every visitor would share one per-address limit (run cloudflare-ips.sh)"
+fi
 code=$(curl -sS -o /dev/null -w '%{http_code} %{ssl_verify_result}' --max-time 10 "$public/livez" || echo "000 x")
 [[ "$code" == "200 0" ]] && ok "$public/livez answers 200 over valid TLS" || bad "$public/livez: HTTP/verify $code"
 # Authenticated Origin Pulls: straight to the origin, without Cloudflare's client certificate, the
