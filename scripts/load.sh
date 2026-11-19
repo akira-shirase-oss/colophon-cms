@@ -114,6 +114,13 @@ if [[ ! -f "perf/k6/$endpoint.js" ]] || [[ "$scenario" != throughput && "$scenar
   echo "usage: scripts/load.sh health|rich-text|openapi|session|accounts|cli|members|roles|tokens|quotas|noisy-agent|password-flood|schedules|projects|setup|changesets|stages|collaboration|live|migrations|delivery|audience|audience-sites|publishing|cache-down|postgres-trouble|purge-trouble|smoke|warm-baseline|cold-cache|stampede|mixed|spike|import-scale|cdn-warm|media-load|entries|content-types|modelling|inverses|transfer|graphql|locales|deletion|collection-delete|site-starter|assets|rich-text-media|bulk|studio|site|preview throughput|steady|stress [--baseline]" >&2
   exit 2
 fi
+# The dependency-failure scenarios pause the stack's Postgres or Valkey (D-127): only on a stack
+# that is this run's own (D-187).
+if [[ "$endpoint" == cache-down || "$endpoint" == postgres-trouble ]]; then
+  # shellcheck source=scripts/stack-guard.sh
+  . scripts/stack-guard.sh
+  require_own_stack "run the $endpoint scenario (it pauses the stack's Postgres or Valkey)"
+fi
 save_baseline=0
 [[ "${3:-}" == "--baseline" ]] && save_baseline=1
 

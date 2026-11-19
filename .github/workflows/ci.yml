@@ -142,6 +142,16 @@ jobs:
         run: deploy/droplet/test-neon-url.sh
       - name: The droplet's edge channel refuses what it can't prove (deploy/droplet/test-upgrade-edge.sh, D-211)
         run: deploy/droplet/test-upgrade-edge.sh
+      - name: The leftover test database sweep (scripts/test-sweep-test-databases.sh, D-195)
+        run: scripts/test-sweep-test-databases.sh
+      - name: The shared-stack guard (scripts/test-stack-guard.sh, D-187)
+        run: scripts/test-stack-guard.sh
+      - name: Backup keys are created mode 600 (scripts/test-backup-key-mode.sh)
+        run: scripts/test-backup-key-mode.sh
+      - name: Backups and restores leave no plaintext on failure or kill (scripts/test-backup-plaintext.sh)
+        run: scripts/test-backup-plaintext.sh
+      - name: A restore whose payload fails its hash is blocked, with why (scripts/test-restore-blocked.sh, D-196)
+        run: scripts/test-restore-blocked.sh
 
   # The testing rule (D-018) from a clean clone: the real stack, the real binary, real outages,
   # the testbed in a browser, and a load smoke run.
@@ -192,7 +202,9 @@ jobs:
         env:
           SQLX_OFFLINE: "false"
           DATABASE_URL: postgres://colophon:colophon-dev@127.0.0.1:55432/colophon
-        run: cargo test --workspace --locked -- --ignored --test-threads=1
+        run: |
+          scripts/sweep-test-databases.sh
+          cargo test --workspace --locked -- --ignored --test-threads=1
       - name: Crash tests F01, F02 and F03 (the server killed before and after a commit, the worker after announcing)
         env:
           SQLX_OFFLINE: "false"

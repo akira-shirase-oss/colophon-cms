@@ -31,9 +31,17 @@ fn the_shared_stack_is_refused_and_an_owned_one_allowed() {
         "the refusal says how to run it safely: {refused}"
     );
     assert!(decide(&[("COMPOSE_PROJECT_NAME", "colophon")]).is_err());
-    assert!(decide(&[("CI", "false")]).is_err());
+    // Exact matches only: CI=false, 0 or 1 doesn't say CI made this stack.
+    for ci in ["false", "0", "1", "TRUE", ""] {
+        assert!(decide(&[("CI", ci)]).is_err(), "CI={ci:?}");
+    }
     assert!(decide(&[("COLOPHON_STACK_OWNER", "0")]).is_err());
     assert!(decide(&[("COLOPHON_STACK_OWNER", "")]).is_err());
+    assert!(
+        decide(&[("COLOPHON_STACK_OWNER", "yes")]).is_err(),
+        "only 1 is the owner's word"
+    );
+    assert!(decide(&[("COMPOSE_PROJECT_NAME", "")]).is_err());
 
     // The three ways a stack is this run's own.
     assert_eq!(decide(&[("CI", "true")]), Ok(()));

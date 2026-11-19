@@ -88,6 +88,10 @@ create_backup() { # <root>
   # encrypting tool — plaintext never lands on the host, and the container scratch is removed
   # once the stream is captured.
   rdir=$(compose exec -T postgres mktemp -d /tmp/colophon-backup.XXXXXX | tr -d '[:space:]')
+  # Until it is removed below, the EXIT trap removes it: a stream that fails or a run that is
+  # killed halfway must not leave an unencrypted copy of the cluster in the container.
+  BACKUP_SCRATCH=$rdir
+  BACKUP_PARTIAL="$dir/.$payload.tmp"
   # Encrypt under a temp name and rename on success, so a failed run can never leave a file
   # that looks like a finished backup.
   # shellcheck disable=SC2016 # $d and $1 expand inside the container's sh, not here
@@ -99,7 +103,9 @@ create_backup() { # <root>
     tar -C "$d" -czf - base
   ' sh "$rdir" | encrypt "$dir/.$payload.tmp"
   mv "$dir/.$payload.tmp" "$dir/$payload"
+  BACKUP_PARTIAL=""
   compose exec -T postgres rm -rf "$rdir"
+  BACKUP_SCRATCH=""
   seconds=$(( SECONDS - t0 ))
 
   bytes=$(wc -c <"$dir/$payload" | tr -d '[:space:]')
@@ -660,8 +666,19 @@ retention_drill() {
 
 # The scratch dir from a verify run, if one exists on this call.
 VERIFY_SCRATCH=""
+# A create's unencrypted copy inside the postgres container, and its half-written payload, while
+# they exist (create_backup sets and clears them).
+BACKUP_SCRATCH=""
+BACKUP_PARTIAL=""
 # shellcheck disable=SC2329 # invoked by the EXIT trap below
-cleanup() { if [[ -n "$VERIFY_SCRATCH" ]]; then rm -rf "$VERIFY_SCRATCH"; fi; }
+cleanup() {
+  if [[ -n "$VERIFY_SCRATCH" ]]; then rm -rf "$VERIFY_SCRATCH"; fi
+  if [[ -n "$BACKUP_PARTIAL" ]]; then rm -f "$BACKUP_PARTIAL"; fi
+  if [[ -n "$BACKUP_SCRATCH" ]]; then
+    compose exec -T postgres rm -rf "$BACKUP_SCRATCH" >/dev/null 2>&1 \
+      || echo "warning: couldn't remove the unencrypted scratch copy $BACKUP_SCRATCH in the postgres container; remove it by hand" >&2
+  fi
+}
 trap cleanup EXIT
 
 case "${1:-}" in

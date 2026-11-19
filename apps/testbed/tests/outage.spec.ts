@@ -1,11 +1,15 @@
 // Stops real services of the local stack and checks that the testbed shows what happened.
-// Services are restarted in `finally`, even when an assertion fails.
+// Services are restarted in `finally`, even when an assertion fails. They are stopped only on a
+// stack that is the run's own (D-187, ./stack-owner.ts); on a shared one these tests are CI's.
 
 import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { expect, test } from '@playwright/test';
+import { stackIsOurs } from './stack-owner.ts';
 
 const compose = fileURLToPath(new URL('../../../deploy/compose.yaml', import.meta.url));
+
+test.skip(!stackIsOurs(), 'stops Postgres and Valkey: CI only on a shared stack (D-187; COLOPHON_STACK_OWNER=1 if it is yours)');
 
 function docker(...args: string[]) {
 	execFileSync('docker', ['compose', '-f', compose, ...args], { stdio: 'ignore' });

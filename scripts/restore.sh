@@ -198,25 +198,31 @@ stage_prepare() {
   local recorded actual
   recorded=$(jq -r '.payload.sha256' "$manifest")
   actual=$(openssl dgst -sha256 -r "$payload" | cut -d' ' -f1)
-  [[ "$actual" == "$recorded" ]] || die "$payload fails the manifest's SHA-256"
+  if [[ "$actual" != "$recorded" ]]; then
+    # The stored bytes aren't what was captured: blocked, with why, as the runbook says (never opened).
+    mark_blocked prepare "the payload fails the manifest's SHA-256 (stored $actual, recorded $recorded): do not restore; investigate storage and re-capture"
+    return 1
+  fi
   say "$1:" "payload SHA-256 matches the manifest"
 
   PG_PORT=$(free_port "$PG_PORT")
   jq --argjson pg "$PG_PORT" '.pg_port = $pg' "$DIR/state.json" >"$DIR/state.json.tmp" \
     && mv "$DIR/state.json.tmp" "$DIR/state.json"
 
-  # Decrypt through the key file (never a flag) and unpack the data directory into the fresh
-  # volume. The tar's single top-level `base/` is flattened into PGDATA's place. A previous
-  # interrupted prepare may have left its volume half-populated — start it clean.
-  decrypt "$payload" >"$DIR/payload.tar.gz"
+  # Decrypt through the key file (never a flag) straight into the container that unpacks the
+  # data directory into the fresh volume: the decrypted bytes are never written to the host, so a
+  # failed or interrupted unpack can't leave them behind. The tar's single top-level `base/` is
+  # flattened into PGDATA's place. A previous interrupted prepare may have left its volume
+  # half-populated — start it clean.
   docker rm -f "$CONTAINER" >/dev/null 2>&1 || true
   docker volume rm "$VOLUME" >/dev/null 2>&1 || true
   docker volume create "$VOLUME" >/dev/null
-  docker run --rm -i -v "$VOLUME:/var/lib/postgresql" --entrypoint sh "$(image postgres)" -c \
+  local postgres_image
+  postgres_image=$(image postgres)
+  decrypt "$payload" | docker run --rm -i -v "$VOLUME:/var/lib/postgresql" --entrypoint sh "$postgres_image" -c \
     'set -eu; d=${PGDATA:?}; mkdir -p "$d";
      tar -xzf - -C "$d" --strip-components=1;
-     chown -R postgres:postgres "$d"; chmod 700 "$d"' <"$DIR/payload.tar.gz"
-  rm -f "$DIR/payload.tar.gz"
+     chown -R postgres:postgres "$d"; chmod 700 "$d"'
   jq --arg db "$DB" '.database = $db' "$DIR/state.json" >"$DIR/state.json.tmp" \
     && mv "$DIR/state.json.tmp" "$DIR/state.json"
   mark_done prepare "$(jq -n --arg vol "$VOLUME" --arg db "$DB" \
