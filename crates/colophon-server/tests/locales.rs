@@ -313,3 +313,62 @@ async fn localization_groups() {
         "locale_required"
     );
 }
+
+/// A locale is one language in any case (D-212): `FR` after `fr` is taken, a tag is stored in BCP 47's
+/// case (`PT-br` reads back `pt-BR`), and a filter for `FR` lists the `fr` entry.
+#[tokio::test]
+#[ignore = "needs the local stack and migrations: scripts/stack.sh up && scripts/migrate.sh"]
+async fn a_locale_is_one_language_in_any_case() {
+    let (_server, owner, project) = set_up().await;
+    let list = entries(&project);
+    let created = send(
+        &owner,
+        Method::POST,
+        &format!("{list}?locale=en"),
+        Some(&json!({"title": "Tide tables", "slug": "tides"})),
+    )
+    .await;
+    assert_eq!(created.status, StatusCode::CREATED, "{}", created.body);
+    let source = created.body["data"]["id"].as_str().expect("id").to_owned();
+    let french = send(
+        &owner,
+        Method::POST,
+        &format!("{list}/{source}/localizations?locale=fr"),
+        None,
+    )
+    .await;
+    assert_eq!(french.status, StatusCode::CREATED, "{}", french.body);
+    for spelling in ["FR", "Fr", "fR"] {
+        let again = send(
+            &owner,
+            Method::POST,
+            &format!("{list}/{source}/localizations?locale={spelling}"),
+            None,
+        )
+        .await;
+        assert_eq!(
+            again.status,
+            StatusCode::CONFLICT,
+            "{spelling}: {}",
+            again.body
+        );
+        assert_eq!(
+            again.body["error"]["details"]["reason"], "locale_taken",
+            "{spelling}"
+        );
+    }
+    let mixed = send(
+        &owner,
+        Method::POST,
+        &format!("{list}?locale=PT-br"),
+        Some(&json!({"title": "Marés", "slug": "mares"})),
+    )
+    .await;
+    assert_eq!(mixed.status, StatusCode::CREATED, "{}", mixed.body);
+    assert_eq!(mixed.body["data"]["locale"], "pt-BR");
+    let listed = send(&owner, Method::GET, &format!("{list}?locale=FR"), None).await;
+    assert_eq!(listed.status, StatusCode::OK, "{}", listed.body);
+    let rows = listed.body["data"].as_array().expect("rows");
+    assert_eq!(rows.len(), 1, "{}", listed.body);
+    assert_eq!(rows[0]["locale"], "fr");
+}

@@ -57,6 +57,48 @@ impl TestDb {
         Self { admin, name, app }
     }
 
+    /// A database migrated only to the migrations before `version`, for a test of a later migration
+    /// against data the earlier schema allowed. The app login
+    /// is connected as usual; `owner()` runs the remaining migrations with `colophon_db::migrate`.
+    pub(crate) async fn before(version: i64) -> Self {
+        let host = host();
+        let admin = PgPool::connect(&format!("postgres://colophon:colophon-dev@{host}/postgres"))
+            .await
+            .expect("the stack's database answers (scripts/stack.sh up)");
+        let name = format!("colophon_test_{}", Uuid::now_v7().simple());
+        sqlx::query(AssertSqlSafe(format!("CREATE DATABASE {name}")))
+            .execute(&admin)
+            .await
+            .expect("create database");
+        let owner = PgPool::connect(&format!("postgres://colophon:colophon-dev@{host}/{name}"))
+            .await
+            .expect("connect as owner");
+        // sqlx's Migrator fields are its macro's (semver-exempt); this pins them to the sqlx in Cargo.lock.
+        let earlier = sqlx::migrate::Migrator {
+            migrations: std::borrow::Cow::Owned(
+                colophon_db::MIGRATOR
+                    .iter()
+                    .filter(|migration| migration.version < version)
+                    .cloned()
+                    .collect(),
+            ),
+            ..sqlx::migrate::Migrator::DEFAULT
+        };
+        earlier
+            .run(&owner)
+            .await
+            .expect("the earlier migrations apply");
+        owner.close().await;
+        let app = PgPoolOptions::new()
+            .max_connections(1)
+            .connect(&format!(
+                "postgres://colophon_app:colophon-dev@{host}/{name}"
+            ))
+            .await
+            .expect("connect as the application login");
+        Self { admin, name, app }
+    }
+
     /// A pool for the table owner, which row-level security doesn't apply to.
     pub(crate) async fn owner(&self) -> PgPool {
         PgPool::connect(&format!(
