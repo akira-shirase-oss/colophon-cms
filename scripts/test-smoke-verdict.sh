@@ -17,13 +17,13 @@ ran=$(grep -oE 'smoke .*scripts/load\.sh [a-z][a-z-]*' .github/workflows/ci.yml 
 
 # The second run (CI 44551888337): assets and bulk failed; the flappers passed. noisy-agent's L08 held (its worst
 # ratio isn't in that run's log line, so 1.6, under the gate's 2, stands for "held").
-printf 'audience\t580.731\t\nmigrations\t408.022\t\nstages\t128.171\t\nnoisy-agent\t18.466\t1.6\nassets\t300\t\nbulk\t2500\t\n' >"$tmp/run2.tsv"
+printf 'audience\t580.731\t\t0\t\nmigrations\t408.022\t\t0\t\nstages\t128.171\t\t0\t\nnoisy-agent\t18.466\t1.6\t0\t\nassets\t300\t\t0\t\nbulk\t2500\t\t0\t\n' >"$tmp/run2.tsv"
 # The first run (CI 44543394086): all six failed; noisy-agent's L08 ratios were 5.79 and 6.56.
-printf 'audience\t747.707\t\nmigrations\t681.471\t\nstages\t254.202\t\nnoisy-agent\t103.657\t6.56\nassets\t619.375\t\nbulk\t2876.506\t\n' >"$tmp/run1.tsv"
+printf 'audience\t747.707\t\t0\t\nmigrations\t681.471\t\t0\t\nstages\t254.202\t\t0\t\nnoisy-agent\t103.657\t6.56\t0\t\nassets\t619.375\t\t0\t\nbulk\t2876.506\t\t0\t\n' >"$tmp/run1.tsv"
 
 # Every other smoke that ran, at a green p99 (D-221 lists them all as flapping, each judged by what it measured).
 for run in run1 run2; do
-  for smoke in $ran; do grep -q "^$smoke	" "$tmp/$run.tsv" || printf '%s\t9.5\t\n' "$smoke" >>"$tmp/$run.tsv"; done
+  for smoke in $ran; do grep -q "^$smoke	" "$tmp/$run.tsv" || printf '%s\t9.5\t\t0\t\n' "$smoke" >>"$tmp/$run.tsv"; done
 done
 
 verdict() { scripts/smoke-verdict.sh "$@" >"$tmp/out" 2>&1; }
@@ -78,27 +78,53 @@ expect_fail "$tmp/list.tsv" "$ran" "assets bulk gone" "$tmp/run2.tsv"
 iran=$(grep -oE 'run_load .*scripts/load\.sh [a-z][a-z-]* [a-z]+' .github/workflows/ci.yml | awk '{print "integration/" $(NF-1) "-" $NF}' | sort -u | paste -sd' ' -)
 [[ $(wc -w <<<"$iran") -ge 15 ]] || { echo "FAIL: read only '$iran' from ci.yml's integration step" >&2; exit 1; }
 # A green run: every integration smoke at its p99 from CI 44561341789's step (the steady ones all 1–21 ms).
-for smoke in $iran; do printf '%s\t%s\t\n' "$smoke" 9.5; done >"$tmp/irun.tsv"
+for smoke in $iran; do printf '%s\t%s\t\t0\t\n' "$smoke" 9.5; done >"$tmp/irun.tsv"
 iverdict() { SMOKE_SCOPE=integration scripts/smoke-verdict.sh "$@" >"$tmp/out" 2>&1; }
 label='integration: a green run (its scope ignores the smokes job entries)'
 iverdict "$list" "$iran" "" "$tmp/irun.tsv" || { echo "FAIL: $label:"; cat "$tmp/out"; exit 1; }
-sed 's/^integration\/members-steady\t9.5/integration\/members-steady\t260/' "$tmp/irun.tsv" >"$tmp/iflap.tsv"
-label='integration: members stalls to 260 ms, under its ceiling'
-iverdict "$list" "$iran" "integration/members-steady" "$tmp/iflap.tsv" || { echo "FAIL: $label:"; cat "$tmp/out"; exit 1; }
-grep -q '^flap: integration/members-steady failed its limit, p99 260 ms, under its ceiling 400 ms' "$tmp/out" || { echo "FAIL: no members flap line:"; cat "$tmp/out"; exit 1; }
-sed 's/^integration\/members-steady\t9.5/integration\/members-steady\t500/' "$tmp/irun.tsv" >"$tmp/iover.tsv"
-label='integration mutant: members past its 2x ceiling'
-if iverdict "$list" "$iran" "integration/members-steady" "$tmp/iover.tsv"; then echo "FAIL: $label accepted"; cat "$tmp/out"; exit 1; fi
-grep -q 'integration/members-steady is past its CEILING: p99 500 ms > 400 ms' "$tmp/out" || { echo "FAIL: $label:"; cat "$tmp/out"; exit 1; }
+# D-221 is closed: runner speed is normalised (rates and limits scaled to the runner), so a steady smoke that still
+# fails its limit fails the job; nothing tolerates it.
+sed 's/^integration\/members-steady\t9.5/integration\/members-steady\t260/' "$tmp/irun.tsv" >"$tmp/islow.tsv"
+label='integration: members failing its (scaled) limit fails, no tolerance listed'
+if iverdict "$list" "$iran" "integration/members-steady" "$tmp/islow.tsv"; then echo "FAIL: $label accepted"; cat "$tmp/out"; exit 1; fi
+grep -q 'smoke integration/members-steady failed and is not on' "$tmp/out" || { echo "FAIL: $label:"; cat "$tmp/out"; exit 1; }
 label='integration mutant: an unlisted (strict) integration smoke fails'
 if iverdict "$list" "$iran" "integration/health-throughput" "$tmp/irun.tsv"; then echo "FAIL: $label accepted"; cat "$tmp/out"; exit 1; fi
 grep -q 'smoke integration/health-throughput failed and is not on' "$tmp/out" || { echo "FAIL: $label:"; cat "$tmp/out"; exit 1; }
-# The steady smokes' tolerance expires with D-221: once its row is no longer Open, the list is refused.
-sed 's/^\(| D-221 |.*\)Open:/\1Fixed:/' docs/DECISIONS.md >"$tmp/decisions-d221.md"
-grep -q '^| D-221 |.*Fixed:' "$tmp/decisions-d221.md" || { echo "FAIL: could not mark D-221 done"; exit 1; }
-label='integration mutant: D-221 done while its tolerance is still listed'
-if SMOKE_DECISIONS="$tmp/decisions-d221.md" SMOKE_SCOPE=integration scripts/smoke-verdict.sh "$list" "$iran" "" "$tmp/irun.tsv" >"$tmp/out" 2>&1; then echo "FAIL: $label accepted"; cat "$tmp/out"; exit 1; fi
+awk -F'\t' 'BEGIN {OFS = FS} $1 == "integration/members-steady" {$2 = 260; $4 = 4; $5 = "checks_failed=4"} {print}' "$tmp/irun.tsv" >"$tmp/ihard.tsv"
+label='integration hard: members flapping under its ceiling but with failed checks'
+if iverdict "$list" "$iran" "integration/members-steady" "$tmp/ihard.tsv"; then echo "FAIL: $label accepted"; cat "$tmp/out"; exit 1; fi
+grep -q 'smoke integration/members-steady has hard failures (4: checks_failed=4)' "$tmp/out" || { echo "FAIL: $label:"; cat "$tmp/out"; exit 1; }
+# D-221's temporary ceilings are gone with it: one planted back is refused, its row no longer being Open.
+with $'integration/members-steady\tflapping\tD-221\tlearning-95\tp99<=400 EXPIRES-WITH D-221\tplanted → back\tnothing'
+label='integration mutant: a D-221 tolerance planted back after D-221 closed'
+if SMOKE_SCOPE=integration scripts/smoke-verdict.sh "$tmp/list.tsv" "$iran" "" "$tmp/irun.tsv" >"$tmp/out" 2>&1; then echo "FAIL: $label accepted"; cat "$tmp/out"; exit 1; fi
 grep -q 'temporary ceiling expired with D-221' "$tmp/out" || { echo "FAIL: $label:"; cat "$tmp/out"; exit 1; }
+# Under half the reference speed latency isn't judged (SMOKE_LATENCY_JUDGED=no), but hard failures still are.
+label='not judged: smokes failing their limits on a too-slow runner pass the verdict'
+SMOKE_LATENCY_JUDGED=no scripts/smoke-verdict.sh "$list" "$ran" "assets audience bulk collaboration live" "$tmp/run2.tsv" >"$tmp/out" 2>&1 || { echo "FAIL: $label:"; cat "$tmp/out"; exit 1; }
+grep -q 'latency not judged on this runner' "$tmp/out" || { echo "FAIL: $label:"; cat "$tmp/out"; exit 1; }
+awk -F'\t' 'BEGIN {OFS = FS} $1 == "live" {$4 = 3; $5 = "requests_failed=3"} {print}' "$tmp/run2.tsv" >"$tmp/slowhard.tsv"
+label='not judged: a hard failure on a too-slow runner still fails'
+if SMOKE_LATENCY_JUDGED=no scripts/smoke-verdict.sh "$list" "$ran" "assets bulk live" "$tmp/slowhard.tsv" >"$tmp/out" 2>&1; then echo "FAIL: $label accepted"; cat "$tmp/out"; exit 1; fi
+grep -q 'smoke live has hard failures (3: requests_failed=3)' "$tmp/out" || { echo "FAIL: $label:"; cat "$tmp/out"; exit 1; }
+
+# Hard failures (correctness) are never tolerated, whatever the list or a ceiling says.
+hard() { awk -F'\t' -v s="$1" -v h="$2" -v d="$3" 'BEGIN {OFS = FS} $1 == s {$4 = h; $5 = d} {print}' "$tmp/run2.tsv" >"$tmp/hard.tsv"; }
+hard migrations 1 'checks_failed=1; release names it: 1 of 400'
+label='hard: a flapper under its ceiling with a failed check'; want='smoke migrations has hard failures (1: checks_failed=1; release names it: 1 of 400)'
+expect_fail "$list" "$ran" "assets bulk" "$tmp/hard.tsv"
+hard assets 3598 'upload_refused=3598; upload 202: 3598 of 4096'
+label='hard: a strict expected failure that is also a correctness failure'; want='smoke assets has hard failures (3598'
+expect_fail "$list" "$ran" "assets bulk" "$tmp/hard.tsv"
+hard cache-down 2 'requests_failed=2'
+label='hard: an unlisted passing smoke (an outage drill) with real request errors'; want='smoke cache-down has hard failures (2: requests_failed=2)'
+expect_fail "$list" "$ran" "assets bulk" "$tmp/hard.tsv"
+awk -F'\t' 'BEGIN {OFS = FS} $1 == "stages" {$4 = ""} {print}' "$tmp/run2.tsv" >"$tmp/hard.tsv"
+label='hard: no count measured for a smoke that ran'; want='smoke stages has no hard-failure count measured'
+expect_fail "$list" "$ran" "assets bulk" "$tmp/hard.tsv"
+label='hard: every count 0, the outage drills included — today'"'"'s verdict unchanged'
+expect_pass "$list" "$ran" "assets bulk" "$tmp/run2.tsv"
 
 refuse() {
   printf '%s\n' "$1" >"$tmp/bad.tsv"
@@ -112,4 +138,4 @@ refuse $'stages\tflapping\tD-209\tlearning-95\t-\tp99 254 → 128\tsomething'
 label="a flapper with one run's numbers"; want="needs both runs' measurements"
 refuse $'stages\tflapping\tD-209\tlearning-95\tp99<=400\tp99 254 ms\tsomething'
 
-echo "smoke verdict: both scopes judged (the integration job's flappers under their ceilings, one past it failing, an unlisted one failing); both runs judged as the list says (noisy-agent at its ordinary ceiling since D-214; a temporary ceiling refused once its decision merges); a deleted entry, a planted passing smoke, a flapper past its ceiling or unmeasured, a smoke that didn't run, and an entry missing its owner, ceiling or runs each fail"
+echo "smoke verdict: hard failures fail every smoke (a flapper, a strict expected failure, an unlisted drill, an unmeasured one) and all-zero leaves the verdict as it was; both scopes judged (the integration job's flappers under their ceilings, one past it failing, an unlisted one failing); both runs judged as the list says (noisy-agent at its ordinary ceiling since D-214; a temporary ceiling refused once its decision merges); a deleted entry, a planted passing smoke, a flapper past its ceiling or unmeasured, a smoke that didn't run, and an entry missing its owner, ceiling or runs each fail"
