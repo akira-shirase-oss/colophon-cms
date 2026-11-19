@@ -18,6 +18,12 @@ read -r -a ran <<<"$2"
 failed=()
 [[ -n "${3:-}" ]] && read -r -a failed <<<"$3"
 metrics=${4:-/dev/null}
+# Which job's entries this run judges (D-221): the smokes job's are plain names (`assets`); another job's carry its
+# scope (`integration/members-steady`, with SMOKE_SCOPE=integration). Entries outside the scope are not this run's.
+scope=${SMOKE_SCOPE:-}
+in_scope() {
+  if [[ -z "$scope" ]]; then [[ "$1" != */* ]]; else [[ "$1" == "$scope"/* ]]; fi
+}
 # Where a temporary ceiling's decision is looked up: its row there means its fix merged and the tolerance expired.
 decisions=${SMOKE_DECISIONS:-docs/DECISIONS.md}
 
@@ -32,6 +38,7 @@ problem() { echo "::error::$*"; problems=$((problems + 1)); }
 
 while IFS=$'\t' read -r smoke kind decision owner ceiling measured owed; do
   [[ -z "$smoke" || "$smoke" == \#* ]] && continue
+  in_scope "$smoke" || continue
   if [[ -z "$decision" || -z "$owner" || -z "$measured" || -z "$owed" ]]; then
     echo "smoke-verdict: $list: '$smoke' needs a decision, an owner, what it measured and what is owed" >&2
     exit 1
@@ -45,8 +52,9 @@ while IFS=$'\t' read -r smoke kind decision owner ceiling measured owed; do
       fi
       if [[ "$ceiling" == *" EXPIRES-WITH "* ]]; then
         reason=${ceiling##* }
-        if grep -q "^| $reason |" "$decisions"; then
-          echo "smoke-verdict: $list: '$smoke''s temporary ceiling expired with $reason, which has merged ($decisions has its row): remove the entry, or restore it as an ordinary flapper at 2x its limit" >&2
+        # A decision is done once its row exists and no longer says `Open:` (D-221's row exists while it is open).
+        if grep "^| $reason |" "$decisions" | grep -qv "Open:"; then
+          echo "smoke-verdict: $list: '$smoke''s temporary ceiling expired with $reason, which is done ($decisions has its row, no longer Open): remove the entry, or restore it as an ordinary flapper at 2x its limit" >&2
           exit 1
         fi
       fi

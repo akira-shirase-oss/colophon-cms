@@ -47,13 +47,13 @@ pub mod work;
 use std::{str::FromStr, time::Duration};
 
 use sqlx::{
-    Executor as _,
+    ConnectOptions as _, Executor as _,
     postgres::{PgConnectOptions, PgPoolOptions, PgSslMode},
 };
 
 pub use sqlx::postgres::{PgConnection, PgListener, PgPool};
 pub use sqlx::{Postgres, Transaction};
-pub use transactions::{begin_tx, begin_tx_snapshot};
+pub use transactions::{Phases, begin_tx, begin_tx_snapshot, with_phases};
 
 /// The schema migrations, embedded at compile time from `migrations/`.
 pub static MIGRATOR: sqlx::migrate::Migrator = sqlx::migrate!("./migrations");
@@ -425,6 +425,15 @@ fn ssl_mode_weakness(mode: PgSslMode) -> &'static str {
     }
 }
 
+/// Statements slower than this are logged (WARN, `sqlx::query`): sqlx's own default, 1 s, unless the process sets
+/// another before building its pools (D-221; `COLOPHON_DB_SLOW_STATEMENT_MS`).
+static SLOW_STATEMENT: std::sync::OnceLock<Duration> = std::sync::OnceLock::new();
+
+/// Sets the slow-statement threshold for every pool built afterwards (D-221). The first call wins.
+pub fn set_slow_statement_threshold(threshold: Duration) {
+    let _ = SLOW_STATEMENT.set(threshold);
+}
+
 /// Builds the pool without connecting. Connections open on first use, so the server starts
 /// (and reports "not ready") while the database is down, instead of failing to start. The URL
 /// is held to [`check_url`]'s TLS rule first.
@@ -434,7 +443,14 @@ pub fn connect_lazy(url: &str, settings: PoolSettings) -> Result<PgPool, DbError
         .options([(
             "statement_timeout",
             settings.statement_timeout.as_millis().to_string(),
-        )]);
+        )])
+        .log_slow_statements(
+            log::LevelFilter::Warn,
+            SLOW_STATEMENT
+                .get()
+                .copied()
+                .unwrap_or(Duration::from_secs(1)),
+        );
     // No ping on checkout: it is a round trip on every query. sqlx still pings each connection
     // as it returns to the pool and drops broken ones, so only a connection that breaks while
     // idle (a database restart) reaches a caller, and fails that one request (D-033).

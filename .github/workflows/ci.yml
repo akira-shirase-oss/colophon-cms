@@ -236,6 +236,8 @@ jobs:
             -c "ALTER SYSTEM SET log_min_duration_statement = '100ms'" \
             -c "ALTER SYSTEM SET log_lock_waits = on" \
             -c "ALTER SYSTEM SET deadlock_timeout = '50ms'" \
+            -c "ALTER SYSTEM SET log_checkpoints = on" \
+            -c "ALTER SYSTEM SET log_autovacuum_min_duration = 0" \
             -c "SELECT pg_reload_conf()"
       - name: Load smoke runs (health, rich-text validation, signed-in and bearer requests, members, custom roles, API tokens, schedules, who may create projects, changesets, public delivery, draft preview, publishing with the worker, drafts, content types, content modelling, deleting entries, the Studio)
         # Endpoints that never touch the database run back to back (throughput): their p99 has
@@ -268,43 +270,86 @@ jobs:
         # to 1,000, and the suites before the smokes create hundreds as dev-owner. It runs at 500
         # until /me stops listing every project (docs/modules/04-api.md, open decisions).
         run: |
+          set -o pipefail
           scripts/install-k6.sh "$RUNNER_TEMP/bin"
           export PATH="$RUNNER_TEMP/bin:$PATH" KEEP=0 DURATION=20s
-          TOTAL=200000 P99_MS=50 scripts/load.sh health throughput
-          TOTAL=100000 P99_MS=50 scripts/load.sh rich-text throughput
-          RATE=400 P99_MS=200 scripts/load.sh session steady
-          RATE=500 P99_MS=200 scripts/load.sh cli steady
-          RATE=500 P99_MS=200 scripts/load.sh members steady
-          RATE=450 P99_MS=200 scripts/load.sh roles steady
-          RATE=200 P99_MS=200 scripts/load.sh tokens steady
-          RATE=500 P99_MS=200 scripts/load.sh schedules steady
-          RATE=500 P99_MS=200 scripts/load.sh projects steady
-          RATE=400 P99_MS=200 scripts/load.sh changesets steady
-          RATE=1500 P99_MS=200 scripts/load.sh delivery steady
+          # D-221's evidence: statements over 100 ms (sqlx) and requests over 200 ms with their phases, per smoke.
+          export COLOPHON_DB_SLOW_STATEMENT_MS=100 LOAD_LOG=info,colophon_api::slow=debug,colophon_server::lag=debug
+          logs="$RUNNER_TEMP/integration-logs"; mkdir -p "$logs"
+          # The runner itself, every second (D-221's key): CPU steal, iowait and the run queue (vmstat), and how long
+          # tasks waited for CPU, I/O and memory (/proc/pressure). Beside the server's lag tickers, a stall then says
+          # whether the runner, the process or its runtime stopped.
+          vmstat -t 1 >"$logs/vmstat.txt" 2>&1 &
+          vmstat_pid=$!
+          (while :; do echo "$(date -u +%FT%TZ) cpu: $(tr '\n' ' ' </proc/pressure/cpu)| io: $(tr '\n' ' ' </proc/pressure/io)| memory: $(tr '\n' ' ' </proc/pressure/memory)"; sleep 1; done) >"$logs/pressure.txt" 2>&1 &
+          pressure_pid=$!
+          trap 'kill "$vmstat_pid" "$pressure_pid" 2>/dev/null || true' EXIT
+          ran=() failed=()
+          # Each smoke runs to the end; the verdict below judges every outcome against perf/expected-smoke-failures.tsv
+          # (scope integration: flapping entries may pass or fail their limit, never their 2x ceiling; D-221).
+          run_load() {
+            local name="integration/${*: -2:1}-${*: -1}"
+            local file="${name//\//_}"
+            ran+=("$name")
+            echo "$(date -u +%FT%TZ) start $name" >>"$logs/windows.txt"
+            if ! env SERVER_LOG="$logs/$file.server.log" RECORD_OUT="$logs/$file.record.json" "$@"; then
+              echo "::warning::smoke failed: $* (the verdict below decides whether it was expected)"
+              failed+=("$name")
+            fi
+            echo "$(date -u +%FT%TZ) end $name" >>"$logs/windows.txt"
+            if [[ -s "$logs/$file.record.json" ]]; then
+              jq -r --arg n "$name" '[$n, (.latency_ms.p99 // ""), ([.l08.ratios[]?] | max // "")] | @tsv' "$logs/$file.record.json" >>"$logs/metrics.tsv"
+            fi
+          }
+          run_load TOTAL=200000 P99_MS=50 scripts/load.sh health throughput
+          run_load TOTAL=100000 P99_MS=50 scripts/load.sh rich-text throughput
+          run_load RATE=400 P99_MS=200 scripts/load.sh session steady
+          run_load RATE=500 P99_MS=200 scripts/load.sh cli steady
+          run_load RATE=500 P99_MS=200 scripts/load.sh members steady
+          run_load RATE=450 P99_MS=200 scripts/load.sh roles steady
+          run_load RATE=200 P99_MS=200 scripts/load.sh tokens steady
+          run_load RATE=500 P99_MS=200 scripts/load.sh schedules steady
+          run_load RATE=500 P99_MS=200 scripts/load.sh projects steady
+          run_load RATE=400 P99_MS=200 scripts/load.sh changesets steady
+          run_load RATE=1500 P99_MS=200 scripts/load.sh delivery steady
           # Draft preview reads (D-172): never cached, each re-checked as its issuer — the
           # spec's 200/s budget, at the drafts smoke's p99 until a runner baseline exists.
-          RATE=200 P99_MS=500 scripts/load.sh preview steady
+          run_load RATE=200 P99_MS=500 scripts/load.sh preview steady
           # RATE counts publishes here, five requests each.
-          RATE=60 P99_MS=500 scripts/load.sh publishing steady
+          run_load RATE=60 P99_MS=500 scripts/load.sh publishing steady
           # Step 3.5 made the drafts mix heavier (title searches walk the collection, lists read
           # each entry's live state, revision reads are new): at 400/s a runner whose health ran
           # 21,982/s fell behind (p99 1.47 s on every endpoint, 224 iterations dropped; run
           # 40526045207), while the same code passed its million-request run locally. 300/s until a
           # back-to-back run on the slowest runner sets it at half, as above; END_GOAL's draft
           # workload is 20 writes and 100 reads a second.
-          RATE=300 P99_MS=500 scripts/load.sh entries steady
-          RATE=400 P99_MS=500 scripts/load.sh content-types steady
+          run_load RATE=300 P99_MS=500 scripts/load.sh entries steady
+          run_load RATE=400 P99_MS=500 scripts/load.sh content-types steady
           # Structures and references (M.1 to M.3): about 1,156 a second back to back on the
           # laptop, so about 600 on a 7763; half is 300.
-          RATE=300 P99_MS=500 scripts/load.sh modelling steady
+          run_load RATE=300 P99_MS=500 scripts/load.sh modelling steady
           # Deleting entries (D-080): RATE counts iterations, about 2.3 requests each. About 590
           # a second back to back on the laptop (1,284 requests), so about 300 on a 7763; half
           # is 150.
-          RATE=150 P99_MS=500 scripts/load.sh deletion steady
+          run_load RATE=150 P99_MS=500 scripts/load.sh deletion steady
           # Images inside rich text (D-177, D-178): cached image-heavy reads, saves naming 20
           # images, refused saves. A first smoke; its rate is set from a runner's run.
-          RATE=100 P99_MS=700 scripts/load.sh rich-text-media steady
-          TOTAL=50000 P99_MS=50 scripts/load.sh studio throughput
+          run_load RATE=100 P99_MS=700 scripts/load.sh rich-text-media steady
+          run_load TOTAL=50000 P99_MS=50 scripts/load.sh studio throughput
+          touch "$logs/metrics.tsv"
+          SMOKE_SCOPE=integration scripts/smoke-verdict.sh perf/expected-smoke-failures.tsv "${ran[*]}" "${failed[*]:-}" "$logs/metrics.tsv" \
+            | tee -a "$logs/verdict.txt" "$GITHUB_STEP_SUMMARY"
+      - name: Keep the load smokes' evidence (per-smoke server logs with slow requests, Postgres's checkpoints, autovacuum, lock waits and slow statements)
+        if: always()
+        run: |
+          mkdir -p "$RUNNER_TEMP/integration-logs"
+          docker compose -f deploy/compose.yaml logs --no-color --timestamps postgres >"$RUNNER_TEMP/integration-logs/postgres.log" 2>&1 || true
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: always()
+        with:
+          name: integration-smoke-logs
+          path: ${{ runner.temp }}/integration-logs/
+          retention-days: 7
       - name: Service logs, and what the database was doing
         if: failure()
         run: |
@@ -402,6 +447,13 @@ jobs:
           export PATH="$RUNNER_TEMP/bin:$PATH" KEEP=0 SAMPLE_RESOURCES=1 SAMPLE_SECONDS=1
           logs="$RUNNER_TEMP/smoke-logs"; mkdir -p "$logs"
           ran=() failed=()
+          # D-221: every smoke's server runs its lag tickers, and the runner is sampled each second (as in integration).
+          export LOAD_LOG=warn,colophon_server::lag=debug
+          vmstat -t 1 >"$logs/vmstat.txt" 2>&1 &
+          vmstat_pid=$!
+          (while :; do echo "$(date -u +%FT%TZ) cpu: $(tr '\n' ' ' </proc/pressure/cpu)| io: $(tr '\n' ' ' </proc/pressure/io)| memory: $(tr '\n' ' ' </proc/pressure/memory)"; sleep 1; done) >"$logs/pressure.txt" 2>&1 &
+          pressure_pid=$!
+          trap 'kill "$vmstat_pid" "$pressure_pid" 2>/dev/null || true' EXIT
           # Each scenario keeps its server log, and marks its window so the Postgres log (one
           # for the job) can be cut by scenario.
           pgq() { docker compose -f deploy/compose.yaml exec -T postgres psql -U colophon -d postgres -XAtq "$@"; }
@@ -414,7 +466,7 @@ jobs:
             # Postgres's own side of the window: its container's CPU each second, and its
             # statements by total time, reset first so they're this scenario's alone.
             pgq -c "SELECT pg_stat_statements_reset()" >/dev/null || true
-            (while :; do docker stats --no-stream --format '{{.CPUPerc}}' "$pgc" 2>/dev/null; sleep 1; done) >"$logs/$name.postgres-cpu.txt" &
+            (while :; do echo "$(date -u +%FT%TZ) $(docker stats --no-stream --format '{{.CPUPerc}}' "$pgc" 2>/dev/null)"; sleep 1; done) >"$logs/$name.postgres-cpu.txt" &
             sampler=$!
             if env SERVER_LOG="$logs/$name.server.log" RECORD_OUT="$logs/$name.record.json" "$@"; then echo "::endgroup::"; else
               echo "::endgroup::"; echo "::warning::smoke failed: $* (the verdict below decides whether it was expected)"; failed+=("$name")
@@ -431,7 +483,7 @@ jobs:
             echo "$(date -u +%FT%TZ) end $name" >>"$logs/windows.txt"
             pgq -c "SELECT round(total_exec_time::numeric, 1) AS total_ms, calls, round(mean_exec_time::numeric, 3) AS mean_ms, rows, left(regexp_replace(query, '\\s+', ' ', 'g'), 160) FROM pg_stat_statements ORDER BY total_exec_time DESC LIMIT 10" \
               >"$logs/$name.statements.txt" 2>&1 || true
-            cpu=$(tr -d '%' <"$logs/$name.postgres-cpu.txt" | awk 'NF {s += $1; n++; if ($1 > m) m = $1} END {if (n) printf "avg %.0f%%, max %.0f%%", s / n, m; else print "not sampled"}')
+            cpu=$(awk '{print $2}' "$logs/$name.postgres-cpu.txt" | tr -d '%' | awk 'NF {s += $1; n++; if ($1 > m) m = $1} END {if (n) printf "avg %.0f%%, max %.0f%%", s / n, m; else print "not sampled"}')
             echo "| $name | postgres CPU $cpu |" >>"$GITHUB_STEP_SUMMARY"
           }
           smoke TOTAL=10000 P99_MS=500 scripts/load.sh assets throughput

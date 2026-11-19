@@ -226,6 +226,38 @@ fn panic_response(payload: Box<dyn Any + Send + 'static>) -> Response {
     ApiError::internal(Panicked(message)).into_response()
 }
 
+/// A request this slow logs its phases (D-221).
+const SLOW_REQUEST: Duration = Duration::from_millis(200);
+
+/// D-221's evidence: a request slower than [`SLOW_REQUEST`] logs one DEBUG line on the target
+/// `colophon_api::slow`, inside its request span (id, method, route): its total, its time getting
+/// connections and beginning transactions (pool wait and `BEGIN`, [`colophon_db::Phases`]), how many,
+/// and the rest (the handler's statements and work). Nothing is counted unless that target is on.
+async fn slow_requests(request: Request, next: Next) -> Response {
+    if !tracing::enabled!(target: "colophon_api::slow", Level::DEBUG) {
+        return next.run(request).await;
+    }
+    let started = std::time::Instant::now();
+    let phases = std::sync::Arc::new(colophon_db::Phases::default());
+    let response =
+        colophon_db::with_phases(std::sync::Arc::clone(&phases), next.run(request)).await;
+    let took = started.elapsed();
+    if took >= SLOW_REQUEST {
+        let total_ms = took.as_millis();
+        let begin_ms = u128::from(phases.begin_micros()) / 1000;
+        tracing::debug!(
+            target: "colophon_api::slow",
+            status = response.status().as_u16(),
+            total_ms,
+            begin_ms,
+            begins = phases.begins(),
+            rest_ms = total_ms.saturating_sub(begin_ms),
+            "slow request"
+        );
+    }
+    response
+}
+
 /// Applies the global stack to a router, with `build` recorded on every request span.
 /// Read it top to bottom as the path of a request.
 pub fn apply(router: Router, limits: HttpLimits, build: BuildInfo) -> Router {
@@ -249,6 +281,8 @@ pub fn apply(router: Router, limits: HttpLimits, build: BuildInfo) -> Router {
                 )
                 .on_failure(()),
         )
+        // 3b. A slow request's phases, inside its span (D-221; off unless its DEBUG target is on).
+        .layer(axum_mw::from_fn(slow_requests))
         // 4. Every error below becomes the envelope, inside the span so its logs carry the id.
         .layer(axum_mw::from_fn(error_envelope))
         // 5. Never close a connection silently over an unread body: refuse declared oversized
