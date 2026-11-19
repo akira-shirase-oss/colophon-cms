@@ -7,8 +7,8 @@
 # service's own (dynamic) user can't read the files where they are kept and the password is in no
 # process environment.
 #
-# Uploads stay off: the unit's s3_secret_key credential is loaded, but a drop-in leaves S3
-# unconfigured (all of COLOPHON_S3_* or none); R2 is the Garage stand-in's job.
+# Uploads stay off: the unit's s3_secret_key credential is loaded, but a drop-in unsets
+# COLOPHON_S3_SECRET_KEY_FILE (all of COLOPHON_S3_* or none); R2 is the Garage stand-in's job.
 #
 #   sudo CI=true deploy/droplet/test-unit-credentials.sh <colophon-server> <colophon> <studio-dir>
 set -euo pipefail
@@ -60,7 +60,9 @@ printf 'COLOPHON_LISTEN_ADDR=127.0.0.1:58000\nCOLOPHON_PUBLIC_URL=http://localho
 
 install -m 0644 deploy/production/colophon.service /etc/systemd/system/colophon.service
 mkdir -p /etc/systemd/system/colophon.service.d
-printf '[Service]\n# No object store in this check (all of COLOPHON_S3_* or none).\nEnvironment=COLOPHON_S3_SECRET_KEY_FILE=\n' >/etc/systemd/system/colophon.service.d/no-s3.conf
+# No object store in this check: the server takes all of COLOPHON_S3_* or none, and refuses one set
+# but blank, so the drop-in unsets the unit's only S3 variable rather than emptying it.
+printf '[Service]\nUnsetEnvironment=COLOPHON_S3_SECRET_KEY_FILE\n' >/etc/systemd/system/colophon.service.d/no-s3.conf
 systemctl daemon-reload && systemctl start colophon
 
 ready=""
