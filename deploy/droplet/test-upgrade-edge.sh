@@ -79,7 +79,13 @@ rm "$work/nobundle/edge/SHA256SUMS.intoto.jsonl"
 if run nobundle; then fail "a build without a provenance bundle was accepted"; fi
 grep -q 'no provenance bundle' "$work/nobundle.out" || fail "no bundle: $(cat "$work/nobundle.out")"
 
-for c in tampered mixed branch nobundle; do
+# No edge release published at all (edge.yml not landed yet): a refusal that says to use the
+# release channel, not a download error.
+mkdir -p "$work/noedge"
+if run noedge; then fail "--channel edge succeeded with no edge release"; fi
+grep -q 'available once edge.yml lands (D-211)' "$work/noedge.out" || fail "no edge release: $(cat "$work/noedge.out")"
+
+for c in tampered mixed branch nobundle noedge; do
   [[ -z "$(ls "$work/$c/root/releases" 2>/dev/null)" ]] || fail "$c left a release unpacked"
 done
-echo "upgrade --channel edge: the good build unpacks; tampered, mixed, branch-built and unbundled builds refuse"
+echo "upgrade --channel edge: the good build unpacks; tampered, mixed, branch-built and unbundled builds refuse, and so does a missing edge release"
