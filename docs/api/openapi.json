@@ -6834,6 +6834,16 @@
             },
             "description": "`not_found` — no such resource — or one the caller may not see, which looks the same"
           },
+          "408": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "`body_stalled` — the body stopped arriving for 15 s, or took longer than its bound"
+          },
           "409": {
             "content": {
               "application/json": {
@@ -6872,7 +6882,7 @@
                 }
               }
             },
-            "description": "`rate_limited` — over the per-credential or per-address limit; `Retry-After`"
+            "description": "`too_many_uploads` — this session or token has four uploads in progress (Retry-After); over the per-credential or per-address limit; `Retry-After`"
           },
           "503": {
             "content": {
@@ -6882,7 +6892,7 @@
                 }
               }
             },
-            "description": "`unavailable` — uploads are not configured on this server"
+            "description": "`unavailable, uploads_busy` — uploads are not configured on this server, or the uploads in progress hold its upload memory (Retry-After)"
           },
           "default": {
             "content": {
@@ -7589,6 +7599,16 @@
             },
             "description": "`not_found` — no such resource — or one the caller may not see, which looks the same"
           },
+          "408": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "`body_stalled` — the body stopped arriving for 15 s, or took longer than its bound"
+          },
           "409": {
             "content": {
               "application/json": {
@@ -7627,7 +7647,7 @@
                 }
               }
             },
-            "description": "`rate_limited` — over the per-credential or per-address limit; `Retry-After`"
+            "description": "`too_many_uploads` — this session or token has four uploads in progress (Retry-After); over the per-credential or per-address limit; `Retry-After`"
           },
           "503": {
             "content": {
@@ -7637,7 +7657,7 @@
                 }
               }
             },
-            "description": "`unavailable` — uploads are not configured on this server"
+            "description": "`unavailable, uploads_busy` — uploads are not configured on this server, or the uploads in progress hold its upload memory (Retry-After)"
           },
           "default": {
             "content": {

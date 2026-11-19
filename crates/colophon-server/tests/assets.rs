@@ -1588,3 +1588,187 @@ async fn a_bare_media_address_revalidates_and_a_versioned_one_is_immutable() {
     );
     assert_ne!(moved.bytes().await.expect("body").to_vec(), v1_bytes);
 }
+
+/// An upload opened on a raw socket (D-215): its headers, declaring `length` bytes, then `first`.
+/// Raw so the body can be paced, held open or cut short: a 10 MB image on a 2 Mbit/s line takes
+/// about 40 s. `session` `None` sends no credentials.
+async fn open_upload(
+    session: Option<&Session>,
+    project: &str,
+    length: usize,
+    first: &[u8],
+) -> tokio::net::TcpStream {
+    use tokio::io::AsyncWriteExt;
+    let address = common::ORIGIN
+        .strip_prefix("http://")
+        .expect("an http origin");
+    let mut socket = tokio::net::TcpStream::connect(address)
+        .await
+        .expect("connect");
+    let credentials = session.map_or_else(String::new, |session| {
+        format!(
+            "Cookie: {}\r\nX-CSRF-Token: {}\r\n",
+            session.cookie, session.csrf
+        )
+    });
+    let head = format!(
+        "POST {path} HTTP/1.1\r\nHost: {address}\r\nOrigin: {origin}\r\n{credentials}\
+         Idempotency-Key: {key}\r\nX-Colophon-File-Name: slow.png\r\nContent-Type: image/png\r\n\
+         Content-Length: {length}\r\nConnection: close\r\n\r\n",
+        path = assets(project),
+        origin = common::ORIGIN,
+        key = key(),
+    );
+    socket.write_all(head.as_bytes()).await.expect("head");
+    socket.write_all(first).await.expect("first bytes");
+    socket.flush().await.expect("flush");
+    socket
+}
+
+/// The status line's code and the whole answer of `socket`, read within `seconds`.
+async fn answer(socket: &mut tokio::net::TcpStream, seconds: u64) -> (String, String) {
+    use tokio::io::AsyncReadExt;
+    let mut bytes = Vec::new();
+    // An answer can come before the body is all sent: read what arrives until the server closes.
+    let _ =
+        tokio::time::timeout(Duration::from_secs(seconds), socket.read_to_end(&mut bytes)).await;
+    let text = String::from_utf8_lossy(&bytes).into_owned();
+    (
+        text.split_whitespace().nth(1).unwrap_or("").to_owned(),
+        text,
+    )
+}
+
+/// A body still arriving isn't the server's slowness (D-215): an upload whose bytes trickle in for
+/// longer than the request deadline, never idle for long, is stored, not cut off with a 504. The
+/// deadline (here 1.5 s) covers the server's own work once the body has arrived.
+#[tokio::test]
+#[ignore = "needs the stack (Garage) and scripts/migrate.sh"]
+async fn a_slow_upload_is_stored_not_timed_out() {
+    use tokio::io::AsyncWriteExt;
+    let _server = common::Server::start_with(&[("COLOPHON_REQUEST_TIMEOUT_MS", "1500")]).await;
+    let owner = sign_in("dev-owner").await;
+    let project = project(&owner).await;
+    let mut socket = open_upload(Some(&owner), &project, WIDE_PNG.len(), &[]).await;
+    let started = Instant::now();
+    // About 3 s for 99 bytes: twice the deadline, a byte every 30 ms (never idle for long).
+    for byte in WIDE_PNG {
+        socket.write_all(&[*byte]).await.expect("a byte");
+        socket.flush().await.expect("flush");
+        tokio::time::sleep(Duration::from_millis(30)).await;
+    }
+    let (status, text) = answer(&mut socket, 15).await;
+    assert!(
+        started.elapsed() > Duration::from_millis(2_500),
+        "the body took longer than the deadline"
+    );
+    assert_eq!(status, "202", "{text}");
+    assert!(
+        text.contains("\"quarantined\"") || text.contains("\"usable\""),
+        "{text}"
+    );
+}
+
+/// A body that stops arriving is given up after the idle timeout (15 s), `408 body_stalled`: it
+/// can't hold its share of the upload budget open for the whole read bound.
+#[tokio::test]
+#[ignore = "needs the stack (Garage) and scripts/migrate.sh"]
+async fn a_stalled_upload_is_given_up_after_its_idle_timeout() {
+    let _server = common::Server::start().await;
+    let owner = sign_in("dev-owner").await;
+    let project = project(&owner).await;
+    let mut socket = open_upload(Some(&owner), &project, 4096, &WIDE_PNG[..20]).await;
+    let started = Instant::now();
+    let (status, text) = answer(&mut socket, 25).await;
+    assert_eq!(status, "408", "{text}");
+    assert!(text.contains("body_stalled"), "{text}");
+    assert!(
+        started.elapsed() >= Duration::from_secs(14),
+        "{:?}",
+        started.elapsed()
+    );
+}
+
+/// Nobody's bytes are read before they are known (D-215): an upload without a session is refused
+/// at once, its body never awaited.
+#[tokio::test]
+#[ignore = "needs the stack (Garage) and scripts/migrate.sh"]
+async fn an_anonymous_upload_is_refused_before_its_body_is_read() {
+    let _server = common::Server::start().await;
+    let owner = sign_in("dev-owner").await;
+    let project = project(&owner).await;
+    let mut socket = open_upload(None, &project, 1024 * 1024, b"").await;
+    let started = Instant::now();
+    let (status, text) = answer(&mut socket, 10).await;
+    assert_eq!(status, "401", "{text}");
+    assert!(
+        started.elapsed() < Duration::from_secs(3),
+        "answered without waiting for the body"
+    );
+}
+
+/// The memory bound (D-215): twelve uploads declaring the 21 MiB limit fill the default 256 MiB
+/// budget, the thirteenth is refused `503 uploads_busy` after a short wait; one session or token has
+/// at most four in flight (`429 too_many_uploads`) while another still uploads; and a body declared
+/// over the limit is refused `413` before a byte is read.
+#[tokio::test]
+#[ignore = "needs the stack (Garage) and scripts/migrate.sh"]
+async fn uploads_in_flight_are_bounded_by_memory_and_by_credential() {
+    const LIMIT: usize = 21 * 1024 * 1024;
+    let _server = common::Server::start().await;
+    let owner = sign_in("dev-owner").await;
+    let project = project(&owner).await;
+    // Three sessions of the same person: each its own credential.
+    let sessions = [
+        owner.clone(),
+        sign_in("dev-owner").await,
+        sign_in("dev-owner").await,
+    ];
+    // Four uploads from each of the three sessions hold twelve shares of the budget, open, slow.
+    let mut held = Vec::new();
+    for session in &sessions {
+        for _ in 0..4 {
+            held.push(open_upload(Some(session), &project, LIMIT, &WIDE_PNG[..8]).await);
+        }
+    }
+    tokio::time::sleep(Duration::from_millis(500)).await;
+    // A fifth from the first session: its own cap, at once, whatever the budget.
+    let mut fifth = open_upload(Some(&sessions[0]), &project, 1024, &[]).await;
+    let (status, text) = answer(&mut fifth, 5).await;
+    assert_eq!(status, "429", "{text}");
+    assert!(
+        text.contains("too_many_uploads") && text.to_ascii_lowercase().contains("retry-after"),
+        "{text}"
+    );
+    // The thirteenth at the limit, from a fourth session: the budget is full, refused after its wait.
+    let fourth = sign_in("dev-owner").await;
+    let mut thirteenth = open_upload(Some(&fourth), &project, LIMIT, &WIDE_PNG[..8]).await;
+    let started = Instant::now();
+    let (status, text) = answer(&mut thirteenth, 10).await;
+    assert_eq!(status, "503", "{text}");
+    assert!(
+        text.contains("uploads_busy") && text.to_ascii_lowercase().contains("retry-after"),
+        "{text}"
+    );
+    assert!(
+        started.elapsed() >= Duration::from_millis(1_800),
+        "it waited for room first"
+    );
+    // Room again once the held uploads go: the fourth session's small upload is stored.
+    drop(held);
+    tokio::time::sleep(Duration::from_millis(500)).await;
+    let (status, body) = upload(
+        &fourth,
+        &project,
+        WIDE_PNG,
+        "after.png",
+        "image/png",
+        &key(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::ACCEPTED, "{body}");
+    // Declared over the limit: refused before any byte is read.
+    let mut over = open_upload(Some(&fourth), &project, LIMIT + 1, &[]).await;
+    let (status, text) = answer(&mut over, 5).await;
+    assert_eq!(status, "413", "{text}");
+}

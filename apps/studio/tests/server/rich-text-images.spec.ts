@@ -262,7 +262,7 @@ test('an image file pasted into the editor is uploaded, described, and shows Che
 		.toEqual(['A green field under an evening sky']);
 });
 
-test('a pasted image whose upload answer is lost is sent again with the same key: one upload, and it goes in (D-214)', async ({ page }) => {
+test('a pasted image whose upload answer is lost is sent again with the same key: one upload, and it goes in (D-215)', async ({ page }) => {
 	await signIn(page);
 	const project = await newProject(page);
 	const entry = await newEntry(page, project, 'Lost answer');
