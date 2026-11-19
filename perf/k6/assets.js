@@ -76,6 +76,17 @@ export function setup() {
   if (signedIn.status !== 204) fail(`sign-in failed: HTTP ${signedIn.status}`);
   const jar = http.cookieJar().cookiesForURL(PUBLIC_URL);
   const session = { cookie: `colophon_session=${jar.colophon_session[0]}`, csrf: jar.colophon_csrf[0] };
+  // One session per VU, as clients have (D-215): a session or token may have 4 uploads in flight and
+  // the Studio sends 3 at a time, so 64 VUs sharing one session measured 429 too_many_uploads, not
+  // uploads (CI 44608263509: 3,598 of 4,096 uploads refused). load.sh lifts the password limit.
+  const vus = SCENARIO === 'steady' ? VUS * 2 : VUS;
+  const sessions = [session];
+  for (let i = 1; i < vus; i++) {
+    const again = http.post(`${PUBLIC_URL}/auth/signin`, JSON.stringify({ email: 'dev-owner@colophon.test', password: 'colophon-dev' }), { headers: { 'Content-Type': 'application/json' } });
+    if (again.status !== 204) fail(`sign-in ${i + 1} of ${vus} failed: HTTP ${again.status}`);
+    const cookies = http.cookieJar().cookiesForURL(PUBLIC_URL);
+    sessions.push({ cookie: `colophon_session=${cookies.colophon_session[0]}`, csrf: cookies.colophon_csrf[0] });
+  }
 
   const write = { Cookie: session.cookie, 'X-CSRF-Token': session.csrf, Origin: PUBLIC_URL, 'Content-Type': 'application/json' };
   const slug = `k6-${Date.now().toString(36)}`;
@@ -104,15 +115,16 @@ export function setup() {
     sleep(0.1);
   }
 
-  return { session, assets, media: `${BASE_URL}/media/v1/${id}/production`, mediaId };
+  return { session, sessions, assets, media: `${BASE_URL}/media/v1/${id}/production`, mediaId };
 }
 
 export default function (data) {
-  const read = { headers: { Cookie: data.session.cookie }, redirects: 0 };
+  const session = data.sessions[(__VU - 1) % data.sessions.length];
+  const read = { headers: { Cookie: session.cookie }, redirects: 0 };
   const write = (fileName) => ({
     headers: {
-      Cookie: data.session.cookie,
-      'X-CSRF-Token': data.session.csrf,
+      Cookie: session.cookie,
+      'X-CSRF-Token': session.csrf,
       Origin: PUBLIC_URL,
       'Content-Type': 'image/png',
       'X-Colophon-File-Name': fileName,
@@ -146,8 +158,8 @@ export default function (data) {
       verifyWait.add(Date.now() - uploaded);
       const gone = http.del(`${data.assets}/${id}`, null, Object.assign({ tags: { endpoint: 'delete', name: 'assets/{asset}' } }, {
         headers: {
-          Cookie: data.session.cookie,
-          'X-CSRF-Token': data.session.csrf,
+          Cookie: session.cookie,
+          'X-CSRF-Token': session.csrf,
           Origin: PUBLIC_URL,
           'Idempotency-Key': key(),
         },
@@ -182,7 +194,7 @@ export default function (data) {
     const one = http.get(`${data.assets}/${data.mediaId}`, Object.assign({ tags: { endpoint: 'read', name: 'assets/{asset}' } }, read));
     const etag = one.headers.Etag;
     const res = http.patch(`${data.assets}/${data.mediaId}`, JSON.stringify({ title: `Warm ${__VU}-${__ITER}`, tags: ['warm', `vu-${__VU}`] }), {
-      headers: { Cookie: data.session.cookie, 'X-CSRF-Token': data.session.csrf, Origin: PUBLIC_URL, 'Content-Type': 'application/json', 'If-Match': etag, 'Idempotency-Key': key() },
+      headers: { Cookie: session.cookie, 'X-CSRF-Token': session.csrf, Origin: PUBLIC_URL, 'Content-Type': 'application/json', 'If-Match': etag, 'Idempotency-Key': key() },
       redirects: 0,
       tags: { endpoint: 'patch', name: 'assets/{asset}' },
       responseCallback: http.expectedStatuses(200, 409),
