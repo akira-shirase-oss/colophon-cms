@@ -41,6 +41,7 @@ pub mod scope;
 pub mod setup;
 pub mod throttle;
 pub mod tokens;
+pub mod transactions;
 pub mod work;
 
 use std::{str::FromStr, time::Duration};
@@ -52,6 +53,7 @@ use sqlx::{
 
 pub use sqlx::postgres::{PgConnection, PgListener, PgPool};
 pub use sqlx::{Postgres, Transaction};
+pub use transactions::{begin_tx, begin_tx_snapshot};
 
 /// The schema migrations, embedded at compile time from `migrations/`.
 pub static MIGRATOR: sqlx::migrate::Migrator = sqlx::migrate!("./migrations");
@@ -441,6 +443,8 @@ pub fn connect_lazy(url: &str, settings: PoolSettings) -> Result<PgPool, DbError
         .min_connections(0)
         .acquire_timeout(settings.acquire_timeout)
         .test_before_acquire(false)
+        // A connection handed back inside a transaction is closed, not pooled (D-217).
+        .after_release(transactions::release_check)
         .connect_lazy_with(options))
 }
 

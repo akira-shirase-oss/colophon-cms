@@ -179,7 +179,7 @@ pub async fn init(
     let app_verifier = verifier(app_password)?;
     let backup_verifier = backup_password.map(verifier).transpose()?;
 
-    let mut tx = pool.begin().await.map_err(DbError::from_query)?;
+    let mut tx = crate::begin_tx(pool).await.map_err(DbError::from_query)?;
     // Two installers at once queue here instead of racing on CREATE ROLE ("RO" — roles).
     sqlx::query("SELECT pg_advisory_xact_lock(0x524f, 0)")
         .execute(&mut *tx)

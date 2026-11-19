@@ -142,7 +142,7 @@ pub async fn begin(
     project: Uuid,
     audience: &Audience,
 ) -> Result<DeliveryTransaction, DbError> {
-    let mut transaction = pool.begin().await.map_err(DbError::from_query)?;
+    let mut transaction = crate::begin_tx(pool).await.map_err(DbError::from_query)?;
     sqlx::query("SET LOCAL ROLE colophon_delivery")
         .execute(&mut *transaction)
         .await

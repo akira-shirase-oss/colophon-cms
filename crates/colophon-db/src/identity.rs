@@ -140,14 +140,14 @@ pub async fn password_sign_in(
     use crate::throttle::{self, Counted, Realm};
     // A key already paused is refused before it takes a slot (D-213): only work that will
     // hash holds one.
-    let mut transaction = pool.begin().await.map_err(DbError::from_query)?;
+    let mut transaction = crate::begin_tx(pool).await.map_err(DbError::from_query)?;
     let paused = throttle::paused(&mut transaction, Realm::Staff, email, address).await?;
     transaction.commit().await.map_err(DbError::from_query)?;
     if paused {
         return Ok(PasswordSignIn::Refused);
     }
     let slot = gate.slot().await?;
-    let mut transaction = pool.begin().await.map_err(DbError::from_query)?;
+    let mut transaction = crate::begin_tx(pool).await.map_err(DbError::from_query)?;
     if throttle::count(&mut transaction, Realm::Staff, email, address).await? == Counted::Paused {
         return Ok(PasswordSignIn::Refused);
     }
@@ -167,7 +167,7 @@ pub async fn password_sign_in(
     let Some(row) = row.filter(|_| right) else {
         return Ok(PasswordSignIn::Refused);
     };
-    let mut transaction = pool.begin().await.map_err(DbError::from_query)?;
+    let mut transaction = crate::begin_tx(pool).await.map_err(DbError::from_query)?;
     throttle::clear(&mut transaction, Realm::Staff, email, address).await?;
     sqlx::query!(
         "UPDATE identities SET last_sign_in_at = now() WHERE id = $1",

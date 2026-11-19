@@ -45,11 +45,8 @@ pub async fn begin_isolated(
     isolation: Isolation,
 ) -> Result<Transaction<'static, Postgres>, DbError> {
     let mut transaction = match isolation {
-        Isolation::PerStatement => pool.begin().await,
-        Isolation::Snapshot => {
-            pool.begin_with("BEGIN ISOLATION LEVEL REPEATABLE READ")
-                .await
-        }
+        Isolation::PerStatement => crate::begin_tx(pool).await,
+        Isolation::Snapshot => crate::begin_tx_snapshot(pool).await,
     }
     .map_err(DbError::from_query)?;
     let identity = scope.identity.map(|id| id.to_string()).unwrap_or_default();
