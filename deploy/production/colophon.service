@@ -23,8 +23,9 @@ Environment=COLOPHON_DATABASE_URL_FILE=%d/database_url
 Environment=COLOPHON_CACHE_URL_FILE=%d/cache_url
 Environment=COLOPHON_S3_SECRET_KEY_FILE=%d/s3_secret_key
 Environment=COLOPHON_STUDIO_DIR=/usr/local/share/colophon/studio
-# Graceful shutdown: readiness drains, then requests finish within COLOPHON_SHUTDOWN_GRACE_MS
-# (25 s by default); systemd waits a little longer before it kills.
+# Graceful shutdown: readiness drains, requests finish within COLOPHON_SHUTDOWN_GRACE_MS (25 s by
+# default), then background work has 5 s in all to stop (D-197): 30 s at most, inside this
+# timeout. Raising the grace? Raise TimeoutStopSec to at least the grace plus 10 s.
 KillSignal=SIGTERM
 TimeoutStopSec=35
 Restart=on-failure

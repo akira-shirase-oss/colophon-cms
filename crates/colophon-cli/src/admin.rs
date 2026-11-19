@@ -428,22 +428,94 @@ impl std::io::Write for Capped {
     }
 }
 
-/// The `COLOPHON_S3_*` object store, as the server builds it (D-016); the error text names
-/// the missing setting.
+/// The `COLOPHON_S3_*` object store, checked and built as the server does (D-016, D-173): plain
+/// `http` only to a loopback address, so the access key and the export never cross a network
+/// unencrypted; the secret key from `COLOPHON_S3_SECRET_KEY` or the file
+/// `COLOPHON_S3_SECRET_KEY_FILE` names, never both. The error text names the setting.
 fn object_store() -> Result<object_store::aws::AmazonS3, String> {
-    fn setting(name: &str) -> Result<String, String> {
-        std::env::var(name).map_err(|_| format!("{name} is not set"))
-    }
-    let endpoint = setting("COLOPHON_S3_ENDPOINT")?;
+    let settings = s3_settings(|name| std::env::var(name).ok())?;
     object_store::aws::AmazonS3Builder::new()
-        .with_endpoint(&endpoint)
-        .with_region(std::env::var("COLOPHON_S3_REGION").unwrap_or_else(|_| "garage".into()))
-        .with_bucket_name(setting("COLOPHON_S3_BUCKET")?)
-        .with_access_key_id(setting("COLOPHON_S3_ACCESS_KEY")?)
-        .with_secret_access_key(setting("COLOPHON_S3_SECRET_KEY")?)
-        .with_allow_http(endpoint.starts_with("http://"))
+        .with_endpoint(&settings.endpoint)
+        .with_region(settings.region)
+        .with_bucket_name(settings.bucket)
+        .with_access_key_id(settings.access_key)
+        .with_secret_access_key(settings.secret_key)
+        .with_allow_http(settings.allow_http)
         .build()
         .map_err(|error| error.to_string())
+}
+
+/// The object store's settings, as [`s3_settings`] read and checked them.
+#[derive(Debug)]
+struct S3Settings {
+    endpoint: String,
+    allow_http: bool,
+    region: String,
+    bucket: String,
+    access_key: String,
+    secret_key: String,
+}
+
+/// Reads and checks the `COLOPHON_S3_*` settings from `lookup` (the environment, or a map in
+/// tests), with the server's rules. A refusal never quotes the secret.
+fn s3_settings(lookup: impl Fn(&str) -> Option<String>) -> Result<S3Settings, String> {
+    let setting = |name: &str| lookup(name).ok_or_else(|| format!("{name} is not set"));
+    let endpoint = setting("COLOPHON_S3_ENDPOINT")?;
+    let parsed = reqwest::Url::parse(&endpoint)
+        .map_err(|_| format!("COLOPHON_S3_ENDPOINT: cannot parse {endpoint:?}"))?;
+    let allow_http = match parsed.scheme() {
+        "https" => false,
+        "http" => {
+            let loopback = parsed.host_str().is_some_and(|host| {
+                host == "localhost"
+                    || host.ends_with(".localhost")
+                    || host
+                        .trim_start_matches('[')
+                        .trim_end_matches(']')
+                        .parse::<std::net::IpAddr>()
+                        .is_ok_and(|ip| ip.is_loopback())
+            });
+            if !loopback {
+                return Err(
+                    "COLOPHON_S3_ENDPOINT may be plain HTTP only for a loopback address".to_owned(),
+                );
+            }
+            true
+        }
+        other => {
+            return Err(format!(
+                "COLOPHON_S3_ENDPOINT: unsupported scheme {other:?}"
+            ));
+        }
+    };
+    let secret_key = match (
+        lookup("COLOPHON_S3_SECRET_KEY"),
+        lookup("COLOPHON_S3_SECRET_KEY_FILE"),
+    ) {
+        (Some(_), Some(_)) => {
+            return Err(
+                "COLOPHON_S3_SECRET_KEY and COLOPHON_S3_SECRET_KEY_FILE are both set: use one"
+                    .to_owned(),
+            );
+        }
+        (Some(value), None) => value,
+        (None, Some(path)) => read_secret_file(std::path::Path::new(&path))
+            .map_err(|problem| format!("COLOPHON_S3_SECRET_KEY_FILE: {path}: {problem}"))?,
+        (None, None) => {
+            return Err(
+                "COLOPHON_S3_SECRET_KEY is not set (or COLOPHON_S3_SECRET_KEY_FILE, a file holding it)"
+                    .to_owned(),
+            );
+        }
+    };
+    Ok(S3Settings {
+        endpoint,
+        allow_http,
+        region: lookup("COLOPHON_S3_REGION").unwrap_or_else(|| "garage".into()),
+        bucket: setting("COLOPHON_S3_BUCKET")?,
+        access_key: setting("COLOPHON_S3_ACCESS_KEY")?,
+        secret_key,
+    })
 }
 
 /// `colophon admin ledger export`: writes the deletion ledger, id-ordered to a high-water
@@ -916,5 +988,88 @@ mod tests {
         assert_eq!(capped.write(b"678").expect("exactly full"), 3);
         assert!(capped.write(b"9").is_err(), "one byte past the bound");
         assert_eq!(capped.buffer.len(), 8);
+    }
+}
+
+#[cfg(test)]
+mod s3_settings_tests {
+    use std::collections::HashMap;
+
+    use super::s3_settings;
+
+    fn lookup(pairs: &[(&str, &str)]) -> impl Fn(&str) -> Option<String> {
+        let map: HashMap<String, String> = pairs
+            .iter()
+            .map(|(key, value)| ((*key).to_owned(), (*value).to_owned()))
+            .collect();
+        move |key| map.get(key).cloned()
+    }
+
+    fn with_endpoint(endpoint: &str) -> Vec<(&str, &str)> {
+        vec![
+            ("COLOPHON_S3_ENDPOINT", endpoint),
+            ("COLOPHON_S3_BUCKET", "ledger"),
+            ("COLOPHON_S3_ACCESS_KEY", "GKexample"),
+            ("COLOPHON_S3_SECRET_KEY", "not-a-real-secret"),
+        ]
+    }
+
+    /// Plain HTTP only to a loopback address, as the server allows (hardening #6).
+    #[test]
+    fn plain_http_is_refused_off_loopback() {
+        for endpoint in [
+            "http://minio.internal:9000",
+            "http://10.0.0.5:3900",
+            "http://s3.example.com",
+        ] {
+            let error = s3_settings(lookup(&with_endpoint(endpoint))).expect_err(endpoint);
+            assert!(
+                error.contains("only for a loopback address"),
+                "{endpoint}: {error}"
+            );
+        }
+        for endpoint in [
+            "http://127.0.0.1:3900",
+            "http://localhost:3900",
+            "http://[::1]:3900",
+        ] {
+            let settings = s3_settings(lookup(&with_endpoint(endpoint))).expect(endpoint);
+            assert!(settings.allow_http, "{endpoint}");
+        }
+        let settings =
+            s3_settings(lookup(&with_endpoint("https://s3.example.com"))).expect("https");
+        assert!(!settings.allow_http);
+        let error = s3_settings(lookup(&with_endpoint("ftp://s3.example.com"))).expect_err("ftp");
+        assert!(error.contains("unsupported scheme"), "{error}");
+    }
+
+    /// The secret key may come from a file, as the server's does; both at once is a mistake.
+    #[test]
+    fn the_secret_key_comes_from_the_variable_or_its_file() {
+        let dir = std::env::temp_dir().join(format!("colophon-s3-secret-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).expect("invariant: the temp dir is writable");
+        let file = dir.join("s3_secret_key");
+        std::fs::write(&file, "  from-the-file\n").expect("invariant: the temp dir is writable");
+        let path = file.to_str().expect("invariant: the temp path is UTF-8");
+
+        let mut pairs = with_endpoint("https://s3.example.com");
+        pairs.retain(|(key, _)| *key != "COLOPHON_S3_SECRET_KEY");
+        pairs.push(("COLOPHON_S3_SECRET_KEY_FILE", path));
+        let settings = s3_settings(lookup(&pairs)).expect("the file's secret");
+        assert_eq!(settings.secret_key, "from-the-file");
+
+        pairs.push(("COLOPHON_S3_SECRET_KEY", "and-the-variable"));
+        let error = s3_settings(lookup(&pairs)).expect_err("both set");
+        assert!(error.contains("both set"), "{error}");
+        assert!(
+            !error.contains("from-the-file") && !error.contains("and-the-variable"),
+            "{error}"
+        );
+
+        std::fs::write(&file, "\n").expect("invariant: the temp dir is writable");
+        pairs.pop();
+        let error = s3_settings(lookup(&pairs)).expect_err("an empty file");
+        assert!(error.contains("it is empty"), "{error}");
+        std::fs::remove_dir_all(&dir).expect("invariant: we own the dir");
     }
 }

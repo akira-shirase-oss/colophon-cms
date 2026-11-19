@@ -35,24 +35,105 @@ pub(crate) async fn open(scope: &Scope<'_>) -> Result<(Client, String), Failure>
     let saved = credentials::profile(scope.profile).await?;
     let client = Client::new(&saved.server, Some(saved.token))?;
     client.check_server().await?;
-    let projects = client
-        .send(Method::GET, "/api/v1/projects", None, &[])
-        .await?
-        .body;
-    let id = projects["data"]
-        .as_array()
-        .into_iter()
-        .flatten()
-        .find(|project| project["id"] == scope.project || project["slug"] == scope.project)
-        .and_then(|project| project["id"].as_str())
-        .ok_or_else(|| {
-            Failure::new(
-                Exit::Denied,
-                format!("no project {:?} that you're a member of", scope.project),
-            )
-        })?
-        .to_owned();
+    let id = resolve(
+        |path| {
+            let client = &client;
+            async move {
+                client
+                    .send(Method::GET, &path, None, &[])
+                    .await
+                    .map(|reply| reply.body)
+            }
+        },
+        scope.project,
+    )
+    .await?;
     Ok((client, id))
+}
+
+/// The id of the project `project` names (an id or a URL name) among the caller's projects,
+/// reading the API through `fetch` (a GET of a path, answering its JSON body).
+///
+/// An id is read directly (`GET /api/v1/projects/{id}`, which answers only a member). A URL name
+/// is found through the bounded project search, a page of at most 100 at a time, the first exact
+/// match by name as before. Neither depends on how many projects the caller is in: the unpaged
+/// list stops at 1,000, so a member of more couldn't reach the rest (D-194).
+pub(crate) async fn resolve<F, Fut>(fetch: F, project: &str) -> Result<String, Failure>
+where
+    F: Fn(String) -> Fut,
+    Fut: std::future::Future<Output = Result<Value, Failure>>,
+{
+    if let Ok(id) = uuid::Uuid::try_parse(project) {
+        return match fetch(format!("/api/v1/projects/{id}")).await {
+            Ok(body) => body["data"]["id"]
+                .as_str()
+                .map(str::to_owned)
+                .ok_or_else(|| Failure::new(Exit::Internal, "the project's answer has no id")),
+            Err(failure) if is_not_found(&failure) => Err(not_a_member(project)),
+            Err(failure) => Err(failure),
+        };
+    }
+    // A URL name is lowercase letters, digits and dashes (so it goes in the query as it is); anything
+    // else names no project.
+    let shaped = (1..=MAX_SLUG).contains(&project.len())
+        && project
+            .bytes()
+            .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'-');
+    if !shaped {
+        return Err(not_a_member(project));
+    }
+    let mut cursor: Option<String> = None;
+    for _ in 0..MAX_SEARCH_PAGES {
+        let mut path = format!("/api/v1/projects?q={project}&limit=100");
+        if let Some(after) = &cursor {
+            path.push_str("&cursor=");
+            path.push_str(after);
+        }
+        let page = fetch(path).await?;
+        if let Some(found) = page["data"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .find(|candidate| candidate["slug"] == project)
+            .and_then(|candidate| candidate["id"].as_str())
+        {
+            return Ok(found.to_owned());
+        }
+        match page["next_cursor"].as_str() {
+            Some(next) if is_cursor(next) => cursor = Some(next.to_owned()),
+            _ => break,
+        }
+    }
+    Err(not_a_member(project))
+}
+
+/// The longest URL name the search can carry (the API's search is at most 100 characters).
+const MAX_SLUG: usize = 100;
+/// Search pages read for one URL name before giving up: 1,000 pages of 100, far past any
+/// membership count, so a server that never ends its cursor can't hold a command forever.
+const MAX_SEARCH_PAGES: usize = 1_000;
+
+/// A cursor the API sent, before it goes back in a URL (base64url, as [`cursor`] checks).
+fn is_cursor(text: &str) -> bool {
+    (1..=16_384).contains(&text.len())
+        && text
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-' || byte == b'_')
+}
+
+/// Whether a failure is the API's "not found", which for a project means "not a member" too.
+fn is_not_found(failure: &Failure) -> bool {
+    failure
+        .refusal
+        .as_ref()
+        .is_some_and(|refusal| refusal["code"] == "not_found")
+}
+
+fn not_a_member(project: &str) -> Failure {
+    Failure::new(
+        Exit::Denied,
+        format!("no project {project:?} that you're a member of"),
+    )
 }
 
 /// The `/api/v1/projects/{project}/environments/{environment}` the scoped routes are under.
@@ -262,6 +343,179 @@ where
                 ));
             }
             Err(failure) => return Err(failure),
+        }
+    }
+}
+
+#[cfg(test)]
+mod resolve_tests {
+    use std::collections::HashMap;
+
+    use serde_json::{Value, json};
+
+    use super::resolve;
+    use crate::client::Failure;
+
+    /// A server whose caller is a member of `count` projects named alike ("Site 0001" …), as the
+    /// API answers: the unpaged list is the first 1,000 by name, then id; `?q=` pages by name, at
+    /// most `limit` (≤ 100) a page, with a cursor; `/projects/{id}` answers a member's project.
+    struct Server {
+        projects: Vec<(String, String, String)>, // (id, slug, name), sorted by name then id
+    }
+
+    impl Server {
+        fn with(count: usize) -> Self {
+            let mut projects: Vec<_> = (1..=count)
+                .map(|n| {
+                    (
+                        format!("01a1ee00-0000-7000-8000-{n:012}"),
+                        format!("site-{n:04}"),
+                        format!("Site {n:04}"),
+                    )
+                })
+                .collect();
+            projects.sort_by(|a, b| (&a.2, &a.0).cmp(&(&b.2, &b.0)));
+            Self { projects }
+        }
+
+        fn view((id, slug, name): &(String, String, String)) -> Value {
+            json!({"id": id, "slug": slug, "name": name})
+        }
+
+        fn get(&self, path: &str) -> Result<Value, Failure> {
+            let (route, query) = path.split_once('?').unwrap_or((path, ""));
+            let params: HashMap<&str, &str> = query
+                .split('&')
+                .filter_map(|pair| pair.split_once('='))
+                .collect();
+            if let Some(id) = route.strip_prefix("/api/v1/projects/") {
+                return self
+                    .projects
+                    .iter()
+                    .find(|project| project.0 == id)
+                    .map(|project| json!({"data": Self::view(project)}))
+                    .ok_or_else(|| Failure {
+                        exit: crate::Exit::Denied,
+                        message: "no such resource [HTTP 404]".into(),
+                        refusal: Some(json!({"code": "not_found"})),
+                    });
+            }
+            assert_eq!(route, "/api/v1/projects", "unexpected request {path}");
+            if params.is_empty() {
+                let data: Vec<_> = self.projects.iter().take(1000).map(Self::view).collect();
+                return Ok(json!({"data": data, "next_cursor": null}));
+            }
+            let limit: usize = params
+                .get("limit")
+                .and_then(|value| value.parse().ok())
+                .unwrap_or(20);
+            assert!(
+                (1..=100).contains(&limit),
+                "limit {limit} is out of the API's range"
+            );
+            let search = params.get("q").copied().unwrap_or("");
+            let after = params.get("cursor").copied();
+            let matching: Vec<_> = self
+                .projects
+                .iter()
+                .filter(|project| {
+                    project.1.contains(search) || project.2.to_lowercase().contains(search)
+                })
+                .skip_while(|project| after.is_some_and(|cursor| project.0 != cursor))
+                .skip(usize::from(after.is_some()))
+                .collect();
+            let page: Vec<_> = matching
+                .iter()
+                .take(limit)
+                .map(|project| Self::view(project))
+                .collect();
+            let next = (matching.len() > limit).then(|| matching[limit - 1].0.clone());
+            Ok(json!({"data": page, "next_cursor": next}))
+        }
+    }
+
+    async fn resolved(server: &Server, project: &str) -> Result<String, String> {
+        resolve(|path| async move { server.get(&path) }, project)
+            .await
+            .map_err(|failure| failure.message)
+    }
+
+    /// A member of more than 1,000 projects reaches every one of them, by id and by URL name;
+    /// the 1,500th by name is past the unpaged list's 1,000.
+    #[tokio::test]
+    async fn a_member_of_more_than_a_thousand_projects_reaches_the_last_one() {
+        let server = Server::with(1500);
+        let last = server
+            .projects
+            .last()
+            .cloned()
+            .expect("invariant: 1,500 projects");
+        assert_eq!(
+            resolved(&server, &last.0).await,
+            Ok(last.0.clone()),
+            "by id"
+        );
+        assert_eq!(
+            resolved(&server, &last.1).await,
+            Ok(last.0.clone()),
+            "by URL name"
+        );
+        let first = server
+            .projects
+            .first()
+            .cloned()
+            .expect("invariant: 1,500 projects");
+        assert_eq!(
+            resolved(&server, &first.1).await,
+            Ok(first.0.clone()),
+            "the first, by URL name"
+        );
+    }
+
+    /// A project renamed after it was made (its name no longer contains its URL name) is still
+    /// found by its URL name among more than 1,000: the search matches the URL name, not only the
+    /// name.
+    #[tokio::test]
+    async fn a_renamed_project_is_found_by_its_url_name() {
+        let mut server = Server::with(1500);
+        let renamed = server
+            .projects
+            .last()
+            .cloned()
+            .expect("invariant: 1,500 projects");
+        let (id, slug, _) = renamed.clone();
+        server.projects.retain(|project| project.0 != id);
+        server
+            .projects
+            .push((id.clone(), slug.clone(), "Zebra Quarterly".to_owned()));
+        server
+            .projects
+            .sort_by(|a, b| (&a.2, &a.0).cmp(&(&b.2, &b.0)));
+        assert!(
+            !"zebra quarterly".contains(&slug),
+            "invariant: the name no longer contains the URL name"
+        );
+        assert_eq!(
+            resolved(&server, &slug).await,
+            Ok(id),
+            "by its old URL name, after the rename"
+        );
+    }
+
+    /// A project the caller isn't in, or a name that can't be a URL name, is refused the same way.
+    #[tokio::test]
+    async fn a_project_the_caller_isnt_in_is_refused() {
+        let server = Server::with(3);
+        for project in [
+            "01a1ee00-0000-7000-8000-999999999999",
+            "nope",
+            "Not A Slug!",
+        ] {
+            let refused = resolved(&server, project).await.expect_err(project);
+            assert!(
+                refused.contains("that you're a member of"),
+                "{project}: {refused}"
+            );
         }
     }
 }
