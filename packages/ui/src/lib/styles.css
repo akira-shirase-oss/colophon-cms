@@ -7,7 +7,7 @@
  * live with changes, amber is on its way (scheduled, in review), rose needs attention or was taken
  * down, grey is a draft. Each has a mark (a dot or an icon), a soft ring around the mark, a soft
  * ground for its tag, and an ink for text. Buttons and cards are flat; only what floats over a page
- * has a shadow. Page titles are set in DM Sans, the site's display face; everything else is Inter.
+ * has a shadow. Text is Inter; Geist Pixel (--font-title) names the product, on the wordmark and empty states.
  * Dark mode is dusk: a violet-tinted near-black with the accent lightened.
  *
  * Apps import this file and add `@source` for this package's components (Tailwind doesn't scan
@@ -17,155 +17,45 @@
 @import 'tw-animate-css';
 @import 'shadcn-svelte/tailwind.css';
 @import '@fontsource-variable/inter/opsz.css';
-@import '@fontsource-variable/dm-sans/opsz.css';
-@import '@fontsource-variable/jetbrains-mono';
+/* The tokens: a byte copy of design/tokens.css, the one source (D-210); scripts/design-contrast.mjs checks it. */
+@import './tokens.css';
 
 @custom-variant dark (&:is(.dark *));
 
-:root {
-	/* Shape: controls (buttons, fields) 8px; cards and dialogs twice that; padding inside a card. */
-	--radius: 0.5rem;
-	--radius-control: var(--radius);
-	--radius-card: calc(var(--radius) * 2);
-	--card-padding: 1.5rem;
-	--card-padding-sm: 1rem;
-
-	/* Paper and ink: one neutral ramp with a breath of lavender. */
-	--background: oklch(1 0 0);
-	--foreground: oklch(0.2 0.006 290);
-	--card: oklch(0.985 0.002 290);
-	--card-foreground: var(--foreground);
-	--popover: oklch(1 0 0);
-	--popover-foreground: var(--foreground);
-	--secondary: oklch(0.967 0.003 290);
-	--secondary-foreground: var(--foreground);
-	--muted: oklch(0.967 0.003 290);
-	--muted-foreground: oklch(0.5 0.008 290);
-	/* shadcn's name for the hover surface of menus and quiet buttons: a neutral step, not the accent. */
-	--accent: oklch(0.952 0.004 290);
-	--accent-foreground: var(--foreground);
-	--destructive: oklch(0.54 0.2 27);
-	--destructive-foreground: oklch(0.99 0 0);
-	--border: oklch(0.92 0.004 290);
-	--input: oklch(0.88 0.005 290);
-	/* The outline of a checkbox or radio: a control's edge, so 3:1 against what it sits on. */
-	--control: oklch(0.6 0.01 290);
-
-	/* The accent: a dusk lavender. --primary fills the one primary button, --brand marks the
-	 * selection and the focus ring, --brand-ink is the accent as text, --brand-soft its ground. */
-	--primary: oklch(0.48 0.12 305);
-	--primary-hover: oklch(0.43 0.12 305);
-	--primary-foreground: oklch(0.99 0.003 305);
-	--brand: oklch(0.56 0.12 305);
-	--brand-ink: oklch(0.47 0.12 305);
-	--brand-soft: oklch(0.955 0.022 305);
-	--ring: var(--brand);
-
-	/* Status: a mark (a dot or an icon), a soft ring around it, a ground for its tag, and an ink
-	 * for text. A status always has a word and a mark: colour is never the only signal. */
-	--live: oklch(0.64 0.16 148);
-	--live-ring: oklch(0.9 0.06 148);
-	--live-soft: oklch(0.965 0.025 148);
-	--live-ink: oklch(0.43 0.1 148);
-	--changed: oklch(0.56 0.19 264);
-	--changed-ring: oklch(0.88 0.05 264);
-	--changed-soft: oklch(0.96 0.017 264);
-	--changed-ink: oklch(0.46 0.17 264);
-	--pending: oklch(0.75 0.15 75);
-	--pending-ring: oklch(0.9 0.08 85);
-	--pending-soft: oklch(0.97 0.035 85);
-	--pending-ink: oklch(0.47 0.1 65);
-	--attention: oklch(0.6 0.19 15);
-	--attention-ring: oklch(0.89 0.05 15);
-	--attention-soft: oklch(0.965 0.02 15);
-	--attention-ink: oklch(0.49 0.17 15);
-	--draft: oklch(0.62 0.01 290);
-	--draft-ring: oklch(0.9 0.004 290);
-	--draft-soft: oklch(0.958 0.003 290);
-	--draft-ink: oklch(0.43 0.008 290);
-
-	/* The shell: a near-white sidebar around one white page. */
-	--sidebar: oklch(0.985 0.002 290);
-	--sidebar-foreground: oklch(0.3 0.006 290);
-	--sidebar-primary: var(--primary);
-	--sidebar-primary-foreground: var(--primary-foreground);
-	--sidebar-accent: oklch(0.952 0.004 290);
-	--sidebar-accent-foreground: var(--foreground);
-	--sidebar-border: oklch(0.92 0.004 290);
-	--sidebar-ring: var(--ring);
-
-	/* Charts: the accent leads; the others are the status hues and a quiet grey. */
-	--chart-1: var(--brand);
-	--chart-2: oklch(0.7 0.01 290);
-	--chart-3: var(--live);
-	--chart-4: var(--pending);
-	--chart-5: var(--changed);
-
-	/* Elevation: only what floats over the page (menus, popovers, dialogs) casts a shadow. */
-	--shadow-hairline: 0 1px 2px oklch(0.2 0.01 290 / 0.06);
-	--shadow-soft: 0 1px 2px oklch(0.2 0.01 290 / 0.04), 0 6px 20px -8px oklch(0.2 0.01 290 / 0.1);
-	--shadow-float: 0 1px 2px oklch(0.2 0.01 290 / 0.05), 0 24px 48px -16px oklch(0.2 0.01 290 / 0.22);
-	--shadow-press: 0 1px 1px oklch(0 0 0 / 0.12);
+/* Geist Pixel, the landing's own latin subset (copied byte for byte; sha256 in design/tokens.css), with the landing's
+ * metric-matched fallback so the swap moves nothing. A browser fetches it only when text uses --font-title: the
+ * wordmark and empty states, never forms or menus. */
+@font-face {
+	font-family: 'Geist Pixel';
+	src: url('./fonts/geist-pixel-latin.woff2') format('woff2');
+	font-weight: 400;
+	font-style: normal;
+	font-display: swap;
+}
+@font-face {
+	font-family: 'Geist Pixel Fallback';
+	src: local('Arial'), local('Helvetica'), local('Liberation Sans');
+	size-adjust: 108.09%;
+	ascent-override: 92.97%;
+	descent-override: 27.29%;
+	line-gap-override: 0%;
+}
+/* Inter's metric-matched fallback, the landing's, so a slow font swap doesn't move text either. */
+@font-face {
+	font-family: 'Inter Fallback';
+	src: local('Arial'), local('Helvetica'), local('Liberation Sans');
+	size-adjust: 107.05%;
+	ascent-override: 90.49%;
+	descent-override: 22.53%;
+	line-gap-override: 0%;
 }
 
-.dark {
-	--background: oklch(0.16 0.008 290);
-	--foreground: oklch(0.96 0.004 290);
-	--card: oklch(0.195 0.009 290);
-	--card-foreground: var(--foreground);
-	--popover: oklch(0.21 0.01 290);
-	--popover-foreground: var(--foreground);
-	--secondary: oklch(0.235 0.01 290);
-	--secondary-foreground: var(--foreground);
-	--muted: oklch(0.235 0.01 290);
-	--muted-foreground: oklch(0.73 0.012 290);
-	--accent: oklch(0.26 0.012 290);
-	--accent-foreground: var(--foreground);
-	--destructive: oklch(0.68 0.18 27);
-	--destructive-foreground: oklch(0.18 0.01 290);
-	--border: oklch(0.29 0.01 290);
-	--input: oklch(0.36 0.012 290);
-	--control: oklch(0.6 0.012 290);
-	--primary: oklch(0.8 0.08 305);
-	--primary-hover: oklch(0.85 0.07 305);
-	--primary-foreground: oklch(0.19 0.03 305);
-	--brand: oklch(0.72 0.1 305);
-	--brand-ink: oklch(0.8 0.08 305);
-	--brand-soft: oklch(0.28 0.04 305);
-	--ring: var(--brand);
-	--live: oklch(0.74 0.15 148);
-	--live-ring: oklch(0.38 0.07 148);
-	--live-soft: oklch(0.26 0.04 148);
-	--live-ink: oklch(0.86 0.1 148);
-	--changed: oklch(0.7 0.14 264);
-	--changed-ring: oklch(0.38 0.08 264);
-	--changed-soft: oklch(0.26 0.045 264);
-	--changed-ink: oklch(0.86 0.07 264);
-	--pending: oklch(0.82 0.14 80);
-	--pending-ring: oklch(0.4 0.07 75);
-	--pending-soft: oklch(0.28 0.045 75);
-	--pending-ink: oklch(0.89 0.1 85);
-	--attention: oklch(0.7 0.17 15);
-	--attention-ring: oklch(0.4 0.08 15);
-	--attention-soft: oklch(0.27 0.055 15);
-	--attention-ink: oklch(0.87 0.08 15);
-	--draft: oklch(0.66 0.01 290);
-	--draft-ring: oklch(0.36 0.01 290);
-	--draft-soft: oklch(0.25 0.008 290);
-	--draft-ink: oklch(0.86 0.006 290);
-	--sidebar: oklch(0.14 0.008 290);
-	--sidebar-foreground: oklch(0.86 0.006 290);
-	--sidebar-primary: var(--primary);
-	--sidebar-primary-foreground: var(--primary-foreground);
-	--sidebar-accent: oklch(0.22 0.01 290);
-	--sidebar-accent-foreground: var(--foreground);
-	--sidebar-border: oklch(0.24 0.01 290);
-	--sidebar-ring: var(--ring);
-	--chart-2: oklch(0.62 0.012 290);
-	--shadow-hairline: 0 1px 2px oklch(0 0 0 / 0.3);
-	--shadow-soft: 0 1px 2px oklch(0 0 0 / 0.3), 0 8px 24px -10px oklch(0 0 0 / 0.5);
-	--shadow-float: 0 1px 2px oklch(0 0 0 / 0.3), 0 32px 64px -24px oklch(0 0 0 / 0.7);
-	--shadow-press: 0 1px 1px oklch(0 0 0 / 0.3);
+:root {
+	/* Shape: controls (buttons, fields) a step under the theme's radius; cards and dialogs a step over. */
+	--radius-control: calc(var(--radius) - 2px);
+	--radius-card: calc(var(--radius) + 4px);
+	--card-padding: 1.5rem;
+	--card-padding-sm: 1rem;
 }
 
 /* On a phone a card gives its room to the content: padding follows density. */
@@ -179,56 +69,55 @@
  * `:root` would also beat `.dark` here (same specificity, later), so light is `:root:not(.dark)`. */
 @media (prefers-contrast: more) {
 	:root:not(.dark) {
-		--foreground: oklch(0.13 0.005 290);
-		--muted-foreground: oklch(0.36 0.008 290);
-		--border: oklch(0.6 0.006 290);
-		--input: oklch(0.5 0.008 290);
-		--control: oklch(0.42 0.01 290);
-		--sidebar-foreground: oklch(0.18 0.006 290);
-		--primary: oklch(0.42 0.12 305);
-		--primary-hover: oklch(0.37 0.12 305);
-		--brand: oklch(0.45 0.12 305);
-		--brand-ink: oklch(0.4 0.12 305);
+		--foreground: oklch(0.13 0 0);
+		--muted-foreground: oklch(0.36 0.02 263);
+		--border: oklch(0.6 0.0075 260.7315);
+		--input: oklch(0.5 0.0075 260.7315);
+		--control: oklch(0.42 0.0075 260.7315);
+		--sidebar-foreground: oklch(0.18 0 0);
+		--primary: oklch(0.46 0.245 262.881);
+		--primary-hover: oklch(0.41 0.245 262.881);
+		--link: oklch(0.46 0.245 262.881);
+		--brand-ink: oklch(0.46 0.245 262.881);
 		--live-ink: oklch(0.33 0.09 148);
 		--changed-ink: oklch(0.37 0.15 264);
 		--pending-ink: oklch(0.35 0.08 65);
 		--attention-ink: oklch(0.38 0.15 15);
-		--draft-ink: oklch(0.32 0.008 290);
+		--draft-ink: oklch(0.32 0.008 260);
 	}
 	.dark {
-		--foreground: oklch(0.99 0.002 290);
-		--muted-foreground: oklch(0.87 0.006 290);
-		--border: oklch(0.55 0.01 290);
-		--input: oklch(0.62 0.01 290);
-		--control: oklch(0.75 0.01 290);
-		--sidebar-foreground: oklch(0.96 0.004 290);
-		--primary: oklch(0.86 0.06 305);
-		--primary-hover: oklch(0.9 0.05 305);
-		--primary-foreground: oklch(0.15 0.03 305);
-		--brand: oklch(0.8 0.08 305);
-		--brand-ink: oklch(0.88 0.06 305);
+		--foreground: oklch(0.99 0 0);
+		--muted-foreground: oklch(0.87 0 0);
+		--border: oklch(0.55 0 0);
+		--input: oklch(0.65 0 0);
+		--control: oklch(0.75 0 0);
+		--sidebar-foreground: oklch(0.96 0 0);
+		--link: oklch(0.75 0.14 259.9027);
+		--brand-ink: oklch(0.75 0.14 259.9027);
 		--live-ink: oklch(0.93 0.07 148);
 		--changed-ink: oklch(0.92 0.05 264);
 		--pending-ink: oklch(0.94 0.07 88);
 		--attention-ink: oklch(0.93 0.05 15);
-		--draft-ink: oklch(0.94 0.003 290);
+		--draft-ink: oklch(0.94 0.003 260);
 	}
 }
 
 @theme inline {
-	--font-sans: 'Inter Variable', ui-sans-serif, system-ui, sans-serif;
-	/* Page titles and display type: DM Sans, the face of Colophon's public site. */
-	--font-display: 'DM Sans Variable', 'Inter Variable', ui-sans-serif, system-ui, sans-serif;
-	--font-mono: 'JetBrains Mono Variable', ui-monospace, SFMono-Regular, monospace;
+	--font-sans: var(--font-sans);
+	/* Page titles: Inter, like all text (DM Sans is gone, D-210); Geist Pixel names the product. */
+	--font-display: var(--font-sans);
+	--font-title: var(--font-title);
+	--font-mono: var(--font-mono);
 
 	/* No text under 14px anywhere: the smallest utility renders at reading size. */
 	--text-xs: 0.875rem;
 	--text-xs--line-height: 1.25rem;
 
-	--radius-sm: calc(var(--radius) * 0.5);
-	--radius-md: calc(var(--radius) * 0.75);
+	/* The theme's scale (D-210): 1.15rem, with sm/md/lg/xl at -4px, -2px, the radius, +4px. */
+	--radius-sm: calc(var(--radius) - 4px);
+	--radius-md: calc(var(--radius) - 2px);
 	--radius-lg: var(--radius);
-	--radius-xl: calc(var(--radius) * 1.33);
+	--radius-xl: calc(var(--radius) + 4px);
 	--radius-2xl: calc(var(--radius) * 1.67);
 	--radius-3xl: calc(var(--radius) * 2);
 	--radius-4xl: calc(var(--radius) * 2.5);

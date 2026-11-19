@@ -17,7 +17,7 @@
 	<header class="flex h-14 items-center gap-3 px-4 sm:px-6">
 		<a href={resolve('/')} class="flex items-center gap-2.5 rounded-md font-medium outline-none focus-visible:ring-[3px] focus-visible:ring-ring/40">
 			<Mark />
-			<span>Colophon Studio</span>
+			<span class="font-title font-normal" data-testid="wordmark">Colophon Studio</span>
 		</a>
 		<span class="rounded-full border border-border bg-card px-2 py-0.5 text-xs text-muted-foreground" title="Colophon is not released yet">preview</span>
 		<div class="ml-auto flex items-center gap-1"><ThemeToggle /><AccountMenu /></div>

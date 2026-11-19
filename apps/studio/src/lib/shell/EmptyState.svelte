@@ -15,7 +15,8 @@
 	<div class="mb-4 flex size-10 items-center justify-center rounded-lg border border-border bg-popover shadow-hairline">
 		<Icon class="size-5 text-muted-foreground" aria-hidden="true" />
 	</div>
-	<p class="font-medium">{title}</p>
+	<!-- The title in Geist Pixel, the product's own face (D-210); the explanation under it stays Inter. -->
+	<p class="font-title text-lg">{title}</p>
 	{#if children}<div class="mt-1 max-w-md text-sm text-pretty text-muted-foreground">{@render children()}</div>{/if}
 	{#if action}<div class="mt-5 flex flex-wrap justify-center gap-2">{@render action()}</div>{/if}
 </div>

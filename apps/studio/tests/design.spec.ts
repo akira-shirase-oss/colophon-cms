@@ -157,19 +157,24 @@ test("the Studio makes no requests to anyone else: the font is self-hosted", asy
   expect(
     await page.evaluate(() => getComputedStyle(document.body).fontFamily),
   ).toContain("Inter Variable");
-  // Page titles are set in DM Sans, the public site's display face (D-182), self-hosted like
-  // Inter and actually loaded; everything else people read stays Inter.
+  // Page titles are Inter like everything else people read (D-210: DM Sans and JetBrains Mono are gone), and
+  // neither old face is loaded. Geist Pixel is the brand's title face: present, but only where the wordmark is.
   expect(
     await page.evaluate(
       () => getComputedStyle(document.querySelector("h1") ?? document.body).fontFamily,
     ),
-  ).toMatch(/^"?DM Sans Variable"?,/);
+  ).toMatch(/^"?Inter Variable"?,/);
   expect(
     await page.evaluate(async () => {
       await document.fonts.ready;
-      return document.fonts.check('560 32px "DM Sans Variable"');
+      return [...document.fonts].map((face) => face.family.replace(/"/g, ""));
     }),
-  ).toBe(true);
+  ).not.toEqual(expect.arrayContaining(["DM Sans Variable"]));
+  expect(
+    await page.evaluate(() =>
+      [...document.fonts].some((face) => face.family.replace(/"/g, "") === "JetBrains Mono Variable"),
+    ),
+  ).toBe(false);
 });
 
 // The design system's own page (D-182): the tokens, the one status badge and every component.

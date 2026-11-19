@@ -1,5 +1,5 @@
 <!--
-  The design system (D-182, after D-056), on one page: the tokens, the type, the one status badge
+  The design system (D-210, after D-182 and D-056), on one page: the tokens, the type, the one status badge
   and every component in the states the Studio uses. Nothing here talks to the server, so it opens
   without signing in.
 -->
@@ -62,8 +62,8 @@
 
 <div class="grid gap-10 pb-16 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.05fr)] lg:items-center">
 	<div class="space-y-5">
-		<Badge variant="brand">Design system · D-182</Badge>
-		<h1 class="display-1 max-w-xl">Quiet paper, one dusk lavender, statuses that mean something.</h1>
+		<Badge variant="brand">Design system · D-210</Badge>
+		<h1 class="display-1 max-w-xl">White paper, one clear blue, statuses that mean something.</h1>
 		<p class="page-intro max-w-lg">The Studio's tokens, type and components, taken from Colophon's public site and made calm enough to work in all day.</p>
 		<nav class="flex flex-wrap gap-2" aria-label="Sections">
 			{#each NAV as name (name)}
@@ -97,7 +97,7 @@
 	</Card.Root>
 </div>
 
-<Section id="foundations" title="Foundations" lead="Tokens in OKLCH, in styles.css. Use the token, never the value: light, dark and more contrast change underneath.">
+<Section id="foundations" title="Foundations" lead="Tokens in OKLCH, in design/tokens.css (the one source; the contrast table checks every pair). Use the token, never the value: light, dark and more contrast change underneath.">
 	<div class="grid gap-10">
 		{#each COLOURS as { group, tokens } (group)}
 			<div>
@@ -131,7 +131,7 @@
 		</div>
 
 		<div>
-			<p class="eyebrow mb-3">Type: DM Sans for page titles and display, Inter for everything people read and use</p>
+			<p class="eyebrow mb-3">Type: Inter for everything people read and use, Geist Pixel for the name of the product</p>
 			<div class="divide-y divide-border overflow-hidden rounded-card border border-border bg-card">
 				{#each TYPE as item (item.name)}
 					<div class="grid gap-2 px-card py-5 sm:grid-cols-[9rem_minmax(0,1fr)] sm:items-baseline">
