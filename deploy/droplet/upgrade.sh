@@ -161,6 +161,9 @@ install_release() {
     [[ -x "$release/bin/colophon-server" ]] || { log "fetching v$version ($arch)"; download release "$version" "$tmp" "$arch"; }
   else
     log "fetching the edge build ($arch)"
+    # No edge release yet (edge.yml hasn't landed, D-211): say so, rather than fail on a download.
+    fetch EDGE "$tmp" edge 2>/dev/null \
+      || die "the edge channel is available once edge.yml lands (D-211); until then use the release channel: upgrade.sh <version>"
     download edge "" "$tmp" "$arch"
     version=edge-${EDGE_COMMIT:0:12}
     release=$ROOT/releases/$version
