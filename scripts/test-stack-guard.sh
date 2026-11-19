@@ -111,8 +111,25 @@ verdicts() {
   sh=$(env -u CI -u COMPOSE_PROJECT_NAME -u COLOPHON_STACK_OWNER "$@" bash -c '. scripts/stack-guard.sh; stack_is_ours && echo ours || echo shared')
   [[ "$ts" == "$sh" ]] || fail "for '$*' the testbed says '$ts', the guard says '$sh'"
 }
+# Exact matches only (D-187b): CI=true, COLOPHON_STACK_OWNER=1, a project other than colophon.
+# CI=false, CI=0 or CI=1 doesn't say CI made this stack.
+verdict() { # <expected ours|shared> <env…>: the shell guard's own answer
+  local want=$1 got
+  shift
+  got=$(env -u CI -u COMPOSE_PROJECT_NAME -u COLOPHON_STACK_OWNER "$@" bash -c '. scripts/stack-guard.sh; stack_is_ours && echo ours || echo shared')
+  [[ "$got" == "$want" ]] || fail "stack_is_ours for '$*' says '$got', not '$want'"
+}
+verdict shared CI=false
+verdict shared CI=0
+verdict shared CI=1
+verdict ours CI=true
+verdict shared COLOPHON_STACK_OWNER=yes
+verdict shared COMPOSE_PROJECT_NAME=
 verdicts true
 verdicts CI=true
+verdicts CI=false
+verdicts CI=0
+verdicts CI=1
 verdicts COMPOSE_PROJECT_NAME=colophon
 verdicts COMPOSE_PROJECT_NAME=colophon-ci
 verdicts COLOPHON_STACK_OWNER=1
