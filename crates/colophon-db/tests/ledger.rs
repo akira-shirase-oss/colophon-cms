@@ -340,6 +340,8 @@ async fn the_export_replayed_removes_what_the_backup_still_holds() {
     .execute(&db.admin)
     .await
     .expect("the backup clone");
+    // Dropped however the test ends (a failed assertion below included).
+    let mut backup_guard = common::DropGuard::new(&backup);
     let restored = PgPoolOptions::new()
         .max_connections(2)
         .connect(&format!(
@@ -455,6 +457,7 @@ async fn the_export_replayed_removes_what_the_backup_still_holds() {
     .execute(&db.admin)
     .await
     .expect("drop the backup");
+    backup_guard.disarm();
     owner.close().await;
     app.close().await;
     db.drop().await;
