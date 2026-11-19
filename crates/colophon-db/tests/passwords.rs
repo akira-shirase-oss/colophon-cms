@@ -322,3 +322,44 @@ async fn sign_in_keys_are_visible_only_in_their_own_realm() {
     owner.close().await;
     db.drop().await;
 }
+
+/// A paused key is refused before it takes a password slot (D-213): only work that will hash
+/// takes one. The gate's only slot is held elsewhere and nothing may wait, so an attempt that
+/// asked for a slot first would be shed as busy instead of answering as a paused key does.
+#[tokio::test]
+#[ignore = "needs the local stack: scripts/stack.sh up"]
+async fn a_paused_key_is_refused_without_taking_a_slot() {
+    let db = TestDb::new().await;
+    made(&db.app, "fay@example.com", "the real password").await;
+    let guesser = "198.51.100.11";
+    for _ in 1..=LOCK_AFTER {
+        identity::password_sign_in(
+            &db.app,
+            &common::gate(),
+            "fay@example.com",
+            guesser,
+            "a guess",
+        )
+        .await
+        .expect("sign-in");
+    }
+    let gate = passwords::PasswordGate::with_waiting(1, 0, std::time::Duration::from_millis(50));
+    let held = gate.slot().await.expect("the only slot");
+    assert_eq!(gate.available(), 0);
+    assert_eq!(
+        identity::password_sign_in(
+            &db.app,
+            &gate,
+            "fay@example.com",
+            guesser,
+            "the real password"
+        )
+        .await
+        .expect("a paused key answers without waiting for a slot"),
+        PasswordSignIn::Refused
+    );
+    assert_eq!(gate.available(), 0, "the paused attempt took no slot");
+    drop(held);
+    assert_eq!(gate.available(), 1);
+    db.drop().await;
+}

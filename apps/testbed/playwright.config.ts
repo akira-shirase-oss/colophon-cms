@@ -51,6 +51,9 @@ export default defineConfig({
 				// The testbed's pages make cookie-authenticated writes through its proxy.
 				COLOPHON_TRUSTED_ORIGINS: `http://localhost:${TESTBED_PORT}`,
 				COLOPHON_LOG_FORMAT: 'json',
+				// Every journey signs its people in from loopback; the password limit (D-213) has
+				// its own tests.
+				COLOPHON_RATE_LIMIT_PASSWORD: '1000/2000',
 				// The audience page exercises the whole magic-link flow without a mail
 				// server: the link comes back in the response (loopback-only, D-140).
 				COLOPHON_DEV_MAIL: '1',

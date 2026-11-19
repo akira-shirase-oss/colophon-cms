@@ -33,7 +33,7 @@ use uuid::Uuid;
 
 use axum::{
     extract::{ConnectInfo, Request, State},
-    http::{HeaderMap, header},
+    http::{HeaderMap, Method, header},
     middleware::Next,
     response::{IntoResponse, Response},
 };
@@ -184,6 +184,10 @@ pub struct AdmissionSettings {
     pub per_credential: Option<Rate>,
     /// Public delivery, per client address.
     pub delivery_per_address: Option<Rate>,
+    /// Password work — sign-in, sign-up, anything that reaches the Argon2 gate — per client
+    /// address (D-213), on top of the management limits: one address can't keep every slot
+    /// busy.
+    pub password_per_address: Option<Rate>,
     /// Proxies whose `X-Forwarded-For` says who the client is.
     pub trusted_proxies: Vec<IpPrefix>,
     /// The quota's window in milliseconds (D-118): `requests_per_minute` is checked against
@@ -197,12 +201,17 @@ pub struct AdmissionSettings {
 enum Class {
     Management,
     Delivery,
+    /// A management request that does password work (D-213): its management limits, and the
+    /// address's password limit as well.
+    Password,
 }
 
 impl Class {
-    /// The class of a request to `path`; `None` if it counts against nothing.
-    fn of(path: &str) -> Option<Self> {
-        if path.starts_with("/content/") {
+    /// The class of a `method` request to `path`; `None` if it counts against nothing.
+    fn of(method: &Method, path: &str) -> Option<Self> {
+        if *method == Method::POST && is_password_work(path) {
+            Some(Self::Password)
+        } else if path.starts_with("/content/") {
             Some(Self::Delivery)
         } else if path.starts_with("/api/")
             || path.starts_with("/auth/")
@@ -215,6 +224,31 @@ impl Class {
         } else {
             None
         }
+    }
+}
+
+/// The routes that reach the password gate (D-150), as a `POST`: staff sign-in and sign-up, a
+/// site's sign-up, sign-in and magic-link sign-in (which hashes when it makes the account),
+/// and staff creating a site user.
+fn is_password_work(path: &str) -> bool {
+    if path == "/auth/signin" || path == "/auth/signup" {
+        return true;
+    }
+    let mut parts = path.trim_start_matches('/').split('/');
+    match (
+        parts.next(),
+        parts.next(),
+        parts.next(),
+        parts.next(),
+        parts.next(),
+        parts.next(),
+    ) {
+        (Some("audience"), Some("v1"), Some(_), Some("signup" | "signin"), None, _)
+        | (Some("audience"), Some("v1"), Some(_), Some("magic-link"), Some(_), None) => true,
+        (Some("api"), Some("v1"), Some("projects"), Some(_), Some("audience"), Some("users")) => {
+            parts.next().is_none()
+        }
+        _ => false,
     }
 }
 
@@ -384,7 +418,7 @@ impl Admission {
     fn keys(&self, class: Class, peer: Option<IpAddr>, headers: &HeaderMap) -> Vec<(String, Cell)> {
         let mut keys = Vec::with_capacity(2);
         let (prefix, per_address) = match class {
-            Class::Management => ("m", self.settings.per_address),
+            Class::Management | Class::Password => ("m", self.settings.per_address),
             Class::Delivery => ("d", self.settings.delivery_per_address),
         };
         if let (Some(rate), Some(client)) = (per_address, self.client(peer, headers)) {
@@ -392,11 +426,23 @@ impl Admission {
             let client = keyed_address(client);
             keys.push((format!("colophon:rl:{prefix}:a:{client}"), rate.cell()));
         }
-        if class == Class::Management
+        if class != Class::Delivery
             && let (Some(rate), Some(credential)) =
                 (self.settings.per_credential, credential(headers))
         {
             keys.push((format!("colophon:rl:m:c:{credential}"), rate.cell()));
+        }
+        // Password work, per address (D-213), keyed like the sign-in throttle: IPv6 by its /64.
+        if class == Class::Password
+            && let (Some(rate), Some(client)) = (
+                self.settings.password_per_address,
+                self.client(peer, headers),
+            )
+        {
+            keys.push((
+                format!("colophon:rl:p:a:{}", keyed_address(client)),
+                rate.cell(),
+            ));
         }
         keys
     }
@@ -558,7 +604,7 @@ pub(crate) async fn admit(State(state): State<AppState>, request: Request, next:
     let Some(admission) = state.admission.clone() else {
         return next.run(request).await;
     };
-    let Some(class) = Class::of(request.uri().path()) else {
+    let Some(class) = Class::of(request.method(), request.uri().path()) else {
         return next.run(request).await;
     };
     let peer = request
@@ -819,6 +865,7 @@ mod tests {
                 per_address: Some(rate(10, 10)),
                 per_credential: Some(rate(5, 5)),
                 delivery_per_address: Some(rate(100, 100)),
+                password_per_address: Some(rate(5, 10)),
                 trusted_proxies: Vec::new(),
                 quota_window_ms: 0,
             },
@@ -852,11 +899,14 @@ mod tests {
             keys[1].0,
             "a token is its own credential"
         );
-        assert_eq!(Class::of("/readyz"), None);
-        assert_eq!(Class::of("/studio/_app/x.js"), None);
-        assert_eq!(Class::of("/auth/login"), Some(Class::Management));
+        assert_eq!(Class::of(&Method::GET, "/readyz"), None);
+        assert_eq!(Class::of(&Method::GET, "/studio/_app/x.js"), None);
         assert_eq!(
-            Class::of("/preview/v1/p/production/exchange"),
+            Class::of(&Method::GET, "/auth/login"),
+            Some(Class::Management)
+        );
+        assert_eq!(
+            Class::of(&Method::POST, "/preview/v1/p/production/exchange"),
             Some(Class::Management)
         );
     }
@@ -907,5 +957,117 @@ mod tests {
         assert!(admission.mark_throttled(other, 1_000_000));
         // A wait already behind us holds nothing: the marker lapses and the next episode tells.
         assert!(admission.mark_throttled(Uuid::now_v7(), 0));
+    }
+
+    #[test]
+    fn password_work_is_its_own_class_on_every_route_that_hashes() {
+        for path in [
+            "/auth/signin",
+            "/auth/signup",
+            "/audience/v1/p/signup",
+            "/audience/v1/p/signin",
+            "/audience/v1/p/magic-link/t0ken",
+            "/api/v1/projects/p/audience/users",
+        ] {
+            assert_eq!(
+                Class::of(&Method::POST, path),
+                Some(Class::Password),
+                "{path}"
+            );
+        }
+        for (method, path) in [
+            (Method::GET, "/auth/login"),
+            (Method::POST, "/auth/device/approve"),
+            (Method::GET, "/api/v1/projects/p/audience/users"),
+            (Method::POST, "/api/v1/projects/p/audience/users/u"),
+            (Method::POST, "/audience/v1/p/magic-link"),
+            (Method::POST, "/audience/v1/p/signout"),
+            (Method::GET, "/audience/v1/p/me"),
+            (Method::POST, "/audience/v1/p/signin/more"),
+        ] {
+            assert_eq!(
+                Class::of(&method, path),
+                Some(Class::Management),
+                "{method} {path}"
+            );
+        }
+    }
+
+    #[test]
+    fn password_work_counts_the_management_limits_and_its_own_per_slash_64() {
+        let admission = Admission::new(
+            AdmissionSettings {
+                per_address: Some(rate(300, 600)),
+                per_credential: Some(rate(150, 300)),
+                password_per_address: Some(rate(5, 10)),
+                ..AdmissionSettings::default()
+            },
+            None,
+        )
+        .expect("no URL");
+        let headers = HeaderMap::new();
+        let keys = |address: &str| {
+            admission
+                .keys(
+                    Class::Password,
+                    Some(address.parse().expect("an address")),
+                    &headers,
+                )
+                .into_iter()
+                .map(|(key, _)| key)
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(
+            keys("198.51.100.7"),
+            [
+                "colophon:rl:m:a:198.51.100.7",
+                "colophon:rl:p:a:198.51.100.7"
+            ]
+        );
+        assert_eq!(keys("2001:db8:1:2::1"), keys("2001:db8:1:2:ffff::9"));
+        assert_ne!(keys("2001:db8:1:2::1"), keys("2001:db8:1:3::1"));
+        // Off, it's management work and nothing more.
+        let off = Admission::new(AdmissionSettings::default(), None).expect("no URL");
+        assert_eq!(
+            off.keys(
+                Class::Password,
+                Some("198.51.100.7".parse().expect("v4")),
+                &headers
+            ),
+            Vec::new()
+        );
+    }
+
+    #[test]
+    fn a_password_burst_is_admitted_then_refused_and_another_address_is_not() {
+        let admission = Admission::new(
+            AdmissionSettings {
+                password_per_address: Some(rate(5, 10)),
+                ..AdmissionSettings::default()
+            },
+            None,
+        )
+        .expect("no URL");
+        let headers = HeaderMap::new();
+        let one = admission.keys(
+            Class::Password,
+            Some("198.51.100.7".parse().expect("v4")),
+            &headers,
+        );
+        let other = admission.keys(
+            Class::Password,
+            Some("198.51.100.8".parse().expect("v4")),
+            &headers,
+        );
+        let mut local = admission.local.lock().expect("lock");
+        let admitted = (0..20).filter(|_| local.check(0, &one).is_none()).count();
+        assert_eq!(
+            admitted, 10,
+            "the burst, and not one more at the same instant"
+        );
+        assert!(
+            local.check(0, &other).is_none(),
+            "another address has its own count"
+        );
     }
 }

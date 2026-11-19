@@ -417,6 +417,13 @@ pub async fn sign_in(
     password: &str,
 ) -> Result<SignIn, DbError> {
     use crate::throttle::{self, Counted, Realm};
+    // A key already paused is refused before it takes a slot (D-213).
+    let mut tx = project_tx(pool, project).await?;
+    let paused = throttle::paused(&mut tx, Realm::Audience(project), email, address).await?;
+    tx.commit().await.map_err(DbError::from_query)?;
+    if paused {
+        return Ok(SignIn::Refused);
+    }
     let slot = gate.slot().await?;
     let mut tx = project_tx(pool, project).await?;
     if throttle::count(&mut tx, Realm::Audience(project), email, address).await? == Counted::Paused
