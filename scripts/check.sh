@@ -112,6 +112,8 @@ elif docker compose -f deploy/compose.yaml ps --quiet 2>/dev/null | grep -q .; t
     # USERS bounds the audience the smoke signs up, not the traffic share it drives.
     PATH="$PATH:$HOME/.local/bin" TOTAL=10000 USERS=64 P99_MS=700 KEEP=0 scripts/load.sh audience throughput
     PATH="$PATH:$HOME/.local/bin" TOTAL=20000 P99_MS=500 KEEP=0 scripts/load.sh publishing throughput
+    # D-184: takedowns, racing undos (exactly one commits), replays and reads back.
+    PATH="$PATH:$HOME/.local/bin" TOTAL=8000 P99_MS=700 KEEP=0 scripts/load.sh undo throughput
     # The dependency-failure evidence runs (L11-L13, D-127): each pauses or kills a real
     # stack dependency mid-run, so they run here one at a time like everywhere else.
     PATH="$PATH:$HOME/.local/bin" DURATION=10s P99_MS=500 KEEP=0 scripts/load.sh cache-down throughput

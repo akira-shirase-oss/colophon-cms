@@ -42,6 +42,7 @@ pub mod setup;
 pub mod throttle;
 pub mod tokens;
 pub mod transactions;
+pub mod undo;
 pub mod work;
 
 use std::{str::FromStr, time::Duration};

@@ -314,4 +314,26 @@ test('refuse to unpublish a draft, take a published article down, and read it as
 		await page.getByRole('button', { name: 'Read published articles' }).click();
 		await expect(page.getByTestId('delivered')).toHaveText('HTTP 410, gone');
 	}
+
+	// Undo of the takedown (D-184): only the newest release, one request, replayed by its key.
+	await page.getByLabel('Undo the takedown in generation').fill('1');
+	await page.getByRole('button', { name: 'Undo this takedown' }).click();
+	await expect(page.getByTestId('undone')).toContainText('409');
+	await expect(page.getByTestId('undone')).toContainText('(changed_since)');
+	await page.getByLabel('Undo the takedown in generation').fill('2');
+	await page.getByLabel('Idempotency key (empty for a new one; kept for a resend)').fill('');
+	await page.getByRole('button', { name: 'Undo this takedown' }).click();
+	await expect(page.getByTestId('undone')).toHaveText('undid 2 as generation 3, 1 back');
+	await expect(page.getByTestId('releases')).toContainText('generation 3: Undo of release 2: Take it down (1 changed)');
+	await page.getByRole('button', { name: 'Undo this takedown' }).click();
+	await expect(page.getByTestId('undone')).toHaveText('undid 2 as generation 3, 1 back (replayed)');
+	await expect(page.getByTestId('generation')).toHaveText('3');
+	await page.getByLabel('Read at generation').fill('');
+	await page.getByRole('button', { name: 'Read published articles' }).click();
+	await expect(page.getByTestId('delivered')).toHaveText('HTTP 200, generation 3: Gone soon');
+	// An undo published something, so it can't be undone in turn.
+	await page.getByLabel('Undo the takedown in generation').fill('3');
+	await page.getByLabel('Idempotency key (empty for a new one; kept for a resend)').fill('');
+	await page.getByRole('button', { name: 'Undo this takedown' }).click();
+	await expect(page.getByTestId('undone')).toContainText('(not_undoable)');
 });

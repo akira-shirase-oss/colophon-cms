@@ -11,13 +11,15 @@ test('comment on the version on screen, and a task through its life', async ({ p
 	const project = await newProject(page);
 	const entry = await newEntry(page, project, 'Winter note');
 
-	// A comment on the entry's current version, written and answered in the editor's Comments tab.
+	// A comment on the entry's current version, written and answered in the Comments drawer, beside
+	// the content (D-184).
 	await page.goto(`/studio/projects/${project}/articles/${entry}`);
-	await page.getByRole('tab', { name: 'Comments' }).click();
+	await page.getByTestId('comments-button').click();
 	await page.getByTestId('comment-input').fill('Check the opening sentence');
 	await page.getByTestId('comment-post').click();
 	const comment = page.getByTestId('comment').first();
 	await expect(comment).toContainText('Check the opening sentence');
+	await expect(comment).toContainText('You');
 	await expect(comment).toHaveAttribute('data-resolved', 'false');
 	await comment.getByTestId('comment-resolve').click();
 	await expect(comment).toHaveAttribute('data-resolved', 'true');

@@ -59,24 +59,33 @@
 	);
 </script>
 
-<figure class="m-0 grid gap-2 rounded-lg border bg-card p-2 font-sans {selected ? 'border-ring ring-[3px] ring-ring/40' : 'border-border'}" data-testid="rich-image" data-state={status} data-asset-id={assetId}>
-	<div class="flex min-h-24 items-center justify-center overflow-hidden rounded-md bg-muted">
+<!-- The picture at its own shape, up to the column's width (D-184): no grey bars beside it. Its
+     actions float over its corner while it is pointed at, focused or selected (and always on a
+     touch screen, which can't point); the alt text sits under it as a quiet caption. -->
+<figure
+	class="m-0 grid max-w-full gap-1.5 font-sans {asset?.state === 'usable' ? 'w-fit' : 'w-full'}"
+	data-testid="rich-image"
+	data-state={status}
+	data-asset-id={assetId}
+	data-selected={selected || undefined}
+>
+	<div class="relative min-w-0 rounded-lg outline-offset-2 {selected ? 'outline-2 outline-ring' : ''}">
 		{#if asset?.state === 'usable'}
 			<img
 				src={thumbnailUrl(project, asset)}
 				srcset={thumbnailSrcset(project, asset) || undefined}
-				sizes="(min-width: 640px) 24rem, 100vw"
+				sizes="(min-width: 640px) 44rem, 100vw"
 				width={asset.width ?? undefined}
 				height={asset.height ?? undefined}
 				{alt}
 				decoding="async"
-				class="m-0! h-auto max-h-72 w-auto max-w-full rounded-none! object-contain"
+				class="m-0! block h-auto max-h-[36rem] w-auto max-w-full rounded-lg! object-contain"
 				draggable="false"
 			/>
 		{:else if status === 'loading'}
-			<div class="h-40 w-full animate-pulse bg-muted motion-reduce:animate-none" aria-hidden="true"></div>
+			<div class="h-40 w-full max-w-md animate-pulse rounded-lg bg-muted motion-reduce:animate-none" aria-hidden="true"></div>
 		{:else}
-			<div class="flex h-40 w-full flex-col items-center justify-center gap-1.5 px-4 text-center text-xs text-muted-foreground">
+			<div class="flex h-40 w-full max-w-md flex-col items-center justify-center gap-1.5 rounded-lg border border-dashed border-border bg-card px-4 text-center text-sm text-muted-foreground">
 				{#if status === 'missing' || status === 'rejected' || status === 'deleted' || status === 'deleting'}
 					<ImageOffIcon class="size-5" aria-hidden="true" />
 				{:else}
@@ -95,8 +104,18 @@
 				{/if}
 			</div>
 		{/if}
+		{#if editable}
+			<span
+				class="actions absolute top-2 right-2 flex gap-0.5 rounded-control border border-border bg-popover p-0.5 shadow-float transition-opacity"
+				data-testid="rich-image-actions"
+			>
+				<Button variant="ghost" size="xs" onclick={() => act('edit')} title="Edit alt text (Enter when the image is selected)" data-testid="rich-image-edit">Edit alt text</Button>
+				<Button variant="ghost" size="xs" onclick={() => act('replace')} data-testid="rich-image-replace">Replace</Button>
+				<Button variant="ghost" size="xs" onclick={remove} title="Remove the image (Delete when it is selected)" data-testid="rich-image-remove">Remove</Button>
+			</span>
+		{/if}
 	</div>
-	<figcaption class="flex flex-wrap items-center gap-x-2 gap-y-1.5 text-start text-xs">
+	<figcaption class="flex max-w-prose flex-wrap items-center gap-x-2 gap-y-1 text-start text-sm text-muted-foreground">
 		{#if status === 'quarantined'}
 			<Badge variant="pending" data-testid="rich-image-state">Checking…</Badge>
 		{:else if status === 'rejected' || status === 'deleting' || status === 'deleted'}
@@ -104,19 +123,22 @@
 		{:else if status === 'missing'}
 			<Badge variant="destructive" data-testid="rich-image-state">Missing</Badge>
 		{/if}
-		<span class="min-w-0 flex-1 text-muted-foreground">
-			<span class="font-medium text-foreground">Alt text:</span>
-			<span data-user-content data-testid="rich-image-alt">{alt}</span>
+		<span class="min-w-0 flex-1 text-pretty" title="Alt text: what people who can't see the image hear">
+			<span class="sr-only">Alt text: </span><span data-user-content data-testid="rich-image-alt">{alt}</span>
 		</span>
-		{#if editable}
-			<span class="flex flex-wrap gap-1">
-				<Button variant="outline" size="xs" onclick={() => act('edit')} data-testid="rich-image-edit">Edit alt text</Button>
-				<Button variant="outline" size="xs" onclick={() => act('replace')} data-testid="rich-image-replace">Replace</Button>
-				<Button variant="ghost" size="xs" onclick={remove} data-testid="rich-image-remove">Remove</Button>
-			</span>
-			{#if selected}
-				<span class="basis-full text-muted-foreground">Press Enter to edit the alt text, or Delete to remove the image.</span>
-			{/if}
-		{/if}
 	</figcaption>
 </figure>
+
+<style>
+	/* Pointer screens show the actions on hover, focus or selection; touch screens always. */
+	@media (hover: hover) {
+		.actions {
+			opacity: 0;
+		}
+		figure:hover .actions,
+		figure:focus-within .actions,
+		figure[data-selected] .actions {
+			opacity: 1;
+		}
+	}
+</style>

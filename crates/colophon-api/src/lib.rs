@@ -45,6 +45,7 @@ pub mod state;
 pub mod studio;
 mod tokens;
 mod type_cache;
+mod undo;
 pub mod uploads;
 mod valkey;
 pub mod version;

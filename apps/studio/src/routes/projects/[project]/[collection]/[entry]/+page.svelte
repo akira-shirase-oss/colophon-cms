@@ -4,7 +4,6 @@
 	import { Skeleton } from '@colophon/ui/ui/skeleton';
 	import EntryEditor from '#lib/EntryEditor.svelte';
 	import { getContentType, getEntry } from '#lib/api.ts';
-	import PageHeader from '#lib/shell/PageHeader.svelte';
 	import Problem from '#lib/shell/Problem.svelte';
 
 	const project = $derived(page.params.project ?? '');
@@ -50,14 +49,11 @@
 {:else if type.data === undefined && type.isError}
 	<Problem error={type.error as Error} />
 {:else if draft.data === undefined || type.data === undefined}
-	<Skeleton class="mb-3 h-10 w-2/3" />
-	<Skeleton class="mb-8 h-4 w-48" />
+	<Skeleton class="mb-8 h-10 w-2/3" />
 	<Skeleton class="h-64 w-full rounded-xl" />
 {:else}
-	<!-- When it was saved is said once, beside the fields, where it stays current (D-081). -->
-	<PageHeader title={draft.data.draft.revision.title || 'Untitled'}>
-		{#snippet eyebrow()}{type.data.definition.name}{/snippet}
-	</PageHeader>
+	<!-- The editor draws the title itself, as the page's heading it edits in place (D-184); the
+	     trail above already names the collection, so there is no eyebrow repeating it. -->
 	{#key entry}
 		<EntryEditor {project} {collection} {entry} type={type.data} initial={draft.data} {published} {referencedBy} />
 	{/key}

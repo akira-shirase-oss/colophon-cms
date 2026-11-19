@@ -140,6 +140,22 @@ export async function member(owner: Page, browser: Browser, project: string, rol
 	return page;
 }
 
+/** Opens an entry's Details in the editor's side panel (closed until asked, D-184). */
+export async function openDetails(page: Page) {
+	const details = page.getByTestId('details');
+	if ((await details.getAttribute('open')) === null) await details.locator('> summary').click();
+}
+
+/** Opens an entry's Details and, inside it, Technical details: the public address, the ids. */
+export async function openTechnicalDetails(page: Page) {
+	await openDetails(page);
+	const technical = page.getByTestId('entry-details').getByTestId('technical-details');
+	if ((await technical.getAttribute('open')) === null) await technical.locator('summary').click();
+}
+
+/** A toast that says `text`. */
+export const toast = (page: Page, text: string | RegExp) => page.locator('[data-sonner-toast]').filter({ hasText: text });
+
 /** With STUDIO_SHOTS_DIR set, saves a full-page photograph of `page` there as `<name>.png`. */
 export async function shot(page: Page, name: string) {
 	const directory = process.env['STUDIO_SHOTS_DIR'];

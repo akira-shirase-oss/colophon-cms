@@ -4653,6 +4653,41 @@
         },
         "type": "object"
       },
+      "UndoneView": {
+        "properties": {
+          "changeset_hash": {
+            "type": "string"
+          },
+          "changeset_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "entries_restored": {
+            "description": "how many entries readers get again",
+            "type": "integer"
+          },
+          "epoch": {
+            "type": "integer"
+          },
+          "generation": {
+            "description": "the release that put things back",
+            "type": "integer"
+          },
+          "undo_of": {
+            "description": "the release it undid",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "generation",
+          "epoch",
+          "undo_of",
+          "changeset_id",
+          "changeset_hash",
+          "entries_restored"
+        ],
+        "type": "object"
+      },
       "UploadBody": {
         "description": "the file's bytes; its name in `X-Colophon-File-Name`, its claimed type in `Content-Type`",
         "format": "binary",
@@ -17891,6 +17926,166 @@
           }
         ],
         "summary": "Open a changeset restoring what that release published",
+        "tags": [
+          "publishing"
+        ]
+      }
+    },
+    "/api/v1/projects/{project}/environments/{environment}/releases/{generation}/undo": {
+      "post": {
+        "operationId": "undoRelease",
+        "parameters": [
+          {
+            "description": "the project's id",
+            "in": "path",
+            "name": "project",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          },
+          {
+            "description": "the environment's slug, such as `production`",
+            "in": "path",
+            "name": "environment",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "the release's generation",
+            "in": "path",
+            "name": "generation",
+            "required": true,
+            "schema": {
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          {
+            "description": "16–128 of `A-Z a-z 0-9 - _`, scoped to the actor, operation and environment",
+            "in": "header",
+            "name": "idempotency-key",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "data": {
+                      "$ref": "#/components/schemas/UndoneView"
+                    }
+                  },
+                  "required": [
+                    "data"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "created"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "`unauthorized` — not signed in, the credential is invalid, or the token was revoked"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "`not_your_release, agent_self_review, missing_permission` — only the person who published the release may undo it, and never an API token"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "`not_found` — no such resource — or one the caller may not see, which looks the same"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "`changed_since` — another release went out after it, before or during this request; `not_undoable, undo_expired, needs_review` — it published something, its 60 seconds passed, or publishing here goes through review; `entry_deleted, revision_outdated, references_unpublished, asset_not_usable` — what it took down can't be put back as it was; `idempotency_key_reused` — this `Idempotency-Key` was used before for a different request"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "`invalid_generation` — there is no such release"
+          },
+          "428": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "`precondition_required` — a required `If-Match` or `Idempotency-Key` is missing"
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "`rate_limited` — over the per-credential or per-address limit; `Retry-After`"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "any other failure, in the one error envelope"
+          }
+        },
+        "security": [
+          {
+            "sessionCookie": []
+          },
+          {
+            "bearerToken": []
+          },
+          {
+            "apiToken": []
+          }
+        ],
+        "summary": "Put back what the newest release took down, as the next release (D-184)",
         "tags": [
           "publishing"
         ]

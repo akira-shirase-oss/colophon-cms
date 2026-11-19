@@ -4,7 +4,7 @@
 // developers. The first-run journey checks its own screens the same way (journey.spec.ts).
 
 import { expect, type Page, test } from '@playwright/test';
-import { api, env, internalTerms, key, member, newEntry, newProject, signIn, violations } from './helpers.ts';
+import { api, env, internalTerms, key, member, newEntry, newProject, openTechnicalDetails, signIn, toast, violations } from './helpers.ts';
 
 async function plain(page: Page, screen: string) {
 	await page.waitForLoadState('networkidle');
@@ -41,15 +41,15 @@ test('every everyday screen speaks plainly; the Technical details drawer keeps t
 	await page.getByRole('tab', { name: /History/ }).click();
 	await plain(page, 'editor, history');
 	// The drawer has the internal names, closed until asked for.
-	const drawer = page.getByTestId('technical-details');
-	await drawer.getByText('Technical details').click();
+	const drawer = page.getByTestId('entry-details').getByTestId('technical-details');
+	await openTechnicalDetails(page);
 	await expect(drawer).toContainText('Revision');
 	await expect(drawer).toContainText('Content hash');
 
 	await page.getByTestId('publish-button').click();
-	await expect(page.getByTestId('publish-outcome')).toContainText('Live as Release');
+	await expect(toast(page, /Published in Release/)).toBeVisible();
 	await plain(page, 'editor, published');
-	await page.getByTestId('publish-outcome').getByRole('link').click();
+	await page.getByTestId('publish-state').getByRole('link').first().click();
 	await expect(page.getByTestId('receipt-label')).toBeVisible();
 	await plain(page, 'receipt');
 	await page.getByRole('link', { name: 'The publish request' }).click();
