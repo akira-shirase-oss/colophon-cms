@@ -142,6 +142,20 @@ jobs:
         run: deploy/droplet/test-neon-url.sh
       - name: The droplet's edge channel refuses what it can't prove (deploy/droplet/test-upgrade-edge.sh, D-211)
         run: deploy/droplet/test-upgrade-edge.sh
+      - name: The leftover test database sweep (scripts/test-sweep-test-databases.sh, D-195)
+        run: scripts/test-sweep-test-databases.sh
+      - name: The shared-stack guard (scripts/test-stack-guard.sh, D-187)
+        run: scripts/test-stack-guard.sh
+      - name: Backup keys are created mode 600 (scripts/test-backup-key-mode.sh)
+        run: scripts/test-backup-key-mode.sh
+      - name: Backups and restores leave no plaintext on failure or kill (scripts/test-backup-plaintext.sh)
+        run: scripts/test-backup-plaintext.sh
+      - name: A restore whose payload fails its hash is blocked, with why (scripts/test-restore-blocked.sh, D-196)
+        run: scripts/test-restore-blocked.sh
+      - name: Every load smoke check.sh runs, CI runs too (scripts/test-smoke-parity.sh, D-209)
+        run: scripts/test-smoke-parity.sh
+      - name: The smokes job's strict verdict on its expected failures (scripts/test-smoke-verdict.sh, D-209)
+        run: scripts/test-smoke-verdict.sh
 
   # The testing rule (D-018) from a clean clone: the real stack, the real binary, real outages,
   # the testbed in a browser, and a load smoke run.
@@ -192,7 +206,9 @@ jobs:
         env:
           SQLX_OFFLINE: "false"
           DATABASE_URL: postgres://colophon:colophon-dev@127.0.0.1:55432/colophon
-        run: cargo test --workspace --locked -- --ignored --test-threads=1
+        run: |
+          scripts/sweep-test-databases.sh
+          cargo test --workspace --locked -- --ignored --test-threads=1
       - name: Crash tests F01, F02 and F03 (the server killed before and after a commit, the worker after announcing)
         env:
           SQLX_OFFLINE: "false"
@@ -308,6 +324,158 @@ jobs:
           name: playwright-traces
           path: apps/testbed/test-results/
           retention-days: 7
+      - name: Tear down
+        if: always()
+        run: scripts/stack.sh reset
+
+  smokes:
+    name: load smokes (every check.sh scenario integration doesn't run, outage drills included)
+    runs-on: ubuntu-latest
+    # Beside integration, not after it: its own runner and its own stack, so the full check's wall
+    # time doesn't grow. These are check.sh's other 23 scenarios at check.sh's own settings
+    # (D-209); scripts/test-smoke-parity.sh fails when check.sh gains one neither job runs. CI owns
+    # this stack (D-187: CI=true), so cache-down and postgres-trouble may pause its Postgres and
+    # Valkey here and nowhere else.
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Keep outgoing ports below the stack's
+        run: sudo sysctl -w net.ipv4.ip_local_port_range="20000 50999"
+      # Which runner these numbers come from: smoke results are pass/fail checks, never capacity
+      # claims, and they differ across runner CPUs (D-186's host check gates on this once it lands).
+      - name: Record the runner
+        run: |
+          {
+            echo "### Runner"
+            echo "| CPU | cores | memory |"
+            echo "|---|---|---|"
+            echo "| $(lscpu | sed -n 's/^Model name: *//p') | $(nproc) | $(free -g | awk '/^Mem:/ {print $2}') GB |"
+          } >>"$GITHUB_STEP_SUMMARY"
+      - name: Start the stack
+        run: scripts/stack.sh up
+      - name: Install the pinned toolchain
+        run: |
+          channel=$(sed -n 's/^channel = "\(.*\)"$/\1/p' rust-toolchain.toml)
+          rustup toolchain install "$channel" --profile minimal
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+      - name: Migrate the stack's database
+        run: scripts/migrate.sh
+      # Triage evidence (D-209): what a slow statement, a lock wait or a slow COMMIT looks like
+      # on this runner, so a failed smoke can be told apart as the code's or the runner's.
+      # Logging only; durability is untouched (never fsync off).
+      - name: Log slow statements and lock waits; measure commit latency
+        run: |
+          set -euo pipefail
+          pg() { docker compose -f deploy/compose.yaml exec -T postgres "$@"; }
+          pg psql -U colophon -d postgres -XAtq \
+            -c "ALTER SYSTEM SET log_min_duration_statement = '100ms'" \
+            -c "ALTER SYSTEM SET log_lock_waits = on" -c "ALTER SYSTEM SET deadlock_timeout = '200ms'" \
+            -c "ALTER SYSTEM SET shared_preload_libraries = 'pg_stat_statements'" \
+            -c "SELECT pg_reload_conf()" >/dev/null
+          # pg_stat_statements loads only at start: CI's own stack, restarted before any smoke.
+          docker compose -f deploy/compose.yaml restart postgres >/dev/null
+          for _ in $(seq 60); do pg pg_isready -q -U colophon && break; sleep 1; done
+          pg psql -U colophon -d postgres -XAtqc "CREATE EXTENSION IF NOT EXISTS pg_stat_statements" >/dev/null
+          fsync=$(pg sh -c 'pg_test_fsync -s 2 -f "$PGDATA/pg_test_fsync.probe"; rm -f "$PGDATA/pg_test_fsync.probe"' \
+            | sed -n 's/^ *fdatasync *\([0-9.]*\) ops\/sec *\([0-9]*\) usecs\/op.*/\1 ops\/s, \2 µs\/op/p' | head -1)
+          pg psql -U colophon -d postgres -XAtqc "CREATE TABLE IF NOT EXISTS commit_probe (n int)" >/dev/null
+          printf 'INSERT INTO commit_probe VALUES (1);\n' | pg sh -c 'cat >/tmp/probe.sql'
+          commit=$(pg pgbench -U colophon -n -c 1 -t 500 -f /tmp/probe.sql postgres 2>&1 | sed -n 's/^latency average = \(.*\)$/\1/p')
+          pg psql -U colophon -d postgres -XAtqc "DROP TABLE commit_probe" >/dev/null
+          {
+            echo "### Storage, as Postgres sees it"
+            echo "| fdatasync (pg_test_fsync) | INSERT+COMMIT, one client (pgbench, 500) |"
+            echo "|---|---|"
+            echo "| ${fsync:-not measured} | ${commit:-not measured} |"
+          } | tee -a "$GITHUB_STEP_SUMMARY"
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - name: Load smokes, check.sh's settings (each runs; the failures must be exactly perf/expected-smoke-failures.tsv)
+        run: |
+          set -o pipefail
+          scripts/install-k6.sh "$RUNNER_TEMP/bin"
+          export PATH="$RUNNER_TEMP/bin:$PATH" KEEP=0 SAMPLE_RESOURCES=1 SAMPLE_SECONDS=1
+          logs="$RUNNER_TEMP/smoke-logs"; mkdir -p "$logs"
+          ran=() failed=()
+          # Each scenario keeps its server log, and marks its window so the Postgres log (one
+          # for the job) can be cut by scenario.
+          pgq() { docker compose -f deploy/compose.yaml exec -T postgres psql -U colophon -d postgres -XAtq "$@"; }
+          pgc=$(docker compose -f deploy/compose.yaml ps -q postgres)
+          smoke() {
+            local name="${*: -2:1}" sampler
+            ran+=("$name")
+            echo "$(date -u +%FT%TZ) start $name" >>"$logs/windows.txt"
+            echo "::group::$*"
+            # Postgres's own side of the window: its container's CPU each second, and its
+            # statements by total time, reset first so they're this scenario's alone.
+            pgq -c "SELECT pg_stat_statements_reset()" >/dev/null || true
+            (while :; do docker stats --no-stream --format '{{.CPUPerc}}' "$pgc" 2>/dev/null; sleep 1; done) >"$logs/$name.postgres-cpu.txt" &
+            sampler=$!
+            if env SERVER_LOG="$logs/$name.server.log" RECORD_OUT="$logs/$name.record.json" "$@"; then echo "::endgroup::"; else
+              echo "::endgroup::"; echo "::warning::smoke failed: $* (the verdict below decides whether it was expected)"; failed+=("$name")
+              # The work tables as the failure left them: what was queued, claimed, retried.
+              docker compose -f deploy/compose.yaml exec -T postgres psql -U colophon -d colophon -XAq \
+                -c "SELECT status, attempts, lease_owner IS NOT NULL AS leased, next_attempt_at > now() AS waiting, left(last_error, 200) AS last_error, count(*) FROM asset_jobs GROUP BY 1, 2, 3, 4, 5 ORDER BY 6 DESC LIMIT 20" \
+                -c "SELECT state, count(*) FROM assets GROUP BY 1" >"$logs/$name.work-tables.txt" 2>&1 || true
+            fi
+            kill "$sampler" 2>/dev/null || true
+            # What the verdict judges a flapping smoke by: its overall p99 and L08's worst noise/baseline ratio.
+            if [[ -s "$logs/$name.record.json" ]]; then
+              jq -r --arg n "$name" '[$n, (.latency_ms.p99 // ""), ([.l08.ratios[]?] | max // "")] | @tsv' "$logs/$name.record.json" >>"$logs/metrics.tsv"
+            fi
+            echo "$(date -u +%FT%TZ) end $name" >>"$logs/windows.txt"
+            pgq -c "SELECT round(total_exec_time::numeric, 1) AS total_ms, calls, round(mean_exec_time::numeric, 3) AS mean_ms, rows, left(regexp_replace(query, '\\s+', ' ', 'g'), 160) FROM pg_stat_statements ORDER BY total_exec_time DESC LIMIT 10" \
+              >"$logs/$name.statements.txt" 2>&1 || true
+            cpu=$(tr -d '%' <"$logs/$name.postgres-cpu.txt" | awk 'NF {s += $1; n++; if ($1 > m) m = $1} END {if (n) printf "avg %.0f%%, max %.0f%%", s / n, m; else print "not sampled"}')
+            echo "| $name | postgres CPU $cpu |" >>"$GITHUB_STEP_SUMMARY"
+          }
+          smoke TOTAL=10000 P99_MS=500 scripts/load.sh assets throughput
+          smoke TOTAL=10000 USERS=64 P99_MS=700 scripts/load.sh audience throughput
+          smoke TOTAL=10000 P99_MS=500 scripts/load.sh bulk throughput
+          smoke DURATION=10s P99_MS=500 scripts/load.sh cache-down throughput
+          smoke DURATION=10s RATE=300 PUBLISH_SECONDS=5 P99_MS=400 scripts/load.sh cdn-warm throughput
+          smoke TOTAL=5000 CORPUS=512 P99_MS=750 scripts/load.sh cold-cache throughput
+          smoke TOTAL=20000 P99_MS=200 scripts/load.sh collaboration throughput
+          smoke TOTAL_RECORDS=1024 P99_MS=15000 scripts/load.sh import-scale throughput
+          smoke TOTAL=10000 P99_MS=500 scripts/load.sh live throughput
+          smoke DURATION=10s MEDIA_VUS=2 P99_MS=700 scripts/load.sh media-load throughput
+          smoke TOTAL=10000 P99_MS=500 scripts/load.sh migrations throughput
+          smoke DURATION=15s RATE=50 PUBLISH_SECONDS=5 P99_MS=700 scripts/load.sh mixed throughput
+          smoke DURATION=8s P99_MS=500 scripts/load.sh noisy-agent throughput
+          smoke DURATION=8s P99_MS=250 scripts/load.sh password-flood throughput
+          smoke DURATION=10s P99_MS=500 scripts/load.sh postgres-trouble throughput
+          smoke DURATION=10s P99_MS=500 scripts/load.sh purge-trouble throughput
+          smoke TOTAL=20000 P99_MS=200 scripts/load.sh quotas throughput
+          smoke TOTAL=10000 P99_MS=500 scripts/load.sh site-starter throughput
+          smoke DURATION=10s P99_MS=700 scripts/load.sh smoke throughput
+          smoke DURATION=8s RATE=300 SPIKE_SECONDS=10 P99_MS=250 scripts/load.sh spike throughput
+          smoke TOTAL=10000 P99_MS=200 scripts/load.sh stages throughput
+          smoke DURATION=15s P99_MS=250 scripts/load.sh stampede throughput
+          smoke TOTAL=50000 P99_MS=350 scripts/load.sh warm-baseline throughput
+          echo "| failed smokes | ${failed[*]:-none} (of ${#ran[@]} that ran) |" >>"$GITHUB_STEP_SUMMARY"
+          # D-209 addendum: a strict entry must fail (its fix removes its line); a flapping one may pass or fail its limit
+          # but never its ceiling (2x); anything unlisted that fails, fails. Each listed smoke's outcome and margin print.
+          touch "$logs/metrics.tsv"
+          scripts/smoke-verdict.sh perf/expected-smoke-failures.tsv "${ran[*]}" "${failed[*]:-}" "$logs/metrics.tsv" | tee -a "$logs/verdict.txt" "$GITHUB_STEP_SUMMARY"
+      - name: Service logs
+        if: failure()
+        run: docker compose -f deploy/compose.yaml logs --no-color --tail 300
+      - name: Keep the evidence (server logs per scenario, Postgres's slow statements and lock waits)
+        if: always()
+        run: |
+          mkdir -p "$RUNNER_TEMP/smoke-logs"
+          docker compose -f deploy/compose.yaml logs --no-color --timestamps postgres >"$RUNNER_TEMP/smoke-logs/postgres.log" 2>&1 || true
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: always()
+        with:
+          name: smoke-logs
+          path: ${{ runner.temp }}/smoke-logs
+          retention-days: 14
       - name: Tear down
         if: always()
         run: scripts/stack.sh reset
