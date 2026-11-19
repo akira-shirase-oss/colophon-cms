@@ -148,7 +148,8 @@ async function secondRelease(page: Page, project: string, first: string): Promis
 // change. The restore is submitted, approved and published like any other changeset, and the
 // generation still moves forward. Pinned reads keep serving what is still deliverable at their
 // generation: the retitled article's earlier and later revisions both stay readable — but what
-// the restore took down is revoked, and a revoked article is gone at every generation (D-049).
+// the restore took down is revoked, and a revoked article is gone at every generation it was
+// published in, and from its takedown on — before it existed it is simply not found (D-049).
 test('roll back to an earlier release through an ordinary changeset', async ({ page }) => {
 	await signIn(page, 'dev-owner');
 	const { project, first } = await rollbackSetup(page);
@@ -208,7 +209,8 @@ test('roll back to an earlier release through an ordinary changeset', async ({ p
 	await expect(page.getByTestId('message')).toHaveText('published as generation 3');
 
 	// Generation 3 serves what generation 1 served; at generation 2 the article's newer revision
-	// is still delivered — but "Farewell" is gone even there: a revocation is for all history.
+	// is still delivered — but "Farewell" is gone even there: a revocation is for all history. At generation 1 it
+	// didn't exist yet, so it is not found there, not gone.
 	await page.getByRole('button', { name: 'Read published articles' }).click();
 	await expect(page.getByTestId('delivered')).toHaveText('HTTP 200, generation 3: Time traveller');
 	await page.getByLabel('Read at generation').fill('1');
@@ -218,10 +220,15 @@ test('roll back to an earlier release through an ordinary changeset', async ({ p
 	await page.getByRole('button', { name: 'Read published articles' }).click();
 	await expect(page.getByTestId('delivered')).toHaveText('HTTP 200, generation 2: Time traveller returns');
 	await page.getByLabel("One article's id (empty for the list)").fill(gone);
-	for (const at of ['', '1', '2']) {
+	// Each read is awaited before its answer is checked: the text on screen is the previous read's until this one
+	// lands, so checking it straight after the click could pass on a stale answer (the flake in CI 44579704651).
+	const reads: [string, string][] = [['', 'HTTP 410, gone'], ['1', 'HTTP 404, not_found'], ['2', 'HTTP 410, gone']];
+	for (const [at, answer] of reads) {
 		await page.getByLabel('Read at generation').fill(at);
+		const answered = page.waitForResponse((response) => response.url().includes(`/articles/${gone}`) && (at === '' ? !response.url().includes('generation=') : response.url().endsWith(`generation=${at}`)));
 		await page.getByRole('button', { name: 'Read published articles' }).click();
-		await expect(page.getByTestId('delivered')).toHaveText('HTTP 410, gone');
+		await answered;
+		await expect(page.getByTestId('delivered')).toHaveText(answer);
 	}
 
 	// Restoring what is already live builds nothing.
