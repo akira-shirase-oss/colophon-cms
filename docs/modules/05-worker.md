@@ -59,10 +59,12 @@ Step 2.3 (D-046): `crates/colophon-worker`, run by `colophon-server --role worke
   admission refuses with `DbError::WorkFull` → 503 `unavailable` + `work_full` + `Retry-After`, rolling
   the whole accepting transaction back; a due schedule that hits it stays `scheduled` and retries at the
   next poll. Worker transactions never take the lock (they only finish admitted work).
-- **The installation payload bound** (P6, D-135): beside the row count, `colophon_pending_payload` sums
-  the stored bytes of every project's open work — job keys, recorded asset sizes, bulk manifests and
-  pending items, plan definitions and resolutions — under a second, install-wide advisory lock, and over
-  spec §33's 1 GiB the same refusal shape answers `payload_full`. Every payload-storing site re-checks
+- **The installation payload bound** (P6, D-135; D-216): beside the row count, the stored bytes of every
+  project's open work — job keys, recorded asset sizes, bulk manifests and pending items, plan definitions
+  and resolutions — kept as a running total by triggers (migration 0078), checked at the end of each
+  admission under the counter row's lock, and over spec §33's 1 GiB the same refusal shape answers
+  `payload_full`. Worker transactions only log their changes; `colophon_worker::payload::Folder` folds the
+  log every 5 s, skipping a turn an admission holds, and warns when the log grows long or old. Every payload-storing site re-checks
   after its write, and the media sweep enqueues only inside the room `install_payload` leaves, so the
   bound is never tipped by work nobody admitted.
 - **The table-retention sweep** (P6, D-135): `colophon_worker::tables::Sweeper` runs beside the
@@ -210,10 +212,11 @@ Each pool is a separate semaphore, so expensive work can never starve editorial 
   new row is inserted, mapped to 503 `unavailable` + `details.reason` `work_full` + `Retry-After: 5`. The
   lock is the first any admitting transaction takes, so it precedes content-type and token-limit locks and
   no two admissions can deadlock; worker transactions never take it.
-- The byte half is in place too (D-135): `work::admission` pairs the project lock with the install-wide
-  byte lock, `check_payload` counts the transaction's own uncommitted stored bytes — idempotency keys,
-  recorded `assets.size_bytes`, bulk operation documents and pending item inputs, plan definitions and
-  resolutions — through `colophon_pending_payload`, and over `job::MAX_PENDING_PAYLOAD` (1 GiB) the refusal
+- The byte half is in place too (D-135, D-216): the stored bytes — idempotency keys, recorded
+  `assets.size_bytes`, bulk operation documents and pending item inputs, plan definitions and resolutions —
+  are a running total kept by triggers; `check_payload`, last in an admitting transaction, locks the counter
+  row to commit and folds in every logged change it can see, its own included, and over
+  `job::MAX_PENDING_PAYLOAD` (1 GiB) the refusal
   is `DbError::PayloadFull` → 503 `unavailable` + `details.reason` `payload_full` + `Retry-After`. Large
   bodies live in object storage, so their recorded size is what the database honestly weighs.
 - When capacity is exhausted, new work is refused with a clear error **before** it is accepted (F09): the

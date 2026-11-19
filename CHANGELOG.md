@@ -8,6 +8,15 @@ through `--version` and `GET /version`.
 
 ## [Unreleased]
 
+### Performance
+
+- **Submitting work no longer waits on every other project's submissions** (D-216). The
+  installation's 1 GiB bound on pending work metadata used to be counted from scratch on every
+  submit, under one lock held for the whole request; it is now a running total checked at the end
+  of each submit, so bulk jobs, uploads, releases and migration plans in different projects go
+  through side by side. Upgrading runs migration 0078, which briefly holds writes to the work
+  tables while it counts the existing total once.
+
 ## [0.1.0-alpha.1] — 2026-11-19
 
 The first versioned state of the engine: pre-release until the P6 proof gate closes

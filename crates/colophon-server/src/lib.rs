@@ -79,6 +79,8 @@ fn start_worker(
         )
     });
     let tables = colophon_worker::tables::Sweeper::new(worker_pool.clone(), config.table_sweep);
+    // The pending-payload log's fold (D-216): admissions fold it too, this keeps it short.
+    let folder = colophon_worker::payload::Folder::new(worker_pool.clone());
     let cancel = cancel.clone();
     Ok(Some(tokio::spawn(async move {
         let sweep_cancel = cancel.clone();
@@ -91,7 +93,8 @@ fn start_worker(
             Arc::new(worker).run(cancel.clone()),
             scheduler.run(cancel.clone()),
             sweep,
-            tables.run(cancel.clone())
+            tables.run(cancel.clone()),
+            folder.run(cancel.clone())
         );
         worker_pool.close().await;
     })))
