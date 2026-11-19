@@ -51,7 +51,7 @@ const TEXT: [string, string[]][] = [
 	...STATUSES.map((status): [string, string[]] => [`${status}-ink`, [`${status}-soft`, 'card', 'background']]),
 	// The accent as text (links, the selection's label): never the brighter --brand itself.
 	['brand-ink', ['background', 'card', 'popover', 'sidebar', 'brand-soft']],
-	['destructive', ['card', 'background']],
+	['destructive', ['card', 'background', 'popover', 'muted', 'secondary']],
 	['destructive-foreground', ['destructive']]
 ];
 /** Marks that aren't text but must be seen (WCAG 1.4.11, 3:1): the focus ring and the edge of an

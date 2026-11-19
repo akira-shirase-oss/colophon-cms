@@ -8,7 +8,7 @@
 		base: "group/badge inline-flex w-fit shrink-0 items-center justify-center gap-1.5 overflow-hidden whitespace-nowrap rounded-full border px-2.5 py-0.5 text-xs font-medium transition-colors focus-visible:ring-4 focus-visible:ring-ring/25 aria-invalid:border-destructive [&>svg]:pointer-events-none [&>svg]:size-3",
 		variants: {
 			variant: {
-				default: "border-transparent bg-primary text-primary-foreground [a]:hover:bg-primary/88",
+				default: "border-transparent bg-primary text-primary-foreground [a]:hover:bg-primary-hover",
 				secondary: "border-transparent bg-secondary text-secondary-foreground [a]:hover:bg-accent",
 				destructive: "border-transparent bg-attention-soft text-attention-ink",
 				outline: "border-border bg-popover text-foreground [a]:hover:bg-accent",

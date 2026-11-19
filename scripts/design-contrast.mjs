@@ -73,7 +73,23 @@ const TEXT = [
 	['primary-foreground', 'primary'], ['secondary-foreground', 'secondary'], ['muted-foreground', 'muted'],
 	['muted-foreground', 'background'], ['muted-foreground', 'card'], ['muted-foreground', 'secondary'],
 	['muted-foreground', 'brand-soft'], ['accent-foreground', 'accent'],
-	['destructive-foreground', 'destructive'], ['destructive', 'background'], ['destructive', 'card'], ['link', 'background'], ['link', 'card'], ['link', 'muted'],
+	['destructive-foreground', 'destructive'], ['destructive', 'background'], ['destructive', 'card'],
+	// Error text on the grounds it sits on: plain surfaces and its own tints behind an error (bg-destructive/5, /10).
+	['destructive', 'popover'], ['destructive', 'muted'], ['destructive', 'secondary'],
+	...['card', 'background', 'popover'].flatMap((g) => [['destructive', `destructive/5 over ${g}`], ['destructive', `destructive/10 over ${g}`]]),
+	// Text on the other translucent grounds the Studio and the kit use (grep "bg-[a-z-]+/[0-9]+"): a tint is
+	// measured over the surfaces it sits on, never as the token alone.
+	...['card', 'background'].flatMap((g) => [
+		...['muted/40', 'muted/50', 'muted/60', 'secondary/40'].flatMap((t) => [['foreground', `${t} over ${g}`], ['muted-foreground', `${t} over ${g}`]]),
+		...['primary/5', 'primary/10'].flatMap((t) => [['foreground', `${t} over ${g}`], ['muted-foreground', `${t} over ${g}`]]),
+		['attention-ink', `attention-soft/60 over ${g}`], ['muted-foreground', `attention-soft/60 over ${g}`],
+		['live-ink', `live-soft/50 over ${g}`], ['muted-foreground', `live-soft/50 over ${g}`],
+		['pending-ink', `pending-soft/70 over ${g}`], ['muted-foreground', `pending-soft/70 over ${g}`],
+		['brand-ink', `brand-soft/40 over ${g}`], ['foreground', `brand-soft/40 over ${g}`],
+		['destructive-foreground', `destructive/90 over ${g}`]
+	]),
+	['accent-foreground', 'accent/50 over popover'],
+	 ['link', 'background'], ['link', 'card'], ['link', 'muted'],
 	['foreground', 'muted'], ['foreground', 'secondary'], ['foreground', 'accent'],
 	['sidebar-foreground', 'sidebar'], ['sidebar-primary-foreground', 'sidebar-primary'],
 	['sidebar-accent-foreground', 'sidebar-accent'],
@@ -90,6 +106,16 @@ const MARKS = [
 	...STATUSES.flatMap((s) => [[s, 'background'], [s, 'card']])
 ];
 
+/** A ground: a token, or `name/NN over base`, the token at NN% over another, blended as the browser does (in sRGB). */
+function tint(t, ground) {
+	const m = ground.match(/^([a-z0-9-]+)\/(\d+) over ([a-z0-9-]+)$/);
+	if (!m) return t[ground];
+	if (!(m[1] in t) || !(m[3] in t)) return undefined;
+	const encode = (c) => (c <= 0.0031308 ? 12.92 * c : 1.055 * c ** (1 / 2.4) - 0.055);
+	const [top, base, a] = [linear(t[m[1]]).map(encode), linear(t[m[3]]).map(encode), Number(m[2]) / 100];
+	return '#' + top.map((c, i) => Math.round((a * c + (1 - a) * base[i]) * 255).toString(16).padStart(2, '0')).join('').toUpperCase();
+}
+
 export function table(css) {
 	const rows = [];
 	for (const [theme, selector] of [['light', ':root'], ['dark', '.dark']]) {
@@ -97,9 +123,10 @@ export function table(css) {
 		const t = theme === 'dark' ? { ...block(css, ':root'), ...own } : own;
 		for (const [pairs, bar, kind] of [[TEXT, 4.5, 'text'], [MARKS, 3, 'non-text']]) {
 			for (const [fg, bg] of pairs) {
-				if (!(fg in t) || !(bg in t)) throw new Error(`${theme}: --${fg} or --${bg} is missing`);
-				const r = ratio(t[fg], t[bg]);
-				rows.push({ theme, fg, bg, kind, bar, r, pass: r >= bar, fgHex: hex(t[fg]), bgHex: hex(t[bg]) });
+				const ground = tint(t, bg);
+				if (!(fg in t) || ground === undefined) throw new Error(`${theme}: --${fg} or --${bg} is missing`);
+				const r = ratio(t[fg], ground);
+				rows.push({ theme, fg, bg, kind, bar, r, pass: r >= bar, fgHex: hex(t[fg]), bgHex: hex(ground) });
 			}
 		}
 	}

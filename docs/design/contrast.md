@@ -17,9 +17,61 @@ marks need 3:1 (1.4.11).
 | light | `--muted-foreground` #626C7F | `--secondary` #F2F4F7 | text | 4.80:1 | 4.5:1 | pass |
 | light | `--muted-foreground` #626C7F | `--brand-soft` #E7F1FF | text | 4.64:1 | 4.5:1 | pass |
 | light | `--accent-foreground` #0830A0 | `--accent` #DFF2FF | text | 9.42:1 | 4.5:1 | pass |
-| light | `--destructive-foreground` #FFFFFF | `--destructive` #E90F1F | text | 4.61:1 | 4.5:1 | pass |
-| light | `--destructive` #E90F1F | `--background` #FFFFFF | text | 4.61:1 | 4.5:1 | pass |
-| light | `--destructive` #E90F1F | `--card` #FFFFFF | text | 4.61:1 | 4.5:1 | pass |
+| light | `--destructive-foreground` #FFFFFF | `--destructive` #D40218 | text | 5.50:1 | 4.5:1 | pass |
+| light | `--destructive` #D40218 | `--background` #FFFFFF | text | 5.50:1 | 4.5:1 | pass |
+| light | `--destructive` #D40218 | `--card` #FFFFFF | text | 5.50:1 | 4.5:1 | pass |
+| light | `--destructive` #D40218 | `--popover` #FFFFFF | text | 5.50:1 | 4.5:1 | pass |
+| light | `--destructive` #D40218 | `--muted` #F9FAFB | text | 5.26:1 | 4.5:1 | pass |
+| light | `--destructive` #D40218 | `--secondary` #F2F4F7 | text | 4.99:1 | 4.5:1 | pass |
+| light | `--destructive` #D40218 | `--destructive/5 over card` #FDF2F3 | text | 5.02:1 | 4.5:1 | pass |
+| light | `--destructive` #D40218 | `--destructive/10 over card` #FBE6E8 | text | 4.61:1 | 4.5:1 | pass |
+| light | `--destructive` #D40218 | `--destructive/5 over background` #FDF2F3 | text | 5.02:1 | 4.5:1 | pass |
+| light | `--destructive` #D40218 | `--destructive/10 over background` #FBE6E8 | text | 4.61:1 | 4.5:1 | pass |
+| light | `--destructive` #D40218 | `--destructive/5 over popover` #FDF2F3 | text | 5.02:1 | 4.5:1 | pass |
+| light | `--destructive` #D40218 | `--destructive/10 over popover` #FBE6E8 | text | 4.61:1 | 4.5:1 | pass |
+| light | `--foreground` #333333 | `--muted/40 over card` #FDFDFD | text | 12.42:1 | 4.5:1 | pass |
+| light | `--muted-foreground` #626C7F | `--muted/40 over card` #FDFDFD | text | 5.20:1 | 4.5:1 | pass |
+| light | `--foreground` #333333 | `--muted/50 over card` #FCFCFD | text | 12.32:1 | 4.5:1 | pass |
+| light | `--muted-foreground` #626C7F | `--muted/50 over card` #FCFCFD | text | 5.16:1 | 4.5:1 | pass |
+| light | `--foreground` #333333 | `--muted/60 over card` #FBFCFD | text | 12.30:1 | 4.5:1 | pass |
+| light | `--muted-foreground` #626C7F | `--muted/60 over card` #FBFCFD | text | 5.15:1 | 4.5:1 | pass |
+| light | `--foreground` #333333 | `--secondary/40 over card` #FAFBFC | text | 12.19:1 | 4.5:1 | pass |
+| light | `--muted-foreground` #626C7F | `--secondary/40 over card` #FAFBFC | text | 5.11:1 | 4.5:1 | pass |
+| light | `--foreground` #333333 | `--primary/5 over card` #F3F7FF | text | 11.77:1 | 4.5:1 | pass |
+| light | `--muted-foreground` #626C7F | `--primary/5 over card` #F3F7FF | text | 4.93:1 | 4.5:1 | pass |
+| light | `--foreground` #333333 | `--primary/10 over card` #E8EFFF | text | 10.96:1 | 4.5:1 | pass |
+| light | `--muted-foreground` #626C7F | `--primary/10 over card` #E8EFFF | text | 4.59:1 | 4.5:1 | pass |
+| light | `--attention-ink` #AB2440 | `--attention-soft/60 over card` #FFF5F5 | text | 6.42:1 | 4.5:1 | pass |
+| light | `--muted-foreground` #626C7F | `--attention-soft/60 over card` #FFF5F5 | text | 4.95:1 | 4.5:1 | pass |
+| light | `--live-ink` #205E2E | `--live-soft/50 over card` #F4FCF5 | text | 7.41:1 | 4.5:1 | pass |
+| light | `--muted-foreground` #626C7F | `--live-soft/50 over card` #F4FCF5 | text | 5.06:1 | 4.5:1 | pass |
+| light | `--pending-ink` #804D0C | `--pending-soft/70 over card` #FFF7E6 | text | 6.58:1 | 4.5:1 | pass |
+| light | `--muted-foreground` #626C7F | `--pending-soft/70 over card` #FFF7E6 | text | 4.96:1 | 4.5:1 | pass |
+| light | `--brand-ink` #155DFC | `--brand-soft/40 over card` #F5F9FF | text | 4.98:1 | 4.5:1 | pass |
+| light | `--foreground` #333333 | `--brand-soft/40 over card` #F5F9FF | text | 11.96:1 | 4.5:1 | pass |
+| light | `--destructive-foreground` #FFFFFF | `--destructive/90 over card` #D81B2F | text | 5.10:1 | 4.5:1 | pass |
+| light | `--foreground` #333333 | `--muted/40 over background` #FDFDFD | text | 12.42:1 | 4.5:1 | pass |
+| light | `--muted-foreground` #626C7F | `--muted/40 over background` #FDFDFD | text | 5.20:1 | 4.5:1 | pass |
+| light | `--foreground` #333333 | `--muted/50 over background` #FCFCFD | text | 12.32:1 | 4.5:1 | pass |
+| light | `--muted-foreground` #626C7F | `--muted/50 over background` #FCFCFD | text | 5.16:1 | 4.5:1 | pass |
+| light | `--foreground` #333333 | `--muted/60 over background` #FBFCFD | text | 12.30:1 | 4.5:1 | pass |
+| light | `--muted-foreground` #626C7F | `--muted/60 over background` #FBFCFD | text | 5.15:1 | 4.5:1 | pass |
+| light | `--foreground` #333333 | `--secondary/40 over background` #FAFBFC | text | 12.19:1 | 4.5:1 | pass |
+| light | `--muted-foreground` #626C7F | `--secondary/40 over background` #FAFBFC | text | 5.11:1 | 4.5:1 | pass |
+| light | `--foreground` #333333 | `--primary/5 over background` #F3F7FF | text | 11.77:1 | 4.5:1 | pass |
+| light | `--muted-foreground` #626C7F | `--primary/5 over background` #F3F7FF | text | 4.93:1 | 4.5:1 | pass |
+| light | `--foreground` #333333 | `--primary/10 over background` #E8EFFF | text | 10.96:1 | 4.5:1 | pass |
+| light | `--muted-foreground` #626C7F | `--primary/10 over background` #E8EFFF | text | 4.59:1 | 4.5:1 | pass |
+| light | `--attention-ink` #AB2440 | `--attention-soft/60 over background` #FFF5F5 | text | 6.42:1 | 4.5:1 | pass |
+| light | `--muted-foreground` #626C7F | `--attention-soft/60 over background` #FFF5F5 | text | 4.95:1 | 4.5:1 | pass |
+| light | `--live-ink` #205E2E | `--live-soft/50 over background` #F4FCF5 | text | 7.41:1 | 4.5:1 | pass |
+| light | `--muted-foreground` #626C7F | `--live-soft/50 over background` #F4FCF5 | text | 5.06:1 | 4.5:1 | pass |
+| light | `--pending-ink` #804D0C | `--pending-soft/70 over background` #FFF7E6 | text | 6.58:1 | 4.5:1 | pass |
+| light | `--muted-foreground` #626C7F | `--pending-soft/70 over background` #FFF7E6 | text | 4.96:1 | 4.5:1 | pass |
+| light | `--brand-ink` #155DFC | `--brand-soft/40 over background` #F5F9FF | text | 4.98:1 | 4.5:1 | pass |
+| light | `--foreground` #333333 | `--brand-soft/40 over background` #F5F9FF | text | 11.96:1 | 4.5:1 | pass |
+| light | `--destructive-foreground` #FFFFFF | `--destructive/90 over background` #D81B2F | text | 5.10:1 | 4.5:1 | pass |
+| light | `--accent-foreground` #0830A0 | `--accent/50 over popover` #EFF8FF | text | 10.07:1 | 4.5:1 | pass |
 | light | `--link` #155DFC | `--background` #FFFFFF | text | 5.26:1 | 4.5:1 | pass |
 | light | `--link` #155DFC | `--card` #FFFFFF | text | 5.26:1 | 4.5:1 | pass |
 | light | `--link` #155DFC | `--muted` #F9FAFB | text | 5.03:1 | 4.5:1 | pass |
@@ -93,9 +145,61 @@ marks need 3:1 (1.4.11).
 | dark | `--muted-foreground` #A3A3A3 | `--secondary` #262626 | text | 6.00:1 | 4.5:1 | pass |
 | dark | `--muted-foreground` #A3A3A3 | `--brand-soft` #16253D | text | 6.08:1 | 4.5:1 | pass |
 | dark | `--accent-foreground` #BEDBFF | `--accent` #0657C9 | text | 4.60:1 | 4.5:1 | pass |
-| dark | `--destructive-foreground` #171717 | `--destructive` #F45A51 | text | 5.49:1 | 4.5:1 | pass |
-| dark | `--destructive` #F45A51 | `--background` #171717 | text | 5.49:1 | 4.5:1 | pass |
-| dark | `--destructive` #F45A51 | `--card` #262626 | text | 4.64:1 | 4.5:1 | pass |
+| dark | `--destructive-foreground` #171717 | `--destructive` #FE665C | text | 6.24:1 | 4.5:1 | pass |
+| dark | `--destructive` #FE665C | `--background` #171717 | text | 6.24:1 | 4.5:1 | pass |
+| dark | `--destructive` #FE665C | `--card` #262626 | text | 5.26:1 | 4.5:1 | pass |
+| dark | `--destructive` #FE665C | `--popover` #262626 | text | 5.26:1 | 4.5:1 | pass |
+| dark | `--destructive` #FE665C | `--muted` #1F1F1F | text | 5.73:1 | 4.5:1 | pass |
+| dark | `--destructive` #FE665C | `--secondary` #262626 | text | 5.26:1 | 4.5:1 | pass |
+| dark | `--destructive` #FE665C | `--destructive/5 over card` #312929 | text | 4.94:1 | 4.5:1 | pass |
+| dark | `--destructive` #FE665C | `--destructive/10 over card` #3C2C2B | text | 4.60:1 | 4.5:1 | pass |
+| dark | `--destructive` #FE665C | `--destructive/5 over background` #231B1A | text | 5.88:1 | 4.5:1 | pass |
+| dark | `--destructive` #FE665C | `--destructive/10 over background` #2E1F1E | text | 5.49:1 | 4.5:1 | pass |
+| dark | `--destructive` #FE665C | `--destructive/5 over popover` #312929 | text | 4.94:1 | 4.5:1 | pass |
+| dark | `--destructive` #FE665C | `--destructive/10 over popover` #3C2C2B | text | 4.60:1 | 4.5:1 | pass |
+| dark | `--foreground` #E5E5E5 | `--muted/40 over card` #232323 | text | 12.48:1 | 4.5:1 | pass |
+| dark | `--muted-foreground` #A3A3A3 | `--muted/40 over card` #232323 | text | 6.23:1 | 4.5:1 | pass |
+| dark | `--foreground` #E5E5E5 | `--muted/50 over card` #222222 | text | 12.63:1 | 4.5:1 | pass |
+| dark | `--muted-foreground` #A3A3A3 | `--muted/50 over card` #222222 | text | 6.31:1 | 4.5:1 | pass |
+| dark | `--foreground` #E5E5E5 | `--muted/60 over card` #222222 | text | 12.63:1 | 4.5:1 | pass |
+| dark | `--muted-foreground` #A3A3A3 | `--muted/60 over card` #222222 | text | 6.31:1 | 4.5:1 | pass |
+| dark | `--foreground` #E5E5E5 | `--secondary/40 over card` #262626 | text | 12.01:1 | 4.5:1 | pass |
+| dark | `--muted-foreground` #A3A3A3 | `--secondary/40 over card` #262626 | text | 6.00:1 | 4.5:1 | pass |
+| dark | `--foreground` #E5E5E5 | `--primary/5 over card` #252931 | text | 11.58:1 | 4.5:1 | pass |
+| dark | `--muted-foreground` #A3A3A3 | `--primary/5 over card` #252931 | text | 5.78:1 | 4.5:1 | pass |
+| dark | `--foreground` #E5E5E5 | `--primary/10 over card` #242B3B | text | 11.24:1 | 4.5:1 | pass |
+| dark | `--muted-foreground` #A3A3A3 | `--primary/10 over card` #242B3B | text | 5.61:1 | 4.5:1 | pass |
+| dark | `--attention-ink` #FFBFC3 | `--attention-soft/60 over card` #341F21 | text | 9.91:1 | 4.5:1 | pass |
+| dark | `--muted-foreground` #A3A3A3 | `--attention-soft/60 over card` #341F21 | text | 6.10:1 | 4.5:1 | pass |
+| dark | `--live-ink` #A4E4AC | `--live-soft/50 over card` #1E281F | text | 10.31:1 | 4.5:1 | pass |
+| dark | `--muted-foreground` #A3A3A3 | `--live-soft/50 over card` #1E281F | text | 6.04:1 | 4.5:1 | pass |
+| dark | `--pending-ink` #F9D68C | `--pending-soft/70 over card` #312614 | text | 10.61:1 | 4.5:1 | pass |
+| dark | `--muted-foreground` #A3A3A3 | `--pending-soft/70 over card` #312614 | text | 5.87:1 | 4.5:1 | pass |
+| dark | `--brand-ink` #458BFF | `--brand-soft/40 over card` #20262F | text | 4.63:1 | 4.5:1 | pass |
+| dark | `--foreground` #E5E5E5 | `--brand-soft/40 over card` #20262F | text | 12.08:1 | 4.5:1 | pass |
+| dark | `--destructive-foreground` #171717 | `--destructive/90 over card` #E96057 | text | 5.36:1 | 4.5:1 | pass |
+| dark | `--foreground` #E5E5E5 | `--muted/40 over background` #1A1A1A | text | 13.82:1 | 4.5:1 | pass |
+| dark | `--muted-foreground` #A3A3A3 | `--muted/40 over background` #1A1A1A | text | 6.90:1 | 4.5:1 | pass |
+| dark | `--foreground` #E5E5E5 | `--muted/50 over background` #1B1B1B | text | 13.67:1 | 4.5:1 | pass |
+| dark | `--muted-foreground` #A3A3A3 | `--muted/50 over background` #1B1B1B | text | 6.83:1 | 4.5:1 | pass |
+| dark | `--foreground` #E5E5E5 | `--muted/60 over background` #1C1C1C | text | 13.53:1 | 4.5:1 | pass |
+| dark | `--muted-foreground` #A3A3A3 | `--muted/60 over background` #1C1C1C | text | 6.76:1 | 4.5:1 | pass |
+| dark | `--foreground` #E5E5E5 | `--secondary/40 over background` #1D1D1D | text | 13.38:1 | 4.5:1 | pass |
+| dark | `--muted-foreground` #A3A3A3 | `--secondary/40 over background` #1D1D1D | text | 6.68:1 | 4.5:1 | pass |
+| dark | `--foreground` #E5E5E5 | `--primary/5 over background` #171A22 | text | 13.81:1 | 4.5:1 | pass |
+| dark | `--muted-foreground` #A3A3A3 | `--primary/5 over background` #171A22 | text | 6.90:1 | 4.5:1 | pass |
+| dark | `--foreground` #E5E5E5 | `--primary/10 over background` #171E2E | text | 13.21:1 | 4.5:1 | pass |
+| dark | `--muted-foreground` #A3A3A3 | `--primary/10 over background` #171E2E | text | 6.60:1 | 4.5:1 | pass |
+| dark | `--attention-ink` #FFBFC3 | `--attention-soft/60 over background` #2E191B | text | 10.64:1 | 4.5:1 | pass |
+| dark | `--muted-foreground` #A3A3A3 | `--attention-soft/60 over background` #2E191B | text | 6.55:1 | 4.5:1 | pass |
+| dark | `--live-ink` #A4E4AC | `--live-soft/50 over background` #162018 | text | 11.34:1 | 4.5:1 | pass |
+| dark | `--muted-foreground` #A3A3A3 | `--live-soft/50 over background` #162018 | text | 6.64:1 | 4.5:1 | pass |
+| dark | `--pending-ink` #F9D68C | `--pending-soft/70 over background` #2D2110 | text | 11.26:1 | 4.5:1 | pass |
+| dark | `--muted-foreground` #A3A3A3 | `--pending-soft/70 over background` #2D2110 | text | 6.23:1 | 4.5:1 | pass |
+| dark | `--brand-ink` #458BFF | `--brand-soft/40 over background` #171D26 | text | 5.15:1 | 4.5:1 | pass |
+| dark | `--foreground` #E5E5E5 | `--brand-soft/40 over background` #171D26 | text | 13.44:1 | 4.5:1 | pass |
+| dark | `--destructive-foreground` #171717 | `--destructive/90 over background` #E75F55 | text | 5.26:1 | 4.5:1 | pass |
+| dark | `--accent-foreground` #BEDBFF | `--accent/50 over popover` #163E78 | text | 7.40:1 | 4.5:1 | pass |
 | dark | `--link` #458BFF | `--background` #171717 | text | 5.45:1 | 4.5:1 | pass |
 | dark | `--link` #458BFF | `--card` #262626 | text | 4.60:1 | 4.5:1 | pass |
 | dark | `--link` #458BFF | `--muted` #1F1F1F | text | 5.01:1 | 4.5:1 | pass |

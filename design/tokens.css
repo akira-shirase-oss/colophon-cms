@@ -6,8 +6,9 @@
  *                       --ring, --sidebar-ring and --chart-1 (icons, large shapes, focus rings: 3:1 is the bar).
  *   --link              new: links and primary-coloured text. Light: --primary. Dark: a lighter tint of the same
  *                       hue (the deeper primary is too dark to read on a dark card).
- *   --destructive       a deeper red: white on it reads ≥ 4.5:1 (the pasted red read 3.63:1). In dark mode a lighter
- *                       red with a dark label instead, so it also reads as error text on a dark card (4.64:1).
+ *   --destructive       a deeper red: white on it reads ≥ 4.5:1 (the pasted red read 3.63:1), and as error text it
+ *                       reads ≥ 4.5:1 on its own tints too (bg-destructive/5 and /10 behind an error, on --muted and
+ *                       --secondary). In dark mode a lighter red with a dark label instead, for the same grounds.
  *   dark --accent and --sidebar-accent: deep enough that their foreground reads ≥ 4.5:1 (pasted 3.09:1).
  *   --muted-foreground  a hair darker in light (0.5471 → 0.5296): the pasted grey read 4.28:1 on a status ground
  *                       and 4.46:1 on --secondary; now ≥ 4.6:1 on every light ground.
@@ -35,7 +36,7 @@
   --secondary: oklch(0.9665 0.0045 258.3247); --secondary-foreground: oklch(0.4419 0.0375 257.2811);
   --muted: oklch(0.9846 0.0017 247.8389); --muted-foreground: oklch(0.5296 0.0321 263.2921);
   --accent: oklch(0.9510 0.0267 237.5723); --accent-foreground: oklch(0.3742 0.1844 263.9420);
-  --destructive: oklch(0.5910 0.2362 26.9032); --destructive-foreground: oklch(1.0000 0 0);
+  --destructive: oklch(0.5475 0.2225 26.9032); --destructive-foreground: oklch(1.0000 0 0);
   --border: oklch(0.9271 0.0075 260.7315); --input: oklch(0.6650 0.0075 260.7315); --ring: oklch(0.6225 0.2041 259.9027);
   --chart-1: oklch(0.6225 0.2041 259.9027); --chart-2: oklch(0.5469 0.2507 262.8085); --chart-3: oklch(0.4902 0.2693 263.7106);
   --chart-4: oklch(0.4234 0.2370 263.9162); --chart-5: oklch(0.3742 0.1844 263.9420);
@@ -86,7 +87,7 @@
   --secondary: oklch(0.2686 0 0); --secondary-foreground: oklch(0.9219 0 0);
   --muted: oklch(0.2393 0 0); --muted-foreground: oklch(0.7155 0 0);
   --accent: oklch(0.4880 0.1915 259.7416); --accent-foreground: oklch(0.8820 0.0588 253.9688);
-  --destructive: oklch(0.6700 0.1900 26.9032); --destructive-foreground: oklch(0.2046 0 0);
+  --destructive: oklch(0.7025 0.1875 26.9032); --destructive-foreground: oklch(0.2046 0 0);
   --border: oklch(0.3715 0 0); --input: oklch(0.5450 0 0); --ring: oklch(0.6225 0.2041 259.9027);
   --chart-1: oklch(0.7122 0.1526 254.9868); --chart-2: oklch(0.6225 0.2041 259.9027); --chart-3: oklch(0.5739 0.2334 262.7735);
   --chart-4: oklch(0.6225 0.2041 259.9027); --chart-5: oklch(0.6225 0.2041 259.9027);
