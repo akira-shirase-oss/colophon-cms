@@ -25,7 +25,10 @@
 use std::{
     collections::HashMap,
     net::{IpAddr, SocketAddr},
-    sync::{Arc, Mutex, PoisonError},
+    sync::{
+        Arc, Mutex, PoisonError,
+        atomic::{AtomicU64, Ordering},
+    },
     time::{Duration, Instant},
 };
 
@@ -342,7 +345,30 @@ pub struct Admission {
     /// Tokens this process knows are throttled, until when: the transition the audit log
     /// records once an episode (D-118). Bounded the way [`Local`]'s arrivals are.
     throttled: Mutex<HashMap<Uuid, Instant>>,
+    /// Tokens refused for their quota, by the hash of their secret, until the refusal's wait
+    /// runs out (D-214): while one stands, the token's next request is answered from here and
+    /// the limiter alone, before Postgres is asked anything. Refusal-only: an entry can refuse,
+    /// never admit. At most [`MAX_REFUSED`] entries.
+    refused: Mutex<HashMap<[u8; 32], Refused>>,
+    /// Questions put to a limit's store (Valkey, or this process's own copy): the count a test
+    /// reads to prove a remembered refusal costs one (D-214).
+    queries: AtomicU64,
 }
+
+/// A token's quota refusal, remembered (D-214): what the token is, the ceiling Postgres gave it
+/// when it was refused, and until when the refusal can stand.
+#[derive(Debug, Clone, Copy)]
+struct Refused {
+    project: Uuid,
+    token: Uuid,
+    rpm: i64,
+    until: Instant,
+}
+
+/// How many refused tokens the memo holds (D-214). Each is a real token over a quota a project
+/// set, so the cap is far above any honest count; past it, a refusal simply isn't remembered and
+/// that token's requests take the full path, which refuses them as before.
+pub const MAX_REFUSED: usize = 10_000;
 
 impl std::fmt::Debug for Admission {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -378,6 +404,8 @@ impl Admission {
             }),
             quota_window_ms,
             throttled: Mutex::new(HashMap::new()),
+            refused: Mutex::new(HashMap::new()),
+            queries: AtomicU64::new(0),
         })
     }
 
@@ -452,6 +480,7 @@ impl Admission {
         if keys.is_empty() {
             return None;
         }
+        self.queries.fetch_add(1, Ordering::Relaxed);
         if let Some(shared) = self.shared(keys).await {
             return shared;
         }
@@ -509,6 +538,7 @@ impl Admission {
 
     /// How far ahead of now `key`'s cell sits, in microseconds.
     async fn ahead(&self, key: &str) -> Option<u64> {
+        self.queries.fetch_add(1, Ordering::Relaxed);
         let mut connection = self.valkey.connection().await;
         if let Some(connection) = connection.as_mut() {
             let reply = tokio::time::timeout(
@@ -530,6 +560,119 @@ impl Admission {
         let local = self.local.lock().unwrap_or_else(PoisonError::into_inner);
         let now = u64::try_from(local.epoch.elapsed().as_micros()).unwrap_or(u64::MAX);
         local.ahead(now, key)
+    }
+
+    /// Remembers that the token whose secret hashes to `hash` was refused for its quota
+    /// (D-214), for `wait_us`: until then [`Self::refused_again`] can answer its requests. Past
+    /// [`MAX_REFUSED`] live entries, expired ones go first; if every one is still live, this
+    /// refusal isn't remembered (the next request takes the full path and is refused there).
+    pub(crate) fn remember_refusal(
+        &self,
+        hash: [u8; 32],
+        project: Uuid,
+        token: Uuid,
+        rpm: i64,
+        wait_us: u64,
+    ) {
+        let mut refused = self.refused.lock().unwrap_or_else(PoisonError::into_inner);
+        let now = Instant::now();
+        if refused.len() >= MAX_REFUSED && !refused.contains_key(&hash) {
+            refused.retain(|_, entry| entry.until > now);
+            if refused.len() >= MAX_REFUSED {
+                return;
+            }
+        }
+        refused.insert(
+            hash,
+            Refused {
+                project,
+                token,
+                rpm,
+                until: now + Duration::from_micros(wait_us),
+            },
+        );
+    }
+
+    /// A remembered refusal that still stands for this request (D-214): `Some` when the token
+    /// whose secret hashes to `hash` was refused for its quota, the refusal hasn't run out, the
+    /// request is one the quota counts (`path` is in the token's own project's environments, as
+    /// [`crate::entries::open`]'s requests are), and the limiter, asked without spending
+    /// anything, says the window is still full. One question to the limiter; never Postgres.
+    ///
+    /// `None` sends the request down the full path: no memo, an expired one (forgotten), a path
+    /// the quota doesn't count, a window with room again (forgotten, so the full path spends
+    /// it), or a limiter that can't be asked (the full path has the same fallback as ever).
+    pub(crate) async fn refused_again(&self, hash: &[u8; 32], path: &str) -> Option<Throttle> {
+        let entry = {
+            let mut refused = self.refused.lock().unwrap_or_else(PoisonError::into_inner);
+            let entry = *refused.get(hash)?;
+            if entry.until <= Instant::now() {
+                refused.remove(hash);
+                return None;
+            }
+            entry
+        };
+        let counted = path
+            .strip_prefix(&format!("/api/v1/projects/{}/environments/", entry.project))
+            .is_some_and(|rest| !rest.ends_with("/schedule"));
+        if !counted {
+            return None;
+        }
+        let cell = quota_cell(entry.rpm, self.quota_window_ms);
+        let over = self
+            .ahead(&quota_key(entry.project, entry.token))
+            .await
+            .and_then(|ahead| ahead.checked_sub(cell.tolerance_us))
+            .filter(|wait| *wait > 0);
+        let mut refused = self.refused.lock().unwrap_or_else(PoisonError::into_inner);
+        let Some(wait_us) = over else {
+            refused.remove(hash);
+            return None;
+        };
+        if let Some(stored) = refused.get_mut(hash) {
+            stored.until = Instant::now() + Duration::from_micros(wait_us);
+        }
+        drop(refused);
+        // The episode goes on: keep its marker with it, so the audit log still hears it once.
+        self.mark_throttled(entry.token, wait_us);
+        Some(Throttle {
+            wait_us,
+            transition: false,
+        })
+    }
+
+    /// How many refusals the memo holds (D-214's bound, for tests).
+    #[doc(hidden)]
+    pub fn refused_len(&self) -> usize {
+        self.refused
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .len()
+    }
+
+    /// How many questions this process has put to a limit's store (D-214, for tests).
+    #[doc(hidden)]
+    pub fn queries(&self) -> u64 {
+        self.queries.load(Ordering::Relaxed)
+    }
+
+    /// Spends `token`'s quota until it refuses, then remembers the refusal under `hash`, as a
+    /// refused request does; the refusal's `Retry-After` (D-214, for tests that start from a
+    /// throttled token without a database).
+    #[doc(hidden)]
+    pub async fn throttle_for_tests(
+        &self,
+        hash: [u8; 32],
+        project: Uuid,
+        token: Uuid,
+        rpm: i64,
+    ) -> u32 {
+        loop {
+            if let Some(throttle) = self.quota(project, token, rpm).await {
+                self.remember_refusal(hash, project, token, rpm, throttle.wait_us);
+                return throttle.retry_after();
+            }
+        }
     }
 
     /// Whether this refusal starts a throttle episode (`true`) or continues one the marker
@@ -957,6 +1100,99 @@ mod tests {
         assert!(admission.mark_throttled(other, 1_000_000));
         // A wait already behind us holds nothing: the marker lapses and the next episode tells.
         assert!(admission.mark_throttled(Uuid::now_v7(), 0));
+    }
+
+    /// The path a remembered refusal answers for: the token's own project's content.
+    fn counted(project: Uuid) -> String {
+        format!("/api/v1/projects/{project}/environments/production/collections/a/entries")
+    }
+
+    #[tokio::test]
+    async fn the_refusal_memo_stays_bounded_and_keeps_refusing_what_it_holds() {
+        let admission = Admission::new(AdmissionSettings::default(), None).expect("no URL");
+        let (project, token) = (Uuid::now_v7(), Uuid::now_v7());
+        let held = [7_u8; 32];
+        admission.throttle_for_tests(held, project, token, 2).await;
+
+        // A flood of other refused tokens, far past the cap, all still waiting.
+        let flood = MAX_REFUSED + 500;
+        for n in 0..flood {
+            let mut hash = [0_u8; 32];
+            hash[..8].copy_from_slice(&(n as u64).to_le_bytes());
+            hash[31] = 1;
+            admission.remember_refusal(hash, project, Uuid::now_v7(), 2, 60_000_000);
+        }
+        assert_eq!(
+            admission.refused_len(),
+            MAX_REFUSED,
+            "never more than the cap"
+        );
+        assert!(
+            admission
+                .refused_again(&held, &counted(project))
+                .await
+                .is_some(),
+            "a refusal it holds still refuses"
+        );
+        // One the full memo couldn't take answers nothing here: the full path refuses it instead.
+        let mut late = [0_u8; 32];
+        late[..8].copy_from_slice(&((flood - 1) as u64).to_le_bytes());
+        late[31] = 1;
+        assert!(
+            admission
+                .refused_again(&late, &counted(project))
+                .await
+                .is_none()
+        );
+    }
+
+    #[tokio::test]
+    async fn expired_refusals_make_room_and_are_never_answered_from() {
+        let admission = Admission::new(AdmissionSettings::default(), None).expect("no URL");
+        let project = Uuid::now_v7();
+        for n in 0..MAX_REFUSED {
+            let mut hash = [0_u8; 32];
+            hash[..8].copy_from_slice(&(n as u64).to_le_bytes());
+            // A wait already behind us.
+            admission.remember_refusal(hash, project, Uuid::now_v7(), 2, 0);
+        }
+        assert!(
+            admission
+                .refused_again(&[0_u8; 32], &counted(project))
+                .await
+                .is_none(),
+            "an expired refusal answers nothing"
+        );
+        let fresh = [9_u8; 32];
+        let token = Uuid::now_v7();
+        admission.throttle_for_tests(fresh, project, token, 2).await;
+        assert!(admission.refused_len() <= MAX_REFUSED);
+        assert!(
+            admission
+                .refused_again(&fresh, &counted(project))
+                .await
+                .is_some(),
+            "a full memo of expired refusals makes room for a live one"
+        );
+    }
+
+    #[tokio::test]
+    async fn without_valkey_a_remembered_refusal_falls_back_to_the_full_path() {
+        // Valkey configured but not there (nothing listens on port 1): the memo's question
+        // fails, so it answers nothing and the request takes the full path, whose quota check
+        // has the same fallback as ever (D-118, unchanged by D-214).
+        let admission = Admission::new(AdmissionSettings::default(), Some("redis://127.0.0.1:1"))
+            .expect("a valid URL");
+        let (project, token) = (Uuid::now_v7(), Uuid::now_v7());
+        let hash = [3_u8; 32];
+        admission.remember_refusal(hash, project, token, 2, 60_000_000);
+        assert!(
+            admission
+                .refused_again(&hash, &counted(project))
+                .await
+                .is_none()
+        );
+        assert_eq!(admission.refused_len(), 0, "and the memo lets it go");
     }
 
     #[test]
