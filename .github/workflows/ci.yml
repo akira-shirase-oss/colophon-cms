@@ -304,7 +304,7 @@ jobs:
     name: load smokes (every check.sh scenario integration doesn't run, outage drills included)
     runs-on: ubuntu-latest
     # Beside integration, not after it: its own runner and its own stack, so the full check's wall
-    # time doesn't grow. These are check.sh's other 22 scenarios at check.sh's own settings
+    # time doesn't grow. These are check.sh's other 23 scenarios at check.sh's own settings
     # (D-209); scripts/test-smoke-parity.sh fails when check.sh gains one neither job runs. CI owns
     # this stack (D-187: CI=true), so cache-down and postgres-trouble may pause its Postgres and
     # Valkey here and nowhere else.
@@ -390,6 +390,7 @@ jobs:
           smoke TOTAL=10000 P99_MS=500 scripts/load.sh migrations throughput
           smoke DURATION=15s RATE=50 PUBLISH_SECONDS=5 P99_MS=700 scripts/load.sh mixed throughput
           smoke DURATION=8s P99_MS=500 scripts/load.sh noisy-agent throughput
+          smoke DURATION=8s P99_MS=250 scripts/load.sh password-flood throughput
           smoke DURATION=10s P99_MS=500 scripts/load.sh postgres-trouble throughput
           smoke DURATION=10s P99_MS=500 scripts/load.sh purge-trouble throughput
           smoke TOTAL=20000 P99_MS=200 scripts/load.sh quotas throughput
@@ -404,7 +405,7 @@ jobs:
             echo "::error::${#failed[@]} smoke(s) failed: ${failed[*]}"
             exit 1
           fi
-          echo "| failed smokes | none (22 ran) |" >>"$GITHUB_STEP_SUMMARY"
+          echo "| failed smokes | none (23 ran) |" >>"$GITHUB_STEP_SUMMARY"
       - name: Service logs
         if: failure()
         run: docker compose -f deploy/compose.yaml logs --no-color --tail 300

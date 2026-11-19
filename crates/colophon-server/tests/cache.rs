@@ -14,8 +14,6 @@ mod common;
 
 use std::{
     collections::BTreeMap,
-    path::PathBuf,
-    process::{Command, Stdio},
     time::{Duration, Instant},
 };
 
@@ -309,28 +307,15 @@ fn uuid_like() -> String {
 struct ValkeyStopped;
 
 impl ValkeyStopped {
-    fn compose(action: &str) {
-        let file = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../deploy/compose.yaml");
-        let status = Command::new("docker")
-            .args(["compose", "-f"])
-            .arg(file)
-            .args([action, "valkey"])
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .status()
-            .expect("docker compose runs");
-        assert!(status.success(), "docker compose {action} valkey failed");
-    }
-
     fn new() -> Self {
-        Self::compose("stop");
+        common::compose(&["stop", "valkey"]);
         Self
     }
 }
 
 impl Drop for ValkeyStopped {
     fn drop(&mut self) {
-        Self::compose("start");
+        common::compose(&["start", "valkey"]);
     }
 }
 

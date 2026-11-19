@@ -45,6 +45,14 @@ through `--version` and `GET /version`.
 - **`@colophon-cms/rich-text` (D-170):** the content renderer as its own zero-dependency
   package, built from the one renderer the Studio uses, so a site reading the delivery API
   renders rich text exactly as the Studio previews it.
+- **The release workflow packs both (D-170):** `npm-pack` checks the SDK and rich-text
+  tarballs and writes `npm publish --dry-run` of every package into the job summary;
+  `npm-publish` publishes them after the CLI. It also no longer reads `npm-dist/x.tgz` as a
+  GitHub repository, which would have failed the first tag's publish.
+- **SDK replies name their generation:** `response.generation` is the `Colophon-Generation` a
+  read answered from, so a page can pin the rest of its reads to it (`atGeneration`). A
+  public-API report per package makes export changes visible in review, and
+  `perf/node/sdk-delivery.mjs` measures the client's overhead and heap beside bare `fetch`.
 - Draft preview on your own site, the backend (D-171, D-172): a person opens a preview of an
   entry (with its translations) or a publish request; the site exchanges the address's
   one-time code for a 15-minute bearer token and reads `/preview/v1`, which answers
@@ -102,6 +110,18 @@ through `--version` and `GET /version`.
 The 2026-11-16 security fixes (D-148 to D-157, D-159 to D-169). Each names the attack it
 closes and carries a test that failed without it.
 
+- Password work is limited per client address: sign-in, sign-up, magic-link sign-in and creating a
+  site user allow 5 a second with a burst of 10 from one address (an IPv6 /64 counts as one),
+  refused with `429` and `Retry-After` before any hashing, on top of the general limits. Set it
+  with `COLOPHON_RATE_LIMIT_PASSWORD` (`off`, `<per second>` or `<per second>/<burst>`). Before,
+  one address could keep every password slot busy and lock everyone else out of signing in. A
+  paused sign-in is now refused without waiting for a slot, and password hashing leaves one core
+  free by default (D-213).
+
+- A content-migration run no longer un-gates an entry: the revision it wrote took the default
+  `public` visibility, so publishing a migrated member-only entry served it to anonymous
+  readers. The run's revision now keeps the gate of the draft it replaces, and revisions and
+  publications runs already wrote are corrected (D-183, migration 0070).
 - Magic links land only on an origin the project lists, and spending one retires its
   siblings (D-148); requests are bounded per client address first, then per recipient with
   an escalating cooldown, then per project (D-153, D-161).
@@ -130,6 +150,11 @@ closes and carries a test that failed without it.
   goes before a `return_to` fragment.
 
 ### Fixed
+
+- Integration tests that stop, pause or restart a local-stack service now refuse the shared stack
+  before any `docker` call: they run in CI, under a compose project of your own, or with
+  `COLOPHON_STACK_OWNER=1` (D-187b). Every such call goes through one guarded helper, and a test
+  keeps it that way.
 
 - The releases list pages: `GET {P}/releases` takes `?limit=` (1–100, default 100, what it
   answered before) and `?cursor=`, and its `next_cursor` is real. It used to stop at the

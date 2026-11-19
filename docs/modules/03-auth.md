@@ -91,7 +91,7 @@ operation, and the cross-project and identity test families from spec §27 pass.
   after 90 days unused. `last_sign_in_at` updates only on a success; the
   accounts' old `failed_sign_ins`/`locked_until` columns are no longer written.
 - Bounded password work (D-150): every sign-up, sign-in, staff-made account and magic-link account hashes or
-  verifies through one `PasswordGate` — `COLOPHON_PASSWORD_CONCURRENCY` Argon2id jobs at once (one a core by
+  verifies through one `PasswordGate` — `COLOPHON_PASSWORD_CONCURRENCY` Argon2id jobs at once (one fewer than the cores by
   default), up to 32 waiters a slot for at most two seconds, and `503` with `Retry-After` past that, decided before
   any database work so a shed request costs nothing and counts no attempt. The dummy verify a missing account gets
   goes through the same gate. A sign-in password longer than 512 bytes — longer than any account can hold — is

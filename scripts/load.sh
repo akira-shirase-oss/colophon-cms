@@ -111,7 +111,7 @@ cd "$(dirname "$0")/.."
 endpoint="${1:-}"
 scenario="${2:-}"
 if [[ ! -f "perf/k6/$endpoint.js" ]] || [[ "$scenario" != throughput && "$scenario" != steady && "$scenario" != stress ]]; then
-  echo "usage: scripts/load.sh health|rich-text|openapi|session|accounts|cli|members|roles|tokens|quotas|noisy-agent|schedules|projects|setup|changesets|stages|collaboration|live|migrations|delivery|audience|audience-sites|publishing|cache-down|postgres-trouble|purge-trouble|smoke|warm-baseline|cold-cache|stampede|mixed|spike|import-scale|cdn-warm|media-load|entries|content-types|modelling|inverses|transfer|graphql|locales|deletion|collection-delete|site-starter|assets|rich-text-media|bulk|studio|site|preview throughput|steady|stress [--baseline]" >&2
+  echo "usage: scripts/load.sh health|rich-text|openapi|session|accounts|cli|members|roles|tokens|quotas|noisy-agent|password-flood|schedules|projects|setup|changesets|stages|collaboration|live|migrations|delivery|audience|audience-sites|publishing|cache-down|postgres-trouble|purge-trouble|smoke|warm-baseline|cold-cache|stampede|mixed|spike|import-scale|cdn-warm|media-load|entries|content-types|modelling|inverses|transfer|graphql|locales|deletion|collection-delete|site-starter|assets|rich-text-media|bulk|studio|site|preview throughput|steady|stress [--baseline]" >&2
   exit 2
 fi
 save_baseline=0
@@ -155,6 +155,7 @@ case "$endpoint" in
   # a 60-a-minute token hammers at ~600/s of mostly refused quota checks — quotas' total rate,
   # entries' p99 budget for the same reason.
   noisy-agent) RATE="${RATE:-250}" P99_MS="${P99_MS:-250}" ;;
+  password-flood) RATE="${RATE:-200}" P99_MS="${P99_MS:-250}" ;;
   # Writers save entries (entries' arm); subscribers' held streams aren't timed — only their
   # clean ends are checked (the p99 gate binds the writes alone).
   live) RATE="${RATE:-500}" P99_MS="${P99_MS:-250}" ;;
@@ -386,11 +387,16 @@ else
     if [[ "$endpoint" == "spike" ]]; then
       export COLOPHON_RATE_LIMIT_DELIVERY="${COLOPHON_RATE_LIMIT_DELIVERY:-1000/2000}"
     fi
+    # password-flood measures production's password limit (D-213: 5 a second, a burst of 10).
+    if [[ "$endpoint" == "password-flood" ]]; then
+      export COLOPHON_RATE_LIMIT_PASSWORD="${COLOPHON_RATE_LIMIT_PASSWORD:-5/10}"
+    fi
     # One machine sends every request: rate limits (D-076) that never refuse, so each request
     # still pays for its check and the run measures it.
     export COLOPHON_RATE_LIMIT_PER_ADDRESS="${COLOPHON_RATE_LIMIT_PER_ADDRESS:-1000000/1000000}" \
       COLOPHON_RATE_LIMIT_PER_CREDENTIAL="${COLOPHON_RATE_LIMIT_PER_CREDENTIAL:-1000000/1000000}" \
-      COLOPHON_RATE_LIMIT_DELIVERY="${COLOPHON_RATE_LIMIT_DELIVERY:-1000000/1000000}"
+      COLOPHON_RATE_LIMIT_DELIVERY="${COLOPHON_RATE_LIMIT_DELIVERY:-1000000/1000000}" \
+      COLOPHON_RATE_LIMIT_PASSWORD="${COLOPHON_RATE_LIMIT_PASSWORD:-1000000/1000000}"
     if [[ -n "$studio_dir" ]]; then export COLOPHON_STUDIO_DIR="$studio_dir"; fi
     # The live scenario's subscribers hold each stream to its clean end: a 15-second lifetime
     # keeps a hold in seconds (the 30-minute default is past the client's 90-second timeout).
