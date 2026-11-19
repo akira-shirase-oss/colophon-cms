@@ -9,7 +9,9 @@
 #             runner's measured baseline.
 # A smoke that fails and isn't listed fails the job.
 # Each job judges only its own entries (SMOKE_SCOPE): the smokes job's are plain names; the integration job's load
-# smokes are `integration/<endpoint>-<scenario>` (D-221).
+# smokes are `integration/<endpoint>-<scenario>` (D-221). Every steady one is flapping until D-221 is fixed: the stall
+# outside Postgres can hit any of them (on a green run all sit at p99 1–21 ms), so each may pass or fail its limit but
+# never 2x it, and the tolerance expires with D-221 (refused once its row is no longer Open).
 #
 # Columns, tab-separated: smoke, kind, decision, owner, ceiling, measured (CI 44543394086 → 44551888337, the 4-core
 # runner), what is owed. A ceiling is `p99<=MS` (the run's overall p99) or `l08<=RATIO` (L08's worst noise/baseline ratio).
@@ -23,7 +25,19 @@ audience	flapping	D-209	learning-95	p99<=1400	p99 748 ms → 581 ms (limit 700);
 migrations	flapping	D-209	learning-95	p99<=1000	p99 681 ms → 408 ms (limit 500)	judge by margin over the runner's measured commit latency (D-209 normalised gate)
 noisy-agent	flapping	D-214	learning-a4	l08<=4	L08 editorial 5.79x, project B 6.56x (limit 2x) → held; overall p99 104 → 18 ms	L08's ordinary noise at 2x its limit: D-214 took refused requests off the pool; this entry leaves when D-209's normalised gate judges L08 by margin
 stages	flapping	D-209	learning-95	p99<=400	p99 254 ms → 128 ms (limit 200)	judge by margin over the runner's measured baseline (D-209 normalised gate)
-integration/members-steady	flapping	D-221	learning-95	p99<=400	p99 379 ms (CI 44452075879), 260 (44578161931) → 3.3 (44561341789); limit 200	D-221: find the stall (single-digit ms on most runs, 250–550 ms on some: bimodal, not runner speed)
-integration/publishing-steady	flapping	D-221	learning-95	p99<=1000	p99 514 ms (CI 44558667145), 550 → 14.1 (44561341789); limit 500	D-221: find the stall (single-digit ms on most runs, 250–550 ms on some: bimodal, not runner speed)
-integration/schedules-steady	flapping	D-221	learning-95	p99<=400	p99 253 ms (CI 44573857079) → 5.5 (44561341789); limit 200	D-221: find the stall (single-digit ms on most runs, 250–550 ms on some: bimodal, not runner speed)
-integration/tokens-steady	flapping	D-221	learning-95	p99<=400	p99 385 ms (CI 44456894675) → 2.7 (44561341789); limit 200	D-221: find the stall (single-digit ms on most runs, 250–550 ms on some: bimodal, not runner speed)
+integration/session-steady	flapping	D-221	learning-95	p99<=400 EXPIRES-WITH D-221	stalls p99 none caught yet → green 1.415 ms (44561341789); limit 200	D-221: find the stall outside Postgres (runner, process or runtime; see D-221's key)
+integration/cli-steady	flapping	D-221	learning-95	p99<=400 EXPIRES-WITH D-221	stalls p99 none caught yet → green 1.843 ms (44561341789); limit 200	D-221: find the stall outside Postgres (runner, process or runtime; see D-221's key)
+integration/members-steady	flapping	D-221	learning-95	p99<=400 EXPIRES-WITH D-221	stalls p99 379 (CI 44452075879), 260 (44578161931), 1989 (44590181097) → green 3.31 ms (44561341789); limit 200	D-221: find the stall outside Postgres (runner, process or runtime; see D-221's key)
+integration/roles-steady	flapping	D-221	learning-95	p99<=400 EXPIRES-WITH D-221	stalls p99 none caught yet → green 4.462 ms (44561341789); limit 200	D-221: find the stall outside Postgres (runner, process or runtime; see D-221's key)
+integration/tokens-steady	flapping	D-221	learning-95	p99<=400 EXPIRES-WITH D-221	stalls p99 385 (44456894675) → green 2.656 ms (44561341789); limit 200	D-221: find the stall outside Postgres (runner, process or runtime; see D-221's key)
+integration/schedules-steady	flapping	D-221	learning-95	p99<=400 EXPIRES-WITH D-221	stalls p99 253 (44573857079) → green 5.48 ms (44561341789); limit 200	D-221: find the stall outside Postgres (runner, process or runtime; see D-221's key)
+integration/projects-steady	flapping	D-221	learning-95	p99<=400 EXPIRES-WITH D-221	stalls p99 none caught yet → green 4.084 ms (44561341789); limit 200	D-221: find the stall outside Postgres (runner, process or runtime; see D-221's key)
+integration/changesets-steady	flapping	D-221	learning-95	p99<=400 EXPIRES-WITH D-221	stalls p99 none caught yet → green 3.793 ms (44561341789); limit 200	D-221: find the stall outside Postgres (runner, process or runtime; see D-221's key)
+integration/delivery-steady	flapping	D-221	learning-95	p99<=400 EXPIRES-WITH D-221	stalls p99 none caught yet → green 4.573 ms (44561341789); limit 200	D-221: find the stall outside Postgres (runner, process or runtime; see D-221's key)
+integration/preview-steady	flapping	D-221	learning-95	p99<=1000 EXPIRES-WITH D-221	stalls p99 none caught yet → green 3.583 ms (44561341789); limit 500	D-221: find the stall outside Postgres (runner, process or runtime; see D-221's key)
+integration/publishing-steady	flapping	D-221	learning-95	p99<=1000 EXPIRES-WITH D-221	stalls p99 514 (44558667145), 586 (44595342727) → green 14.108 ms (44561341789); limit 500	D-221: find the stall outside Postgres (runner, process or runtime; see D-221's key)
+integration/entries-steady	flapping	D-221	learning-95	p99<=1000 EXPIRES-WITH D-221	stalls p99 none caught yet → green 6.08 ms (44561341789); limit 500	D-221: find the stall outside Postgres (runner, process or runtime; see D-221's key)
+integration/content-types-steady	flapping	D-221	learning-95	p99<=1000 EXPIRES-WITH D-221	stalls p99 none caught yet → green 14.077 ms (44561341789); limit 500	D-221: find the stall outside Postgres (runner, process or runtime; see D-221's key)
+integration/modelling-steady	flapping	D-221	learning-95	p99<=1000 EXPIRES-WITH D-221	stalls p99 719 (44595342727) → green 20.604 ms (44561341789); limit 500	D-221: find the stall outside Postgres (runner, process or runtime; see D-221's key)
+integration/deletion-steady	flapping	D-221	learning-95	p99<=1000 EXPIRES-WITH D-221	stalls p99 none caught yet → green 6.252 ms (44561341789); limit 500	D-221: find the stall outside Postgres (runner, process or runtime; see D-221's key)
+integration/rich-text-media-steady	flapping	D-221	learning-95	p99<=1400 EXPIRES-WITH D-221	stalls p99 none caught yet → green 4.85 ms (44561341789); limit 700	D-221: find the stall outside Postgres (runner, process or runtime; see D-221's key)

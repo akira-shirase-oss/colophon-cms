@@ -274,8 +274,16 @@ jobs:
           scripts/install-k6.sh "$RUNNER_TEMP/bin"
           export PATH="$RUNNER_TEMP/bin:$PATH" KEEP=0 DURATION=20s
           # D-221's evidence: statements over 100 ms (sqlx) and requests over 200 ms with their phases, per smoke.
-          export COLOPHON_DB_SLOW_STATEMENT_MS=100 LOAD_LOG=info,colophon_api::slow=debug
+          export COLOPHON_DB_SLOW_STATEMENT_MS=100 LOAD_LOG=info,colophon_api::slow=debug,colophon_server::lag=debug
           logs="$RUNNER_TEMP/integration-logs"; mkdir -p "$logs"
+          # The runner itself, every second (D-221's key): CPU steal, iowait and the run queue (vmstat), and how long
+          # tasks waited for CPU, I/O and memory (/proc/pressure). Beside the server's lag tickers, a stall then says
+          # whether the runner, the process or its runtime stopped.
+          vmstat -t 1 >"$logs/vmstat.txt" 2>&1 &
+          vmstat_pid=$!
+          (while :; do echo "$(date -u +%FT%TZ) cpu: $(tr '\n' ' ' </proc/pressure/cpu)| io: $(tr '\n' ' ' </proc/pressure/io)| memory: $(tr '\n' ' ' </proc/pressure/memory)"; sleep 1; done) >"$logs/pressure.txt" 2>&1 &
+          pressure_pid=$!
+          trap 'kill "$vmstat_pid" "$pressure_pid" 2>/dev/null || true' EXIT
           ran=() failed=()
           # Each smoke runs to the end; the verdict below judges every outcome against perf/expected-smoke-failures.tsv
           # (scope integration: flapping entries may pass or fail their limit, never their 2x ceiling; D-221).

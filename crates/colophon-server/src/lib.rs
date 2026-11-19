@@ -5,6 +5,7 @@
 
 pub mod config;
 pub mod events;
+mod lag;
 mod mail;
 pub mod probes;
 pub mod setup_code;
@@ -338,6 +339,8 @@ pub async fn run(
     .context("configuring the database pool")?;
 
     let cancel = CancellationToken::new();
+    // D-221's evidence: when this process stops running on time (off unless its DEBUG target is on).
+    lag::start(&cancel);
     let mut supervisor = Supervisor::new(readiness.clone(), cancel.child_token());
     let database_probe = DatabaseProbe::new(config.database_url.expose(), config.probe_timeout)
         .map_err(|error| anyhow::anyhow!(error))

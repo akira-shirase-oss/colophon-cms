@@ -52,8 +52,9 @@ while IFS=$'\t' read -r smoke kind decision owner ceiling measured owed; do
       fi
       if [[ "$ceiling" == *" EXPIRES-WITH "* ]]; then
         reason=${ceiling##* }
-        if grep -q "^| $reason |" "$decisions"; then
-          echo "smoke-verdict: $list: '$smoke''s temporary ceiling expired with $reason, which has merged ($decisions has its row): remove the entry, or restore it as an ordinary flapper at 2x its limit" >&2
+        # A decision is done once its row exists and no longer says `Open:` (D-221's row exists while it is open).
+        if grep "^| $reason |" "$decisions" | grep -qv "Open:"; then
+          echo "smoke-verdict: $list: '$smoke''s temporary ceiling expired with $reason, which is done ($decisions has its row, no longer Open): remove the entry, or restore it as an ordinary flapper at 2x its limit" >&2
           exit 1
         fi
       fi

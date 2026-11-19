@@ -72,21 +72,28 @@ expect_fail "$tmp/list.tsv" "$ran" "assets bulk gone" "$tmp/run2.tsv"
 # The integration job's scope (D-221): its smokes are integration/<endpoint>-<scenario>, read from its run_load lines.
 iran=$(grep -oE 'run_load .*scripts/load\.sh [a-z][a-z-]* [a-z]+' .github/workflows/ci.yml | awk '{print "integration/" $(NF-1) "-" $NF}' | sort -u | paste -sd' ' -)
 [[ $(wc -w <<<"$iran") -ge 15 ]] || { echo "FAIL: read only '$iran' from ci.yml's integration step" >&2; exit 1; }
-printf 'integration/members-steady\t3.3\t\nintegration/publishing-steady\t14.1\t\nintegration/schedules-steady\t5.5\t\nintegration/tokens-steady\t2.7\t\n' >"$tmp/irun.tsv"
+# A green run: every integration smoke at its p99 from CI 44561341789's step (the steady ones all 1–21 ms).
+for smoke in $iran; do printf '%s\t%s\t\n' "$smoke" 9.5; done >"$tmp/irun.tsv"
 iverdict() { SMOKE_SCOPE=integration scripts/smoke-verdict.sh "$@" >"$tmp/out" 2>&1; }
 label='integration: a green run (its scope ignores the smokes job entries)'
 iverdict "$list" "$iran" "" "$tmp/irun.tsv" || { echo "FAIL: $label:"; cat "$tmp/out"; exit 1; }
-sed 's/^integration\/members-steady\t3.3/integration\/members-steady\t260/' "$tmp/irun.tsv" >"$tmp/iflap.tsv"
+sed 's/^integration\/members-steady\t9.5/integration\/members-steady\t260/' "$tmp/irun.tsv" >"$tmp/iflap.tsv"
 label='integration: members stalls to 260 ms, under its ceiling'
 iverdict "$list" "$iran" "integration/members-steady" "$tmp/iflap.tsv" || { echo "FAIL: $label:"; cat "$tmp/out"; exit 1; }
 grep -q '^flap: integration/members-steady failed its limit, p99 260 ms, under its ceiling 400 ms' "$tmp/out" || { echo "FAIL: no members flap line:"; cat "$tmp/out"; exit 1; }
-sed 's/^integration\/members-steady\t3.3/integration\/members-steady\t500/' "$tmp/irun.tsv" >"$tmp/iover.tsv"
+sed 's/^integration\/members-steady\t9.5/integration\/members-steady\t500/' "$tmp/irun.tsv" >"$tmp/iover.tsv"
 label='integration mutant: members past its 2x ceiling'
 if iverdict "$list" "$iran" "integration/members-steady" "$tmp/iover.tsv"; then echo "FAIL: $label accepted"; cat "$tmp/out"; exit 1; fi
 grep -q 'integration/members-steady is past its CEILING: p99 500 ms > 400 ms' "$tmp/out" || { echo "FAIL: $label:"; cat "$tmp/out"; exit 1; }
-label='integration mutant: an unlisted integration smoke fails'
-if iverdict "$list" "$iran" "integration/roles-steady" "$tmp/irun.tsv"; then echo "FAIL: $label accepted"; cat "$tmp/out"; exit 1; fi
-grep -q 'smoke integration/roles-steady failed and is not on' "$tmp/out" || { echo "FAIL: $label:"; cat "$tmp/out"; exit 1; }
+label='integration mutant: an unlisted (strict) integration smoke fails'
+if iverdict "$list" "$iran" "integration/health-throughput" "$tmp/irun.tsv"; then echo "FAIL: $label accepted"; cat "$tmp/out"; exit 1; fi
+grep -q 'smoke integration/health-throughput failed and is not on' "$tmp/out" || { echo "FAIL: $label:"; cat "$tmp/out"; exit 1; }
+# The steady smokes' tolerance expires with D-221: once its row is no longer Open, the list is refused.
+sed 's/^\(| D-221 |.*\)Open:/\1Fixed:/' docs/DECISIONS.md >"$tmp/decisions-d221.md"
+grep -q '^| D-221 |.*Fixed:' "$tmp/decisions-d221.md" || { echo "FAIL: could not mark D-221 done"; exit 1; }
+label='integration mutant: D-221 done while its tolerance is still listed'
+if SMOKE_DECISIONS="$tmp/decisions-d221.md" SMOKE_SCOPE=integration scripts/smoke-verdict.sh "$list" "$iran" "" "$tmp/irun.tsv" >"$tmp/out" 2>&1; then echo "FAIL: $label accepted"; cat "$tmp/out"; exit 1; fi
+grep -q 'temporary ceiling expired with D-221' "$tmp/out" || { echo "FAIL: $label:"; cat "$tmp/out"; exit 1; }
 
 refuse() {
   printf '%s\n' "$1" >"$tmp/bad.tsv"
