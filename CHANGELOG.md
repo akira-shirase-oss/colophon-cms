@@ -8,6 +8,13 @@ through `--version` and `GET /version`.
 
 ## [Unreleased]
 
+### Performance
+
+- **An API token over its request quota no longer costs the database anything** (D-214). After
+  its first refusal, a token that keeps sending is refused from memory and the rate limiter alone
+  until its `Retry-After` runs out, so an agent stuck in a retry loop can't slow other projects'
+  requests by queuing for database connections. The answer is the same `429` with `Retry-After`.
+
 ## [0.1.0-alpha.1] — 2026-11-19
 
 The first versioned state of the engine: pre-release until the P6 proof gate closes

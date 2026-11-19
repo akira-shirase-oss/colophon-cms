@@ -13,11 +13,11 @@
 # runner), what is owed. A ceiling is `p99<=MS` (the run's overall p99) or `l08<=RATIO` (L08's worst noise/baseline ratio).
 # A ceiling marked `EXPIRES-WITH D-NNN` is a temporary tolerance for a known, owned defect: the verdict refuses it once
 # docs/DECISIONS.md has D-NNN's row (its fix merged), and that fix removes the entry or restores the ordinary 2x ceiling.
-# noisy-agent's 8 (its measured worst, 6.56, plus about 25%) is the D-214 defect itself, pool-acquire queueing; at 2x it
-# would be 4.
+# noisy-agent's ceiling was a temporary 8 (its measured worst, 6.56, plus about 25%) until D-214 took refused requests off
+# the pool; it is back at the ordinary 4 (2x its limit).
 bulk	strict	D-216	learning-a4	-	p99 2877 ms vs 500 → failed again	the work-admission lock and the pending-payload sum (D-216)
 assets	flapping	D-218	learning-95	p99<=1000	p99 619 ms → 619 ms (limit 500; 256 of 1016 deletes met 409 asset_quarantined) → 430 ms in CI 44571564046, passed	D-218's fix (evidence run 44573857079 in progress)
 audience	flapping	D-209	learning-95	p99<=1400	p99 748 ms → 581 ms (limit 700); server CPU avg 124% of 400%	password hashing on the runner's CPU: judge by margin over the runner's measured hash cost (D-209 normalised gate)
 migrations	flapping	D-209	learning-95	p99<=1000	p99 681 ms → 408 ms (limit 500)	judge by margin over the runner's measured commit latency (D-209 normalised gate)
-noisy-agent	flapping	D-214	learning-a4	l08<=8 EXPIRES-WITH D-214	L08 editorial 5.79x, project B 6.56x (limit 2x) → held; overall p99 104 → 18 ms	pool-acquire queueing behind the noisy token (D-214 (a))
+noisy-agent	flapping	D-214	learning-a4	l08<=4	L08 editorial 5.79x, project B 6.56x (limit 2x) → held; overall p99 104 → 18 ms	L08's ordinary noise at 2x its limit: D-214 took refused requests off the pool; this entry leaves when D-209's normalised gate judges L08 by margin
 stages	flapping	D-209	learning-95	p99<=400	p99 254 ms → 128 ms (limit 200)	judge by margin over the runner's measured baseline (D-209 normalised gate)
