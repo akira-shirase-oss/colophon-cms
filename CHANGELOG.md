@@ -8,8 +8,21 @@ through `--version` and `GET /version`.
 
 ## [Unreleased]
 
-### Changed — read before upgrading
+## [0.1.0-alpha.1] — 2026-11-19
 
+The first versioned state of the engine: pre-release until the P6 proof gate closes
+(restore drill on clean infrastructure is done; usability drills and an independent
+install are still ahead — see `docs/ROADMAP.md`).
+
+### Read before upgrading
+
+- **Migration 0077 checks for languages that differ only in case (D-212):** it refuses to run if
+  a localization group already holds the same language twice in different case, and names each
+  group and its tags. Keep one entry of each through the API, then migrate again (the
+  `locale_case_duplicates` row of "Failure modes worth knowing" in `deploy/runbooks/upgrade.md`).
+  Nothing is merged or deleted automatically. Otherwise it
+  rewrites the stored tags that aren't already in canonical case (`PT-br` → `pt-BR`), in one short
+  transaction, and from then on the database recases every tag written, whoever writes it.
 - **Images inside rich text must name real uploads** (D-177). A rich-text `image` whose
   `assetId` isn't an upload of the environment is refused `422 asset_not_found` at that
   image's pointer. Drafts made with the old Studio dialog hold random placeholder ids, so they
@@ -20,22 +33,71 @@ through `--version` and `GET /version`.
   size and renditions. A site using `url` keeps showing the released bytes after a replace
   until the entries using it are published again; `current_url` follows the newest bytes.
   `RENDER_VERSION` is 2, so cached delivery answers are refetched once.
-
-### Performance
-
-- Making an API token holds the project's creation lock for two statements instead of eight:
-  the count of active tokens stays exact (one creator at a time per project), but queued
-  creators no longer hold pooled connections long enough to starve reads.
-- Watched writes no longer take PostgreSQL's NOTIFY lock (D-180): their live-list hints are
-  queued in an unlogged table and sent by a pump every 100 ms, so concurrent saves commit in
-  groups again instead of one at a time. A live list may hear a change up to 100 ms later.
-- Lists of schedules and releases, and the changesets that stop an entry's deletion, read only the rows they
-  return: titles and names are looked up after the limit, so a plan that misjudged a project's size can no
-  longer pair every row with every changeset (a 120-row schedule list read 16,203 changeset rows, a 100-release
-  page 10,150; the schedules load smoke's lists took three seconds).
+- **The static Linux server allocates through mimalloc (D-176):** musl's own allocator ran
+  allocation-heavy requests five times slower than glibc's on the same runner. Other builds are
+  unchanged.
+- **Magic links stop until origins are listed:** `PUT {P}/audience/origins` must name each
+  site a link may land on; until then a request is `422 return_to_not_allowed` (D-148).
+- **A database on another machine needs `sslmode=verify-full`:** the server and the admin
+  commands refuse to start on a non-loopback `COLOPHON_DATABASE_URL` or
+  `COLOPHON_MIGRATION_DATABASE_URL` with any other mode — `require` (what Neon's copied URL
+  says) takes any certificate, and `verify-ca` takes any publicly trusted one — and on
+  `channel_binding=require`, which the driver would ignore. Name a private CA with
+  `sslrootcert`. A loopback host or a Unix socket is unchanged (D-156).
+- **Private destinations need a flag:** a server reaches loopback, private or link-local
+  addresses only with `COLOPHON_ALLOW_PRIVATE_DESTINATIONS=1` — development only (D-149).
+- **Flags are strict:** a boolean setting is `1`/`true`/`0`/`false`; anything else stops the
+  server at start-up instead of being read as off.
+- **`409 too_many_attempts` is gone:** a paused sign-in answers the same `400
+  sign_in_failed` a wrong password does (D-154).
+- **New answers:** `429 rate_limited` with `Retry-After` for magic-link requests (D-153,
+  D-161); `503` with `Retry-After` when password work is saturated (D-150); `413` for a
+  public sign-in body over 16 KiB (D-164); `account_disabled` only to the right password
+  (D-169).
+- **Deleting a project is an operator's job:** `colophon_delete_project` runs from the
+  owner's login, no longer from the application's (D-167).
+- **Behind a reverse proxy, set `COLOPHON_TRUSTED_PROXIES`:** without it every client is the
+  proxy, and every per-address bound — admission, sign-in pauses, magic links — becomes one
+  shared bucket.
+- **New settings:** `COLOPHON_PASSWORD_CONCURRENCY`, `COLOPHON_MAGIC_LINKS_PER_ADDRESS`,
+  `COLOPHON_MAGIC_LINKS_PER_PROJECT`, `COLOPHON_EVENTS_PUBLIC_*` (module 18).
+- **Licence:** MIT (`LICENSE`, D-158).
+- **Security floor for rollback:** once deployed, never roll back to a binary without these
+  fixes, whatever the schema allows (`deploy/runbooks/upgrade.md`, section 7).
 
 ### Added
 
+- **Content engine:** collections and singletons with a Strapi-style type builder
+  (slugs, references that never dangle, objects, lists, blocks, shared components,
+  unique fields, defaults, patterns, conditional fields, locales), insert-only
+  revision history, changesets bound to their hash, reviews, scheduled publishing and
+  entry deletion as tombstones the database refuses while anything depends on them.
+- **Publishing:** releases on a publisher's base generation, non-overlapping
+  publication intervals, a `/content/v1` delivery API served as `colophon_delivery`
+  with a generation-keyed cache, ETags, tombstoned unpublishes, CDN purge jobs, and
+  probes with receipts per destination.
+- **Identity:** OpenID Connect sign-in, server-side sessions with CSRF and `Origin`
+  checks, email-and-password accounts, project members, single-use invitations, roles
+  as data including field lists and `own` conditions, project API tokens with an
+  append-only audit log, and a first-run setup code.
+- **Surfaces:** the Studio (Svelte, served by the server at `/studio`), `colophon`
+  CLI (device sign-in, content commands, machine-readable envelope v2),
+  `@colophon-cms/sdk`, a bounded GraphQL endpoint, a Streamable HTTP MCP server on
+  API tokens, and JSONL import/export with Strapi and Sanity adapters.
+- **Operations:** the local Compose stack (PostgreSQL 18, Valkey, Garage, Keycloak),
+  `/livez`/`/readyz` with background probes, structured JSON logs with request ids,
+  latency and deployment identity, encrypted cluster base backups with WAL archiving,
+  `backup.sh daily` with verified-backup retention, the six-stage restore procedure
+  with a recovery epoch and deletion-ledger replay, and `admin migrate-status` as the
+  upgrade gate.
+- **Safety:** an outbox the worker claims under leases, idempotency-keyed deliveries,
+  bounded everything (rate limits in Valkey, request/queue/body caps, token and cost
+  budgets reserved in Postgres), agents held draft-only, and per-tenant row-level
+  security.
+- **Verification:** fault and load matrices with stored evidence (`perf/results/`),
+  a deterministic simulator differentially checked against Postgres, crash and
+  crash-loop tests, and a restore drill that seeds an in-flight job and asserts the
+  held outbox, the replayed tombstone and serving.
 - **The TypeScript SDK is ready for npm (D-170):** `@colophon-cms/sdk` gains
   `client.compatibility()` and a `compat` option (`warn` by default, `throw`, `off`) that say
   plainly when the server is too old or too new, by the CLI's rule (D-062). A packaging gate
@@ -104,12 +166,41 @@ through `--version` and `GET /version`.
 - The media library pages past 100 uploads (`cursor`, `next_cursor`), searches (`q`), filters
   by `state` and `tag`, and keeps alt text, title, credit and tags via
   `PATCH …/assets/{asset}` under `If-Match` (D-179).
+- **The Studio's look (D-182):** one accent for the one primary action on a screen, a button
+  hierarchy, one status badge that always pairs a word with its mark ("Live with changes", "In
+  review", "Taken down"), and dialogs that keep to the screen. One button switches light and
+  dark; until you press it the Studio follows your system. Search lives in the header (an icon
+  on a phone); "Linked from" sits in the entry's Content tab; and after you publish, the Publish
+  button comes back for your next edit instead of staying hidden behind "Live as Release N".
+- **Requests and releases say when they undo a release:** a changeset and the release it makes
+  carry `undo_of`, the release an undo reverses (migration 0071), beside `rollback_generation`.
+- **One look for the Studio, the website and the docs (D-210):** the Studio takes the website's
+  theme — white paper, one clear blue for the primary action, rounder corners — made readable:
+  every text and surface pair meets WCAG AA in light and dark (a table checked on every push,
+  `docs/design/contrast.md`), and form fields have a boundary you can see. Text is Inter
+  throughout; the product's name and empty states use the website's Geist Pixel; DM Sans and
+  JetBrains Mono are gone, so the Studio loads two font families instead of three. Statuses keep their
+  words and icons; "Live with changes" is violet now, so it never looks like a button.
+- **A deploy package for one server (S0, `deploy/droplet`):** one 2 GB droplet with Neon for
+  Postgres, R2 for media and backups, and Cloudflare in front. `install.sh` sets the server up in one
+  idempotent pass; `upgrade.sh` switches releases (migrations first, an atomic switch, a readiness
+  check and a smoke test) and rolls back on its own if the new release doesn't come up, refuses a
+  database a newer build has migrated, and will follow an `edge` channel, verifying every file's
+  provenance first, once edge builds are published. The origin answers only Cloudflare (Authenticated Origin Pulls), SSH takes keys
+  only, and a nightly encrypted logical backup to R2 (14 daily, 8 weekly) comes with its restore
+  drill. `deploy/droplet/DEPLOY.md` leads with the fast path and the rehearsal's measured times.
 
 ### Security
 
-The 2026-11-16 security fixes (D-148 to D-157, D-159 to D-169). Each names the attack it
+The 2026-11-16 security fixes (D-148 to D-157, D-159 to D-169) and D-217. Each names the attack it
 closes and carries a test that failed without it.
 
+- **A cancelled request can't leave a database connection inside a transaction (D-217):** a
+  request cancelled at the moment it started a transaction could return its database connection
+  still inside that transaction, so the next request to borrow it wrote into a transaction nobody
+  committed (a fresh sign-in could read back as signed out). Colophon now starts transactions so a
+  cancel can't interrupt them, and checks every connection on release, closing one that comes back
+  inside a transaction.
 - Password work is limited per client address: sign-in, sign-up, magic-link sign-in and creating a
   site user allow 5 a second with a burst of 10 from one address (an IPv6 /64 counts as one),
   refused with `429` and `Retry-After` before any hashing, on top of the general limits. Set it
@@ -151,6 +242,17 @@ closes and carries a test that failed without it.
 
 ### Fixed
 
+- **`upgrade.sh --channel edge` says why it can't run yet:** with no edge release published it
+  refuses and changes nothing, pointing you to the release channel (`upgrade.sh <version>`), instead
+  of failing on a missing provenance bundle.
+- **One entry per language in a localization group (D-212):** a group could hold the same
+  language twice in different case (`fr` and `FR`), so a reader asking for French got either one at
+  random. Locale tags are now stored in BCP 47's recommended case (`pt-br` → `pt-BR`,
+  `zh-hant-tw` → `zh-Hant-TW`; only the case changes, no alias is mapped, so `iw` stays `iw`) at
+  every input — create, save, localize, import, and the management API's entry list, whose
+  `?locale=` filter now finds `fr` for `FR` (the public delivery API has no locale parameter yet) —
+  and a second entry in the same language answers `409 locale_taken`. The database enforces it
+  too, so direct writes are recased.
 - Integration tests that stop, pause or restart a local-stack service now refuse the shared stack
   before any `docker` call: they run in CI, under a compose project of your own, or with
   `COLOPHON_STACK_OWNER=1` (D-187b). Every such call goes through one guarded helper, and a test
@@ -165,79 +267,18 @@ closes and carries a test that failed without it.
   release field itself instead of through `allOf`, and the release, delivery and observation
   fields are marked required. `@colophon-cms/sdk`'s generated types follow.
 
-### Changed — read before upgrading
+### Performance
 
-- **The static Linux server allocates through mimalloc (D-176):** musl's own allocator ran
-  allocation-heavy requests five times slower than glibc's on the same runner. Other builds are
-  unchanged.
-- **Magic links stop until origins are listed:** `PUT {P}/audience/origins` must name each
-  site a link may land on; until then a request is `422 return_to_not_allowed` (D-148).
-- **A database on another machine needs `sslmode=verify-full`:** the server and the admin
-  commands refuse to start on a non-loopback `COLOPHON_DATABASE_URL` or
-  `COLOPHON_MIGRATION_DATABASE_URL` with any other mode — `require` (what Neon's copied URL
-  says) takes any certificate, and `verify-ca` takes any publicly trusted one — and on
-  `channel_binding=require`, which the driver would ignore. Name a private CA with
-  `sslrootcert`. A loopback host or a Unix socket is unchanged (D-156).
-- **Private destinations need a flag:** a server reaches loopback, private or link-local
-  addresses only with `COLOPHON_ALLOW_PRIVATE_DESTINATIONS=1` — development only (D-149).
-- **Flags are strict:** a boolean setting is `1`/`true`/`0`/`false`; anything else stops the
-  server at start-up instead of being read as off.
-- **`409 too_many_attempts` is gone:** a paused sign-in answers the same `400
-  sign_in_failed` a wrong password does (D-154).
-- **New answers:** `429 rate_limited` with `Retry-After` for magic-link requests (D-153,
-  D-161); `503` with `Retry-After` when password work is saturated (D-150); `413` for a
-  public sign-in body over 16 KiB (D-164); `account_disabled` only to the right password
-  (D-169).
-- **Deleting a project is an operator's job:** `colophon_delete_project` runs from the
-  owner's login, no longer from the application's (D-167).
-- **Behind a reverse proxy, set `COLOPHON_TRUSTED_PROXIES`:** without it every client is the
-  proxy, and every per-address bound — admission, sign-in pauses, magic links — becomes one
-  shared bucket.
-- **New settings:** `COLOPHON_PASSWORD_CONCURRENCY`, `COLOPHON_MAGIC_LINKS_PER_ADDRESS`,
-  `COLOPHON_MAGIC_LINKS_PER_PROJECT`, `COLOPHON_EVENTS_PUBLIC_*` (module 18).
-- **Licence:** MIT (`LICENSE`, D-158).
-- **Security floor for rollback:** once deployed, never roll back to a binary without these
-  fixes, whatever the schema allows (`deploy/runbooks/upgrade.md`, section 7).
-
-## [0.1.0-alpha.1]
-
-The first versioned state of the engine: pre-release until the P6 proof gate closes
-(restore drill on clean infrastructure is done; usability drills and an independent
-install are still ahead — see `docs/ROADMAP.md`).
-
-### Added
-
-- **Content engine:** collections and singletons with a Strapi-style type builder
-  (slugs, references that never dangle, objects, lists, blocks, shared components,
-  unique fields, defaults, patterns, conditional fields, locales), insert-only
-  revision history, changesets bound to their hash, reviews, scheduled publishing and
-  entry deletion as tombstones the database refuses while anything depends on them.
-- **Publishing:** releases on a publisher's base generation, non-overlapping
-  publication intervals, a `/content/v1` delivery API served as `colophon_delivery`
-  with a generation-keyed cache, ETags, tombstoned unpublishes, CDN purge jobs, and
-  probes with receipts per destination.
-- **Identity:** OpenID Connect sign-in, server-side sessions with CSRF and `Origin`
-  checks, email-and-password accounts, project members, single-use invitations, roles
-  as data including field lists and `own` conditions, project API tokens with an
-  append-only audit log, and a first-run setup code.
-- **Surfaces:** the Studio (Svelte, served by the server at `/studio`), `colophon`
-  CLI (device sign-in, content commands, machine-readable envelope v2),
-  `@colophon-cms/sdk`, a bounded GraphQL endpoint, a Streamable HTTP MCP server on
-  API tokens, and JSONL import/export with Strapi and Sanity adapters.
-- **Operations:** the local Compose stack (PostgreSQL 18, Valkey, Garage, Keycloak),
-  `/livez`/`/readyz` with background probes, structured JSON logs with request ids,
-  latency and deployment identity, encrypted cluster base backups with WAL archiving,
-  `backup.sh daily` with verified-backup retention, the six-stage restore procedure
-  with a recovery epoch and deletion-ledger replay, and `admin migrate-status` as the
-  upgrade gate.
-- **Safety:** an outbox the worker claims under leases, idempotency-keyed deliveries,
-  bounded everything (rate limits in Valkey, request/queue/body caps, token and cost
-  budgets reserved in Postgres), agents held draft-only, and per-tenant row-level
-  security.
-- **Verification:** fault and load matrices with stored evidence (`perf/results/`),
-  a deterministic simulator differentially checked against Postgres, crash and
-  crash-loop tests, and a restore drill that seeds an in-flight job and asserts the
-  held outbox, the replayed tombstone and serving.
+- Making an API token holds the project's creation lock for two statements instead of eight:
+  the count of active tokens stays exact (one creator at a time per project), but queued
+  creators no longer hold pooled connections long enough to starve reads.
+- Watched writes no longer take PostgreSQL's NOTIFY lock (D-180): their live-list hints are
+  queued in an unlogged table and sent by a pump every 100 ms, so concurrent saves commit in
+  groups again instead of one at a time. A live list may hear a change up to 100 ms later.
+- Lists of schedules and releases, and the changesets that stop an entry's deletion, read only the rows they
+  return: titles and names are looked up after the limit, so a plan that misjudged a project's size can no
+  longer pair every row with every changeset (a 120-row schedule list read 16,203 changeset rows, a 100-release
+  page 10,150; the schedules load smoke's lists took three seconds).
 
 ### Known limitations
 
@@ -248,9 +289,13 @@ install are still ahead — see `docs/ROADMAP.md`).
 - Observability is structured logs plus health endpoints; per-signal recipes and the
   gaps (Prometheus-style metrics, OTLP export, the dropped-record counter) are
   documented in `deploy/runbooks/observability.md`.
-- The release workflow is written and reviewed but has not yet run on GitHub;
-  publishing waits on the maintainer (npm organisation, credentials — module 19);
-  the licence is MIT (`LICENSE`, D-158).
+- This tag is annotated but not signed; every release file instead carries signed build
+  provenance (`gh attestation verify <file> --repo akira-shirase-oss/colophon-cms`), and the
+  container image is attested too. Signed tags come before 0.1.0.
+- The npm packages (`@colophon-cms/cli` and its five platform packages, `@colophon-cms/sdk`,
+  `@colophon-cms/rich-text`) are pre-releases on the `next` tag: `npm install
+  @colophon-cms/cli@next`. The standalone `colophon-mcp` binary isn't in the release archives or
+  on npm yet; the server's own MCP endpoint (Streamable HTTP, on API tokens) is included.
 
 ## How to upgrade
 

@@ -10,6 +10,11 @@ cd "$(dirname "$0")/.."
 if [[ ! -d node_modules ]]; then
   npm ci
 fi
+# The design tokens (D-210): every text/surface pair in both themes meets its WCAG bar, the committed table
+# is current, and @colophon/ui's copy of design/tokens.css is a byte copy.
+node scripts/design-contrast.mjs >/dev/null
+node scripts/design-contrast.mjs --check docs/design/contrast.md >/dev/null
+node scripts/design-contrast.mjs --check-copy packages/ui/src/lib/tokens.css
 npm run check --workspaces --if-present
 npm test --workspaces --if-present
 # What npm would ship of @colophon-cms/sdk and @colophon-cms/rich-text, installed and used from

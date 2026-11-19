@@ -62,7 +62,7 @@ pub async fn list(
 
 /// A worker's transaction: as `colophon_worker`, for its duration.
 async fn worker(pool: &PgPool) -> Result<Transaction<'static, Postgres>, DbError> {
-    let mut transaction = pool.begin().await.map_err(DbError::from_query)?;
+    let mut transaction = crate::begin_tx(pool).await.map_err(DbError::from_query)?;
     sqlx::query("SET LOCAL ROLE colophon_worker")
         .execute(&mut *transaction)
         .await

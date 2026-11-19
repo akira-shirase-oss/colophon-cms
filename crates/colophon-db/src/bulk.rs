@@ -570,7 +570,7 @@ pub async fn mark(
 /// Running jobs for the worker's scan, claimed oldest first (the in-flight index keeps
 /// this cheap).
 pub async fn running(pool: &sqlx::PgPool, limit: i64) -> Result<Vec<(Uuid, Uuid, Uuid)>, DbError> {
-    let mut transaction = pool.begin().await.map_err(DbError::from_query)?;
+    let mut transaction = crate::begin_tx(pool).await.map_err(DbError::from_query)?;
     sqlx::query("SET LOCAL ROLE colophon_worker")
         .execute(&mut *transaction)
         .await
@@ -659,6 +659,8 @@ pub async fn read_job(
     environment: Uuid,
     job: Uuid,
 ) -> Result<Option<Job>, DbError> {
+    // D-217: a begin on the connection the caller holds, not one from the pool: a cancel here
+    // can leave only that connection in a transaction, and the pool closes it on release.
     let mut tx = conn.begin().await.map_err(DbError::from_query)?;
     sqlx::query("SET LOCAL ROLE colophon_worker")
         .execute(&mut *tx)
@@ -678,7 +680,7 @@ pub async fn due_items(
     job: Uuid,
     limit: i64,
 ) -> Result<Vec<Item>, DbError> {
-    let mut transaction = pool.begin().await.map_err(DbError::from_query)?;
+    let mut transaction = crate::begin_tx(pool).await.map_err(DbError::from_query)?;
     sqlx::query("SET LOCAL ROLE colophon_worker")
         .execute(&mut *transaction)
         .await
@@ -713,7 +715,7 @@ pub async fn checkpoint(
     environment: Uuid,
     job: Uuid,
 ) -> Result<bool, DbError> {
-    let mut transaction = pool.begin().await.map_err(DbError::from_query)?;
+    let mut transaction = crate::begin_tx(pool).await.map_err(DbError::from_query)?;
     sqlx::query("SET LOCAL ROLE colophon_worker")
         .execute(&mut *transaction)
         .await
@@ -815,7 +817,7 @@ pub async fn mark_corrupt(
     environment: Uuid,
     job: Uuid,
 ) -> Result<bool, DbError> {
-    let mut transaction = pool.begin().await.map_err(DbError::from_query)?;
+    let mut transaction = crate::begin_tx(pool).await.map_err(DbError::from_query)?;
     sqlx::query("SET LOCAL ROLE colophon_worker")
         .execute(&mut *transaction)
         .await

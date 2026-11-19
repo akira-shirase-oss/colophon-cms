@@ -1,4 +1,4 @@
-<!-- A page's title (DM Sans, D-182), a line of context under it, and its actions. The intro is one
+<!-- A page's title (Inter, D-210), a line of context under it, and its actions. The intro is one
      line that says what the page is for, not how the model behind it works. -->
 <script lang="ts">
 	import type { Snippet } from 'svelte';

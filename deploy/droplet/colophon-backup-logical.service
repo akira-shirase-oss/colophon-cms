@@ -1,0 +1,17 @@
+# The provider-independent backup (deploy/droplet/DEPLOY.md, step 10): pg_dump -Fc over
+# verify-full, encrypted with age, to the R2 backups bucket, then 14 daily + 8 weekly kept.
+[Unit]
+Description=Colophon logical backup (pg_dump, age) to R2
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+LoadCredential=migration_database_url:/etc/colophon/credentials/migration_database_url
+LoadCredential=s3_secret_key:/etc/colophon/credentials/s3_secret_key
+ExecStart=/usr/local/bin/colophon-backup-logical run
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
