@@ -6,6 +6,7 @@
 -->
 <script lang="ts">
 	import { page } from '$app/state';
+	import { projectQuery } from '#lib/queries.ts';
 	import { createQuery, useQueryClient } from '@tanstack/svelte-query';
 	import { Button } from '@colophon/ui/ui/button';
 	import * as Table from '@colophon/ui/ui/table';
@@ -14,7 +15,6 @@
 	import Problem from '#lib/shell/Problem.svelte';
 	import UsersRoundIcon from '@lucide/svelte/icons/users-round';
 	import {
-		getProject,
 		listAudienceRoles,
 		listAudit,
 		listSiteUsers,
@@ -25,7 +25,7 @@
 
 	const project = $derived(page.params.project ?? '');
 	const queryClient = useQueryClient();
-	const mine = createQuery(() => ({ queryKey: ['project', project], queryFn: () => getProject(project) }));
+	const mine = createQuery(() => projectQuery(project));
 	const manages = $derived(may(mine.data, 'audience.manage'));
 	const readsLog = $derived(may(mine.data, 'audit.read'));
 

@@ -13,7 +13,7 @@
 	import { goto } from '$app/navigation';
 	import { resolve } from '$app/paths';
 	import { page } from '$app/state';
-	import { createQuery } from '@tanstack/svelte-query';
+	import { createQuery, useQueryClient } from '@tanstack/svelte-query';
 	import { Button } from '@colophon/ui/ui/button';
 	import * as Dialog from '@colophon/ui/ui/dialog';
 	import { Input } from '@colophon/ui/ui/input';
@@ -21,7 +21,7 @@
 	import { Skeleton } from '@colophon/ui/ui/skeleton';
 	import * as Table from '@colophon/ui/ui/table';
 	import * as ToggleGroup from '@colophon/ui/ui/toggle-group';
-	import { ApiError, createChangeset, entryState, listContentTypes, listEntries, may, newKey } from '#lib/api.ts';
+	import { ApiError, createChangeset, entryState, listEntries, may, newKey } from '#lib/api.ts';
 	import { ago, changesetsQuery, projectQuery, typesQuery } from '#lib/queries.ts';
 	import ChangesetBadge from '#lib/shell/ChangesetBadge.svelte';
 	import EmptyState from '#lib/shell/EmptyState.svelte';
@@ -38,12 +38,14 @@
 	const makes = $derived(mine.data === undefined || may(mine.data, 'content.update'));
 	const firstType = $derived(types.data?.find((type) => type.slug !== 'articles') ?? types.data?.[0]);
 	let creating = $state(false);
+	const queryClient = useQueryClient();
 	// Every entry, by content type, to pick from: loaded when the dialog opens.
 	const choices = createQuery(() => ({
 		queryKey: ['changeset-choices', project],
 		queryFn: async () => {
 			// Only collections the role may read; the server refuses the others' lists.
-			const types = (await listContentTypes(project)).filter((type) => may(mine.data, 'content.read', type.slug));
+			// The layout's content types, not a read of their own (P3-12).
+			const types = (await queryClient.fetchQuery(typesQuery(project))).filter((type) => may(mine.data, 'content.read', type.slug));
 			return Promise.all(types.map(async (type) => ({ type, entries: await listEntries(project, type.slug) })));
 		},
 		enabled: creating && mine.data !== undefined

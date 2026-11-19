@@ -12,11 +12,11 @@
 	import PackageCheckIcon from '@lucide/svelte/icons/package-check';
 	import { resolve } from '$app/paths';
 	import { page } from '$app/state';
-	import { createInfiniteQuery, createQuery } from '@tanstack/svelte-query';
+	import { createInfiniteQuery, createQuery, useQueryClient } from '@tanstack/svelte-query';
 	import { Button } from '@colophon/ui/ui/button';
 	import { Skeleton } from '@colophon/ui/ui/skeleton';
 	import { deliveryUrl, type Job, listJobs, listReleases, listSchedules, type Release, type Schedule } from '#lib/api.ts';
-	import { ago, typesQuery } from '#lib/queries.ts';
+	import { ago, releasesQuery, typesQuery } from '#lib/queries.ts';
 	import EmptyState from '#lib/shell/EmptyState.svelte';
 	import PageHeader from '#lib/shell/PageHeader.svelte';
 	import Problem from '#lib/shell/Problem.svelte';
@@ -48,9 +48,12 @@
 	// first: a hint reads every page shown again from the first, each from the fresh page before
 	// it, so a release published meanwhile never leaves a gap between them.
 	type ReleasePage = Awaited<ReturnType<typeof listReleases>>;
+	const queryClient = useQueryClient();
 	const releases = createInfiniteQuery(() => ({
 		queryKey: ['releases', project, 'pages'],
-		queryFn: ({ pageParam }: { pageParam: string | null }) => listReleases(project, pageParam),
+		// The first page is the sidebar's release read (`releasesQuery`): one request serves both (P3-12).
+		queryFn: ({ pageParam }: { pageParam: string | null }) =>
+			pageParam === null ? queryClient.fetchQuery(releasesQuery(project)) : listReleases(project, pageParam),
 		initialPageParam: null as string | null,
 		getNextPageParam: (last: ReleasePage) => last.nextCursor
 	}));

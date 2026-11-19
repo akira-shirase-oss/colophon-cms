@@ -104,10 +104,12 @@ screen-reader journeys pass, and no screen ever shows a success the server has n
   never content — into the query invalidations a fresh visit would run: entries, drafts, history, changesets, stages,
   releases and their jobs and receipts, schedules, tasks, comments, migrations and their items, assets, members and
   invitations, roles, tokens, destinations and the audit trail all move as PostgreSQL commits, without a reload or a
-  poll. A `resync` event and every reconnect invalidates every key in the project, and so does the first open (all
-  but the builders' version-keyed `type`/`component` reads): a commit landing between a page's own loads and the
-  stream's open sent its hint to nobody, and a delivery that settled then read "pending" until a reload
-  (`tests/server/deliveries.spec.ts`, "settles before the live stream opens"). Every invalidation cancels a read
+  poll. A `resync` event and every reconnect invalidates every key in the project (all but the builders'
+  version-keyed `type`/`component` reads). The first open needn't (D-203, amending D-108): a project's reads wait
+  for its stream to open, at most 400 ms (`lib/streamGate.ts`), and the server subscribes before it answers, so
+  nothing loaded before the stream listened. Only when a read had to go ahead (a slow or refused stream) does the
+  first open re-read too, since a commit in between sent its hint to nobody
+  (`tests/server/deliveries.spec.ts`, "settles before the live stream opens"; `tests/server/one-read.spec.ts`). Every invalidation cancels a read
   already in flight first: while a query has no data yet, TanStack joins the read in flight rather than send a new
   one, and that read may predate the commit the hint announces, so its stale answer stood ("settles while the page is
   still loading its lists"). An entry's editor stays on screen when a refresh of it fails — a read turned away
