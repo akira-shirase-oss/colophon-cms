@@ -1,0 +1,144 @@
+/* Studio v2, a PROPOSAL (the maintainer's ask, 2026-11-19: "something crazy like this dashboard design too").
+ *
+ * Two directions carry the website's language into the Studio; the maintainer picks one, and only then do its
+ * new tokens move into design/tokens.css (D-210's one source) and this file go away.
+ *   A, "website-faithful": exactly the landing's moves. Geist Pixel page titles and display figures, an
+ *      inverted Get-started panel (the hero's move) with pixel icons, --surface-section grounds, the primary
+ *      blue for the one main action and the outline for the rest, pixel empty states.
+ *   B, "bolder": A, plus the sidebar on the inverted ground, pixel section headers and a larger Overview scale.
+ * The direction is `data-direction` on <html> (lib/proposal/direction.ts): `?direction=a|b`, remembered.
+ *
+ * Work screens stay calm and dense: the boldness lives in Overview, empty states, onboarding and page
+ * headers, never in the data. Motion: one-time or on interaction only, nothing loops, reduced motion stills it.
+ * scripts/proposal-contrast.mjs measures every new pair in both themes. */
+
+:root {
+	/* The landing's section ground and its hover (theme.css there) */
+	--surface-section: #f2f2f2;
+	--surface-section-hover: #efefef;
+	/* The inverted panel: near-black on the light theme, white on the dark one; one mid-grey for its icons */
+	--hero-bg: #141414;
+	--hero-fg: #fafafa;
+	--hero-muted: #c4c4c4;
+	--hero-icon: #8a8a8a;
+	--hero-line: #2e2e2e;
+	--hero-hover: color-mix(in srgb, var(--hero-fg) 9%, transparent);
+	/* B: the selected item's icon on the inverted sidebar: the brand blue on black, the deeper primary on white */
+	--v2-nav-active: var(--brand);
+	/* The pixel icons' palette, the landing's: a 1-cell outline and five fills */
+	--px-outline: #14161c;
+	--px-blue: #0061ff;
+	--px-orange: #ff8a3d;
+	--px-green: #3fbf6b;
+	--px-pink: #ff7eb6;
+	--px-cream: #fff1d0;
+}
+.dark {
+	--surface-section: #1d1d1b;
+	--surface-section-hover: #232321;
+	--hero-bg: #fafafa;
+	--hero-fg: #141414;
+	--hero-muted: #4d4d4d;
+	--hero-icon: #8a8a8a;
+	--hero-line: #e5e5e5;
+	--v2-nav-active: var(--primary);
+	--px-outline: #e9e7e1;
+	--px-blue: #4d8dff;
+	--px-orange: #ff9a55;
+	--px-green: #55cf7f;
+	--px-pink: #ff8fc0;
+	--px-cream: #2b2924;
+}
+
+/* On the inverted panel the pixel outline must read on it, so it takes the panel's ink */
+.v2-inverted {
+	--px-outline: var(--hero-fg);
+}
+
+/* ---------- Both directions ---------- */
+:root[data-direction] .page-title {
+	font-family: var(--font-title);
+	font-weight: 400;
+	font-synthesis: none;
+	letter-spacing: 0;
+	font-size: 2.25rem;
+	line-height: 1.1;
+}
+
+/* ---------- B: bolder ---------- */
+/* The sidebar on the inverted ground: the frame around the work turns into the hero's black (white in dark). */
+:root[data-direction='b'] {
+	--sidebar: var(--hero-bg);
+	--sidebar-foreground: var(--hero-fg);
+	--sidebar-accent: color-mix(in srgb, var(--hero-fg) 12%, var(--hero-bg));
+	--sidebar-accent-foreground: var(--hero-fg);
+	--sidebar-border: var(--hero-line);
+}
+:root[data-direction='b'] [data-sidebar='sidebar'] {
+	--muted-foreground: var(--hero-muted);
+	--border: var(--hero-line);
+	/* the logo's tile is the one light square in the black sidebar (dark in the white one) */
+	--background: var(--hero-fg);
+}
+/* The selected item and the live card sit on the sidebar's own step, not the page's ground. */
+:root[data-direction='b'] [data-sidebar='menu-button'][data-active='true'],
+:root[data-direction='b'] [data-testid='live-card'] {
+	background: var(--sidebar-accent);
+	color: var(--sidebar-accent-foreground);
+}
+:root[data-direction='b'] [data-sidebar='menu-button'][data-active='true'] svg {
+	color: var(--v2-nav-active);
+}
+:root[data-direction='b'] [data-sidebar='group-label'] {
+	font-family: var(--font-title);
+	font-size: 0.875rem;
+	color: var(--hero-muted);
+	letter-spacing: 0;
+}
+:root[data-direction='b'] .page-title {
+	font-size: 3rem;
+}
+:root[data-direction='b'] .v2-section-title {
+	font-family: var(--font-title);
+	font-weight: 400;
+	font-size: 1.375rem;
+	line-height: 1.2;
+	letter-spacing: 0;
+}
+:root[data-direction='b'] .stat-value {
+	font-size: 3rem;
+	line-height: 1;
+}
+
+/* A pixel icon reacts on hover and on tap: a small wiggle, once, back to rest. */
+@keyframes v2-wiggle {
+	0%,
+	100% {
+		transform: rotate(0deg) scale(1);
+	}
+	30% {
+		transform: rotate(-10deg) scale(1.12);
+	}
+	65% {
+		transform: rotate(8deg) scale(1.05);
+	}
+}
+@media (prefers-reduced-motion: no-preference) {
+	.v2-wiggle[data-tap] {
+		animation: v2-wiggle 300ms cubic-bezier(0.22, 1, 0.36, 1) 1;
+	}
+	@media (hover: hover) {
+		.v2-wiggle:hover {
+			animation: v2-wiggle 300ms cubic-bezier(0.22, 1, 0.36, 1) 1;
+		}
+	}
+}
+
+/* The first-run line lights up once, word by word, the closing statement's move (lib/proposal/LightLine). */
+.v2-light .v2-word {
+	color: var(--v2-light-rest, currentColor);
+}
+.v2-light[data-light='go'] .v2-word {
+	color: var(--v2-light-on, currentColor);
+	transition: color 250ms cubic-bezier(0.22, 1, 0.36, 1) var(--d);
+}

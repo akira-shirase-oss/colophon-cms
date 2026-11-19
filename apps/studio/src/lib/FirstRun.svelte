@@ -5,14 +5,14 @@
   left out (rule 5). Hidden, it stays hidden in this browser.
 -->
 <script lang="ts">
-	import CircleCheckIcon from '@lucide/svelte/icons/circle-check';
-	import CircleDashedIcon from '@lucide/svelte/icons/circle-dashed';
 	import { resolve } from '$app/paths';
 	import { createQuery } from '@tanstack/svelte-query';
 	import { Button } from '@colophon/ui/ui/button';
 	import { type ChangesetSummary, type ContentType, listInvitations, listMembers, may, type Project, type Release, type Summary } from './api.ts';
 	import { hide, isHidden, mainCollection, oneOf, receiptSeen } from './firstRun.ts';
 	import { destinationsQuery } from './queries.ts';
+	import LightLine from './proposal/LightLine.svelte';
+	import PixelIcon, { type PixelName } from './proposal/PixelIcon.svelte';
 
 	let {
 		project,
@@ -157,45 +157,129 @@
 		return list;
 	});
 	const remaining = $derived(items.filter((item) => !item.done).length);
+	// The one next step: the screen's one primary action (D-182); the others are outlines.
+	const next = $derived(items.find((item) => !item.done)?.id);
+	const ICON: Record<string, PixelName> = { types: 'blocks', write: 'pen', publish: 'stamp', connect: 'globe', invite: 'people', receipt: 'receipt' };
 </script>
 
 {#if !hidden}
-	<section class="mb-10 rounded-2xl border border-border bg-card p-5 sm:p-6" aria-labelledby="first-run-heading" data-testid="first-run">
-		<div class="mb-4 flex flex-wrap items-start justify-between gap-3">
-			<div>
-				<h2 id="first-run-heading" class="text-base font-semibold">{remaining === 0 ? "You're all set" : 'Get started'}</h2>
-				<p class="text-sm text-muted-foreground" data-testid="first-run-count">
+	<!-- Studio v2 proposal: the website hero's inverted panel (white on dark, black on light), a pixel icon for
+	     each step that wiggles on hover or tap, the one next step in the primary blue and the rest as outlines in
+	     the panel's ink, and a first-run line that lights up once (lib/proposal). -->
+	<section class="v2-inverted v2-firstrun mb-10" aria-labelledby="first-run-heading" data-testid="first-run">
+		<div class="mb-6 flex flex-wrap items-start justify-between gap-3">
+			<div class="space-y-2">
+				<h2 id="first-run-heading" class="v2-firstrun-title">{remaining === 0 ? "You're all set" : 'Get started'}</h2>
+				<p class="v2-firstrun-muted text-sm" data-testid="first-run-count">
 					{remaining === 0 ? 'Every step is done. You can hide this list.' : `${items.length - remaining} of ${items.length} done`}
 				</p>
+				{#if remaining > 0}
+					<LightLine
+						class="v2-firstrun-line"
+						text="Decide what you’ll write, write it, publish it, and Colophon prints a receipt of what went live."
+						rest="var(--hero-muted)"
+						on="var(--hero-fg)"
+					/>
+				{/if}
 			</div>
 			<Button
 				variant="ghost"
 				size="sm"
+				class="v2-hero-ghost"
 				onclick={() => {
 					hide(identity, project);
 					hidden = true;
 				}}>Hide this list</Button
 			>
 		</div>
-		<ol class="divide-y divide-dotted divide-border">
+		<ol class="v2-steps">
 			{#each items as item (item.id)}
-				<li class="flex items-center gap-3 py-3" data-testid="first-run-item" data-item={item.id} data-done={item.done}>
-					{#if item.done}
-						<CircleCheckIcon class="size-5 shrink-0 text-live" aria-hidden="true" />
-					{:else}
-						<CircleDashedIcon class="size-5 shrink-0 text-muted-foreground" aria-hidden="true" />
-					{/if}
-					<span class="min-w-0 flex-1">
-						<span class="block text-sm font-medium" class:text-muted-foreground={item.done}>
+				<li class="v2-step" data-testid="first-run-item" data-item={item.id} data-done={item.done}>
+					<span class="flex items-center gap-3">
+						<PixelIcon name={item.done ? 'check' : (ICON[item.id] ?? 'pen')} size="2rem" wiggle />
+						<span class="text-sm font-medium" class:v2-firstrun-muted={item.done}>
 							{item.title}<span class="sr-only">{item.done ? ' (done)' : ' (to do)'}</span>
 						</span>
-						<span class="block text-sm text-muted-foreground">{item.detail}</span>
 					</span>
+					<span class="v2-firstrun-muted block flex-1 text-sm">{item.detail}</span>
 					{#if !item.done}
-						<Button variant="outline" size="sm" href={item.href} aria-label="{item.action}: {item.title}">{item.action}</Button>
+						<Button
+							variant={item.id === next ? 'default' : 'outline'}
+							size="sm"
+							class={item.id === next ? '' : 'v2-hero-outline'}
+							href={item.href}
+							aria-label="{item.action}: {item.title}">{item.action}</Button
+						>
 					{/if}
 				</li>
 			{/each}
 		</ol>
 	</section>
 {/if}
+
+<style>
+	.v2-firstrun {
+		padding: var(--card-padding);
+		border-radius: var(--radius-card);
+		background: var(--hero-bg);
+		color: var(--hero-fg);
+	}
+	.v2-firstrun-title {
+		font-family: var(--font-title);
+		font-weight: 400;
+		font-size: 1.75rem;
+		line-height: 1.1;
+		letter-spacing: 0;
+	}
+	:global(:root[data-direction='b']) .v2-firstrun-title {
+		font-size: 2.5rem;
+	}
+	.v2-firstrun-muted {
+		color: var(--hero-muted);
+	}
+	:global(.v2-firstrun-line) {
+		max-width: 40rem;
+		font-size: 1.125rem;
+		line-height: 1.4;
+		font-weight: 500;
+	}
+	.v2-steps {
+		display: grid;
+		gap: 0.75rem;
+	}
+	@media (min-width: 48rem) {
+		.v2-steps {
+			grid-template-columns: repeat(2, minmax(0, 1fr));
+		}
+	}
+	@media (min-width: 80rem) {
+		.v2-steps {
+			grid-template-columns: repeat(3, minmax(0, 1fr));
+		}
+	}
+	.v2-step {
+		display: flex;
+		flex-direction: column;
+		gap: 0.75rem;
+		padding: 1rem 1.125rem 1.125rem;
+		border: 1px solid var(--hero-line);
+		border-radius: var(--radius-control);
+	}
+	.v2-step :global([data-slot='button']) {
+		align-self: flex-start;
+	}
+	/* The outline and ghost buttons in the panel's ink: a 1px edge and the label, a 9% ink ground on hover. */
+	.v2-firstrun :global(a.v2-hero-outline[data-slot='button']),
+	.v2-firstrun :global(button.v2-hero-ghost[data-slot='button']) {
+		border-color: var(--hero-fg);
+		background: transparent;
+		color: var(--hero-fg);
+	}
+	.v2-firstrun :global(button.v2-hero-ghost[data-slot='button']) {
+		border-color: transparent;
+	}
+	.v2-firstrun :global(a.v2-hero-outline[data-slot='button']:hover),
+	.v2-firstrun :global(button.v2-hero-ghost[data-slot='button']:hover) {
+		background: var(--hero-hover);
+	}
+</style>

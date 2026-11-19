@@ -8,6 +8,7 @@
 	import { ApiError } from '#lib/api.ts';
 	import mark from '#lib/colophon-mark.svg';
 	import Frame from '#lib/shell/Frame.svelte';
+	import { applyDirection } from '#lib/proposal/direction.ts';
 	import type { LayoutProps } from './$types';
 
 	let { children }: LayoutProps = $props();
@@ -25,6 +26,8 @@
 	});
 	// A project's pages draw their own shell, with its sidebar; every other page gets the plain frame.
 	const inProject = $derived(page.route.id?.startsWith('/projects/[project]') ?? false);
+	// Studio v2 proposal: the direction to draw (?direction=a|b, remembered).
+	$effect(() => applyDirection(page.url.search));
 </script>
 
 <svelte:head>
