@@ -386,7 +386,13 @@ jobs:
             pgq -c "SELECT pg_stat_statements_reset()" >/dev/null || true
             (while :; do docker stats --no-stream --format '{{.CPUPerc}}' "$pgc" 2>/dev/null; sleep 1; done) >"$logs/$name.postgres-cpu.txt" &
             sampler=$!
-            if env SERVER_LOG="$logs/$name.server.log" "$@"; then echo "::endgroup::"; else echo "::endgroup::"; echo "::error::smoke failed: $*"; failed+=("$name"); fi
+            if env SERVER_LOG="$logs/$name.server.log" "$@"; then echo "::endgroup::"; else
+              echo "::endgroup::"; echo "::error::smoke failed: $*"; failed+=("$name")
+              # The work tables as the failure left them: what was queued, claimed, retried.
+              docker compose -f deploy/compose.yaml exec -T postgres psql -U colophon -d colophon -XAq \
+                -c "SELECT status, attempts, lease_owner IS NOT NULL AS leased, next_attempt_at > now() AS waiting, left(last_error, 200) AS last_error, count(*) FROM asset_jobs GROUP BY 1, 2, 3, 4, 5 ORDER BY 6 DESC LIMIT 20" \
+                -c "SELECT state, count(*) FROM assets GROUP BY 1" >"$logs/$name.work-tables.txt" 2>&1 || true
+            fi
             kill "$sampler" 2>/dev/null || true
             echo "$(date -u +%FT%TZ) end $name" >>"$logs/windows.txt"
             pgq -c "SELECT round(total_exec_time::numeric, 1) AS total_ms, calls, round(mean_exec_time::numeric, 3) AS mean_ms, rows, left(regexp_replace(query, '\\s+', ' ', 'g'), 160) FROM pg_stat_statements ORDER BY total_exec_time DESC LIMIT 10" \
@@ -394,7 +400,8 @@ jobs:
             cpu=$(tr -d '%' <"$logs/$name.postgres-cpu.txt" | awk 'NF {s += $1; n++; if ($1 > m) m = $1} END {if (n) printf "avg %.0f%%, max %.0f%%", s / n, m; else print "not sampled"}')
             echo "| $name | postgres CPU $cpu |" >>"$GITHUB_STEP_SUMMARY"
           }
-          smoke LOAD_LOG=info TOTAL=10000 P99_MS=500 scripts/load.sh assets throughput
+          # The worker's own story of the warm asset (claimed, verified, retried?): debug for it alone.
+          smoke LOAD_LOG=info,colophon_worker=debug TOTAL=10000 P99_MS=500 scripts/load.sh assets throughput
           smoke TOTAL=10000 USERS=64 P99_MS=700 scripts/load.sh audience throughput
           smoke TOTAL=10000 P99_MS=500 scripts/load.sh bulk throughput
           smoke DURATION=10s P99_MS=500 scripts/load.sh cache-down throughput
