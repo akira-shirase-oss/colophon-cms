@@ -3,16 +3,18 @@
 // as PostgreSQL commits — a hint names what changed and never carries content, so what follows
 // is a refetch through the API the role was already authorized for.
 //
-// - `resync` (the receiver lagged, or the server's listener reconnected) and every open, the
-//   first included (a commit between the page's loads and the open went unheard), invalidate
-//   every project-scoped key: the stream is a disposable accelerator and Postgres
-//   stays the authority, so a missed hint costs one refetch, never a wrong row.
+// - `resync` (the receiver lagged, or the server's listener reconnected) and every reopen
+//   invalidate every project-scoped key: the stream is a disposable accelerator and Postgres
+//   stays the authority, so a missed hint costs one refetch, never a wrong row. The first open
+//   doesn't need to: the project's reads wait for it (`streamGate.ts`), unless one had to go
+//   ahead first, and then it re-reads as a reopen would (D-203).
 // - The stream ends cleanly at its server-side lifetime; EventSource re-opens it on its own,
 //   and an open after a gap may have missed hints, so it resyncs rather than trust the state.
 // - A backgrounded tab can lose its connection quietly: becoming visible re-opens a dead
 //   stream and resyncs either way.
 
 import type { QueryClient, QueryFilters } from '@tanstack/svelte-query';
+import { streamClosed, streamOpened } from './streamGate.ts';
 
 /** A `change` event's data: `{"k":"<kind>","c":"<collection>"?,"e":"<environment>"?}`. */
 interface Hint {
@@ -133,11 +135,12 @@ export function watchProject(project: string, env: string, queryClient: QueryCli
 		stream.addEventListener('change', onChange);
 		stream.addEventListener('resync', resync);
 		stream.addEventListener('open', () => {
-			// Every open resyncs, the first too: the page's own loads ran before the stream was
-			// listening, and a commit landing in between sent its hint to nobody — a delivery that
-			// settled then showed "pending" until a reload. One refetch of what loaded is the cost.
+			// A reopen resyncs: hints may have been missed while the stream was down. The first open
+			// re-reads only if a read went ahead before the stream was listening (`streamGate.ts`: reads
+			// wait for the open, up to a bound), since a commit in between sent its hint to nobody. When
+			// every read waited, nothing loaded before the stream listened, so nothing is read twice (F9).
 			if (opened) resync();
-			else catchUp();
+			else if (streamOpened(project).early) catchUp();
 			opened = true;
 		});
 		// `error` needs no handler: EventSource retries on its own, and the next `open` resyncs.
@@ -159,5 +162,6 @@ export function watchProject(project: string, env: string, queryClient: QueryCli
 		document.removeEventListener('visibilitychange', onVisibility);
 		source?.close();
 		source = null;
+		streamClosed(project);
 	};
 }

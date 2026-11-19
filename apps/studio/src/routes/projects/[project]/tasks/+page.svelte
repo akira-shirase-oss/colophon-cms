@@ -26,7 +26,6 @@
 		getEntry,
 		getTask,
 		listChangesets,
-		listContentTypes,
 		listEntries,
 		listRevisions,
 		may,
@@ -39,7 +38,7 @@
 	} from '#lib/api.ts';
 	import CommentsPanel from '#lib/CommentsPanel.svelte';
 	import { plainError } from '#lib/errors.ts';
-	import { ago, meQuery, membersQuery, projectQuery, tasksQuery } from '#lib/queries.ts';
+	import { ago, meQuery, membersQuery, projectQuery, tasksQuery, typesQuery } from '#lib/queries.ts';
 	import EmptyState from '#lib/shell/EmptyState.svelte';
 	import FormRow from '#lib/shell/FormRow.svelte';
 	import PageHeader from '#lib/shell/PageHeader.svelte';
@@ -118,7 +117,8 @@
 	const choices = createQuery(() => ({
 		queryKey: ['task-choices', project],
 		queryFn: async () => {
-			const types = (await listContentTypes(project)).filter((type) => may(mine.data, 'content.update', type.slug));
+			// The layout's content types, not a read of their own (P3-12).
+			const types = (await queryClient.fetchQuery(typesQuery(project))).filter((type) => may(mine.data, 'content.update', type.slug));
 			return Promise.all(types.map(async (type) => ({ type, entries: await listEntries(project, type.slug).catch(() => [] as Summary[]) })));
 		},
 		enabled: creating && mine.data !== undefined

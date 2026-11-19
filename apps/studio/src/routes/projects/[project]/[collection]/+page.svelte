@@ -31,7 +31,7 @@
 	import FieldInputs from '#lib/FieldInputs.svelte';
 	import { oneOf } from '#lib/firstRun.ts';
 	import { newKeys, type Outcome, publishesInOneClick, publishInOneClick } from '#lib/publishing.ts';
-	import { ago, meQuery, projectQuery, releasesQuery } from '#lib/queries.ts';
+	import { ago, entriesQuery, meQuery, projectQuery, releasesQuery } from '#lib/queries.ts';
 	import EmptyState from '#lib/shell/EmptyState.svelte';
 	import PageHeader from '#lib/shell/PageHeader.svelte';
 	import Problem from '#lib/shell/Problem.svelte';
@@ -86,11 +86,17 @@
 			input.value = '';
 		}
 	}
+	const queryClient = useQueryClient();
 	// Pages of 100, newest first, followed with the server's cursor when someone asks for more. Keyed
 	// under the collection's entries, so saving and publishing refresh it.
 	const entries = createInfiniteQuery(() => ({
 		queryKey: ['entries', project, collection, q, creator ?? 'anyone', 'pages'],
-		queryFn: ({ pageParam }: { pageParam: string | null }) => searchEntries(project, collection, q, pageParam, creator),
+		// The first page of the whole list is the sidebar count's own read (`entriesQuery`): one request serves
+		// both (P3-12). A search, "Only mine" or a later page reads on its own.
+		queryFn: ({ pageParam }: { pageParam: string | null }) =>
+			pageParam === null && creator === null
+				? queryClient.fetchQuery({ ...entriesQuery(project, collection, q), staleTime: 5_000 })
+				: searchEntries(project, collection, q, pageParam, creator),
 		initialPageParam: null as string | null,
 		getNextPageParam: (last: { next_cursor: string | null }) => last.next_cursor,
 		placeholderData: keepPreviousData
@@ -119,7 +125,6 @@
 	// Bulk publishing (bounded: a publish request holds at most 100 entries). Picking rows publishes
 	// their current versions together, in one click when the role may approve and publish its own
 	// requests here, else as one request sent for review. Live entries with nothing new are left out.
-	const queryClient = useQueryClient();
 	const releases = createQuery(() => releasesQuery(project));
 	const oneClick = $derived(publishesInOneClick(mine.data, [collection]));
 	const asks = $derived(may(mine.data, 'content.update', collection));

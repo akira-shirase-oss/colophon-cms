@@ -15,5 +15,9 @@ npm test --workspaces --if-present
 # What npm would ship of @colophon-cms/sdk and @colophon-cms/rich-text, installed and used from
 # the tarballs (D-170): allowlist, budgets, publint, attw, Node, TypeScript, a browser bundle.
 node packages/sdk/scripts/pack-check.mjs
+# The SDK's load smoke: delivery reads through the packed SDK against a stub in its own process,
+# beside bare fetch (perf/node/sdk-delivery.mjs; full runs are TOTAL=1000000 on a quiet machine).
+# The overhead budget is loosened for a shared runner; failures and heap growth are not.
+TOTAL=20000 OVERHEAD_P99_MS=25 KEEP=0 node --expose-gc perf/node/sdk-delivery.mjs
 npm run build -w @colophon/studio
 npm run test:e2e -w @colophon/studio

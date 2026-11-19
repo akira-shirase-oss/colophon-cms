@@ -6,6 +6,7 @@
 // failure or a busy server means "keep the edit and try again". A rate limit (429, D-076) says
 // how long to wait: a read waits and goes once more here; a write keeps its Idempotency-Key.
 
+import { projectOf, readsMayStart } from './streamGate.ts';
 import { busyFor } from './words.ts';
 
 export interface Project {
@@ -432,6 +433,9 @@ const pause = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
  *  Exported for the modules beside this one that keep their own calls (preview.ts). */
 export async function send(method: string, path: string, body?: unknown, headers: Record<string, string> = {}): Promise<Response> {
 	const write = method !== 'GET';
+	// A project's reads wait (briefly) for its live stream, so none needs reading again when it opens (F9).
+	const project = write ? null : projectOf(path);
+	if (project !== null) await readsMayStart(project);
 	// Every attempt is the same request: a write sent again keeps its Idempotency-Key.
 	const attempt = async (): Promise<Response> => {
 		try {
