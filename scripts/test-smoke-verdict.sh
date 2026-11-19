@@ -21,6 +21,11 @@ printf 'audience\t580.731\t\nmigrations\t408.022\t\nstages\t128.171\t\nnoisy-age
 # The first run (CI 44543394086): all six failed; noisy-agent's L08 ratios were 5.79 and 6.56.
 printf 'audience\t747.707\t\nmigrations\t681.471\t\nstages\t254.202\t\nnoisy-agent\t103.657\t6.56\nassets\t619.375\t\nbulk\t2876.506\t\n' >"$tmp/run1.tsv"
 
+# Every other smoke that ran, at a green p99 (D-221 lists them all as flapping, each judged by what it measured).
+for run in run1 run2; do
+  for smoke in $ran; do grep -q "^$smoke	" "$tmp/$run.tsv" || printf '%s\t9.5\t\n' "$smoke" >>"$tmp/$run.tsv"; done
+done
+
 verdict() { scripts/smoke-verdict.sh "$@" >"$tmp/out" 2>&1; }
 expect_pass() { verdict "$@" || { echo "FAIL: $label should pass:"; cat "$tmp/out"; exit 1; }; }
 expect_fail() {
@@ -54,8 +59,8 @@ expect_fail "$list" "$ran" "assets" "$tmp/run2.tsv"
 grep -v '^assets	' "$list" >"$tmp/deleted.tsv"
 label='mutant: assets deleted from the list'; want='smoke assets failed and is not on'
 expect_fail "$tmp/deleted.tsv" "$ran" "assets bulk" "$tmp/run2.tsv"
-with $'warm-baseline\tstrict\tD-000\tnobody\t-\tplanted\tnothing'
-label='mutant: a passing smoke planted as strict'; want='smoke warm-baseline PASSED: remove it'
+with $'cache-down\tstrict\tD-000\tnobody\t-\tplanted\tnothing'
+label='mutant: a passing smoke planted as strict'; want='smoke cache-down PASSED: remove it'
 expect_fail "$tmp/list.tsv" "$ran" "assets bulk" "$tmp/run2.tsv"
 
 sed 's/^migrations\t408.022/migrations\t1200/' "$tmp/run2.tsv" >"$tmp/over.tsv"
