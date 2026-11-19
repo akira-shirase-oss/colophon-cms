@@ -8,6 +8,12 @@ through `--version` and `GET /version`.
 
 ## [Unreleased]
 
+### Added
+
+- A SvelteKit demo site (D-220): Butter & Thyme's recipes prerendered with SvelteKit 3 at one release per
+  build (`?generation=N` on every read, a build that refuses an answer from another release), the release
+  marker on every page, and a rebuild on publish with the other demo sites (`apps/sites/sveltekit`).
+
 ## [0.1.0-alpha.1] — 2026-11-19
 
 The first versioned state of the engine: pre-release until the P6 proof gate closes
