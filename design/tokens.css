@@ -1,0 +1,109 @@
+/* Colophon's design tokens: the one source for the Studio, the website and the docs (D-210).
+ *
+ * The maintainer's shadcn theme (2026-11-18), "same look, made readable". Every value is the pasted one except:
+ *   --primary           one shade deeper, oklch(0.546 0.245 262.881): white labels and links on white read 5.26:1
+ *                       (the pasted oklch(0.6225 0.2041 259.9027) read 3.71:1). The pasted blue stays as --brand,
+ *                       --ring, --sidebar-ring and --chart-1 (icons, large shapes, focus rings: 3:1 is the bar).
+ *   --link              new: links and primary-coloured text. Light: --primary. Dark: a lighter tint of the same
+ *                       hue (the deeper primary is too dark to read on a dark card).
+ *   --destructive       a deeper red: white on it reads ≥ 4.5:1 (the pasted red read 3.63:1). In dark mode a lighter
+ *                       red with a dark label instead, so it also reads as error text on a dark card (4.64:1).
+ *   dark --accent and --sidebar-accent: deep enough that their foreground reads ≥ 4.5:1 (pasted 3.09:1).
+ *   --muted-foreground  a hair darker in light (0.5471 → 0.5296): the pasted grey read 4.28:1 on a status ground
+ *                       and 4.46:1 on --secondary; now ≥ 4.6:1 on every light ground.
+ *   --input             form-field boundaries only, ≥ 3:1 against the background (WCAG 1.4.11); pasted 1.24:1.
+ *                       --border stays as pasted for dividers and cards.
+ *   fonts               Inter for text, Geist Pixel for brand titles, the system monospace stack for code; nothing
+ *                       else is downloaded.
+ * Everything else (neutrals, radius and its scale, shadows, spacing) is exactly as pasted.
+ *
+ * scripts/design-tokens.mjs checks this file: every text/surface pair in both themes against its WCAG bar (the
+ * contrast table, docs/design/contrast.md), and that each copy (packages/ui, the landing, the docs) matches it.
+ *
+ * Fonts. Geist Pixel is the landing's own latin subset, copied byte for byte:
+ *   geist-pixel-latin.woff2  11076 bytes  sha256 a50494ed7ca60a21f2ffb7fd93bc996aaa7b5a2f0246184543ad0dfd5f557ed5
+ *   (SIL Open Font License 1.1, OFL-GeistPixel.txt beside it)
+ */
+
+:root {
+  --background: oklch(1.0000 0 0); --foreground: oklch(0.3211 0 0);
+  --card: oklch(1.0000 0 0); --card-foreground: oklch(0.3211 0 0);
+  --popover: oklch(1.0000 0 0); --popover-foreground: oklch(0.3211 0 0);
+  --primary: oklch(0.5460 0.2450 262.8810); --primary-foreground: oklch(1.0000 0 0);
+  --brand: oklch(0.6225 0.2041 259.9027);
+  --link: oklch(0.5460 0.2450 262.8810);
+  --secondary: oklch(0.9665 0.0045 258.3247); --secondary-foreground: oklch(0.4419 0.0375 257.2811);
+  --muted: oklch(0.9846 0.0017 247.8389); --muted-foreground: oklch(0.5296 0.0321 263.2921);
+  --accent: oklch(0.9510 0.0267 237.5723); --accent-foreground: oklch(0.3742 0.1844 263.9420);
+  --destructive: oklch(0.5910 0.2362 26.9032); --destructive-foreground: oklch(1.0000 0 0);
+  --border: oklch(0.9271 0.0075 260.7315); --input: oklch(0.6650 0.0075 260.7315); --ring: oklch(0.6225 0.2041 259.9027);
+  --chart-1: oklch(0.6225 0.2041 259.9027); --chart-2: oklch(0.5469 0.2507 262.8085); --chart-3: oklch(0.4902 0.2693 263.7106);
+  --chart-4: oklch(0.4234 0.2370 263.9162); --chart-5: oklch(0.3742 0.1844 263.9420);
+  --sidebar: oklch(0.9846 0.0017 247.8389); --sidebar-foreground: oklch(0.3211 0 0);
+  --sidebar-primary: oklch(0.5460 0.2450 262.8810); --sidebar-primary-foreground: oklch(1.0000 0 0);
+  --sidebar-accent: oklch(0.9510 0.0267 237.5723); --sidebar-accent-foreground: oklch(0.3742 0.1844 263.9420);
+  --sidebar-border: oklch(0.9271 0.0075 260.7315); --sidebar-ring: oklch(0.6225 0.2041 259.9027);
+  --gradient-brand-from: #ffffff; --gradient-brand-to: #0061ff;
+  --font-sans: 'Inter Variable', 'Inter', 'Inter Fallback', ui-sans-serif, system-ui, sans-serif;
+  --font-title: 'Geist Pixel', 'Geist Pixel Fallback', sans-serif;
+  --font-mono: ui-monospace, 'SF Mono', SFMono-Regular, Menlo, Consolas, monospace;
+  --radius: 1.15rem;
+  --shadow-x: 0; --shadow-y: 1px; --shadow-blur: 3px; --shadow-spread: 0px; --shadow-opacity: 0.1; --shadow-color: oklch(0 0 0);
+  --shadow-2xs: 0 1px 3px 0px hsl(0 0% 0% / 0.05); --shadow-xs: 0 1px 3px 0px hsl(0 0% 0% / 0.05);
+  --shadow-sm: 0 1px 3px 0px hsl(0 0% 0% / 0.10), 0 1px 2px -1px hsl(0 0% 0% / 0.10);
+  --shadow: 0 1px 3px 0px hsl(0 0% 0% / 0.10), 0 1px 2px -1px hsl(0 0% 0% / 0.10);
+  --shadow-md: 0 1px 3px 0px hsl(0 0% 0% / 0.10), 0 2px 4px -1px hsl(0 0% 0% / 0.10);
+  --shadow-lg: 0 1px 3px 0px hsl(0 0% 0% / 0.10), 0 4px 6px -1px hsl(0 0% 0% / 0.10);
+  --shadow-xl: 0 1px 3px 0px hsl(0 0% 0% / 0.10), 0 8px 10px -1px hsl(0 0% 0% / 0.10);
+  --shadow-2xl: 0 1px 3px 0px hsl(0 0% 0% / 0.25);
+  --tracking-normal: 0em; --spacing: 0.25rem;
+  /* ---- Colophon additions (not in the pasted theme) ---- */
+  /* Hover for the one primary button; the accent as text (--brand-ink) and its soft ground. */
+  --primary-hover: oklch(0.4900 0.2450 262.8810);
+  --brand-ink: oklch(0.5460 0.2450 262.8810); --brand-soft: oklch(0.9550 0.0250 259.9027);
+  /* The outline of a checkbox or radio: a control's edge, 3:1 against what it sits on. */
+  --control: oklch(0.6650 0.0075 260.7315);
+  /* Status: a mark (dot or icon), a ring around it, a ground for its tag, an ink for text. Always with a word:
+     colour is never the only signal. Green is live, violet live with changes (hue 300: 38° from the blue accent, D-182's 30° rule), amber on its way, rose needs
+     attention or was taken down, grey a draft. The light amber mark is deeper than D-182's (0.75 → 0.67) so it
+     meets 3:1 on white.  */
+  --live: oklch(0.64 0.16 148); --live-ring: oklch(0.9 0.06 148); --live-soft: oklch(0.965 0.025 148); --live-ink: oklch(0.43 0.1 148);
+  --changed: oklch(0.56 0.19 300); --changed-ring: oklch(0.88 0.05 300); --changed-soft: oklch(0.96 0.017 300); --changed-ink: oklch(0.46 0.17 300);
+  --pending: oklch(0.6700 0.15 75); --pending-ring: oklch(0.9 0.08 85); --pending-soft: oklch(0.97 0.035 85); --pending-ink: oklch(0.47 0.1 65);
+  --attention: oklch(0.6 0.19 15); --attention-ring: oklch(0.89 0.05 15); --attention-soft: oklch(0.965 0.02 15); --attention-ink: oklch(0.49 0.17 15);
+  --draft: oklch(0.62 0.01 260); --draft-ring: oklch(0.9 0.004 260); --draft-soft: oklch(0.958 0.003 260); --draft-ink: oklch(0.43 0.008 260);
+  /* Named elevations, on the theme's shadow scale: only what floats over a page casts a shadow. */
+  --shadow-press: var(--shadow-2xs); --shadow-hairline: var(--shadow-xs); --shadow-soft: var(--shadow-md); --shadow-float: var(--shadow-xl);
+}
+
+.dark {
+  --background: oklch(0.2046 0 0); --foreground: oklch(0.9219 0 0);
+  --card: oklch(0.2686 0 0); --card-foreground: oklch(0.9219 0 0);
+  --popover: oklch(0.2686 0 0); --popover-foreground: oklch(0.9219 0 0);
+  --primary: oklch(0.5460 0.2450 262.8810); --primary-foreground: oklch(1.0000 0 0);
+  --brand: oklch(0.6225 0.2041 259.9027);
+  --link: oklch(0.6510 0.1861 259.9027);
+  --secondary: oklch(0.2686 0 0); --secondary-foreground: oklch(0.9219 0 0);
+  --muted: oklch(0.2393 0 0); --muted-foreground: oklch(0.7155 0 0);
+  --accent: oklch(0.4880 0.1915 259.7416); --accent-foreground: oklch(0.8820 0.0588 253.9688);
+  --destructive: oklch(0.6700 0.1900 26.9032); --destructive-foreground: oklch(0.2046 0 0);
+  --border: oklch(0.3715 0 0); --input: oklch(0.5450 0 0); --ring: oklch(0.6225 0.2041 259.9027);
+  --chart-1: oklch(0.7122 0.1526 254.9868); --chart-2: oklch(0.6225 0.2041 259.9027); --chart-3: oklch(0.5739 0.2334 262.7735);
+  --chart-4: oklch(0.6225 0.2041 259.9027); --chart-5: oklch(0.6225 0.2041 259.9027);
+  --sidebar: oklch(0.2046 0 0); --sidebar-foreground: oklch(0.9219 0 0);
+  --sidebar-primary: oklch(0.5460 0.2450 262.8810); --sidebar-primary-foreground: oklch(1.0000 0 0);
+  --sidebar-accent: oklch(0.4880 0.1915 259.7416); --sidebar-accent-foreground: oklch(0.8820 0.0588 253.9688);
+  --sidebar-border: oklch(0.3715 0 0); --sidebar-ring: oklch(0.6225 0.2041 259.9027);
+  /* ---- Colophon additions ---- */
+  --primary-hover: oklch(0.5800 0.2400 262.8810);
+  --brand-ink: oklch(0.6510 0.1861 259.9027); --brand-soft: oklch(0.2650 0.0500 259.9027);
+  --control: oklch(0.5450 0 0);
+  --live: oklch(0.74 0.15 148); --live-ring: oklch(0.38 0.07 148); --live-soft: oklch(0.26 0.04 148); --live-ink: oklch(0.86 0.1 148);
+  --changed: oklch(0.7 0.14 300); --changed-ring: oklch(0.38 0.08 300); --changed-soft: oklch(0.26 0.045 300); --changed-ink: oklch(0.86 0.07 300);
+  --pending: oklch(0.82 0.14 80); --pending-ring: oklch(0.4 0.07 75); --pending-soft: oklch(0.28 0.045 75); --pending-ink: oklch(0.89 0.1 85);
+  --attention: oklch(0.7 0.17 15); --attention-ring: oklch(0.4 0.08 15); --attention-soft: oklch(0.27 0.055 15); --attention-ink: oklch(0.87 0.08 15);
+  --draft: oklch(0.66 0.01 260); --draft-ring: oklch(0.36 0.01 260); --draft-soft: oklch(0.25 0.008 260); --draft-ink: oklch(0.86 0.006 260);
+  --shadow-press: 0 1px 1px hsl(0 0% 0% / 0.30); --shadow-hairline: 0 1px 2px hsl(0 0% 0% / 0.30);
+  --shadow-soft: 0 1px 2px hsl(0 0% 0% / 0.30), 0 8px 24px -10px hsl(0 0% 0% / 0.50);
+  --shadow-float: 0 1px 2px hsl(0 0% 0% / 0.30), 0 32px 64px -24px hsl(0 0% 0% / 0.70);
+}
