@@ -247,15 +247,28 @@ async fn password_work_is_limited_per_address_and_another_address_still_signs_in
         statuses.contains(&StatusCode::TOO_MANY_REQUESTS),
         "{statuses:?}"
     );
-    // Staff sign-in shares the address's password limit.
-    assert_eq!(
-        post_as(
-            &format!("{block}::ff"),
-            "/auth/signin",
-            &serde_json::json!({"email": "nobody@example.test", "password": "a guess at it"}),
-        )
-        .await,
-        StatusCode::TOO_MANY_REQUESTS
+    // Staff sign-in shares the address's password limit. The cell earns one back a second, so on
+    // a slow runner a single attempt may land on a fresh one: four in a row can't all.
+    let staff_started = Instant::now();
+    let mut staff = Vec::new();
+    for n in 0..4 {
+        staff.push(
+            post_as(
+                &format!("{block}::f{n}"),
+                "/auth/signin",
+                &serde_json::json!({"email": "nobody@example.test", "password": "a guess at it"}),
+            )
+            .await,
+        );
+    }
+    let staff_earned = usize::try_from(staff_started.elapsed().as_secs()).expect("small") + 1;
+    let staff_admitted = staff
+        .iter()
+        .filter(|status| **status != StatusCode::TOO_MANY_REQUESTS)
+        .count();
+    assert!(
+        staff.contains(&StatusCode::TOO_MANY_REQUESTS) && staff_admitted <= staff_earned,
+        "staff sign-in from the flooding /64: {staff:?} ({staff_admitted} admitted, {staff_earned} earned)"
     );
 
     // Meanwhile another address signs up and signs in.
