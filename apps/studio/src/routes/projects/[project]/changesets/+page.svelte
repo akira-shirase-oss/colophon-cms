@@ -177,7 +177,8 @@
 									<colgroup>
 										<col class="w-10" />
 										<col />
-										<col class="w-36 max-sm:w-0" />
+										<!-- The state column fits the longest badge, "Live with changes" with its icon (request-dialog-layout.spec). -->
+										<col class="w-44 max-sm:w-0" />
 										<col class="w-[11.5rem] max-sm:w-0" />
 									</colgroup>
 									<thead class="sr-only">
