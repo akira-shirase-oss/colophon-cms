@@ -183,6 +183,12 @@
 
 	// ---- The task itself -------------------------------------------------------
 	let open = $state<EditorialTask | null>(null);
+	// The task's title outlives `open` by the dialog's exit animation, so the closing dialog keeps its
+	// accessible name (axe's aria-dialog-name): its Title has gone with `open` by then.
+	let named = $state('');
+	$effect(() => {
+		if (open !== null) named = open.title;
+	});
 	// Its entry, for the comments' version and creator (and to know when it's deleted): a read that
 	// ends null either way the read fails.
 	const openEntry = createQuery(() => ({
@@ -406,7 +412,7 @@
 <!-- The task itself: change its title, who it's waiting on (nobody sends null, never omission),
      and where it stands — each on the etag it was read at. Its entry's comments sit below. -->
 <Dialog.Root open={open !== null} onOpenChange={(next) => !next && (open = null)}>
-	<Dialog.Content class="max-h-[90svh] overflow-y-auto sm:max-w-2xl" data-testid="task-detail">
+	<Dialog.Content class="max-h-[90svh] overflow-y-auto sm:max-w-2xl" data-testid="task-detail" aria-label={named || undefined}>
 		{#if open !== null}
 			<Dialog.Header>
 				<Dialog.Title data-user-content>{open.title}</Dialog.Title>

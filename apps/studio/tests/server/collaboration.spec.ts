@@ -91,8 +91,19 @@ test('a task is made on an entry, assigned, finished, and unassigned', async ({ 
 	expect(tasks.status).toBe(200);
 	expect(tasks.body?.['data'][0].assignee_id).toBeNull();
 
-	// The list shows it the same way.
+	// The list shows it the same way. While the detail closes it keeps its name (axe's
+	// aria-dialog-name): read at once, before its exit animation has finished. Then the scan
+	// waits for it to be gone, an observable state, not a sleep.
 	await page.keyboard.press('Escape');
+	const unnamed = await page.evaluate(() =>
+		[...document.querySelectorAll('[role="dialog"]')].filter((dialog) => {
+			const by = dialog.getAttribute('aria-labelledby');
+			const label = by ? document.getElementById(by)?.textContent?.trim() : '';
+			return !label && !dialog.getAttribute('aria-label')?.trim();
+		}).length
+	);
+	expect(unnamed, 'a closing dialog without a name').toBe(0);
+	await expect(detail).toBeHidden();
 	await expect(page.getByTestId('task').first()).toContainText('Fix the byline');
 	expect(await internalTerms(page)).toEqual([]);
 	expect(await violations(page)).toEqual([]);
