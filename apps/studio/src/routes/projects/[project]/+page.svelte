@@ -101,43 +101,43 @@
 		{/key}
 	{/if}
 	<section class="stagger grid gap-3 sm:grid-cols-2 xl:grid-cols-4" aria-label="At a glance">
-		<a class="stat lift" style="--i: 0" href={live ? resolve('/projects/[project]/releases/[generation]', { project, generation: String(live.generation) }) : resolve('/projects/[project]/releases', { project })}>
-			<span class="stat-label">Live release</span>
+		<a class="lift flex flex-col items-start gap-1.5 rounded-card border border-border bg-card px-(--card-padding) py-(--card-padding-sm) hover:border-foreground/20" style="--i: 0" href={live ? resolve('/projects/[project]/releases/[generation]', { project, generation: String(live.generation) }) : resolve('/projects/[project]/releases', { project })}>
+			<span class="text-sm text-muted-foreground">Live release</span>
 			{#if releases.isPending}
 				<Skeleton class="h-8 w-24" />
 			{:else if releases.isError}
-				<span class="stat-value">Unknown</span>
+				<span class="font-display text-[1.75rem] leading-9 font-[560] tracking-[-0.015em] tabular-nums">Unknown</span>
 				<span class="text-xs text-destructive" data-testid="releases-problem">Couldn't check what's live</span>
 			{:else if live}
-				<span class="stat-value">{releaseName(live.generation)}</span>
+				<span class="font-display text-[1.75rem] leading-9 font-[560] tracking-[-0.015em] tabular-nums">{releaseName(live.generation)}</span>
 				<ReleaseLabel release={live} testid="overview-label" />
 			{:else}
-				<span class="stat-value">None yet</span>
+				<span class="font-display text-[1.75rem] leading-9 font-[560] tracking-[-0.015em] tabular-nums">None yet</span>
 				<span class="text-xs text-muted-foreground">Nothing is published</span>
 			{/if}
 		</a>
-		<a class="stat lift" style="--i: 1" href={resolve('/projects/[project]/changesets', { project })}>
-			<span class="stat-label">Waiting for review</span>
+		<a class="lift flex flex-col items-start gap-1.5 rounded-card border border-border bg-card px-(--card-padding) py-(--card-padding-sm) hover:border-foreground/20" style="--i: 1" href={resolve('/projects/[project]/changesets', { project })}>
+			<span class="text-sm text-muted-foreground">Waiting for review</span>
 			{#if sets.isError}
-				<span class="stat-value">Unknown</span>
+				<span class="font-display text-[1.75rem] leading-9 font-[560] tracking-[-0.015em] tabular-nums">Unknown</span>
 				<span class="text-xs text-destructive">Couldn't load {PUBLISH_REQUESTS}</span>
 			{:else}
-				<span class="stat-value tabular" data-testid="awaiting-count">{(sets.data ?? []).filter((set) => set.status.state === 'awaiting_review').length}</span>
+				<span class="font-display text-[1.75rem] leading-9 font-[560] tracking-[-0.015em] tabular-nums" data-testid="awaiting-count">{(sets.data ?? []).filter((set) => set.status.state === 'awaiting_review').length}</span>
 				<span class="text-xs text-muted-foreground">{count(waiting.length, PUBLISH_REQUEST, PUBLISH_REQUESTS)} in progress</span>
 			{/if}
 		</a>
-		<div class="stat" style="--i: 2">
-			<span class="stat-label">Entries</span>
-			<span class="stat-value tabular" data-testid="entry-count">{all.length}{more ? '+' : ''}</span>
+		<div class="flex flex-col items-start gap-1.5 rounded-card border border-border bg-card px-(--card-padding) py-(--card-padding-sm)" style="--i: 2">
+			<span class="text-sm text-muted-foreground">Entries</span>
+			<span class="font-display text-[1.75rem] leading-9 font-[560] tracking-[-0.015em] tabular-nums" data-testid="entry-count">{all.length}{more ? '+' : ''}</span>
 			<span class="flex flex-wrap gap-x-3 gap-y-1 text-xs text-muted-foreground">
-				<span><span class="tally-dot bg-live ring-live-ring" aria-hidden="true"></span>{tally.live} live</span>
-				<span><span class="tally-dot bg-changed ring-changed-ring" aria-hidden="true"></span>{tally.changed} changed</span>
-				<span><span class="tally-dot bg-draft ring-draft-ring" aria-hidden="true"></span>{tally.draft} draft</span>
+				<span><span class="mr-2 inline-block size-2 rounded-full align-middle ring-[3px] bg-live ring-live-ring" aria-hidden="true"></span>{tally.live} live</span>
+				<span><span class="mr-2 inline-block size-2 rounded-full align-middle ring-[3px] bg-changed ring-changed-ring" aria-hidden="true"></span>{tally.changed} changed</span>
+				<span><span class="mr-2 inline-block size-2 rounded-full align-middle ring-[3px] bg-draft ring-draft-ring" aria-hidden="true"></span>{tally.draft} draft</span>
 			</span>
 		</div>
-		<div class="stat" style="--i: 3">
-			<span class="stat-label">Last published</span>
-			<span class="stat-value">{live ? ago(live.published_at) : 'Never'}</span>
+		<div class="flex flex-col items-start gap-1.5 rounded-card border border-border bg-card px-(--card-padding) py-(--card-padding-sm)" style="--i: 3">
+			<span class="text-sm text-muted-foreground">Last published</span>
+			<span class="font-display text-[1.75rem] leading-9 font-[560] tracking-[-0.015em] tabular-nums">{live ? ago(live.published_at) : 'Never'}</span>
 			<span class="truncate text-xs text-muted-foreground">{live ? `by ${live.published_by_name ?? live.published_by}` : 'No releases yet'}</span>
 		</div>
 	</section>
@@ -238,42 +238,3 @@
 	</div>
 {/if}
 
-<style>
-	/* The design system's card (D-182): its padding and radius tokens, a hairline, flat. */
-	.stat {
-		display: flex;
-		flex-direction: column;
-		gap: 0.375rem;
-		padding: var(--card-padding-sm) var(--card-padding);
-		border: 1px solid var(--border);
-		border-radius: var(--radius-card);
-		background: var(--card);
-		align-items: flex-start;
-	}
-	a.stat:hover {
-		border-color: color-mix(in oklch, var(--foreground) 20%, transparent);
-	}
-	/* A status mark as on Colophon's site: a dot in a soft ring of its own colour. */
-	.tally-dot {
-		display: inline-block;
-		width: 0.5rem;
-		height: 0.5rem;
-		margin-right: 0.5rem;
-		border-radius: 9999px;
-		vertical-align: middle;
-		/* The ring's colour comes from the `ring-*-ring` class beside it. */
-		box-shadow: 0 0 0 3px var(--tw-ring-color);
-	}
-	.stat-label {
-		font-size: 0.875rem;
-		color: var(--muted-foreground);
-	}
-	.stat-value {
-		font-family: var(--font-display);
-		font-size: 1.75rem;
-		line-height: 2.25rem;
-		font-weight: 560;
-		letter-spacing: -0.015em;
-		font-variant-numeric: tabular-nums;
-	}
-</style>

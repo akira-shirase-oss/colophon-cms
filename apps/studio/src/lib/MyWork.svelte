@@ -70,19 +70,19 @@
 </script>
 
 <div class="grid gap-6 lg:grid-cols-2" data-testid="my-work">
-	<section class="card" aria-labelledby="my-drafts">
-		<h2 id="my-drafts" class="card-title">Your drafts</h2>
-		<p class="card-hint">What you started that readers don't have yet.</p>
+	<section class="min-w-0 rounded-card border border-border bg-card p-(--card-padding)" aria-labelledby="my-drafts">
+		<h2 id="my-drafts" class="text-base font-semibold">Your drafts</h2>
+		<p class="mt-0.5 mb-3 text-sm text-muted-foreground">What you started that readers don't have yet.</p>
 		{#if !listsSettled}
 			<Skeleton class="h-24 w-full rounded-lg" />
 		{:else}
 			{#if listsFailed}
 				<div class="mb-3"><Problem error={lists.find((list) => list.isError)?.error ?? new Error('')} what="your drafts" retry={() => lists.forEach((list) => list.isError && list.refetch())} /></div>
 			{/if}
-			<ul class="rows" data-testid="my-drafts">
+			<ul class="grid -mx-2 gap-1" data-testid="my-drafts">
 				{#each drafts as { type, entry } (entry.id)}
 					<li>
-						<a class="row" href={resolve('/projects/[project]/[collection]/[entry]', { project, collection: type.slug, entry: entry.id })}>
+						<a class="flex min-w-0 items-center gap-3 rounded-control p-2 outline-none hover:bg-muted focus-visible:ring-[3px] focus-visible:ring-ring/40" href={resolve('/projects/[project]/[collection]/[entry]', { project, collection: type.slug, entry: entry.id })}>
 							<FileTextIcon class="size-4 shrink-0 text-muted-foreground" aria-hidden="true" />
 							<span class="min-w-0 flex-1">
 								<span class="block truncate text-sm font-medium" data-user-content>{shownTitle(entry.revision.title)}</span>
@@ -92,7 +92,7 @@
 						</a>
 					</li>
 				{:else}
-					<li class="empty">
+					<li class="p-2 text-sm text-muted-foreground">
 						Nothing half-finished.
 						{#if writes && main}<Button class="ml-1" size="sm" variant="outline" href={resolve('/projects/[project]/[collection]', { project, collection: main.slug }) + '?new=1'}>Write a new {oneOf(main.definition.name)}</Button>{/if}
 					</li>
@@ -101,32 +101,32 @@
 		{/if}
 	</section>
 
-	<section class="card" aria-labelledby="my-requests">
-		<h2 id="my-requests" class="card-title">Publish requests</h2>
+	<section class="min-w-0 rounded-card border border-border bg-card p-(--card-padding)" aria-labelledby="my-requests">
+		<h2 id="my-requests" class="text-base font-semibold">Publish requests</h2>
 		{#if sets.isPending}
 			<Skeleton class="h-24 w-full rounded-lg" />
 		{:else if sets.isError}
 			<Problem error={sets.error} what={PUBLISH_REQUESTS} retry={() => sets.refetch()} />
 		{:else}
-			<h3 class="card-hint" id="waiting-heading">{reviews ? 'Waiting for your review' : 'Waiting for review: a publisher approves these'}</h3>
-			<ul class="rows" aria-labelledby="waiting-heading" data-testid="waiting-review">
+			<h3 class="mt-0.5 mb-3 text-sm text-muted-foreground" id="waiting-heading">{reviews ? 'Waiting for your review' : 'Waiting for review: a publisher approves these'}</h3>
+			<ul class="grid -mx-2 gap-1" aria-labelledby="waiting-heading" data-testid="waiting-review">
 				{#each waiting as set (set.id)}
 					<li>
-						<a class="row" href={resolve('/projects/[project]/changesets/[changeset]', { project, changeset: set.id })}>
+						<a class="flex min-w-0 items-center gap-3 rounded-control p-2 outline-none hover:bg-muted focus-visible:ring-[3px] focus-visible:ring-ring/40" href={resolve('/projects/[project]/changesets/[changeset]', { project, changeset: set.id })}>
 							<span class="min-w-0 flex-1 truncate text-sm font-medium" data-user-content>{set.title}</span>
 							<span class="text-xs text-muted-foreground">{set.submitted_at ? ago(set.submitted_at) : ''}</span>
 						</a>
 					</li>
 				{:else}
-					<li class="empty">Nothing is waiting for review.</li>
+					<li class="p-2 text-sm text-muted-foreground">Nothing is waiting for review.</li>
 				{/each}
 			</ul>
 			{#if yours.length > 0}
-				<h3 class="card-hint mt-4" id="yours-heading">Yours, still in progress</h3>
-				<ul class="rows" aria-labelledby="yours-heading" data-testid="my-requests-list">
+				<h3 class="mt-4 mb-3 text-sm text-muted-foreground" id="yours-heading">Yours, still in progress</h3>
+				<ul class="grid -mx-2 gap-1" aria-labelledby="yours-heading" data-testid="my-requests-list">
 					{#each yours as set (set.id)}
 						<li>
-							<a class="row" href={resolve('/projects/[project]/changesets/[changeset]', { project, changeset: set.id })}>
+							<a class="flex min-w-0 items-center gap-3 rounded-control p-2 outline-none hover:bg-muted focus-visible:ring-[3px] focus-visible:ring-ring/40" href={resolve('/projects/[project]/changesets/[changeset]', { project, changeset: set.id })}>
 								<span class="min-w-0 flex-1 truncate text-sm font-medium" data-user-content>{set.title}</span>
 								<ChangesetBadge state={set.status.state} />
 							</a>
@@ -137,17 +137,17 @@
 		{/if}
 	</section>
 
-	<section class="card" aria-labelledby="my-schedules">
-		<h2 id="my-schedules" class="card-title">Scheduled</h2>
+	<section class="min-w-0 rounded-card border border-border bg-card p-(--card-padding)" aria-labelledby="my-schedules">
+		<h2 id="my-schedules" class="text-base font-semibold">Scheduled</h2>
 		{#if schedules.isPending}
 			<Skeleton class="h-16 w-full rounded-lg" />
 		{:else if schedules.isError}
 			<Problem error={schedules.error} what="what is scheduled" retry={() => schedules.refetch()} />
 		{:else}
-			<ul class="rows" data-testid="my-schedules-list">
+			<ul class="grid -mx-2 gap-1" data-testid="my-schedules-list">
 				{#each upcoming.slice(0, 5) as item (item.id)}
 					<li>
-						<a class="row" href={resolve('/projects/[project]/changesets/[changeset]', { project, changeset: item.changeset_id })}>
+						<a class="flex min-w-0 items-center gap-3 rounded-control p-2 outline-none hover:bg-muted focus-visible:ring-[3px] focus-visible:ring-ring/40" href={resolve('/projects/[project]/changesets/[changeset]', { project, changeset: item.changeset_id })}>
 							<CalendarClockIcon class="size-4 shrink-0 text-muted-foreground" aria-hidden="true" />
 							<span class="min-w-0 flex-1">
 								<span class="block truncate text-sm font-medium" data-user-content>{item.title}</span>
@@ -159,7 +159,7 @@
 				{/each}
 				{#each blocked as item (item.id)}
 					<li>
-						<a class="row" href={resolve('/projects/[project]/changesets/[changeset]', { project, changeset: item.changeset_id })}>
+						<a class="flex min-w-0 items-center gap-3 rounded-control p-2 outline-none hover:bg-muted focus-visible:ring-[3px] focus-visible:ring-ring/40" href={resolve('/projects/[project]/changesets/[changeset]', { project, changeset: item.changeset_id })}>
 							<CalendarClockIcon class="size-4 shrink-0 text-muted-foreground" aria-hidden="true" />
 							<span class="min-w-0 flex-1">
 								<span class="block truncate text-sm font-medium" data-user-content>{item.title}</span>
@@ -170,23 +170,23 @@
 					</li>
 				{/each}
 				{#if upcoming.length === 0 && blocked.length === 0}
-					<li class="empty">Nothing is scheduled. An approved publish request can be set to publish at a time you choose.</li>
+					<li class="p-2 text-sm text-muted-foreground">Nothing is scheduled. An approved publish request can be set to publish at a time you choose.</li>
 				{/if}
 			</ul>
 		{/if}
 	</section>
 
-	<section class="card" aria-labelledby="my-releases">
-		<h2 id="my-releases" class="card-title">Recent releases</h2>
+	<section class="min-w-0 rounded-card border border-border bg-card p-(--card-padding)" aria-labelledby="my-releases">
+		<h2 id="my-releases" class="text-base font-semibold">Recent releases</h2>
 		{#if releases.isPending}
 			<Skeleton class="h-16 w-full rounded-lg" />
 		{:else if releases.isError}
 			<Problem error={releases.error} what="releases" retry={() => releases.refetch()} />
 		{:else}
-			<ul class="rows" data-testid="my-releases-list">
+			<ul class="grid -mx-2 gap-1" data-testid="my-releases-list">
 				{#each latest as release (release.generation)}
 					<li>
-						<a class="row" href={resolve('/projects/[project]/releases/[generation]', { project, generation: String(release.generation) })}>
+						<a class="flex min-w-0 items-center gap-3 rounded-control p-2 outline-none hover:bg-muted focus-visible:ring-[3px] focus-visible:ring-ring/40" href={resolve('/projects/[project]/releases/[generation]', { project, generation: String(release.generation) })}>
 							<span class="min-w-0 flex-1">
 								<span class="block truncate text-sm font-medium">{releaseName(release.generation)}<span class="font-normal text-muted-foreground" data-user-content>: {release.title}</span></span>
 								<span class="text-xs text-muted-foreground">{ago(release.published_at)}</span>
@@ -195,7 +195,7 @@
 						</a>
 					</li>
 				{:else}
-					<li class="empty">Nothing is live yet. Each publish becomes a numbered release, with a receipt.</li>
+					<li class="p-2 text-sm text-muted-foreground">Nothing is live yet. Each publish becomes a numbered release, with a receipt.</li>
 				{/each}
 			</ul>
 		{/if}
@@ -205,50 +205,3 @@
 	<Button variant="outline" href={resolve('/projects/[project]', { project })}>Open the project<ArrowRightIcon data-icon="inline-end" /></Button>
 </p>
 
-<style>
-	/* The design system's card (D-182): its padding and radius tokens, a hairline, no shadow. */
-	.card {
-		min-width: 0;
-		padding: var(--card-padding);
-		border: 1px solid var(--border);
-		border-radius: var(--radius-card);
-		background: var(--card);
-	}
-	.card-title {
-		font-size: 1rem;
-		font-weight: 600;
-	}
-	.card-hint {
-		margin-block: 0.125rem 0.75rem;
-		font-size: 0.875rem;
-		color: var(--muted-foreground);
-	}
-	/* Rows reach out by their own padding, so their text lines up with the card's heading; one
-	 * shrinkable column, so a long title truncates instead of widening the card. */
-	.rows {
-		display: grid;
-		grid-template-columns: minmax(0, 1fr);
-		gap: 0.25rem;
-		margin-inline: -0.5rem;
-	}
-	.row {
-		display: flex;
-		align-items: center;
-		gap: 0.75rem;
-		min-width: 0;
-		padding: 0.5rem;
-		border-radius: var(--radius-control);
-	}
-	.row:hover {
-		background: var(--muted);
-	}
-	.row:focus-visible {
-		outline: none;
-		box-shadow: 0 0 0 3px color-mix(in oklch, var(--ring) 40%, transparent);
-	}
-	.empty {
-		padding: 0.5rem;
-		font-size: 0.875rem;
-		color: var(--muted-foreground);
-	}
-</style>
