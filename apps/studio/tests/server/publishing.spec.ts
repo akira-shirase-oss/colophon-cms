@@ -335,12 +335,10 @@ async function counted(page: Page, path: string): Promise<{ load: string[]; catc
 	return { load, catchUp };
 }
 
-/** Reads a screen makes more than twice today (load plus the stream's catch-up), by screen. F9,
- *  workstream 4: the Releases page reads the release list under two keys — the sidebar's
- *  `['releases', p]` and its own paged `['releases', p, 'pages']` — on origin/main too. */
-const KNOWN_DUPLICATES: Record<string, string[]> = {
-	releases: ['/api/v1/projects/:p/environments/production/releases']
-};
+/** Reads a screen makes more than twice (load plus the stream's catch-up), by screen. None today: the
+ *  Releases page's double read (the sidebar's `['releases', p]` and its own paged key) went with D-203,
+ *  which reads its first page through the sidebar's key. A new duplicate fails this test. */
+const KNOWN_DUPLICATES: Record<string, string[]> = {};
 
 test('each publishing screen asks the API once for each thing it needs', async ({ page }) => {
 	await signIn(page);

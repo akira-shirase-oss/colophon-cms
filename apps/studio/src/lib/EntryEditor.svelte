@@ -345,10 +345,11 @@
 	const standing = $derived(published === null ? 'draft' : matchesLive && saver.status === 'saved' ? 'live' : 'changed');
 
 	// A draft that a release took down reads "Taken down", not like one never published: the public
-	// read of it answers "gone" (410) rather than "not found". Keyed under the collection's
-	// entries, so publishing and unpublishing refresh it.
+	// read of it answers "gone" (410) rather than "not found". Only a release changes that answer, so it
+	// is keyed under the project's releases: publishing, unpublishing and the stream's releases hints
+	// refresh it, and a save (an entries hint, a list refresh) never reads the public API again.
 	const absence = createQuery(() => ({
-		queryKey: ['entries', project, collection, 'absence', entry],
+		queryKey: ['releases', project, 'absence', collection, entry],
 		queryFn: () => readerAbsence(project, collection, entry),
 		enabled: published === null,
 		retry: false
@@ -987,7 +988,7 @@
 		>
 			<!-- The status card: the badge and the save state on one row, then one sentence with the
 			     release, marked by a rule in the badge's tone. -->
-			<div class="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1 max-xl:min-w-fit xl:grid xl:gap-2" data-testid="entry-status">
+			<div class="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1 max-xl:flex-auto xl:grid xl:gap-2" data-testid="entry-status">
 				<div class="flex min-w-0 flex-wrap items-center justify-between gap-x-3 gap-y-1">
 					<StatusBadge state={shownState} generation={published?.generation ?? null} testid="entry-state" />
 					<p class="flex min-w-0 items-center gap-1.5 text-sm" role="status" data-testid="save-status" data-status={saver.status}>
