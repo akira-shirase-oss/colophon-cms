@@ -300,9 +300,16 @@ async fn an_upload_wakes_the_asset_worker_instead_of_waiting_for_its_poll() {
 
 /// The asset worker's listener comes back after losing its connection (D-218): its backend, named
 /// `colophon-asset-wake`, is terminated; a new one appears, and an upload is still woken for (poll at 10 s).
+///
+/// CI only (like the outage tests, D-187): it terminates a Postgres backend, and the local stack's Postgres is shared
+/// with other databases. It refuses to run on a stack it doesn't own, and checks the backend it terminates in Rust
+/// first: the listener's name, in this test's own database.
 #[tokio::test]
-#[ignore = "needs the stack and scripts/migrate.sh"]
+#[ignore = "CI only: terminates a Postgres backend, refused on a shared stack (D-187)"]
 async fn the_asset_worker_listens_again_after_losing_its_listener() {
+    if let Err(reason) = common::stack_guard(|key| std::env::var(key).ok()) {
+        panic!("{reason}");
+    }
     let _server = common::Server::start_with(&[("COLOPHON_WORKER_POLL_MS", "10000")]).await;
     let owner = sign_in("dev-owner").await;
     let project = project(&owner).await;
@@ -322,13 +329,20 @@ async fn the_asset_worker_listens_again_after_losing_its_listener() {
     );
     // The pid first, then a terminate of exactly that pid: a terminate inside the filtering WHERE runs in whatever
     // order the planner picks, and once took this database's other backends with it.
-    let pid: i32 = sqlx::query_scalar(
-        "SELECT pid FROM pg_stat_activity
+    let (pid, application, database_name, ours): (i32, String, String, String) = sqlx::query_as(
+        "SELECT pid, application_name, datname::text, current_database()::text FROM pg_stat_activity
          WHERE application_name = 'colophon-asset-wake' AND datname = current_database()",
     )
     .fetch_one(&database)
     .await
     .expect("the listener's backend");
+    // Checked here, in Rust, before anything is terminated: exactly the listener, in this test's own database.
+    assert_eq!(
+        application,
+        colophon_worker::ASSET_LISTENER,
+        "not the asset listener: pid {pid}"
+    );
+    assert_eq!(database_name, ours, "pid {pid} is in another database");
     let killed: bool = sqlx::query_scalar("SELECT pg_terminate_backend($1)")
         .bind(pid)
         .fetch_one(&database)
