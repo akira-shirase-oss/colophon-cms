@@ -110,6 +110,10 @@ through `--version` and `GET /version`.
 The 2026-11-16 security fixes (D-148 to D-157, D-159 to D-169). Each names the attack it
 closes and carries a test that failed without it.
 
+- A content-migration run no longer un-gates an entry: the revision it wrote took the default
+  `public` visibility, so publishing a migrated member-only entry served it to anonymous
+  readers. The run's revision now keeps the gate of the draft it replaces, and revisions and
+  publications runs already wrote are corrected (D-183, migration 0070).
 - Magic links land only on an origin the project lists, and spending one retires its
   siblings (D-148); requests are bounded per client address first, then per recipient with
   an escalating cooldown, then per project (D-153, D-161).
@@ -138,6 +142,11 @@ closes and carries a test that failed without it.
   goes before a `return_to` fragment.
 
 ### Fixed
+
+- Integration tests that stop, pause or restart a local-stack service now refuse the shared stack
+  before any `docker` call: they run in CI, under a compose project of your own, or with
+  `COLOPHON_STACK_OWNER=1` (D-187b). Every such call goes through one guarded helper, and a test
+  keeps it that way.
 
 - The releases list pages: `GET {P}/releases` takes `?limit=` (1–100, default 100, what it
   answered before) and `?cursor=`, and its `next_cursor` is real. It used to stop at the

@@ -7,13 +7,11 @@
     reason = "process-level tests: any failure to start, read or connect is a test failure"
 )]
 
-#[path = "common/stack_guard.rs"]
-mod stack_guard;
+mod common;
 
 use std::{
     io::{BufRead as _, BufReader},
     net::SocketAddr,
-    path::PathBuf,
     process::{Child, Command, ExitStatus, Stdio},
     sync::mpsc,
     thread,
@@ -208,32 +206,18 @@ async fn sigterm_drains_then_exits_cleanly() {
 struct StackServices;
 
 impl StackServices {
-    fn compose(args: &[&str]) {
-        stack_guard::require_own_stack(&format!("run docker compose {}", args.join(" ")));
-        let file = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../deploy/compose.yaml");
-        let status = Command::new("docker")
-            .args(["compose", "-f"])
-            .arg(file)
-            .args(args)
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .status()
-            .expect("docker compose runs");
-        assert!(status.success(), "docker compose {args:?} failed");
-    }
-
     fn stop(service: &str) {
-        Self::compose(&["stop", service]);
+        common::compose(&["stop", service]);
     }
 
     fn start(service: &str) {
-        Self::compose(&["start", service]);
+        common::compose(&["start", service]);
     }
 }
 
 impl Drop for StackServices {
     fn drop(&mut self) {
-        Self::compose(&["start", "postgres", "valkey"]);
+        common::compose(&["start", "postgres", "valkey"]);
     }
 }
 
@@ -410,35 +394,4 @@ fn a_connection_is_never_closed_silently_after_an_unread_body() {
             "{kilobytes} KiB to {path}: the connection was closed without `connection: close` after:\n{first}"
         );
     }
-}
-
-/// The guard's rule (D-187): CI, a project of one's own, or the owner's word; nothing else.
-#[test]
-fn only_a_stack_of_ones_own_may_be_stopped() {
-    use stack_guard::stack_is_ours;
-    assert!(
-        !stack_is_ours(None, None, None),
-        "a bare shell on the everyday stack"
-    );
-    assert!(
-        !stack_is_ours(Some(""), Some(""), Some("")),
-        "empty values say nothing"
-    );
-    assert!(
-        !stack_is_ours(None, Some("colophon"), None),
-        "the everyday project named outright"
-    );
-    assert!(
-        !stack_is_ours(None, None, Some("yes")),
-        "only 1 is the owner's word"
-    );
-    assert!(
-        stack_is_ours(Some("true"), None, None),
-        "CI made its own stack"
-    );
-    assert!(
-        stack_is_ours(None, Some("colophon-mine"), None),
-        "a project of one's own"
-    );
-    assert!(stack_is_ours(None, None, Some("1")), "the owner says so");
 }
