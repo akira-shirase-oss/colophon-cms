@@ -33,6 +33,7 @@ r2() {
     RCLONE_CONFIG_R2_ENDPOINT="$(setting COLOPHON_S3_ENDPOINT)" \
     RCLONE_CONFIG_R2_ACCESS_KEY_ID="$(setting COLOPHON_S3_ACCESS_KEY)" \
     RCLONE_CONFIG_R2_SECRET_ACCESS_KEY="$(tr -d '\n' <"$creds/s3_secret_key")" \
+    RCLONE_CONFIG_R2_REGION=auto \
     RCLONE_CONFIG_R2_NO_CHECK_BUCKET=true \
     rclone "$@"
 }
@@ -98,8 +99,12 @@ run() {
     || { echo "error: can't read the database URL's parts" >&2; exit 1; }
   local user=${BASH_REMATCH[2]} pass=${BASH_REMATCH[3]} host=${BASH_REMATCH[4]} port=${BASH_REMATCH[6]:-5432} db=${BASH_REMATCH[7]}
   pass=$(printf '%b' "${pass//%/\\x}")   # percent-decoded
+  # Neon's certificate verifies against the system's public roots; a URL that names its own CA
+  # (a private Postgres) is verified against that, as the server itself does.
+  local rootcert=system query=${BASH_REMATCH[8]}
+  if [[ "&$query&" =~ \&sslrootcert=([^\&]+)\& ]]; then rootcert=$(printf '%b' "${BASH_REMATCH[1]//%/\\x}"); fi
   PGHOST=$host PGPORT=$port PGUSER=$user PGPASSWORD=$pass PGDATABASE=$db PGSSLMODE=verify-full \
-    PGSSLROOTCERT=system pg_dump --format=custom --no-owner \
+    PGSSLROOTCERT=$rootcert pg_dump --format=custom --no-owner \
     | age --encrypt --recipients-file "$recipient_file" >"$work/$stamp.dump.age"
   [[ -s "$work/$stamp.dump.age" ]] || { echo "error: the dump is empty" >&2; exit 1; }
   r2 copyto "$work/$stamp.dump.age" "r2:$bucket/logical/$stamp.dump.age"

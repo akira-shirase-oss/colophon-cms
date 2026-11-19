@@ -18,7 +18,7 @@ EnvironmentFile=/etc/colophon/colophon.env
 Environment=COLOPHON_S3_BUCKET=colophon-backups
 Environment=COLOPHON_MIGRATION_DATABASE_URL_FILE=%d/migration_database_url
 Environment=COLOPHON_S3_SECRET_KEY_FILE=%d/s3_secret_key
-ExecStart=/bin/sh -c 'exec /usr/local/bin/colophon admin ledger export --s3-key "deletion-ledger/$(date -u +%%Y-%%m-%%dT%%H%%M%%SZ).jsonl" --json'
+ExecStart=/bin/sh -c 'exec /usr/local/bin/colophon admin ledger-export --s3-key "deletion-ledger/$(date -u +%%Y-%%m-%%dT%%H%%M%%SZ).jsonl" --json'
 DynamicUser=yes
 NoNewPrivileges=yes
 ProtectSystem=strict

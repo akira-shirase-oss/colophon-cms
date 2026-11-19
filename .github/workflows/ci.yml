@@ -381,6 +381,14 @@ jobs:
           docker cp "$id:/usr/share/colophon/studio" "$out/studio"
           docker rm "$id" >/dev/null
           sudo CI=true deploy/droplet/test-unit-credentials.sh "$out/colophon-server" "$out/colophon" "$out/studio"
+      - name: Every 'colophon admin' command the droplet runs exists in the CLI (deploy/droplet/test-unit-commands.sh)
+        run: |
+          set -euo pipefail
+          out=$(mktemp -d)
+          id=$(docker create colophon:local)
+          docker cp "$id:/usr/local/bin/colophon" "$out/colophon"
+          docker rm "$id" >/dev/null
+          deploy/droplet/test-unit-commands.sh "$out/colophon"
       - name: Timings and sizes
         if: always()
         run: |
