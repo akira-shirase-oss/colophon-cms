@@ -238,7 +238,7 @@ async fn password_work_is_limited_per_address_and_another_address_still_signs_in
         .filter(|status| **status != StatusCode::TOO_MANY_REQUESTS)
         .count();
     // The burst, plus what one a second earns back while the flood runs.
-    let earned = usize::try_from(started.elapsed().as_secs()).expect("small") + 1;
+    let earned = usize::try_from(started.elapsed().as_secs()).expect("small");
     assert!(
         (1..=3 + earned).contains(&admitted),
         "one /64 got {admitted} password attempts through: {statuses:?}"
@@ -247,9 +247,10 @@ async fn password_work_is_limited_per_address_and_another_address_still_signs_in
         statuses.contains(&StatusCode::TOO_MANY_REQUESTS),
         "{statuses:?}"
     );
-    // Staff sign-in shares the address's password limit. The cell earns one back a second, so on
-    // a slow runner a single attempt may land on a fresh one: four in a row can't all.
-    let staff_started = Instant::now();
+    // Staff sign-in shares the address's password limit: four more attempts from the same /64,
+    // and everything the /64 got through — flood and staff together, since the flood began —
+    // stays within the cell's bound, burst + floor(elapsed × rate). Were staff sign-in counted
+    // apart, its four would be admitted on top, past the bound however slow the runner.
     let mut staff = Vec::new();
     for n in 0..4 {
         staff.push(
@@ -261,14 +262,17 @@ async fn password_work_is_limited_per_address_and_another_address_still_signs_in
             .await,
         );
     }
-    let staff_earned = usize::try_from(staff_started.elapsed().as_secs()).expect("small") + 1;
     let staff_admitted = staff
         .iter()
         .filter(|status| **status != StatusCode::TOO_MANY_REQUESTS)
         .count();
+    // One a second, a burst of three (COLOPHON_RATE_LIMIT_PASSWORD above).
+    let allowed = 3 + usize::try_from(started.elapsed().as_secs()).expect("small");
     assert!(
-        staff.contains(&StatusCode::TOO_MANY_REQUESTS) && staff_admitted <= staff_earned,
-        "staff sign-in from the flooding /64: {staff:?} ({staff_admitted} admitted, {staff_earned} earned)"
+        admitted + staff_admitted <= allowed,
+        "the /64 got {} password attempts through in {:?}, allowed {allowed}: flood {statuses:?}, staff {staff:?}",
+        admitted + staff_admitted,
+        started.elapsed()
     );
 
     // Meanwhile another address signs up and signs in.
