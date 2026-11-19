@@ -387,11 +387,12 @@
 				<ul class="flex flex-wrap gap-1.5" aria-label="Examples">
 					{#each EXAMPLES as example (example.form)}
 						<li>
-							<button
-								type="button"
-								class="rounded-full border border-border bg-card px-2.5 py-1 text-left text-xs outline-none hover:bg-accent focus-visible:ring-4 focus-visible:ring-ring/25"
+							<Button
+								variant="outline"
+								size="xs"
+								class="h-auto rounded-full py-1 text-left"
 								onclick={() => setPattern(def as { pattern?: string }, example.form)}
-								title="Use this form"><code class="font-mono">{example.form}</code> <span class="text-muted-foreground">{example.means}</span></button
+								title="Use this form"><code class="font-mono">{example.form}</code> <span class="text-muted-foreground">{example.means}</span></Button
 							>
 						</li>
 					{/each}

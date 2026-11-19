@@ -152,9 +152,10 @@
 			>
 				<div class="flex items-center gap-3 px-3 py-2.5 {problem !== null ? 'bg-attention-soft/50' : ''}">
 					{#if editable}
-						<button
-							type="button"
-							class="flex size-7 shrink-0 cursor-grab items-center justify-center rounded-md text-muted-foreground outline-none hover:bg-accent hover:text-foreground focus-visible:ring-4 focus-visible:ring-ring/25 active:cursor-grabbing"
+						<Button
+							variant="ghost"
+							size="icon-xs"
+							class="cursor-grab text-muted-foreground hover:text-foreground active:cursor-grabbing"
 							draggable="true"
 							aria-label="Move {field.label}"
 							title="Drag to move, or use the arrow keys"
@@ -166,7 +167,7 @@
 								if (event.dataTransfer) event.dataTransfer.effectAllowed = 'move';
 							}}
 							ondragend={() => ((dragging = null), (over = null))}
-							onkeydown={(event) => keyed(event, index)}><GripVerticalIcon class="size-4" /></button
+							onkeydown={(event) => keyed(event, index)}><GripVerticalIcon class="size-4" /></Button
 						>
 					{/if}
 					<span class="flex size-8 shrink-0 items-center justify-center rounded-lg border border-border bg-background" aria-hidden="true"><Icon class="size-4" /></span>

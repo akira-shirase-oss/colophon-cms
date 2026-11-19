@@ -341,11 +341,12 @@
 						{#if asset.tags.length > 0}
 							<div class="relative z-10 flex flex-wrap gap-1" role="group" aria-label="Tags">
 								{#each asset.tags.slice(0, 3) as one (one)}
-									<button
-										type="button"
-										class="rounded-full border border-border px-2 py-0.5 text-xs text-muted-foreground hover:text-foreground focus-visible:ring-[3px] focus-visible:ring-ring/40 focus-visible:outline-none"
+									<Button
+										variant="outline"
+										size="xs"
+										class="rounded-full text-muted-foreground hover:text-foreground"
 										onclick={() => (tag = one)}
-										aria-label="Show uploads tagged {one}">#{one}</button
+										aria-label="Show uploads tagged {one}">#{one}</Button
 									>
 								{/each}
 								{#if asset.tags.length > 3}<span class="px-1 text-xs text-muted-foreground">+{asset.tags.length - 3}</span>{/if}
