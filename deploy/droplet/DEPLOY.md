@@ -36,7 +36,7 @@ are on.
 
 ```sh
 /opt/colophon-src/deploy/droplet/upgrade.sh 0.1.0-alpha.2      # a tagged release
-/opt/colophon-src/deploy/droplet/upgrade.sh --channel edge     # the newest build of main
+/opt/colophon-src/deploy/droplet/upgrade.sh --channel edge     # the newest build of main (once edge.yml lands)
 /opt/colophon-src/deploy/droplet/upgrade.sh --rollback         # back to the release before
 /opt/colophon-src/deploy/droplet/upgrade.sh --status
 ```
@@ -52,7 +52,8 @@ three releases are kept.
 - **The release channel (default)** is for normal use: tagged, changelogged, the archives the
   release workflow published.
 - **The edge channel** is for a fix you need before the next release: the newest build of `main`
-  (D-211). It installs only what it can prove: `SHA256SUMS`'s provenance (built by `edge.yml` on
+  (D-211). **It is available once `edge.yml` lands (D-211); until then use the release channel**
+  — `upgrade.sh --channel edge` says so and changes nothing. It installs only what it can prove: `SHA256SUMS`'s provenance (built by `edge.yml` on
   `refs/heads/main` of this repository), every file against `SHA256SUMS`, and the build's commit
   equal to the attested one; anything else is fetched again once, then refused. Go back to the
   release channel at the next release.
