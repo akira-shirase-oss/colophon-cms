@@ -95,7 +95,12 @@ const TEXT = [
 	['sidebar-accent-foreground', 'sidebar-accent'],
 	['primary-foreground', 'primary-hover'], ['brand-ink', 'background'], ['brand-ink', 'card'],
 	['brand-ink', 'brand-soft'],
-	...STATUSES.flatMap((s) => [[`${s}-ink`, `${s}-soft`], [`${s}-ink`, 'background'], [`${s}-ink`, 'card'], ['muted-foreground', `${s}-soft`]])
+	...STATUSES.flatMap((s) => [[`${s}-ink`, `${s}-soft`], [`${s}-ink`, 'background'], [`${s}-ink`, 'card'], ['muted-foreground', `${s}-soft`]]),
+	// Studio v2 (D-210 addendum): text on the section ground (cards, rows, stat cards, empty states) and its hover;
+	// the inverted panel's ink, muted ink, and ink on its 9% hover ground.
+	...['surface-section', 'surface-section-hover'].flatMap((g) => [['foreground', g], ['card-foreground', g], ['muted-foreground', g], ['link', g]]),
+	['destructive', 'surface-section'], ...STATUSES.map((s) => [`${s}-ink`, 'surface-section']),
+	['hero-fg', 'hero-bg'], ['hero-muted', 'hero-bg'], ['hero-fg', 'hero-fg/9 over hero-bg']
 ];
 const MARKS = [
 	['input', 'background'], ['input', 'card'], ['ring', 'background'], ['ring', 'card'],
@@ -103,7 +108,13 @@ const MARKS = [
 	...[1, 2, 3, 4, 5].map((n) => [`chart-${n}`, 'background']),
 	...[1, 2, 3, 4, 5].map((n) => [`chart-${n}`, 'card']),
 	['control', 'background'], ['control', 'card'],
-	...STATUSES.flatMap((s) => [[s, 'background'], [s, 'card']])
+	...STATUSES.flatMap((s) => [[s, 'background'], [s, 'card']]),
+	// Studio v2: a field's and a checkbox's edge and the focus ring on the section ground; on the inverted panel,
+	// an outline button's edge (its ink), the focus ring, the blue button, a mark, and the tiles' edge; the pixel
+	// icons' outline on the page and the section ground (on the panel the outline takes the panel's ink).
+	['input', 'surface-section'], ['control', 'surface-section'], ['ring', 'surface-section'],
+	['hero-fg', 'hero-bg'], ['ring', 'hero-bg'], ['primary', 'hero-bg'], ['hero-icon', 'hero-bg'],
+	['px-outline', 'background'], ['px-outline', 'surface-section']
 ];
 
 /** A ground: a token, or `name/NN over base`, the token at NN% over another, blended as the browser does (in sRGB). */
