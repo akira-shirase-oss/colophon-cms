@@ -54,6 +54,10 @@ export default defineConfig({
 				// Every journey signs its people in from loopback; the password limit (D-213) has
 				// its own tests.
 				COLOPHON_RATE_LIMIT_PASSWORD: '1000/2000',
+				// The same for magic links (D-161): every journey asks from loopback, and the
+				// shipped bounds have their own tests.
+				COLOPHON_MAGIC_LINKS_PER_ADDRESS: '1000',
+				COLOPHON_MAGIC_LINKS_PER_PROJECT: '100000',
 				// The audience page exercises the whole magic-link flow without a mail
 				// server: the link comes back in the response (loopback-only, D-140).
 				COLOPHON_DEV_MAIL: '1',
