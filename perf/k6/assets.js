@@ -85,10 +85,16 @@ export function setup() {
   });
   if (made.status !== 202) fail(`warm upload: HTTP ${made.status} ${made.body}`);
   const mediaId = made.json('data.id');
-  for (let waits = 0; waits < 100; waits += 1) {
+  // Poll on a clock, not a count: back-to-back GETs once spent their 100 tries in a
+  // quarter of a second, before the worker had picked the job up (CI 44447828333).
+  const started = Date.now();
+  for (;;) {
     const one = http.get(`${assets}/${mediaId}`, { headers: { Cookie: session.cookie }, redirects: 0 });
-    if (one.json('data.state') === 'usable') break;
-    if (waits === 99) fail(`warm asset never verified: ${one.body}`);
+    const state = one.json('data.state');
+    if (state === 'usable') break;
+    const waited = Date.now() - started;
+    if (waited >= 30000) fail(`warm asset never verified: still ${state} after ${waited} ms: ${one.body}`);
+    sleep(0.1);
   }
 
   return { session, assets, media: `${BASE_URL}/media/v1/${id}/production`, mediaId };

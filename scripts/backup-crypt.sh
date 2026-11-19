@@ -22,7 +22,8 @@ ensure_key() { # create=1 lets a first run mint the local dev secret; verify mus
       if [[ "${1:-}" != "create" ]]; then
         echo "error: no age identity at $key_file (set COLOPHON_BACKUP_AGE_KEY_FILE)" >&2; exit 1
       fi
-      age-keygen -o "$key_file" 2>/dev/null
+      # Created 600 from the start (umask 077): never readable by others, even for a moment.
+      (umask 077 && age-keygen -o "$key_file" 2>/dev/null)
       chmod 600 "$key_file"
       echo "note: generated $key_file (gitignored, mode 600) — losing it loses every backup" >&2
     fi
@@ -33,7 +34,7 @@ ensure_key() { # create=1 lets a first run mint the local dev secret; verify mus
       if [[ "${1:-}" != "create" ]]; then
         echo "error: no passphrase file at $key_file (set COLOPHON_BACKUP_PASSPHRASE_FILE)" >&2; exit 1
       fi
-      openssl rand -base64 48 >"$key_file"
+      (umask 077 && openssl rand -base64 48 >"$key_file")
       chmod 600 "$key_file"
       echo "note: generated $key_file (gitignored, mode 600) — losing it loses every backup" >&2
     fi
