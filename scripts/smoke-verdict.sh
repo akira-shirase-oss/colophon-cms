@@ -18,6 +18,8 @@ read -r -a ran <<<"$2"
 failed=()
 [[ -n "${3:-}" ]] && read -r -a failed <<<"$3"
 metrics=${4:-/dev/null}
+# Where a temporary ceiling's decision is looked up: its row there means its fix merged and the tolerance expired.
+decisions=${SMOKE_DECISIONS:-docs/DECISIONS.md}
 
 # Plain space-delimited sets and awk lookups, so this runs on macOS's bash 3.2 as well as CI's.
 in_set() { [[ "$2" == *" $1 "* ]]; }
@@ -37,9 +39,16 @@ while IFS=$'\t' read -r smoke kind decision owner ceiling measured owed; do
   case "$kind" in
     strict) ;;
     flapping)
-      if [[ ! "$ceiling" =~ ^(p99|l08)\<=[0-9]+(\.[0-9]+)?$ ]]; then
-        echo "smoke-verdict: $list: flapping '$smoke' needs a ceiling, p99<=MS or l08<=RATIO (has '$ceiling')" >&2
+      if [[ ! "$ceiling" =~ ^(p99|l08)\<=[0-9]+(\.[0-9]+)?( EXPIRES-WITH D-[0-9]+[a-z]?)?$ ]]; then
+        echo "smoke-verdict: $list: flapping '$smoke' needs a ceiling, p99<=MS or l08<=RATIO [EXPIRES-WITH D-NNN] (has '$ceiling')" >&2
         exit 1
+      fi
+      if [[ "$ceiling" == *" EXPIRES-WITH "* ]]; then
+        reason=${ceiling##* }
+        if grep -q "^| $reason |" "$decisions"; then
+          echo "smoke-verdict: $list: '$smoke''s temporary ceiling expired with $reason, which has merged ($decisions has its row): remove the entry, or restore it as an ordinary flapper at 2x its limit" >&2
+          exit 1
+        fi
       fi
       if [[ "$measured" != *→* ]]; then
         echo "smoke-verdict: $list: flapping '$smoke' needs both runs' measurements (a → b), has '$measured'" >&2
@@ -74,6 +83,7 @@ for smoke in $listed; do
   # Flapping: either outcome against the normal limit, never past the ceiling.
   ceiling=$(column "$smoke" 5)
   what=${ceiling%%<=*} bound=${ceiling#*<=}
+  bound=${bound%% *}
   case "$what" in
     p99) value=$(metric "$smoke" 2) unit=" ms" ;;
     l08) value=$(metric "$smoke" 3) unit="x" ;;
