@@ -28,6 +28,16 @@ screen-reader journeys pass, and no screen ever shows a success the server has n
 - First-run setup.
 - The content list, the editor and the review screen.
 - Publishing status and delivery receipts.
+- The publishing flow (D-185, the 2026-11-17 UI audit's workstream 3): one entry-state helper
+  (`lib/entryState.ts`: live = has a live revision, unpublished changes a separate flag) for the
+  Overview, list filters and sidebar; one next step and one primary per request state
+  (`lib/requestState.ts`); a receipt pages "What went live" from `…/changes` and says how many
+  entries the role can't open; a rollback asks first (`lib/RollbackDialog.svelte`): totals,
+  what it puts back and takes down, what stays down and why (D-049, D-097), "too large" with
+  the way out, and a confirm that sends the preview's hash, so a publish behind its back shows
+  what changed instead of making a different request; a request's origin reads "Undo of
+  Release N" before "Rollback to Release N" (`lib/releaseOrigin.ts`); a reviewer whose role
+  can't read every item is offered Request changes, not Approve.
 - History and time travel.
 - The media picker and preview.
 - The developer area.

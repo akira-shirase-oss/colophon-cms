@@ -1,0 +1,54 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT r.id AS \"revision_id!\", r.title AS \"title!\", now.revision_id AS \"live_revision_id?\"\n           FROM revisions r\n           LEFT JOIN publications now ON now.project_id = r.project_id AND now.environment_id = r.environment_id\n                                     AND now.entry_id = r.entry_id AND now.valid_to IS NULL\n           WHERE r.project_id = $1 AND r.environment_id = $2 AND r.id = ANY($3)",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "revision_id!",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "revisions",
+            "name": "id"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "title!",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "revisions",
+            "name": "title"
+          }
+        }
+      },
+      {
+        "ordinal": 2,
+        "name": "live_revision_id?",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "publications",
+            "name": "revision_id"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid",
+        "UuidArray"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      true
+    ]
+  },
+  "hash": "3a64afc584fa4c66bc2a2da99c4163a1ac608c73fcd6b7e6093f928ec724b285"
+}

@@ -189,52 +189,239 @@ pub async fn published_pins(
     .map_err(DbError::from_query)
 }
 
+/// Plans this transaction's statements for the values they run with (D-185): "live at a
+/// generation" is two index ranges whose better half depends on the generation — an old one is
+/// found by `valid_from`, a recent one by `valid_to` — and a cached generic plan, which Postgres
+/// switches to after five runs of a prepared statement, picks one half for every generation and
+/// scans half the history for the rest (measured: 8 ms custom, 126–260 ms generic, at 100k
+/// publications). A release's changes page the same way: its cursor's `OR` folds away only in a
+/// plan for the values (0.9 ms custom, 300 ms generic). Transaction-local, so it ends with the
+/// transaction.
+pub(crate) async fn plan_for_values(tx: &mut ProjectTransaction) -> Result<(), DbError> {
+    sqlx::query!("SET LOCAL plan_cache_mode = force_custom_plan")
+        .execute(&mut *tx.transaction)
+        .await
+        .map_err(DbError::from_query)?;
+    Ok(())
+}
+
+/// The most pins one rollback changeset may carry (D-185). A release changes at most
+/// [`MAX_ITEMS`] entries, but a rollback restores a whole publication set, so it may change more;
+/// past this many it is refused as `rollback_too_large`, and a nearer release is the way back.
+/// Sized from the idempotency record its answer must fit ([`crate::idempotency::MAX_RESPONSE_BYTES`]):
+/// the worst-case item serialises to 1,342 bytes and the rest of the answer to 39,280, so 194 fit;
+/// 190 leaves room (`colophon-api`'s `the_largest_rollback_answer_fits_its_idempotency_record`).
+/// Before this cap a rollback of a few hundred entries failed with a 500 (D-185).
+pub const MAX_ROLLBACK_ITEMS: usize = 190;
+
+/// What [`rollback_pins`] reads at most: one past [`MAX_ROLLBACK_ITEMS`], so a caller can tell a
+/// set that fits from one that doesn't without reading the rest.
+const ROLLBACK_PINS_READ: i64 = 191;
+const _: () = assert!(
+    ROLLBACK_PINS_READ == 191 && MAX_ROLLBACK_ITEMS == 190,
+    "ROLLBACK_PINS_READ is one past MAX_ROLLBACK_ITEMS"
+);
+
 /// The publication set as it stood at `generation`, as the pins a rollback changeset would carry:
 /// a publish pin for every entry published then (matching the delivery read at that generation,
 /// which leaves out anything since revoked), and an unpublish pin for every entry published now
 /// that wasn't published then. An entry publishing the same revision already is not in the set —
 /// the changeset that follows restores the past as a new release; the generation still moves
-/// forward (module 01, D4; docs/modules/06, "rollback is a new generation").
+/// forward (module 01, D4; docs/modules/06, "rollback is a new generation"). Publish pins
+/// first, then unpublish pins, each by entry id; at most one more than [`MAX_ROLLBACK_ITEMS`].
 pub async fn rollback_pins(
     tx: &mut ProjectTransaction,
     generation: i64,
 ) -> Result<Vec<Pin>, DbError> {
+    plan_for_values(tx).await?;
     sqlx::query_as!(
         Pin,
         r#"WITH at AS (
+               -- Live at $3: still open, or closed after it. Two halves, each on its own
+               -- index (open rows; closed by release), so the read follows what was live
+               -- then, not the whole history (D-185).
                SELECT p.entry_id, p.revision_id
                FROM publications p
                WHERE p.project_id = $1 AND p.environment_id = $2
-                 AND p.valid_from <= $3 AND coalesce(p.valid_to, $3 + 1) > $3
-                 AND p.revoked_in IS NULL
+                 AND p.valid_to IS NULL AND p.valid_from <= $3 AND p.revoked_in IS NULL
+               UNION ALL
+               SELECT p.entry_id, p.revision_id
+               FROM publications p
+               WHERE p.project_id = $1 AND p.environment_id = $2
+                 AND p.valid_to > $3 AND p.valid_from <= $3 AND p.revoked_in IS NULL
+           ), now AS (
+               SELECT p.entry_id, p.revision_id
+               FROM publications p
+               WHERE p.project_id = $1 AND p.environment_id = $2 AND p.valid_to IS NULL
+           ), diff AS MATERIALIZED (
+               -- What differs, cut to the page first: only these rows meet the revisions
+               -- (D-185; joining first fetched every revision live then, at 48k live entries
+               -- most of half a second).
+               SELECT 'publish' AS kind, at.entry_id, at.revision_id
+               FROM at
+               WHERE NOT EXISTS (
+                   SELECT 1 FROM now WHERE now.entry_id = at.entry_id AND now.revision_id = at.revision_id
+               )
+               UNION ALL
+               SELECT 'unpublish', now.entry_id, now.revision_id
+               FROM now
+               WHERE NOT EXISTS (SELECT 1 FROM at WHERE at.entry_id = now.entry_id)
+               ORDER BY 1, 2
+               LIMIT $4
+           )
+           SELECT d.kind AS "kind!", d.entry_id AS "entry_id!", r.id AS "revision_id!",
+                  r.collection AS "collection!", r.content_hash AS "content_hash!",
+                  r.schema_version AS "schema_version!", v.definition_hash AS "definition_hash!"
+           FROM diff d
+           JOIN revisions r ON r.project_id = $1 AND r.environment_id = $2
+                           AND r.id = d.revision_id
+           JOIN content_type_versions v ON v.project_id = r.project_id AND v.environment_id = r.environment_id
+                                       AND v.collection = r.collection AND v.version = r.schema_version
+           ORDER BY 1, 2"#,
+        tx.project,
+        tx.environment,
+        generation,
+        ROLLBACK_PINS_READ
+    )
+    .fetch_all(&mut *tx.transaction)
+    .await
+    .map_err(DbError::from_query)
+}
+
+/// How many entries a rollback to `generation` would put back and take down — [`rollback_pins`]'
+/// set, counted without reading it, so a preview can say how far past
+/// [`MAX_ROLLBACK_ITEMS`] a rollback is.
+pub async fn rollback_counts(
+    tx: &mut ProjectTransaction,
+    generation: i64,
+) -> Result<(i64, i64), DbError> {
+    plan_for_values(tx).await?;
+    let row = sqlx::query!(
+        r#"WITH at AS (
+               -- Live at $3: still open, or closed after it. Two halves, each on its own
+               -- index (open rows; closed by release), so the read follows what was live
+               -- then, not the whole history (D-185).
+               SELECT p.entry_id, p.revision_id
+               FROM publications p
+               WHERE p.project_id = $1 AND p.environment_id = $2
+                 AND p.valid_to IS NULL AND p.valid_from <= $3 AND p.revoked_in IS NULL
+               UNION ALL
+               SELECT p.entry_id, p.revision_id
+               FROM publications p
+               WHERE p.project_id = $1 AND p.environment_id = $2
+                 AND p.valid_to > $3 AND p.valid_from <= $3 AND p.revoked_in IS NULL
            ), now AS (
                SELECT p.entry_id, p.revision_id
                FROM publications p
                WHERE p.project_id = $1 AND p.environment_id = $2 AND p.valid_to IS NULL
            )
-           SELECT 'publish' AS "kind!", at.entry_id AS "entry_id!", r.id AS "revision_id!",
-                  r.collection AS "collection!", r.content_hash AS "content_hash!",
-                  r.schema_version AS "schema_version!", v.definition_hash AS "definition_hash!"
-           FROM at
-           JOIN revisions r ON r.project_id = $1 AND r.environment_id = $2
-                           AND r.id = at.revision_id
-           JOIN content_type_versions v ON v.project_id = r.project_id AND v.environment_id = r.environment_id
-                                       AND v.collection = r.collection AND v.version = r.schema_version
-           WHERE NOT EXISTS (
-               SELECT 1 FROM now WHERE now.entry_id = at.entry_id AND now.revision_id = at.revision_id
-           )
-           UNION ALL
-           SELECT 'unpublish', now.entry_id, r.id, r.collection, r.content_hash,
-                  r.schema_version, v.definition_hash
-           FROM now
-           JOIN revisions r ON r.project_id = $1 AND r.environment_id = $2
-                           AND r.id = now.revision_id
-           JOIN content_type_versions v ON v.project_id = r.project_id AND v.environment_id = r.environment_id
-                                       AND v.collection = r.collection AND v.version = r.schema_version
-           WHERE NOT EXISTS (SELECT 1 FROM at WHERE at.entry_id = now.entry_id)"#,
+           SELECT (SELECT count(*) FROM at
+                   WHERE NOT EXISTS (SELECT 1 FROM now
+                                     WHERE now.entry_id = at.entry_id AND now.revision_id = at.revision_id)
+                  ) AS "publish!",
+                  (SELECT count(*) FROM now
+                   WHERE NOT EXISTS (SELECT 1 FROM at WHERE at.entry_id = now.entry_id)
+                  ) AS "unpublish!""#,
         tx.project,
         tx.environment,
         generation
+    )
+    .fetch_one(&mut *tx.transaction)
+    .await
+    .map_err(DbError::from_query)?;
+    Ok((row.publish, row.unpublish))
+}
+
+/// What a person reads about one pin before a rollback is made: the title of the version it
+/// names, and the version readers get of its entry now, if any.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PinTitle {
+    /// The pinned revision.
+    pub revision_id: Uuid,
+    /// Its title.
+    pub title: String,
+    /// The entry's open publication now, if it is published.
+    pub live_revision_id: Option<Uuid>,
+}
+
+/// The titles of `revisions` and what each one's entry publishes now: the rollback preview's
+/// words for [`rollback_pins`].
+pub async fn pin_titles(
+    tx: &mut ProjectTransaction,
+    revisions: &[Uuid],
+) -> Result<Vec<PinTitle>, DbError> {
+    sqlx::query_as!(
+        PinTitle,
+        r#"SELECT r.id AS "revision_id!", r.title AS "title!", now.revision_id AS "live_revision_id?"
+           FROM revisions r
+           LEFT JOIN publications now ON now.project_id = r.project_id AND now.environment_id = r.environment_id
+                                     AND now.entry_id = r.entry_id AND now.valid_to IS NULL
+           WHERE r.project_id = $1 AND r.environment_id = $2 AND r.id = ANY($3)"#,
+        tx.project,
+        tx.environment,
+        revisions
+    )
+    .fetch_all(&mut *tx.transaction)
+    .await
+    .map_err(DbError::from_query)
+}
+
+/// An entry readers had at a generation that a rollback to it can't bring back: it was taken
+/// down since, which revoked that publication (D-049), so the generation's set no longer holds
+/// it (D-097). Only entries not published now: one published again is taken down by the
+/// rollback, and is among its pins.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct KeptDown {
+    /// The entry.
+    pub entry_id: Uuid,
+    /// Its collection.
+    pub collection: String,
+    /// The title readers had at the generation.
+    pub title: String,
+    /// The version readers had at the generation.
+    pub revision_id: Uuid,
+    /// The release that took it down (and revoked that publication).
+    pub taken_down_in: i64,
+    /// Who created the entry; `None` once it was deleted (D-080), when it can't be published
+    /// again. What a role reads of it follows from this (D-058).
+    pub created_by: Option<Uuid>,
+    /// How many entries a rollback to the generation keeps down, however many are listed.
+    pub total: i64,
+}
+
+/// The most kept-down entries a rollback preview lists.
+pub const MAX_KEPT_DOWN: i64 = 100;
+
+/// The entries a rollback to `generation` leaves down although readers had them then: published
+/// at `generation`, revoked by a takedown since, and not published now. By title, at most
+/// [`MAX_KEPT_DOWN`], each row carrying the total.
+pub async fn kept_down(
+    tx: &mut ProjectTransaction,
+    generation: i64,
+) -> Result<Vec<KeptDown>, DbError> {
+    plan_for_values(tx).await?;
+    sqlx::query_as!(
+        KeptDown,
+        r#"SELECT p.entry_id, p.collection, p.title, p.revision_id,
+                  p.revoked_in AS "taken_down_in!", e.created_by AS "created_by?",
+                  count(*) OVER () AS "total!"
+           FROM publications p
+           LEFT JOIN entries e ON e.project_id = p.project_id AND e.environment_id = p.environment_id
+                              AND e.id = p.entry_id
+           WHERE p.project_id = $1 AND p.environment_id = $2
+             -- A revoked publication is always closed (its takedown closed it): live at $3
+             -- is closed after it, which the closed-by-release index finds (D-185).
+             AND p.valid_to > $3 AND p.valid_from <= $3
+             AND p.revoked_in IS NOT NULL
+             AND NOT EXISTS (SELECT 1 FROM publications now
+                             WHERE now.project_id = p.project_id AND now.environment_id = p.environment_id
+                               AND now.entry_id = p.entry_id AND now.valid_to IS NULL)
+           ORDER BY p.title, p.entry_id
+           LIMIT $4"#,
+        tx.project,
+        tx.environment,
+        generation,
+        MAX_KEPT_DOWN
     )
     .fetch_all(&mut *tx.transaction)
     .await

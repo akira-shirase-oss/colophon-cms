@@ -25,7 +25,8 @@
 	import * as Table from '@colophon/ui/ui/table';
 	import * as Tabs from '@colophon/ui/ui/tabs';
 	import { Toggle } from '@colophon/ui/ui/toggle';
-	import { ApiError, type Content, createEntry, type EntryState, entryState, exportUrl, getContentType, getEntry, importEntries, may, mayOn, newKey, searchEntries } from '#lib/api.ts';
+	import { ApiError, type Content, createEntry, entryState, exportUrl, getContentType, getEntry, importEntries, may, mayOn, newKey, searchEntries } from '#lib/api.ts';
+	import { type EntryFilter, shows, tally as tallyOf } from '#lib/entryState.ts';
 	import { applies, blockingProblem, type FormValue, formValue, slugify, starter, storedValue, titleLabel } from '#lib/content.ts';
 	import { plainError } from '#lib/errors.ts';
 	import FieldInputs from '#lib/FieldInputs.svelte';
@@ -104,17 +105,11 @@
 			void goto(resolve('/projects/[project]/[collection]/[entry]', { project, collection, entry: only.id }), { replaceState: true });
 		}
 	});
-	let filter = $state<'all' | EntryState>('all');
-	const rows = $derived(loaded.filter((entry) => filter === 'all' || entryState(entry) === filter));
-	const tally = $derived(
-		loaded.reduce<Record<EntryState, number>>(
-			(counts, entry) => {
-				counts[entryState(entry)] += 1;
-				return counts;
-			},
-			{ draft: 0, live: 0, changed: 0 }
-		)
-	);
+	// Counted as the overview and the sidebar count (lib/entryState.ts): Live includes the entries
+	// live with unpublished changes, which "Changed" narrows to.
+	let filter = $state<EntryFilter>('all');
+	const rows = $derived(loaded.filter((entry) => shows(filter, entry)));
+	const tally = $derived(tallyOf(loaded));
 
 	// Bulk publishing (bounded: a publish request holds at most 100 entries). Picking rows publishes
 	// their current versions together, in one click when the role may approve and publish its own
@@ -357,9 +352,9 @@
 			<Tabs.Root bind:value={filter as string}>
 				<Tabs.List aria-label="Show">
 					<Tabs.Trigger value="all">All</Tabs.Trigger>
-					<Tabs.Trigger value="draft">Drafts <span class="tabular text-muted-foreground">{tally.draft}</span></Tabs.Trigger>
-					<Tabs.Trigger value="changed">Changed <span class="tabular text-muted-foreground">{tally.changed}</span></Tabs.Trigger>
 					<Tabs.Trigger value="live">Live <span class="tabular text-muted-foreground">{tally.live}</span></Tabs.Trigger>
+					<Tabs.Trigger value="changes" title="Live, with changes not yet published">Changed <span class="tabular text-muted-foreground">{tally.withChanges}</span></Tabs.Trigger>
+					<Tabs.Trigger value="draft">Drafts <span class="tabular text-muted-foreground">{tally.drafts}</span></Tabs.Trigger>
 				</Tabs.List>
 			</Tabs.Root>
 			{#if readsOthers && !single && who.data}

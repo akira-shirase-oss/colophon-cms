@@ -328,7 +328,7 @@ test('a new person sets up Colophon, publishes a first article, and brings in a 
 			}
 			if (name === 'review') {
 				await expect(phone.getByTestId('changeset-status')).toHaveAttribute('data-state', 'awaiting_review');
-				await expect(phone.getByRole('button', { name: 'Approve this version' })).toBeInViewport();
+				await expect(phone.getByRole('button', { name: 'Approve', exact: true })).toBeInViewport();
 			}
 			// Settings is the developer area, where the internal names stay (D-059, rule 5).
 			await screen(phone, `phone-${name}`, { words: !name.startsWith('settings') });
@@ -343,13 +343,14 @@ test('a new person sets up Colophon, publishes a first article, and brings in a 
 		await screen(owner, 'publish-requests');
 		await owner.getByTestId('changesets').getByRole('link', { name: 'A second voice' }).click();
 		await expect(owner.getByTestId('changeset-status')).toHaveAttribute('data-state', 'awaiting_review');
-		await expect(owner.getByTestId('diff')).toBeVisible();
+		// A new entry reads as a preview of what goes live; an update as a diff (P2-13).
+		await expect(owner.getByTestId('version-preview').or(owner.getByTestId('diff')).first()).toBeVisible();
 		await screen(owner, 'review');
-		await owner.getByRole('button', { name: 'Approve this version' }).click();
+		await owner.getByRole('button', { name: 'Approve', exact: true }).click();
 		await expect(owner.getByTestId('changeset-status')).toHaveAttribute('data-state', 'approved');
-		await owner.getByRole('button', { name: 'Publish', exact: true }).click();
+		await owner.getByRole('button', { name: 'Publish now', exact: true }).click();
 		await expect(owner.getByTestId('changeset-status')).toHaveAttribute('data-state', 'published');
-		await expect(owner.getByTestId('release-link')).toHaveText('release 2');
+		await expect(owner.getByTestId('release-link')).toHaveText('Release 2');
 		await screen(owner, 'approved-and-published');
 	});
 
@@ -365,7 +366,7 @@ test('a new person sets up Colophon, publishes a first article, and brings in a 
 		}
 		await phone.goto(request);
 		// Opened directly, a published request's comparison once stayed "Loading…" for good.
-		await expect(phone.getByTestId('diff')).toBeVisible();
+		await expect(phone.getByTestId('version-preview').or(phone.getByTestId('diff')).first()).toBeVisible();
 		await screen(phone, 'phone-publish-request');
 		await phone.context().close();
 	});

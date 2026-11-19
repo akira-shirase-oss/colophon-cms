@@ -183,7 +183,7 @@ test('a story whose author isn’t published is refused by name, and published w
 	// The request it made, approved: publishing it says the same, and offers one with the author.
 	await page.getByTestId('publish-outcome').getByRole('link', { name: 'Open the publish request' }).click();
 	await expect(page.getByTestId('changeset-status')).toHaveAttribute('data-state', 'approved');
-	await page.getByRole('button', { name: 'Publish', exact: true }).click();
+	await page.getByRole('button', { name: 'Publish now', exact: true }).click();
 	await expect(page.getByTestId('changeset-error')).toContainText(words);
 	expect(await violations(page)).toEqual([]);
 	expect(await internalTerms(page)).toEqual([]);
@@ -191,10 +191,11 @@ test('a story whose author isn’t published is refused by name, and published w
 	await expect(page.getByTestId('changeset-status')).toHaveAttribute('data-state', 'open');
 	await expect(page.getByTestId('changeset-items')).toContainText('Notes on the engine');
 	await expect(page.getByTestId('changeset-items')).toContainText('Ada Lovelace');
-	await page.getByRole('button', { name: 'Ask for review' }).click();
-	await page.getByRole('button', { name: 'Approve this version' }).click();
+	await page.getByTestId('ask-review').click();
+	await page.getByRole('button', { name: 'Send for review' }).click();
+	await page.getByRole('button', { name: 'Approve', exact: true }).click();
 	await expect(page.getByTestId('changeset-status')).toHaveAttribute('data-state', 'approved');
-	await page.getByRole('button', { name: 'Publish', exact: true }).click();
+	await page.getByRole('button', { name: 'Publish now', exact: true }).click();
 	await expect(page.getByTestId('changeset-status')).toHaveAttribute('data-state', 'published');
 	expect(await readers(page, project, 'stories')).toContain('Notes on the engine');
 	expect(await readers(page, project, 'people')).toContain('Ada Lovelace');

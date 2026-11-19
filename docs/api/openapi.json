@@ -564,6 +564,60 @@
         },
         "type": "object"
       },
+      "ChangeView": {
+        "properties": {
+          "collection": {
+            "type": "string"
+          },
+          "entry_deleted": {
+            "description": "the entry was deleted since (D-080)",
+            "type": "boolean"
+          },
+          "entry_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "kind": {
+            "enum": [
+              "publish",
+              "unpublish"
+            ],
+            "type": "string"
+          },
+          "previous_revision_id": {
+            "description": "what readers had just before: the version it replaced or took down; null when the entry was new to them",
+            "format": "uuid",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "revision_id": {
+            "description": "the version it published, or took down",
+            "format": "uuid",
+            "type": "string"
+          },
+          "title": {
+            "description": "the title of the version it published, or took down",
+            "type": "string"
+          },
+          "title_hidden": {
+            "description": "your role doesn't read the entry's title field, so `title` is blank",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "kind",
+          "entry_id",
+          "collection",
+          "title",
+          "revision_id",
+          "previous_revision_id",
+          "entry_deleted",
+          "title_hidden"
+        ],
+        "type": "object"
+      },
       "ChangesetItemView": {
         "properties": {
           "collection": {
@@ -616,6 +670,10 @@
           },
           "title": {
             "type": "string"
+          },
+          "title_hidden": {
+            "description": "your role doesn't read the entry's title field, so `title` is blank",
+            "type": "boolean"
           }
         },
         "type": "object"
@@ -693,11 +751,16 @@
             "description": "`sha256:<hex>` — its `ETag`, and what reviews bind",
             "type": "string"
           },
+          "hidden_items": {
+            "description": "items left out because your role can't read their entries",
+            "type": "integer"
+          },
           "id": {
             "format": "uuid",
             "type": "string"
           },
           "items": {
+            "description": "the items your role reads (D-185); the hash covers every item",
             "items": {
               "$ref": "#/components/schemas/ChangesetItemView"
             },
@@ -1687,6 +1750,47 @@
       "JsonLines": {
         "description": "one JSON object per line, each an entry's content document",
         "type": "string"
+      },
+      "KeptDownView": {
+        "properties": {
+          "collection": {
+            "type": "string"
+          },
+          "entry_deleted": {
+            "description": "deleted since (D-080), so it can't be published again",
+            "type": "boolean"
+          },
+          "entry_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "revision_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "taken_down_in": {
+            "description": "the release that took it down",
+            "type": "integer"
+          },
+          "title": {
+            "description": "the title readers had at that release",
+            "type": "string"
+          },
+          "title_hidden": {
+            "description": "your role doesn't read the title field, so `title` is blank",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "entry_id",
+          "collection",
+          "title",
+          "title_hidden",
+          "revision_id",
+          "taken_down_in",
+          "entry_deleted"
+        ],
+        "type": "object"
       },
       "LiveView": {
         "properties": {
@@ -3336,7 +3440,7 @@
         "type": "object"
       },
       "ReceiptView": {
-        "description": "a release — every `ReleaseView` field, at the top level — plus its deliveries and observations: the publish receipt",
+        "description": "a release — every `ReleaseView` field, at the top level — plus its deliveries and observations: the publish receipt. What it changed for readers pages at `…/releases/{generation}/changes`",
         "properties": {
           "changeset_hash": {
             "description": "the approved hash it published",
@@ -3762,6 +3866,121 @@
           "members",
           "invitations",
           "updated_at"
+        ],
+        "type": "object"
+      },
+      "RollbackLineView": {
+        "properties": {
+          "collection": {
+            "type": "string"
+          },
+          "entry_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "kind": {
+            "description": "`publish` puts back the version readers had then; `unpublish` takes down what they didn't have",
+            "enum": [
+              "publish",
+              "unpublish"
+            ],
+            "type": "string"
+          },
+          "live_revision_id": {
+            "description": "what readers get of the entry now, if anything",
+            "format": "uuid",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "revision_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "title": {
+            "description": "the title of the version it pins",
+            "type": "string"
+          },
+          "title_hidden": {
+            "description": "your role doesn't read the title field, so `title` is blank",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "kind",
+          "entry_id",
+          "collection",
+          "title",
+          "title_hidden",
+          "revision_id",
+          "live_revision_id"
+        ],
+        "type": "object"
+      },
+      "RollbackPreviewView": {
+        "description": "what `POST` would build now (the same pins), and what it would leave down",
+        "properties": {
+          "generation": {
+            "description": "the release it restores",
+            "type": "integer"
+          },
+          "hash": {
+            "description": "`sha256:<hex>` of the pins a rollback made now would carry — the `ETag`; send it as `If-Match` on `POST`. Null when `too_large`",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "kept_down": {
+            "description": "up to 100 entries readers had at that release that it won't bring back, because they were taken down since (D-049), by title, less those your role can't read",
+            "items": {
+              "$ref": "#/components/schemas/KeptDownView"
+            },
+            "type": "array"
+          },
+          "kept_down_total": {
+            "type": "integer"
+          },
+          "latest": {
+            "description": "the environment's current generation",
+            "type": "integer"
+          },
+          "max_items": {
+            "description": "the most entries one rollback may change",
+            "type": "integer"
+          },
+          "publish_total": {
+            "description": "entries it would put back",
+            "type": "integer"
+          },
+          "restore": {
+            "description": "the first 100 of the pins a rollback made now would carry, publishes first, each by entry id, less those your role can't read; empty when it would be refused `already_at`, and when `too_large`",
+            "items": {
+              "$ref": "#/components/schemas/RollbackLineView"
+            },
+            "type": "array"
+          },
+          "too_large": {
+            "description": "it would change more than `max_items`, so `POST` refuses it `rollback_too_large`; roll back to a nearer release first",
+            "type": "boolean"
+          },
+          "unpublish_total": {
+            "description": "entries it would take down",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "generation",
+          "latest",
+          "hash",
+          "publish_total",
+          "unpublish_total",
+          "max_items",
+          "too_large",
+          "restore",
+          "kept_down",
+          "kept_down_total"
         ],
         "type": "object"
       },
@@ -9402,7 +9621,7 @@
                 }
               }
             },
-            "description": "`missing_permission, agent_self_review` — the role can't review it, or a token tried to approve a token's changeset"
+            "description": "`missing_permission, agent_self_review, cannot_review_hidden` — the role can't review it, a token tried to approve a token's changeset, or an approval names a version the role can't read in full"
           },
           "404": {
             "content": {
@@ -17174,7 +17393,294 @@
         ]
       }
     },
+    "/api/v1/projects/{project}/environments/{environment}/releases/{generation}/changes": {
+      "get": {
+        "operationId": "listReleaseChanges",
+        "parameters": [
+          {
+            "description": "the project's id",
+            "in": "path",
+            "name": "project",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          },
+          {
+            "description": "the environment's slug, such as `production`",
+            "in": "path",
+            "name": "environment",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "the release's generation",
+            "in": "path",
+            "name": "generation",
+            "required": true,
+            "schema": {
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          {
+            "description": "page size: 1–100, default 100",
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          {
+            "description": "the `next_cursor` a previous page answered",
+            "in": "query",
+            "name": "cursor",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "data": {
+                      "items": {
+                        "$ref": "#/components/schemas/ChangeView"
+                      },
+                      "type": "array"
+                    },
+                    "next_cursor": {
+                      "description": "pass back in the operation's cursor parameter for the next page; `null` on the last page",
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "data",
+                    "next_cursor"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "a page of the entries it published (first) and took down, each by entry id; an entry your role can't read is left out, so a page may hold fewer than `limit` — follow `next_cursor` until it is `null`"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "`bad_request` — `limit` out of range, or a cursor that isn't this list's"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "`unauthorized` — not signed in, the credential is invalid, or the token was revoked"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "`not_found` — no such resource — or one the caller may not see, which looks the same"
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "`rate_limited` — over the per-credential or per-address limit; `Retry-After`"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "any other failure, in the one error envelope"
+          }
+        },
+        "security": [
+          {
+            "sessionCookie": []
+          },
+          {
+            "bearerToken": []
+          },
+          {
+            "apiToken": []
+          }
+        ],
+        "summary": "What a release changed for readers, as far as your role reads it",
+        "tags": [
+          "publishing"
+        ]
+      }
+    },
     "/api/v1/projects/{project}/environments/{environment}/releases/{generation}/rollback": {
+      "get": {
+        "operationId": "previewRollback",
+        "parameters": [
+          {
+            "description": "the project's id",
+            "in": "path",
+            "name": "project",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          },
+          {
+            "description": "the environment's slug, such as `production`",
+            "in": "path",
+            "name": "environment",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "the release's generation",
+            "in": "path",
+            "name": "generation",
+            "required": true,
+            "schema": {
+              "minimum": 0,
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "data": {
+                      "$ref": "#/components/schemas/RollbackPreviewView"
+                    }
+                  },
+                  "required": [
+                    "data"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "ok",
+            "headers": {
+              "ETag": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "`unauthorized` — not signed in, the credential is invalid, or the token was revoked"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "`missing_permission and friends` — signed in, but the role does not allow this"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "`not_found` — no such resource — or one the caller may not see, which looks the same"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "`invalid_generation` — only an earlier release than the live one"
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "`rate_limited` — over the per-credential or per-address limit; `Retry-After`"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "any other failure, in the one error envelope"
+          }
+        },
+        "security": [
+          {
+            "sessionCookie": []
+          },
+          {
+            "bearerToken": []
+          },
+          {
+            "apiToken": []
+          }
+        ],
+        "summary": "What a rollback to that release would restore and take down, without making it",
+        "tags": [
+          "publishing"
+        ]
+      },
       "post": {
         "operationId": "rollbackRelease",
         "parameters": [
@@ -17212,6 +17718,15 @@
             "in": "header",
             "name": "idempotency-key",
             "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "the rollback preview's `ETag`: refused `stale_changeset` if the pins moved since",
+            "in": "header",
+            "name": "if-match",
+            "required": false,
             "schema": {
               "type": "string"
             }
@@ -17273,6 +17788,16 @@
             },
             "description": "`unauthorized` — not signed in, the credential is invalid, or the token was revoked"
           },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "`missing_permission and friends` — signed in, but the role does not allow this"
+          },
           "404": {
             "content": {
               "application/json": {
@@ -17291,7 +17816,7 @@
                 }
               }
             },
-            "description": "`idempotency_key_reused` — this `Idempotency-Key` was used before for a different request"
+            "description": "`stale_changeset` — the pins moved since the preview named in `If-Match`; `idempotency_key_reused` — this `Idempotency-Key` was used before for a different request"
           },
           "422": {
             "content": {
@@ -17301,7 +17826,7 @@
                 }
               }
             },
-            "description": "`invalid_field` — a rollback takes no `entries` or `unpublish`"
+            "description": "`invalid_field` — a rollback takes no `entries` or `unpublish`; `invalid_generation, already_at, rollback_too_large` — not an earlier release, nothing to restore, or more than 190 entries"
           },
           "428": {
             "content": {

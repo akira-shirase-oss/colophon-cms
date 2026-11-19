@@ -1,6 +1,8 @@
 <!--
-  A project's releases (D-045, D-046): each one numbered, what it published, who published it, its
-  label, and how each website connection (destination) heard about it. Connections are set up in
+  A project's releases (D-045, D-046), one readable row each: its number, its title (which opens
+  its receipt), what it did for readers in words ("2 went live, 1 taken down"), who published it
+  and when, its label, and how each website connection (destination) heard about it. The live
+  release says so on its own row, once. Connections are set up in
   Settings; addresses for developers are in the Technical details. Above them, what is scheduled
   to publish and how past schedules went (D-060). The newest 100 first; older ones a page at a
   time, as the list pages (`?cursor=`).
@@ -22,6 +24,7 @@
 	import ReleaseLabel from '#lib/shell/ReleaseLabel.svelte';
 	import StatusBadge from '#lib/shell/StatusBadge.svelte';
 	import { releaseName, STATUS_WORDS } from '#lib/words.ts';
+	import { originText, releaseOrigin } from '#lib/releaseOrigin.ts';
 	import TechnicalDetails from '#lib/shell/TechnicalDetails.svelte';
 
 	const project = $derived(page.params.project ?? '');
@@ -84,6 +87,14 @@
 		failed: 'bg-attention',
 		superseded: 'bg-draft'
 	};
+	/** What a release did for readers, in words: "2 went live, 1 taken down". */
+	function wentLive(release: Release): string {
+		const parts = [
+			...(release.entries > 0 ? [`${release.entries.toLocaleString()} went live`] : []),
+			...(release.unpublished > 0 ? [`${release.unpublished.toLocaleString()} taken down`] : [])
+		];
+		return parts.length === 0 ? 'Nothing changed for readers' : parts.join(', ');
+	}
 	const PURGE: Record<Exclude<Release['purge'], 'none'>, string> = {
 		pending: 'CDN purge pending: copies the CDN holds may still be served',
 		accepted: 'CDN purge accepted',
@@ -104,15 +115,6 @@
 {:else if releases.isError && releases.data === undefined}
 	<Problem error={releases.error} />
 {:else}
-	<p class="mb-6 flex flex-wrap items-center gap-x-2 gap-y-1 rounded-xl border border-border bg-card px-4 py-3 text-sm" data-testid="current-generation">
-		{#if generation === 0}
-			Nothing is published yet.
-		{:else}
-			<span class="font-medium tabular">Live: {releaseName(generation)}</span>
-			<span class="text-muted-foreground">Your website reads it from Colophon's public address, with no sign-in.</span>
-		{/if}
-	</p>
-
 	{#if schedules.isError}
 		<div class="mb-6"><Problem error={schedules.error} what="what is scheduled" retry={() => schedules.refetch()} /></div>
 	{/if}
@@ -163,40 +165,41 @@
 			{/snippet}
 		</EmptyState>
 	{:else}
-		<ol class="stagger space-y-3" reversed data-testid="releases">
+		<ol class="stagger overflow-hidden rounded-xl border border-border bg-card" reversed data-testid="releases">
 			{#each shown as release, index (release.generation)}
-				<li class="rounded-xl border border-border bg-card p-4" style="--i: {index}" data-generation={release.generation}>
-					<div class="flex flex-wrap items-start gap-x-4 gap-y-2">
-						<div class="min-w-0 flex-1">
-							<p class="text-sm font-medium text-muted-foreground tabular">{releaseName(release.generation)}</p>
-							<a class="font-medium hover:underline" href={resolve('/projects/[project]/changesets/[changeset]', { project, changeset: release.changeset_id })}>{release.title}</a>
-							<p class="mt-0.5 text-sm text-muted-foreground">
-								{release.entries}
-								{release.entries === 1 ? 'entry' : 'entries'} changed{#if release.unpublished > 0},
-									<span data-testid="unpublished">{release.unpublished} unpublished</span>{/if} · by {release.published_by_name ?? release.published_by} ·
-								<span title={new Date(release.published_at).toLocaleString()}>{ago(release.published_at)}</span>
-							</p>
-						</div>
-						<ReleaseLabel {release} href={resolve('/projects/[project]/releases/[generation]', { project, generation: String(release.generation) })} />
+				{@const receiptHref = resolve('/projects/[project]/releases/[generation]', { project, generation: String(release.generation) })}
+				{@const jobs = byRelease.get(release.generation) ?? []}
+				<li class="rule-dotted relative grid gap-x-4 gap-y-1 px-4 py-3.5 last:border-b-0 hover:bg-muted/40 sm:grid-cols-[6rem_minmax(0,1fr)_auto] sm:items-start" style="--i: {index}" data-generation={release.generation}>
+					<span class="text-sm text-muted-foreground tabular sm:pt-0.5">{releaseName(release.generation)}</span>
+					<div class="min-w-0">
+						<a class="block truncate font-medium after:absolute after:inset-0 hover:underline" href={receiptHref} title={release.title} data-user-content>{release.title}</a>
+						<p class="mt-0.5 text-sm text-muted-foreground">
+							{#if originText(releaseOrigin(release))}<span data-testid="release-origin">{originText(releaseOrigin(release))}</span> · {/if}{wentLive(release)} · by {release.published_by_name ?? release.published_by} ·
+							<span title={new Date(release.published_at).toLocaleString()}>{ago(release.published_at)}</span>
+						</p>
+						{#if release.purge !== 'none' || jobs.length > 0}
+							<ul class="mt-2 space-y-1 text-sm text-muted-foreground">
+								{#if release.purge !== 'none'}
+									<li class="flex items-center gap-2" data-testid="purge" data-state={release.purge}>
+										<span class="size-1.5 rounded-full {release.purge === 'accepted' ? 'bg-live' : release.purge === 'failed' ? 'bg-attention' : 'bg-pending'}" aria-hidden="true"></span>
+										{#if release.unpublished > 0 && release.purge === 'pending'}Removal pending at the CDN: copies it holds may still be served{:else}{PURGE[release.purge]}{/if}
+									</li>
+								{/if}
+								{#each jobs as job (job.id)}
+									<li class="flex items-center gap-2" data-testid="delivery" data-status={job.status} class:text-destructive={job.status === 'failed'}>
+										<span class="size-1.5 rounded-full {DOT[job.status]}" class:breathe={['pending', 'running', 'retrying'].includes(job.status)} aria-hidden="true"></span>
+										{job.destination_name}: {STATUS[job.status]}{job.attempts > 1 ? ` after ${job.attempts} attempts` : ''}{job.last_error && job.status !== 'succeeded'
+											? ` (${failureText(job.last_error)})`
+											: ''}
+									</li>
+								{/each}
+							</ul>
+						{/if}
 					</div>
-					{#if release.purge !== 'none' || (byRelease.get(release.generation) ?? []).length > 0}
-						<ul class="mt-3 space-y-1 border-t border-dotted border-border pt-3 text-sm text-muted-foreground">
-							{#if release.purge !== 'none'}
-								<li class="flex items-center gap-2" data-testid="purge" data-state={release.purge}>
-									<span class="size-1.5 rounded-full {release.purge === 'accepted' ? 'bg-live' : release.purge === 'failed' ? 'bg-attention' : 'bg-pending'}" aria-hidden="true"></span>
-									{#if release.unpublished > 0 && release.purge === 'pending'}Removal pending at the CDN: copies it holds may still be served{:else}{PURGE[release.purge]}{/if}
-								</li>
-							{/if}
-							{#each byRelease.get(release.generation) ?? [] as job (job.id)}
-								<li class="flex items-center gap-2" data-testid="delivery" data-status={job.status} class:text-destructive={job.status === 'failed'}>
-									<span class="size-1.5 rounded-full {DOT[job.status]}" class:breathe={['pending', 'running', 'retrying'].includes(job.status)} aria-hidden="true"></span>
-									{job.destination_name}: {STATUS[job.status]}{job.attempts > 1 ? ` after ${job.attempts} attempts` : ''}{job.last_error && job.status !== 'succeeded'
-										? ` (${failureText(job.last_error)})`
-										: ''}
-								</li>
-							{/each}
-						</ul>
-					{/if}
+					<span class="flex flex-wrap items-center gap-2 sm:justify-end">
+						{#if release.generation === generation}<StatusBadge state="live" text="Live now" title="Readers get this release" testid="live-now" />{/if}
+						<ReleaseLabel {release} />
+					</span>
 				</li>
 			{/each}
 		</ol>

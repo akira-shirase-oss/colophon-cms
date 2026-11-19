@@ -56,6 +56,7 @@ use crate::{
     members::require,
     session::{Credential, SignedIn},
     shape::{Data, Page},
+    visibility::Shown,
 };
 
 const CREATE: &str = "changeset.create";
@@ -78,7 +79,37 @@ pub(crate) struct OnePath {
 pub(crate) struct RollbackPath {
     project: String,
     environment: String,
-    generation: i64,
+    /// Read as text, so a generation that isn't a number is refused like one out of range.
+    generation: String,
+}
+
+/// The release a rollback restores, from its path segment: one before the live one, else
+/// `invalid_generation` — the same refusal for 0, a negative, an overflow or text (R5).
+fn rollback_target(raw: &str, latest: i64) -> Result<i64, ApiError> {
+    raw.parse::<i64>()
+        .ok()
+        .filter(|generation| (1..latest).contains(generation))
+        .ok_or_else(|| ApiError::InvalidField {
+            reason: "invalid_generation",
+            pointer: "/generation",
+            message: format!("this environment's releases are generations 1 to {latest}"),
+        })
+}
+
+/// Refuses a rollback whose pins pass [`changesets::MAX_ROLLBACK_ITEMS`] (D-185).
+fn within_rollback_cap(pins: &[Pin]) -> Result<(), ApiError> {
+    if pins.len() > changesets::MAX_ROLLBACK_ITEMS {
+        return Err(ApiError::InvalidField {
+            reason: "rollback_too_large",
+            pointer: "/generation",
+            message: format!(
+                "a rollback changes at most {} entries, and this one would change more; roll back \
+                 to a nearer release",
+                changesets::MAX_ROLLBACK_ITEMS
+            ),
+        });
+    }
+    Ok(())
 }
 
 /// `{"title": "Launch posts", "entries": ["…", "…"], "unpublish": ["…"]}`: entries to publish and
@@ -173,6 +204,8 @@ pub(crate) struct ItemView {
     /// The entry moved on since it was pinned: edited, or (for `unpublish`) published anew or
     /// already taken down.
     edited: bool,
+    /// The caller's role doesn't read this entry's title field, so `title` is blank (D-058).
+    title_hidden: bool,
     /// The revision readers get now, if published: what this item changes from.
     published_revision_id: Option<Uuid>,
     /// Who created the entry, so a client can tell which items a role limited to its own
@@ -282,7 +315,11 @@ pub(crate) struct ChangesetView {
     /// The release it undoes, when it is an undo of a takedown (D-184): read this before
     /// `rollback_generation`, which an undo also sets (to the release before).
     undo_of: Option<i64>,
+    /// The items the caller's role reads (D-185): an entry it can't read is left out and counted
+    /// in `hidden_items`; the hash still covers every item.
     items: Vec<ItemView>,
+    /// How many items are left out because the caller's role can't read their entries.
+    hidden_items: usize,
     reviews: Vec<ReviewView>,
     /// Each configured review stage and where it stands, in order; empty where none are
     /// configured and the single implicit review decides (D-104).
@@ -407,6 +444,15 @@ async fn view(tx: &mut ProjectTransaction, head: Head) -> Result<ChangesetView, 
     let edited = items.iter().filter(|item| item.moved()).count();
     let status = named(decide(&head, edited, &reviews, &stages), &reviews);
     let stage_states = stage_states(&head, &reviews, &stages)?;
+    let named: Vec<(&str, Option<Uuid>)> = items
+        .iter()
+        .map(|item| (item.pin.collection.as_str(), item.created_by))
+        .collect();
+    let shown = crate::visibility::shown(tx, &named).await?;
+    let hidden_items = shown
+        .iter()
+        .filter(|shown| **shown == Shown::Hidden)
+        .count();
     Ok(ChangesetView {
         id: head.id,
         title: head.title,
@@ -419,17 +465,25 @@ async fn view(tx: &mut ProjectTransaction, head: Head) -> Result<ChangesetView, 
         updated_at: rfc3339(head.updated_at)?,
         rollback_generation: head.rollback,
         undo_of: head.undo_of,
+        hidden_items,
         items: items
             .into_iter()
-            .map(|item| ItemView {
+            .zip(shown)
+            .filter(|(_, shown)| *shown != Shown::Hidden)
+            .map(|(item, shown)| ItemView {
                 entry_deleted: item.created_by.is_none(),
                 created_by: item.created_by,
                 edited: item.moved(),
+                title_hidden: shown == Shown::Untitled,
                 kind: item.pin.kind,
                 entry_id: item.pin.entry_id,
                 collection: item.pin.collection,
                 revision_id: item.pin.revision_id,
-                title: item.title,
+                title: if shown == Shown::Whole {
+                    item.title
+                } else {
+                    String::new()
+                },
                 content_hash: content_hash(&item.pin.content_hash),
                 schema_version: item.pin.schema_version,
                 current_revision_id: item.current_revision_id,
@@ -545,6 +599,44 @@ async fn may_change_entries(tx: &mut ProjectTransaction, entries: &[Uuid]) -> Re
         Err(ApiError::missing(
             Action::ContentUpdate,
             "your role can't change content in this changeset",
+        ))
+    }
+}
+
+/// Refuses unless the caller's role may change content somewhere: a rollback preview too large
+/// to name its pins is told only to such a role (D-185).
+fn may_change_some(tx: &ProjectTransaction) -> Result<(), ApiError> {
+    if tx
+        .policy
+        .permissions()
+        .iter()
+        .any(|permission| permission.action == Action::ContentUpdate)
+    {
+        Ok(())
+    } else {
+        Err(ApiError::missing(
+            Action::ContentUpdate,
+            "your role can't change content in this changeset",
+        ))
+    }
+}
+
+/// Refuses an approval unless the caller's role reads every field of every item (D-185, R6):
+/// an approval approves every pinned version, and the request page leaves out or blanks what the
+/// role can't read, so anything less would be an approval made unseen.
+fn reads_all(tx: &ProjectTransaction, items: &[changesets::Item]) -> Result<(), ApiError> {
+    let all = items.iter().all(|item| {
+        let own = item.created_by == Some(tx.identity);
+        tx.policy
+            .fields(Action::ContentRead, &item.pin.collection, own)
+            .is_some_and(|read| read == colophon_domain::policy::Fields::All)
+    });
+    if all {
+        Ok(())
+    } else {
+        Err(ApiError::forbidden(
+            "cannot_review_hidden",
+            "your role can't read everything this changeset publishes, so it can't approve it; it can still ask for changes",
         ))
     }
 }
@@ -758,18 +850,24 @@ pub(crate) async fn rollback(
         });
     }
     let title = title(&new.title)?;
+    // The preview's hash, when the caller looked at one: the request is made only if it would
+    // pin exactly that (D-185), so a publish landing while the dialog was open can't turn the
+    // confirm into a different request.
+    let expected = headers
+        .contains_key(header::IF_MATCH)
+        .then(|| if_match(&headers))
+        .transpose()?;
     let mut tx = open(&state, caller, &path.project, &path.environment).await?;
     let (_, latest) = releases::generation(&mut tx)
         .await
         .map_err(ApiError::from_db)?;
-    if !(1..latest).contains(&path.generation) {
-        return Err(ApiError::InvalidField {
-            reason: "invalid_generation",
-            pointer: "/generation",
-            message: format!("this environment's releases are generations 1 to {latest}"),
-        });
+    let generation = rollback_target(&path.generation, latest)?;
+    let target = generation.to_string();
+    let mut parts = vec![CREATE, title, target.as_str()];
+    if let Some(expected) = &expected {
+        parts.push(expected);
     }
-    let request = request_hash(&[CREATE, title, &path.generation.to_string()]);
+    let request = request_hash(&parts);
     match idempotency::claim(&mut tx, CREATE, key, &request)
         .await
         .map_err(ApiError::from_db)?
@@ -785,9 +883,10 @@ pub(crate) async fn rollback(
             return Ok(respond(status, response, &hash, true));
         }
     }
-    let pins = changesets::rollback_pins(&mut tx, path.generation)
+    let pins = changesets::rollback_pins(&mut tx, generation)
         .await
         .map_err(ApiError::from_db)?;
+    within_rollback_cap(&pins)?;
     if pins.is_empty() {
         return Err(ApiError::InvalidField {
             reason: "already_at",
@@ -795,19 +894,19 @@ pub(crate) async fn rollback(
             message: "this environment already publishes what that release published".to_owned(),
         });
     }
+    let hash = hash_of(&pins);
+    if let Some(expected) = expected {
+        let current = content_hash(&hash);
+        if current != expected {
+            return Err(ApiError::StaleChangeset { current });
+        }
+    }
     let pinned: Vec<Uuid> = pins.iter().map(|pin| pin.entry_id).collect();
     may_change_entries(&mut tx, &pinned).await?;
     let id = Uuid::now_v7();
-    changesets::create(
-        &mut tx,
-        id,
-        title,
-        &pins,
-        &hash_of(&pins),
-        Some(path.generation),
-    )
-    .await
-    .map_err(ApiError::from_db)?;
+    changesets::create(&mut tx, id, title, &pins, &hash, Some(generation))
+        .await
+        .map_err(ApiError::from_db)?;
     let head = changesets::get(&mut tx, id)
         .await
         .map_err(ApiError::from_db)?
@@ -819,6 +918,230 @@ pub(crate) async fn rollback(
         .map_err(ApiError::from_db)?;
     tx.commit().await.map_err(ApiError::from_db)?;
     Ok(respond(StatusCode::CREATED, text, &created.hash, false))
+}
+
+/// One pin a rollback would carry, as its preview names it.
+#[derive(Serialize)]
+pub(crate) struct RollbackLineView {
+    /// `publish` (puts back the version readers had then) or `unpublish` (takes down what
+    /// readers didn't have then).
+    kind: String,
+    entry_id: Uuid,
+    collection: String,
+    /// The title of the version it pins; blank where the role doesn't read titles.
+    title: String,
+    title_hidden: bool,
+    revision_id: Uuid,
+    /// What readers get of the entry now, if anything.
+    live_revision_id: Option<Uuid>,
+}
+
+/// An entry readers had then that the rollback won't bring back: taken down since (D-049).
+#[derive(Serialize)]
+pub(crate) struct KeptDownView {
+    entry_id: Uuid,
+    collection: String,
+    /// Blank where the role doesn't read titles.
+    title: String,
+    title_hidden: bool,
+    revision_id: Uuid,
+    /// The release that took it down.
+    taken_down_in: i64,
+    /// Deleted since (D-080): it can't be published again.
+    entry_deleted: bool,
+}
+
+/// The most pins and kept-down entries a preview lists; the totals count them all.
+const PREVIEW_LINES: usize = 100;
+
+#[derive(Serialize)]
+pub(crate) struct RollbackPreviewView {
+    generation: i64,
+    /// The environment's current generation, which the rollback would follow.
+    latest: i64,
+    /// The hash a rollback made now would have — also the response's `ETag`. Sent back as
+    /// `If-Match`, it makes `POST` refuse if the pins moved since (D-185). `None` when it is too
+    /// large to make.
+    hash: Option<String>,
+    /// How many entries it would put back, and how many it would take down.
+    publish_total: i64,
+    unpublish_total: i64,
+    /// The most entries one rollback may change ([`changesets::MAX_ROLLBACK_ITEMS`]).
+    max_items: usize,
+    /// It would change more than `max_items`, so `POST` refuses it `rollback_too_large`: the
+    /// totals say by how much, and a nearer release is the way back.
+    too_large: bool,
+    /// The first [`PREVIEW_LINES`] of the pins `POST` would build now — publishes first, then
+    /// takedowns, each by entry id — less those the role can't read; empty when it would be
+    /// refused `already_at`, and when it is `too_large` (only the totals are read then).
+    restore: Vec<RollbackLineView>,
+    /// Up to [`PREVIEW_LINES`] entries the rollback leaves down, by title, less those the role
+    /// can't read.
+    kept_down: Vec<KeptDownView>,
+    /// How many it leaves down in all.
+    kept_down_total: i64,
+}
+
+/// The preview's lines from its pins, as `shown` lets the role read each (D-185).
+fn restore_lines(
+    lines: Vec<Pin>,
+    shown: Vec<Shown>,
+    titles: &HashMap<Uuid, changesets::PinTitle>,
+) -> Vec<RollbackLineView> {
+    lines
+        .into_iter()
+        .zip(shown)
+        .filter(|(_, shown)| *shown != Shown::Hidden)
+        .map(|(pin, shown)| {
+            let named = titles.get(&pin.revision_id);
+            RollbackLineView {
+                title: match (shown, named) {
+                    (Shown::Whole, Some(named)) => named.title.clone(),
+                    _ => String::new(),
+                },
+                title_hidden: shown == Shown::Untitled,
+                live_revision_id: named.and_then(|named| named.live_revision_id),
+                kind: pin.kind,
+                entry_id: pin.entry_id,
+                collection: pin.collection,
+                revision_id: pin.revision_id,
+            }
+        })
+        .collect()
+}
+
+/// The preview's kept-down entries, as `shown` lets the role read each (D-185).
+fn kept_lines(kept: Vec<changesets::KeptDown>, shown: Vec<Shown>) -> Vec<KeptDownView> {
+    kept.into_iter()
+        .zip(shown)
+        .filter(|(_, shown)| *shown != Shown::Hidden)
+        .map(|(row, shown)| KeptDownView {
+            entry_deleted: row.created_by.is_none(),
+            title: if shown == Shown::Whole {
+                row.title
+            } else {
+                String::new()
+            },
+            title_hidden: shown == Shown::Untitled,
+            entry_id: row.entry_id,
+            collection: row.collection,
+            revision_id: row.revision_id,
+            taken_down_in: row.taken_down_in,
+        })
+        .collect()
+}
+
+/// `GET {P}/releases/{generation}/rollback`: what `POST` would build now, without building it —
+/// the same pins from the same query, counted, the first [`PREVIEW_LINES`] named — and the
+/// entries readers had at that release that it won't bring back, because they were taken down
+/// since (a takedown survives a rollback, D-049). Refused like `POST`: `invalid_generation`
+/// outside `1..latest`, and a role that can't change every entry it pins is told so before it
+/// asks. Past [`changesets::MAX_ROLLBACK_ITEMS`] pins it answers `too_large` with the totals,
+/// which `POST` refuses as `rollback_too_large`. The lines name only what the role reads
+/// (D-185). Read in one snapshot; the `ETag` is the pins' hash.
+pub(crate) async fn rollback_preview(
+    State(state): State<AppState>,
+    caller: SignedIn,
+    Path(path): Path<RollbackPath>,
+) -> Result<Response, ApiError> {
+    let mut tx = crate::entries::open_isolated(
+        &state,
+        caller,
+        &path.project,
+        &path.environment,
+        colophon_db::scope::Isolation::Snapshot,
+    )
+    .await?;
+    let (_, latest) = releases::generation(&mut tx)
+        .await
+        .map_err(ApiError::from_db)?;
+    let generation = rollback_target(&path.generation, latest)?;
+    // Counted first: past the cap there is nothing to name or hash — `POST` refuses it — and
+    // reading the pins of a set that large costs what the live set costs (D-185, R8).
+    let (publish, unpublish) = changesets::rollback_counts(&mut tx, generation)
+        .await
+        .map_err(ApiError::from_db)?;
+    let too_large = usize::try_from(publish.saturating_add(unpublish))
+        .map_or(true, |total| total > changesets::MAX_ROLLBACK_ITEMS);
+    let pins = if too_large {
+        may_change_some(&tx)?;
+        Vec::new()
+    } else {
+        let pins = changesets::rollback_pins(&mut tx, generation)
+            .await
+            .map_err(ApiError::from_db)?;
+        let pinned: Vec<Uuid> = pins.iter().map(|pin| pin.entry_id).collect();
+        may_change_entries(&mut tx, &pinned).await?;
+        pins
+    };
+    let (hash, publish_total, unpublish_total) = if too_large {
+        (None, publish, unpublish)
+    } else {
+        let publish = pins
+            .iter()
+            .filter(|pin| pin.kind == Kind::Publish.as_str())
+            .count();
+        let count = |n: usize| i64::try_from(n).unwrap_or(i64::MAX);
+        (
+            Some(content_hash(&hash_of(&pins))),
+            count(publish),
+            count(pins.len() - publish),
+        )
+    };
+    let lines: Vec<Pin> = pins.into_iter().take(PREVIEW_LINES).collect();
+    let revisions: Vec<Uuid> = lines.iter().map(|pin| pin.revision_id).collect();
+    let titles: HashMap<Uuid, changesets::PinTitle> = changesets::pin_titles(&mut tx, &revisions)
+        .await
+        .map_err(ApiError::from_db)?
+        .into_iter()
+        .map(|title| (title.revision_id, title))
+        .collect();
+    let shown_entries: Vec<Uuid> = lines.iter().map(|pin| pin.entry_id).collect();
+    let creators: HashMap<Uuid, Uuid> = colophon_db::entries::creators(&mut tx, &shown_entries)
+        .await
+        .map_err(ApiError::from_db)?
+        .into_iter()
+        .map(|(entry, _, created_by)| (entry, created_by))
+        .collect();
+    let named: Vec<(&str, Option<Uuid>)> = lines
+        .iter()
+        .map(|pin| {
+            (
+                pin.collection.as_str(),
+                creators.get(&pin.entry_id).copied(),
+            )
+        })
+        .collect();
+    let line_shown = crate::visibility::shown(&mut tx, &named).await?;
+    let kept = changesets::kept_down(&mut tx, generation)
+        .await
+        .map_err(ApiError::from_db)?;
+    let named: Vec<(&str, Option<Uuid>)> = kept
+        .iter()
+        .map(|row| (row.collection.as_str(), row.created_by))
+        .collect();
+    let kept_shown = crate::visibility::shown(&mut tx, &named).await?;
+    tx.commit().await.map_err(ApiError::from_db)?;
+    let restore = restore_lines(lines, line_shown, &titles);
+    let kept_down_total = kept.first().map_or(0, |row| row.total);
+    let kept_down = kept_lines(kept, kept_shown);
+    let view = RollbackPreviewView {
+        generation,
+        latest,
+        hash: hash.clone(),
+        publish_total,
+        unpublish_total,
+        max_items: changesets::MAX_ROLLBACK_ITEMS,
+        too_large,
+        restore,
+        kept_down,
+        kept_down_total,
+    };
+    let text = serde_json::to_string(&Data { data: view }).map_err(ApiError::internal)?;
+    Ok(match hash {
+        Some(hash) => respond(StatusCode::OK, text, &hash, false),
+        None => json(StatusCode::OK, text, None, false),
+    })
 }
 
 /// `GET {P}/changesets/{changeset}`.
@@ -878,9 +1201,11 @@ pub(crate) async fn refresh(
     };
     let mut pins = if let Some(generation) = head.rollback {
         // A rollback changeset refreshes to its release's set, not to the drafts (D-097).
-        changesets::rollback_pins(&mut tx, generation)
+        let pins = changesets::rollback_pins(&mut tx, generation)
             .await
-            .map_err(ApiError::from_db)?
+            .map_err(ApiError::from_db)?;
+        within_rollback_cap(&pins)?;
+        pins
     } else {
         let mut pins = changesets::pins(&mut tx, &of_kind(Kind::Publish))
             .await
@@ -966,11 +1291,16 @@ pub(crate) async fn review(
             "an API token can't approve a changeset an API token submitted; it needs a person's approval",
         ));
     }
-    let edited = changesets::items(&mut tx, head.id)
+    let items = changesets::items(&mut tx, head.id)
         .await
-        .map_err(ApiError::from_db)?
-        .iter()
-        .any(changesets::Item::moved);
+        .map_err(ApiError::from_db)?;
+    // An approval approves every pinned version (D-185, R6): one whose entry, or any field of it,
+    // the reviewer's role can't read would be approved unseen — the request page leaves such an
+    // item out or blanks its title. Asking for changes stays open to them.
+    if decision == Decision::Approve {
+        reads_all(&tx, &items)?;
+    }
+    let edited = items.iter().any(changesets::Item::moved);
     if edited {
         return Err(ApiError::conflict(
             "entries_moved_on",
@@ -1576,4 +1906,140 @@ pub(crate) async fn stages_replace(
         .map_err(ApiError::from_db)?;
     tx.commit().await.map_err(ApiError::from_db)?;
     Ok(respond(StatusCode::OK, text, &etag, false))
+}
+
+#[cfg(test)]
+mod tests {
+    use colophon_db::{changesets::MAX_ROLLBACK_ITEMS, idempotency::MAX_RESPONSE_BYTES};
+
+    use super::*;
+
+    /// A title as long as a revision or changeset title may be (200 characters) in the character
+    /// whose UTF-8 is longest: single-line text has no control characters (schema.rs), so nothing
+    /// serde would write as a 6-byte `\u00XX` escape, and a 4-byte character beats `"` or `\`
+    /// (2 bytes each, escaped).
+    fn longest_title() -> String {
+        "\u{1F600}".repeat(200)
+    }
+
+    /// A display name as long as `identities` allows (200), escaped as badly as JSON can (6 bytes
+    /// a character): nothing validates a provider's names for control characters.
+    fn longest_name() -> String {
+        "\u{1}".repeat(200)
+    }
+
+    fn worst_item() -> ItemView {
+        ItemView {
+            kind: "unpublish".to_owned(),
+            entry_id: Uuid::max(),
+            collection: "c".repeat(63),
+            revision_id: Uuid::max(),
+            title: longest_title(),
+            content_hash: format!("sha256:{}", "f".repeat(64)),
+            schema_version: i32::MAX,
+            current_revision_id: Some(Uuid::max()),
+            edited: false,
+            title_hidden: false,
+            published_revision_id: Some(Uuid::max()),
+            created_by: Some(Uuid::max()),
+            entry_deleted: false,
+        }
+    }
+
+    /// A rollback changeset as `POST …/rollback` answers it, and records it under its idempotency
+    /// key: just made, so no reviews, but every stage the environment may configure.
+    fn worst_rollback(items: usize) -> ChangesetView {
+        let stage = StageStateView {
+            key: "k".repeat(63),
+            name: "\u{1F600}".repeat(100),
+            different_reviewer: true,
+            state: "approval_expired",
+            by: Some(Uuid::max()),
+            by_name: Some(longest_name()),
+            at: Some("2026-11-18T00:00:00.000000000Z".to_owned()),
+        };
+        ChangesetView {
+            id: Uuid::max(),
+            title: longest_title(),
+            hash: format!("sha256:{}", "f".repeat(64)),
+            status: StatusView {
+                state: "changes_requested",
+                generation: Some(i64::MAX),
+                by: Some(longest_name()),
+                self_review: true,
+                edited_items: usize::MAX,
+            },
+            created_by: Uuid::max(),
+            created_at: "2026-11-18T00:00:00.000000000Z".to_owned(),
+            submitted_by: Some(Uuid::max()),
+            submitted_at: Some("2026-11-18T00:00:00.000000000Z".to_owned()),
+            updated_at: "2026-11-18T00:00:00.000000000Z".to_owned(),
+            rollback_generation: Some(i64::MAX),
+            // The longest the marker can be (D-184), though a rollback never carries one.
+            undo_of: Some(i64::MAX),
+            items: (0..items).map(|_| worst_item()).collect(),
+            hidden_items: usize::MAX,
+            reviews: Vec::new(),
+            stages: (0..changeset::MAX_STAGES)
+                .map(|_| stage_clone(&stage))
+                .collect(),
+        }
+    }
+
+    fn stage_clone(stage: &StageStateView) -> StageStateView {
+        StageStateView {
+            key: stage.key.clone(),
+            name: stage.name.clone(),
+            different_reviewer: stage.different_reviewer,
+            state: stage.state,
+            by: stage.by,
+            by_name: stage.by_name.clone(),
+            at: stage.at.clone(),
+        }
+    }
+
+    /// D-185 (the coordinator's A2): the largest rollback answer — `MAX_ROLLBACK_ITEMS` items of
+    /// the longest serialisation each field allows — fits the idempotency record, so a rollback at
+    /// the cap is recorded, never a 500. And one more item's worth of room would not be left over
+    /// for a much higher cap: the cap is sized from this, not guessed.
+    #[test]
+    fn the_largest_rollback_answer_fits_its_idempotency_record() {
+        let one = serde_json::to_string(&worst_item()).expect("an item serialises");
+        let empty = body(&worst_rollback(0)).expect("a view serialises");
+        let full = body(&worst_rollback(MAX_ROLLBACK_ITEMS)).expect("a view serialises");
+        println!(
+            "worst item {} bytes, fixed part {} bytes, at the cap of {MAX_ROLLBACK_ITEMS}: {} of {MAX_RESPONSE_BYTES}",
+            one.len(),
+            empty.len(),
+            full.len()
+        );
+        assert!(full.len() <= MAX_RESPONSE_BYTES, "{} bytes", full.len());
+        // The cap uses the room: within ten worst-case items of the record's limit.
+        assert!(
+            full.len() + 10 * (one.len() + 1) > MAX_RESPONSE_BYTES,
+            "{} bytes",
+            full.len()
+        );
+    }
+
+    /// Past the cap a rollback is refused by name; at the cap it isn't.
+    #[test]
+    fn a_rollback_past_the_cap_is_refused_rollback_too_large() {
+        let pin = Pin {
+            kind: "unpublish".to_owned(),
+            entry_id: Uuid::nil(),
+            revision_id: Uuid::nil(),
+            collection: "articles".to_owned(),
+            content_hash: vec![0; 32],
+            schema_version: 1,
+            definition_hash: vec![0; 32],
+        };
+        let at_cap = vec![pin.clone(); MAX_ROLLBACK_ITEMS];
+        assert!(within_rollback_cap(&at_cap).is_ok());
+        let past = vec![pin; MAX_ROLLBACK_ITEMS + 1];
+        match within_rollback_cap(&past) {
+            Err(ApiError::InvalidField { reason, .. }) => assert_eq!(reason, "rollback_too_large"),
+            other => panic!("expected rollback_too_large, got {other:?}"),
+        }
+    }
 }
