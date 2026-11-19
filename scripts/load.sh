@@ -82,7 +82,8 @@
 # served by its runner while a release is published every two seconds; needs node).
 #
 # Environment overrides: TOTAL, VUS, RATE, DURATION, P99_MS (the k6 latency threshold),
-# KEEP=0 (don't write a result file; for CI smoke runs), LOAD_PORT (default 58090),
+# KEEP=0 (don't write a result file; for CI smoke runs), LOAD_LOG (the server's log level, default
+# warn; the warning gate counts WARN and ERROR lines either way), LOAD_PORT (default 58090),
 # SERVER_LOG=<path> (keep the server's log there); DRILL_WINDOWS=<path> names the
 # soak-sidecar.sh windows JSONL — with it, mixed.js excuses failures inside the drill
 # windows and the run's error gate means "none outside them", and server warnings are
@@ -373,7 +374,7 @@ else
     # shellcheck source=scripts/local-env.sh
     . scripts/local-env.sh
     # The public URL is the sign-in redirect URI registered in the development realm.
-    export COLOPHON_LISTEN_ADDR="127.0.0.1:$port" COLOPHON_PUBLIC_URL="http://localhost:$port" COLOPHON_LOG=warn COLOPHON_LOG_FORMAT=json
+    export COLOPHON_LISTEN_ADDR="127.0.0.1:$port" COLOPHON_PUBLIC_URL="http://localhost:$port" COLOPHON_LOG="${LOAD_LOG:-warn}" COLOPHON_LOG_FORMAT=json
     # A load run can hold hundreds of live sockets, and a big response keeps each one open
     # longer: under this Mac's 256-file default the accept loop hit EMFILE about once a second
     # on GET /openapi.json at 2,000/s (D-110's scenario). Production runs under a service
