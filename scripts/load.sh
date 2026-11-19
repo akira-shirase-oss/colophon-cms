@@ -84,7 +84,8 @@
 # served by its runner while a release is published every two seconds; needs node).
 #
 # Environment overrides: TOTAL, VUS, RATE, DURATION, P99_MS (the k6 latency threshold),
-# KEEP=0 (don't write a result file; for CI smoke runs), LOAD_PORT (default 58090),
+# KEEP=0 (don't write a result file; for CI smoke runs), RECORD_OUT (also write the run's record there), LOAD_LOG (the server's log level, default
+# warn; the warning gate counts WARN and ERROR lines either way), LOAD_PORT (default 58090),
 # SERVER_LOG=<path> (keep the server's log there); DRILL_WINDOWS=<path> names the
 # soak-sidecar.sh windows JSONL — with it, mixed.js excuses failures inside the drill
 # windows and the run's error gate means "none outside them", and server warnings are
@@ -121,6 +122,13 @@ fi
 if (( script_ok == 0 )) || [[ "$scenario" != throughput && "$scenario" != steady && "$scenario" != stress ]]; then
   echo "usage: scripts/load.sh health|rich-text|openapi|session|accounts|cli|members|roles|tokens|quotas|noisy-agent|password-flood|schedules|projects|setup|changesets|stages|collaboration|live|migrations|delivery|audience|audience-sites|publishing|undo|cache-down|postgres-trouble|purge-trouble|smoke|warm-baseline|cold-cache|stampede|mixed|spike|import-scale|cdn-warm|media-load|entries|content-types|modelling|inverses|transfer|graphql|locales|deletion|collection-delete|site-starter|assets|rich-text-media|bulk|studio|site|preview|uploads-slow throughput|steady|stress [--baseline]" >&2
   exit 2
+fi
+# The dependency-failure scenarios pause the stack's Postgres or Valkey (D-127): only on a stack
+# that is this run's own (D-187).
+if [[ "$endpoint" == cache-down || "$endpoint" == postgres-trouble ]]; then
+  # shellcheck source=scripts/stack-guard.sh
+  . scripts/stack-guard.sh
+  require_own_stack "run the $endpoint scenario (it pauses the stack's Postgres or Valkey)"
 fi
 save_baseline=0
 [[ "${3:-}" == "--baseline" ]] && save_baseline=1
@@ -384,7 +392,7 @@ else
     # shellcheck source=scripts/local-env.sh
     . scripts/local-env.sh
     # The public URL is the sign-in redirect URI registered in the development realm.
-    export COLOPHON_LISTEN_ADDR="127.0.0.1:$port" COLOPHON_PUBLIC_URL="http://localhost:$port" COLOPHON_LOG=warn COLOPHON_LOG_FORMAT=json
+    export COLOPHON_LISTEN_ADDR="127.0.0.1:$port" COLOPHON_PUBLIC_URL="http://localhost:$port" COLOPHON_LOG="${LOAD_LOG:-warn}" COLOPHON_LOG_FORMAT=json
     # A load run can hold hundreds of live sockets, and a big response keeps each one open
     # longer: under this Mac's 256-file default the accept loop hit EMFILE about once a second
     # on GET /openapi.json at 2,000/s (D-110's scenario). Production runs under a service
@@ -463,8 +471,13 @@ tx_before=$(db_transactions)
 # CPU from ps, and the connections Postgres sees this database hold — what the API's pool
 # plus a migrator connection amount to. SAMPLE_SECONDS apart; recorded into the result's
 # `resources`. One server, so skipped under CLUSTER=1 (the numbers would name nothing).
+# SAMPLE_RESOURCES=1 samples any scenario (CI's smokes job, for triage evidence).
+sample_resources=${SAMPLE_RESOURCES:-0}
 case "$endpoint" in
-  warm-baseline|cold-cache|stampede|mixed|spike|import-scale|cdn-warm|media-load|audience-sites)
+  warm-baseline|cold-cache|stampede|mixed|spike|import-scale|cdn-warm|media-load|audience-sites) sample_resources=1 ;;
+esac
+case "$sample_resources" in
+  1)
     if [[ "$cluster" != "1" ]]; then
       (
         while :; do
@@ -882,6 +895,8 @@ record=$(jq -c \
        ({}; . + {($e.key): $e.value}))' "$work/summary.json")
 
 echo "$record" | jq .
+# RECORD_OUT: the record as a file too, for a caller that judges it (CI's smoke verdict, D-209).
+if [[ -n "${RECORD_OUT:-}" ]]; then echo "$record" >"$RECORD_OUT"; fi
 
 if [[ "${KEEP:-1}" == "1" ]]; then
   mkdir -p perf/results perf/baselines

@@ -312,6 +312,18 @@ check() {
   echo "stack ok: $checks checks passed"
 }
 
+# check writes to the server (a temporary table, a forced WAL switch that archives a segment);
+# down and reset remove the stack's containers or data. They run only on a stack that is this
+# run's own (D-187, scripts/stack-guard.sh). up stays open to anyone: it is idempotent and
+# destroys nothing, and it is how a stack comes back after a reboot.
+case "${1:-}" in
+  check | down | reset)
+    # shellcheck source=scripts/stack-guard.sh
+    . scripts/stack-guard.sh
+    require_own_stack "run 'scripts/stack.sh $1' (it writes to the server, or removes the stack's containers or data)"
+    ;;
+esac
+
 case "${1:-}" in
   up)
     compose up --detach --wait --wait-timeout 300

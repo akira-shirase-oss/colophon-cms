@@ -1198,7 +1198,15 @@ pub fn explain(tool: Tool, plan: &Plan, error: &ApiError) -> Outcome {
             };
             Outcome::failure(text, refusal_json(refusal))
         }
-        ApiError::TimedOut(_) | ApiError::Unreachable(_) if tool.writes() => {
+        // A write whose answer never came, or came but couldn't be used (too large, or not the
+        // JSON the API documents), may have happened: the server may have committed it before
+        // answering. Only a refusal, or a request that was never sent, says nothing changed.
+        ApiError::TimedOut(_)
+        | ApiError::Unreachable(_)
+        | ApiError::TooLarge { .. }
+        | ApiError::BadAnswer
+            if tool.writes() =>
+        {
             let retry = match &plan.key {
                 Some(key) => format!(
                     "Calling {} again with idempotency_key {key} is safe: it can't happen twice.",
@@ -1209,10 +1217,14 @@ pub fn explain(tool: Tool, plan: &Plan, error: &ApiError) -> Outcome {
                     tool.name()
                 ),
             };
+            let what = match error {
+                ApiError::TooLarge { .. } | ApiError::BadAnswer => {
+                    "Colophon's answer couldn't be read"
+                }
+                _ => "Colophon didn't answer",
+            };
             Outcome::failure(
-                format!(
-                    "Colophon didn't answer ({error}), so this may or may not have happened. {retry}"
-                ),
+                format!("{what} ({error}), so this may or may not have happened. {retry}"),
                 json!({"code": "outcome_unknown", "message": error.to_string(), "idempotency_key": plan.key}),
             )
         }
@@ -1723,6 +1735,47 @@ mod tests {
             &read,
             &ApiError::Unreachable("refused".into()),
         );
+        assert_eq!(outcome.structured["error"]["code"], "unavailable");
+    }
+
+    /// A write whose answer came but couldn't be used may have happened: it is
+    /// `outcome_unknown`, never "nothing was changed" (hardening #3).
+    #[test]
+    fn a_write_with_an_unreadable_answer_may_have_happened() {
+        let plan = plan(
+            Tool::CreateDraft,
+            json!({"collection": "articles", "content": {}, "idempotency_key": "agent-key-0000000001"}),
+        )
+        .expect("valid");
+        for error in [ApiError::TooLarge { limit: 1024 }, ApiError::BadAnswer] {
+            let outcome = explain(Tool::CreateDraft, &plan, &error);
+            assert_eq!(
+                outcome.structured["error"]["code"], "outcome_unknown",
+                "{error}"
+            );
+            assert!(
+                outcome.text.contains("may or may not have happened"),
+                "{}",
+                outcome.text
+            );
+            assert!(
+                outcome
+                    .text
+                    .contains("idempotency_key agent-key-0000000001"),
+                "{}",
+                outcome.text
+            );
+            assert!(
+                !outcome.text.contains("Nothing was changed"),
+                "{}",
+                outcome.text
+            );
+        }
+        // A read changes nothing, whatever its answer was.
+        let outcome = explain(Tool::GetEntry, &plan_for_read(), &ApiError::BadAnswer);
+        assert_eq!(outcome.structured["error"]["code"], "unavailable");
+        // A request never sent changed nothing either.
+        let outcome = explain(Tool::CreateDraft, &plan, &ApiError::BadUrl);
         assert_eq!(outcome.structured["error"]["code"], "unavailable");
     }
 

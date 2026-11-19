@@ -146,7 +146,9 @@ pub struct Config {
     /// How long readiness says `draining` before the listener closes. `COLOPHON_DRAIN_DELAY_MS`,
     /// default 5 s.
     pub drain_delay: Duration,
-    /// Hard deadline from the shutdown signal to exit. `COLOPHON_SHUTDOWN_GRACE_MS`, default 25 s.
+    /// How long requests have to finish after the shutdown signal; background cleanup then has 5 s
+    /// more (D-197), so a supervisor's stop timeout must exceed this plus 5 s.
+    /// `COLOPHON_SHUTDOWN_GRACE_MS`, default 25 s.
     pub shutdown_grace: Duration,
     /// The origin browsers reach this server at (`COLOPHON_PUBLIC_URL`, default
     /// `http://localhost:58000`): the sign-in redirect URI and the first trusted origin.
