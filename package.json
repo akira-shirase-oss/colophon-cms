@@ -6,7 +6,8 @@
     "packages/*",
     "!packages/cli-npm",
     "apps/*",
-    "apps/sites/*"
+    "apps/sites/*",
+    "!apps/sites/nextjs"
   ],
   "engines": {
     "node": ">=22.17"

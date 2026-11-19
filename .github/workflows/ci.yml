@@ -595,3 +595,51 @@ jobs:
         with:
           persist-credentials: false
       - uses: EmbarkStudios/cargo-deny-action@3c6349835b2b7b196a839186cb8b78e02f7b5f25 # v2.1.1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+      # The Next.js demo site has its own npm tree, outside the CMS's workspaces (D-220), so it is audited on its
+      # own and reported separately: a finding here is the demo's, never the CMS's.
+      - name: The Next.js demo's own npm tree (apps/sites/nextjs, not part of the CMS)
+        working-directory: apps/sites/nextjs
+        run: npm audit --omit=dev --audit-level=moderate
+
+  nextjs-demo:
+    # The Next.js demo site (D-220) lives outside the CMS's npm workspaces, with its own package-lock.json. This job
+    # installs it on its own and runs only when it or the API contract it reads changes, and on main.
+    name: Next.js demo (its own install, types, tests, an unseeded build)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - name: Does this change touch the demo or the API contract?
+        id: scope
+        env:
+          REF: ${{ github.ref }}
+        run: |
+          if [ "$REF" = "refs/heads/main" ]; then echo "run=true" >>"$GITHUB_OUTPUT"; exit 0; fi
+          base=$(git merge-base HEAD origin/main)
+          if git diff --name-only "$base" HEAD | grep -qE '^(apps/sites/nextjs/|docs/api/openapi\.json$)'; then
+            echo "run=true" >>"$GITHUB_OUTPUT"
+          else
+            echo "run=false" >>"$GITHUB_OUTPUT"; echo "Nothing the Next.js demo depends on changed; skipped."
+          fi
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        if: steps.scope.outputs.run == 'true'
+        with:
+          node-version: 24
+      - name: Install exactly what its package-lock.json pins
+        if: steps.scope.outputs.run == 'true'
+        working-directory: apps/sites/nextjs
+        run: npm ci --no-audit --no-fund
+      - name: Types, the delivery-read tests, and a build with nothing seeded
+        if: steps.scope.outputs.run == 'true'
+        working-directory: apps/sites/nextjs
+        run: |
+          npm run check
+          npm test
+          npm run build
+          test -f dist/index.html
