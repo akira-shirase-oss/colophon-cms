@@ -56,7 +56,7 @@
 }
 
 /* ---------- Both directions ---------- */
-:root[data-direction] .page-title {
+:root[data-direction] .page-title:not([data-user-content]) {
 	font-family: var(--font-title);
 	font-weight: 400;
 	font-synthesis: none;
@@ -95,7 +95,7 @@
 	color: var(--hero-muted);
 	letter-spacing: 0;
 }
-:root[data-direction='b'] .page-title {
+:root[data-direction='b'] .page-title:not([data-user-content]) {
 	font-size: 3rem;
 }
 :root[data-direction='b'] .v2-section-title {
