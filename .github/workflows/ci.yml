@@ -456,6 +456,7 @@ jobs:
           smoke DURATION=8s RATE=300 SPIKE_SECONDS=10 P99_MS=250 scripts/load.sh spike throughput
           smoke TOTAL=10000 P99_MS=200 scripts/load.sh stages throughput
           smoke DURATION=15s P99_MS=250 scripts/load.sh stampede throughput
+          smoke TOTAL=8000 P99_MS=700 scripts/load.sh undo throughput
           smoke TOTAL=50000 P99_MS=350 scripts/load.sh warm-baseline throughput
           echo "| failed smokes | ${failed[*]:-none} (of ${#ran[@]} that ran) |" >>"$GITHUB_STEP_SUMMARY"
           # D-209 addendum: a strict entry must fail (its fix removes its line); a flapping one may pass or fail its limit
