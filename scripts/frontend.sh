@@ -15,6 +15,9 @@ fi
 node scripts/design-contrast.mjs >/dev/null
 node scripts/design-contrast.mjs --check docs/design/contrast.md >/dev/null
 node scripts/design-contrast.mjs --check-copy packages/ui/src/lib/tokens.css
+# The sweep (D-210): no colour/shadow/palette literals and no hand-rolled primitives bypassing the tokens
+# in apps/studio or packages/ui; every intentional case is a documented exception in the checker.
+node scripts/check-design-literals.mjs >/dev/null
 npm run check --workspaces --if-present
 npm test --workspaces --if-present
 # What npm would ship of @colophon-cms/sdk and @colophon-cms/rich-text, installed and used from
