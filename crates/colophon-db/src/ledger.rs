@@ -409,7 +409,7 @@ pub async fn replay(pool: &PgPool, rows: &[Row]) -> Result<Replayed, DbError> {
     if rows.is_empty() {
         return Ok(Replayed::default());
     }
-    let mut transaction = pool.begin().await.map_err(DbError::from_query)?;
+    let mut transaction = crate::begin_tx(pool).await.map_err(DbError::from_query)?;
     // Rows come in with their own ids, which don't advance the sequence — and a replayed
     // project deletion writes a fresh row of its own, which draws it. It must start above
     // both the interval and whatever an earlier replay left, before the role switch;
