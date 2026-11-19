@@ -210,6 +210,10 @@ fn api_services(
         passwords: colophon_db::passwords::PasswordGate::new(config.password_concurrency),
         magic_links: config.magic_links,
         media_origin: config.media_origin.clone(),
+        uploads: colophon_api::uploads::UploadGate::new(
+            config.upload_memory_mb,
+            config.max_body_bytes,
+        ),
         install_kind: config.install_kind,
     })
 }

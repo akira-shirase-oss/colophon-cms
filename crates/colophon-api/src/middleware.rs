@@ -18,7 +18,6 @@ use tower_http::{
     catch_panic::CatchPanicLayer,
     limit::RequestBodyLimitLayer,
     request_id::{MakeRequestId, PropagateRequestIdLayer, RequestId, SetRequestIdLayer},
-    timeout::TimeoutLayer,
     trace::{DefaultOnResponse, TraceLayer},
 };
 use tracing::{Level, Span};
@@ -54,6 +53,44 @@ impl Default for HttpLimits {
             // 1 MiB (module 04); uploads stream separately and never pass through here.
             max_body_bytes: 1024 * 1024,
         }
+    }
+}
+
+/// The request deadline, handed to an upload handler instead of timing its body (D-215).
+#[derive(Debug, Clone, Copy)]
+pub struct UploadDeadline(pub Duration);
+
+/// Whether `request` sends an upload's bytes: `POST {P}/assets` or `POST {P}/assets/{asset}/replace`
+/// (`{P}` = `/api/v1/projects/{project}/environments/{environment}`).
+pub fn is_upload(request: &Request) -> bool {
+    if request.method() != axum::http::Method::POST {
+        return false;
+    }
+    let parts: Vec<&str> = request
+        .uri()
+        .path()
+        .trim_end_matches('/')
+        .split('/')
+        .collect();
+    let environment = matches!(parts.as_slice(), ["", "api", "v1", "projects", project, "environments", env, ..] if !project.is_empty() && !env.is_empty());
+    environment
+        && match &parts[7..] {
+            ["assets"] => true,
+            ["assets", asset, "replace"] => !asset.is_empty(),
+            _ => false,
+        }
+}
+
+/// The deadline layer: `timeout` around every request but an upload, which instead carries it as an
+/// [`UploadDeadline`] for its handler (its body may legitimately take longer to arrive).
+async fn deadline(timeout: Duration, mut request: Request, next: Next) -> Response {
+    if is_upload(&request) {
+        request.extensions_mut().insert(UploadDeadline(timeout));
+        return next.run(request).await;
+    }
+    match tokio::time::timeout(timeout, next.run(request)).await {
+        Ok(response) => response,
+        Err(_) => TIMEOUT_STATUS.into_response(),
     }
 }
 
@@ -260,11 +297,11 @@ pub fn apply(router: Router, limits: HttpLimits, build: BuildInfo) -> Router {
         }))
         // 6. A panic below becomes a 500 envelope instead of a dropped connection.
         .layer(CatchPanicLayer::custom(panic_response))
-        // 7. The deadline for producing response headers.
-        .layer(TimeoutLayer::with_status_code(
-            TIMEOUT_STATUS,
-            limits.request_timeout,
-        ))
+        // 7. The deadline for producing response headers: every request's, except an upload's,
+        //    whose body may still be arriving (D-215); its handler applies it once the body is in.
+        .layer(axum_mw::from_fn(move |request: Request, next: Next| {
+            deadline(limits.request_timeout, request, next)
+        }))
         // 8. Reject bodies that grow past the limit while streaming (no Content-Length)...
         .layer(RequestBodyLimitLayer::new(limits.max_body_bytes))
         // ...and give axum's extractors, whose own default is 2 MB, the same limit.
@@ -275,6 +312,36 @@ pub fn apply(router: Router, limits: HttpLimits, build: BuildInfo) -> Router {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn request(method: &str, path: &str) -> Request {
+        Request::builder()
+            .method(method)
+            .uri(path)
+            .body(Body::empty())
+            .expect("request")
+    }
+
+    #[test]
+    fn only_the_two_upload_routes_skip_the_deadline() {
+        let p = "/api/v1/projects/abc/environments/production";
+        assert!(is_upload(&request("POST", &format!("{p}/assets"))));
+        assert!(is_upload(&request(
+            "POST",
+            &format!("{p}/assets/01a1/replace")
+        )));
+        assert!(!is_upload(&request("GET", &format!("{p}/assets"))));
+        assert!(!is_upload(&request("POST", &format!("{p}/assets/01a1"))));
+        assert!(!is_upload(&request(
+            "POST",
+            &format!("{p}/assets/01a1/metadata")
+        )));
+        assert!(!is_upload(&request(
+            "POST",
+            &format!("{p}/collections/assets/entries")
+        )));
+        assert!(!is_upload(&request("POST", "/api/v1/projects/abc/assets")));
+        assert!(!is_upload(&request("POST", "/auth/signup")));
+    }
 
     #[test]
     fn credential_segments_are_written_as_their_names() {

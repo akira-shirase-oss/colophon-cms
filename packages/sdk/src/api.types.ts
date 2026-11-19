@@ -5121,6 +5121,15 @@ export interface operations {
                     "application/json": components["schemas"]["Error"];
                 };
             };
+            /** @description `body_stalled` — the body stopped arriving for 15 s, or took longer than its bound */
+            408: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
             /** @description `idempotency_key_reused` — this `Idempotency-Key` was used before for a different request */
             409: {
                 headers: {
@@ -5148,7 +5157,7 @@ export interface operations {
                     "application/json": components["schemas"]["Error"];
                 };
             };
-            /** @description `rate_limited` — over the per-credential or per-address limit; `Retry-After` */
+            /** @description `too_many_uploads` — this session or token has four uploads in progress (Retry-After); over the per-credential or per-address limit; `Retry-After` */
             429: {
                 headers: {
                     [name: string]: unknown;
@@ -5157,7 +5166,7 @@ export interface operations {
                     "application/json": components["schemas"]["Error"];
                 };
             };
-            /** @description `unavailable` — uploads are not configured on this server */
+            /** @description `unavailable, uploads_busy` — uploads are not configured on this server, or the uploads in progress hold its upload memory (Retry-After) */
             503: {
                 headers: {
                     [name: string]: unknown;
@@ -5578,6 +5587,15 @@ export interface operations {
                     "application/json": components["schemas"]["Error"];
                 };
             };
+            /** @description `body_stalled` — the body stopped arriving for 15 s, or took longer than its bound */
+            408: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
             /** @description `asset_quarantined, asset_rejected, already_deleted` — its first verdict is still out, it has no version to replace, or it is gone; `idempotency_key_reused` — this `Idempotency-Key` was used before for a different request */
             409: {
                 headers: {
@@ -5605,7 +5623,7 @@ export interface operations {
                     "application/json": components["schemas"]["Error"];
                 };
             };
-            /** @description `rate_limited` — over the per-credential or per-address limit; `Retry-After` */
+            /** @description `too_many_uploads` — this session or token has four uploads in progress (Retry-After); over the per-credential or per-address limit; `Retry-After` */
             429: {
                 headers: {
                     [name: string]: unknown;
@@ -5614,7 +5632,7 @@ export interface operations {
                     "application/json": components["schemas"]["Error"];
                 };
             };
-            /** @description `unavailable` — uploads are not configured on this server */
+            /** @description `unavailable, uploads_busy` — uploads are not configured on this server, or the uploads in progress hold its upload memory (Retry-After) */
             503: {
                 headers: {
                     [name: string]: unknown;

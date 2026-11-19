@@ -803,7 +803,21 @@ export async function replaceAsset(project: string, asset: string, file: File): 
 	return sendFile(`${assetsPath(project)}/${asset}/replace`, file);
 }
 
+/** One file's bytes, sent with one Idempotency-Key for every attempt: when the first answer is lost or a
+ *  504 (the server's deadline ran out, perhaps while its commit was finishing), the same request goes once
+ *  more, and the server replays the upload it stored instead of storing a second (D-215). */
 async function sendFile(path: string, file: File): Promise<Asset> {
+	const key = newKey();
+	try {
+		return await sendFileOnce(path, file, key);
+	} catch (failure) {
+		const lost = failure instanceof ApiError && failure.failure === 'retry' && (failure.status === null || failure.status === 504);
+		if (!lost) throw failure;
+		return sendFileOnce(path, file, key);
+	}
+}
+
+async function sendFileOnce(path: string, file: File, key: string): Promise<Asset> {
 	let response: Response;
 	try {
 		response = await fetch(path, {
@@ -814,7 +828,7 @@ async function sendFile(path: string, file: File): Promise<Asset> {
 				'Content-Type': file.type || 'application/octet-stream',
 				'X-CSRF-Token': csrfToken(),
 				'X-Colophon-File-Name': file.name,
-				'Idempotency-Key': newKey()
+				'Idempotency-Key': key
 			},
 			body: file
 		});

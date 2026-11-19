@@ -63,7 +63,15 @@ create → conflict → review → publish scenario produce equivalent durable r
      refused after being drained, bodies a handler leaves unread are drained afterwards (up to 32 MiB, within 2 s),
      and otherwise the response says `Connection: close` (RFC 9112 §9.6; found by the testbed);
   6. `CatchPanicLayer::custom`;
-  7. timeout (504 `deadline_exceeded`);
+  7. timeout (504 `deadline_exceeded`), for every request but the two upload routes (`POST {P}/assets` and
+     `POST {P}/assets/{asset}/replace`, D-215). Their handlers read the body only after sign-in and the role's
+     permission, inside the upload bounds (`uploads.rs`): a memory budget shared by uploads in flight
+     (`COLOPHON_UPLOAD_MEMORY_MB`, 256 by default: 12 bodies at the limit; a full budget waits 2 s, then
+     `503 uploads_busy` with `Retry-After`), at most 4 per session or token (`429 too_many_uploads`), a declared
+     `Content-Length` over the limit refused before any byte is read (413), no 15 s without a byte and the whole
+     read within the limit at 64 KiB/s (`408 body_stalled`). The request deadline then covers the server's own
+     work on the arrived body (504). Streaming the body into the quarantine object, instead of holding it, is
+     the later improvement that lifts the memory bound;
   8. body limit (`COLOPHON_MAX_BODY_BYTES`, 21 MiB by default, sized for uploads). The routes anyone may call
      with a body before signing in — `/auth/signup`, `/auth/signin`, `/auth/device`, `/auth/device/token` and an
      audience's `signup`, `signin` and `magic-link` — read at most 16 KiB (`body_limit` in the route table,
