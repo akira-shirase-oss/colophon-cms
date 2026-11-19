@@ -401,7 +401,7 @@ jobs:
             echo "| $name | postgres CPU $cpu |" >>"$GITHUB_STEP_SUMMARY"
           }
           # The worker's own story of the warm asset (claimed, verified, retried?): debug for it alone.
-          smoke LOAD_LOG=info,colophon_worker=debug TOTAL=10000 P99_MS=500 scripts/load.sh assets throughput
+          smoke TOTAL=10000 P99_MS=500 scripts/load.sh assets throughput
           smoke TOTAL=10000 USERS=64 P99_MS=700 scripts/load.sh audience throughput
           smoke TOTAL=10000 P99_MS=500 scripts/load.sh bulk throughput
           smoke DURATION=10s P99_MS=500 scripts/load.sh cache-down throughput
