@@ -298,7 +298,7 @@ jobs:
             fi
             echo "$(date -u +%FT%TZ) end $name" >>"$logs/windows.txt"
             if [[ -s "$logs/$file.record.json" ]]; then
-              jq -r --arg n "$name" '[$n, (.latency_ms.p99 // ""), ([.l08.ratios[]?] | max // "")] | @tsv' "$logs/$file.record.json" >>"$logs/metrics.tsv"
+              jq -r --arg n "$name" '(.hard_failures // {}) as $h | [$n, (.latency_ms.p99 // ""), ([.l08.ratios[]?] | max // ""), (.hard_failures_total // ""), ([$h | to_entries[] | select(.key != "failed_checks" and (.value | type) == "number" and .value > 0) | "\(.key)=\(.value)"] + ($h.failed_checks // []) | join("; "))] | @tsv' "$logs/$file.record.json" >>"$logs/metrics.tsv"
             fi
           }
           run_load TOTAL=200000 P99_MS=50 scripts/load.sh health throughput
@@ -476,9 +476,10 @@ jobs:
                 -c "SELECT state, count(*) FROM assets GROUP BY 1" >"$logs/$name.work-tables.txt" 2>&1 || true
             fi
             kill "$sampler" 2>/dev/null || true
-            # What the verdict judges a flapping smoke by: its overall p99 and L08's worst noise/baseline ratio.
+            # What the verdict judges by: each smoke's overall p99 and L08's worst noise/baseline ratio (a flapper's ceiling), and
+            # its hard failures, never tolerated (the total, then which keys and checks).
             if [[ -s "$logs/$name.record.json" ]]; then
-              jq -r --arg n "$name" '[$n, (.latency_ms.p99 // ""), ([.l08.ratios[]?] | max // "")] | @tsv' "$logs/$name.record.json" >>"$logs/metrics.tsv"
+              jq -r --arg n "$name" '(.hard_failures // {}) as $h | [$n, (.latency_ms.p99 // ""), ([.l08.ratios[]?] | max // ""), (.hard_failures_total // ""), ([$h | to_entries[] | select(.key != "failed_checks" and (.value | type) == "number" and .value > 0) | "\(.key)=\(.value)"] + ($h.failed_checks // []) | join("; "))] | @tsv' "$logs/$name.record.json" >>"$logs/metrics.tsv"
             fi
             echo "$(date -u +%FT%TZ) end $name" >>"$logs/windows.txt"
             pgq -c "SELECT round(total_exec_time::numeric, 1) AS total_ms, calls, round(mean_exec_time::numeric, 3) AS mean_ms, rows, left(regexp_replace(query, '\\s+', ' ', 'g'), 160) FROM pg_stat_statements ORDER BY total_exec_time DESC LIMIT 10" \

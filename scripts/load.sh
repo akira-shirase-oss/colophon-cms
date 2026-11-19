@@ -855,6 +855,18 @@ record=$(jq -c \
     rps: (.metrics.http_reqs.rate | floor),
     failed: (.metrics.http_req_failed.passes // 0),
     checks_failed: (.metrics.checks.fails // 0),
+    # Correctness, never tolerated by the smoke verdict whatever a list or a ceiling says: any failed check, any
+    # request failed outside the statuses its script declared expected (expectedStatuses in k6), and for assets a
+    # run whose uploads are mostly refused (its upload_refused Rate at 1% or more). Each failing check is named.
+    hard_failures: ({
+      checks_failed: (.metrics.checks.fails // 0),
+      requests_failed: (.metrics.http_req_failed.passes // 0)
+    } + (if .metrics.upload_refused then {
+      upload_refused: (if ((.metrics.upload_refused.value // 0) >= 0.01) then (.metrics.upload_refused.passes // 0) else 0 end)
+    } else {} end) + {
+      failed_checks: [.root_group | .. | objects | .checks? // empty | (if type == "object" then to_entries | map(.value) else . end)[]
+                      | select((.fails // 0) > 0) | "\(.name): \(.fails) of \((.passes // 0) + .fails)"]
+    }),
     dropped: (.metrics.dropped_iterations.count // 0),
     latency_ms: (.metrics.http_req_duration | {
       avg: (.avg * 1000 | round / 1000), p50: (.med * 1000 | round / 1000),
@@ -872,6 +884,8 @@ record=$(jq -c \
     + (reduce (to_entries[] | select(.key | test("^l[0-9]{2}$"))) as $e
        ({}; . + {($e.key): $e.value}))' "$work/summary.json")
 
+# The hard failures' total (every count but the failing checks' names): any above 0 fails the smoke verdict.
+record=$(jq -c '.hard_failures_total = ([.hard_failures | to_entries[] | select(.key != "failed_checks") | .value] | add // 0)' <<<"$record")
 echo "$record" | jq .
 # RECORD_OUT: the record as a file too, for a caller that judges it (CI's smoke verdict, D-209).
 if [[ -n "${RECORD_OUT:-}" ]]; then echo "$record" >"$RECORD_OUT"; fi

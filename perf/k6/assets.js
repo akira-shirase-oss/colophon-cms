@@ -10,6 +10,7 @@
 
 import http from 'k6/http';
 import { check, fail, sleep } from 'k6';
+import { Rate } from 'k6/metrics';
 
 const BASE_URL = __ENV.BASE_URL || 'http://127.0.0.1:58000';
 const PUBLIC_URL = __ENV.PUBLIC_URL || 'http://localhost:58000';
@@ -32,7 +33,11 @@ const scenarios = {
 };
 if (!(SCENARIO in scenarios)) throw new Error(`SCENARIO must be one of ${Object.keys(scenarios).join(', ')}`);
 
-const thresholds = { http_req_failed: ['rate==0'], checks: ['rate==1'], http_req_duration: [`p(99)<${P99_MS}`] };
+// Uploads refused for load (429 too_many_uploads, 503): a hard failure of the smoke when 1% or more of them are
+// (the record's hard_failures.upload_refused), so a run that measured refusals can't pass as uploads.
+const uploadRefused = new Rate('upload_refused');
+
+const thresholds = { http_req_failed: ['rate==0'], checks: ['rate==1'], http_req_duration: [`p(99)<${P99_MS}`], upload_refused: ['rate<0.01'] };
 if (SCENARIO === 'steady') {
   thresholds.dropped_iterations = [`count<=${Math.floor(RATE * durationSeconds(DURATION) * 0.0001)}`];
 }
@@ -119,6 +124,7 @@ export default function (data) {
     const fake = __ITER % 50 === 49;
     const body = fake ? FAKE : PNG;
     const res = http.post(data.assets, body.buffer, Object.assign({ tags: { endpoint: 'upload', name: 'assets' } }, write(fake ? 'photo.png' : 'dot.png')));
+    uploadRefused.add(res.status === 429 || res.status === 503);
     check(res, {
       'upload 202': (r) => r.status === 202,
       'upload lands quarantined': (r) => r.json('data.state') === 'quarantined',
@@ -127,6 +133,7 @@ export default function (data) {
     // D-098: an unreferenced upload asked to go — 202 means the delete job is queued, not that
     // the object is gone. A delete can't touch quarantine, so the upload's verdict comes first.
     const made = http.post(data.assets, PNG.buffer, Object.assign({ tags: { endpoint: 'delete-upload', name: 'assets' } }, write('going.png')));
+    uploadRefused.add(made.status === 429 || made.status === 503);
     check(made, { 'delete upload 202': (r) => r.status === 202 });
     const id = made.json('data.id');
     if (typeof id === 'string') {
