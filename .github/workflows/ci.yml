@@ -317,9 +317,11 @@ jobs:
           if awk -v s="$scale" 'BEGIN {exit !(s < 0.5)}'; then
             echo "::warning::this runner measured $health_rps health req/s, $(awk -v s="$scale" 'BEGIN {printf "%.0f", s * 100}')% of the reference $REFERENCE_RPS: the steady smokes' rates are scaled to it, and their numbers say little about the code"
           fi
-          echo "| runner | ${runner_cpu:-unknown}: health $health_rps req/s (median of 3), scale $scale of $REFERENCE_RPS |" >>"$GITHUB_STEP_SUMMARY"
+          # The long health run above, beside the probe: REFERENCE_RPS is in long-run units, so a gap shows in every record.
+          long_rps=$(jq -r '.rps // empty' "$logs/integration_health-throughput.record.json" 2>/dev/null || true)
+          echo "| runner | ${runner_cpu:-unknown}: health $health_rps req/s (median of 3; long run ${long_rps:-not measured}), scale $scale of $REFERENCE_RPS |" >>"$GITHUB_STEP_SUMMARY"
           # Steady smokes are judged at their scaled rates even below the floor: the scaling keeps their relative load.
-          export RUNNER_HEALTH_RPS=$health_rps RUNNER_REFERENCE_RPS=$REFERENCE_RPS RUNNER_SCALE=$scale RUNNER_JUDGED=yes
+          export RUNNER_HEALTH_RPS=$health_rps RUNNER_LONG_HEALTH_RPS=${long_rps:-} RUNNER_REFERENCE_RPS=$REFERENCE_RPS RUNNER_SCALE=$scale RUNNER_JUDGED=yes
           rate() { awk -v r="$1" -v s="$scale" 'BEGIN {v = int(r * s + 0.5); if (v < 1) v = 1; print v}'; }
           run_load TOTAL=100000 P99_MS=50 scripts/load.sh rich-text throughput
           run_load RATE=$(rate 400) P99_MS=200 scripts/load.sh session steady
@@ -553,7 +555,8 @@ jobs:
           smoke TOTAL=20000 P99_MS=$(limit 200) scripts/load.sh quotas throughput
           smoke TOTAL=10000 P99_MS=$(limit 500) scripts/load.sh site-starter throughput
           smoke DURATION=10s P99_MS=$(limit 700) scripts/load.sh smoke throughput
-          smoke DURATION=8s RATE=$(rate 300) SPIKE_SECONDS=10 P99_MS=250 scripts/load.sh spike throughput
+          # A limiter smoke (perf/limiter-smokes.tsv): its rate exceeds the fixed delivery limit, so it never scales.
+          smoke DURATION=8s RATE=300 SPIKE_SECONDS=10 P99_MS=250 scripts/load.sh spike throughput
           smoke TOTAL=10000 P99_MS=$(limit 200) scripts/load.sh stages throughput
           smoke DURATION=15s P99_MS=$(limit 250) scripts/load.sh stampede throughput
           smoke TOTAL=8000 P99_MS=$(limit 700) scripts/load.sh undo throughput
