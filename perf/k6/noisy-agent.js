@@ -60,6 +60,11 @@ function durationSeconds(text) {
 
 const PHASE = durationSeconds(DURATION);
 const GAP = 2; // seconds between the phases, so nothing in flight bleeds across
+// D-221: the quiet and noisy phases alternate in short windows, A B A B A B, and the ratio is taken from the
+// medians of each phase's per-window p95s, so a stall of the runner corrupts one window, not the verdict (one
+// 8-second baseline either caught a stall or didn't: 4.76 ms → 8.64x on one run, 53.7 ms → 1.04x on another).
+const WINDOWS = parseInt(__ENV.L08_WINDOWS || '3', 10);
+const WINDOW = Math.max(2, Math.ceil(PHASE / WINDOWS));
 // Each executor's VUs can grow to twice their preallocated count; a VU's idInTest is
 // global across every scenario, so the article pools must cover the largest id any VU
 // can hold — the sum of all five executors' maxima.
@@ -69,13 +74,16 @@ if (!(SCENARIO === 'throughput' || SCENARIO === 'steady')) {
   throw new Error('SCENARIO must be throughput or steady');
 }
 
-// A constant-rate arm of `vus` VUs for one phase, starting `start` seconds in.
+// A constant-rate arm of `vus` VUs for one window, starting `start` seconds in.
 function arm(rate, start, vus, execFn) {
   return {
     executor: 'constant-arrival-rate',
     rate,
     timeUnit: '1s',
-    duration: DURATION,
+    duration: `${WINDOW}s`,
+    // Shorter than the gap, so windows never overlap: with k6's default 30 s, the agent's overrun spilled into the
+    // next quiet window and k6 planned VUs for all of them at once, more than the article pools cover.
+    gracefulStop: `${GAP - 1}s`,
     startTime: `${start}s`,
     preAllocatedVUs: vus,
     maxVUs: vus * 2,
@@ -107,31 +115,48 @@ const thresholds = {
   'http_req_duration{arm:b_noise}': [`p(95)<${P95_CEIL}`],
   'http_req_duration{arm:agent}': ['p(99)<60000'],
 };
+// Each window's series lands in the exported summary because a threshold names it.
+for (let w = 0; w < WINDOWS; w += 1) {
+  for (const which of ['baseline', 'noise', 'b_baseline', 'b_noise']) {
+    thresholds[`http_req_duration{arm:${which},w:${w}}`] = [`p(95)<${P95_CEIL}`];
+  }
+}
 if (SCENARIO === 'steady') {
-  const scheduled = (RATE + B_RATE) * PHASE * 2 + AGENT_RATE * PHASE;
+  const scheduled = ((RATE + B_RATE) * 2 + AGENT_RATE) * WINDOW * WINDOWS;
   thresholds.dropped_iterations = [`count<=${Math.max(1, Math.floor(scheduled * 0.0001))}`];
 }
 
 export const options = {
-  scenarios: {
-    a_baseline: arm(RATE, 0, A_VUS, 'editorial'),
-    b_baseline: arm(B_RATE, 0, B_VUS, 'editorial'),
-    a_noise: arm(RATE, PHASE + GAP, A_VUS, 'editorial'),
-    b_noise: arm(B_RATE, PHASE + GAP, B_VUS, 'editorial'),
-    agent: arm(AGENT_RATE, PHASE + GAP, AGENT_VUS, 'hammer'),
-  },
+  // Window w: quiet from w*(2*(WINDOW+GAP)), noisy WINDOW+GAP later; the agent hammers only in the noisy ones.
+  scenarios: Object.fromEntries(
+    Array.from({ length: WINDOWS }, (_, w) => {
+      const quiet = w * 2 * (WINDOW + GAP);
+      const noisy = quiet + WINDOW + GAP;
+      return [
+        [`a_baseline_${w}`, arm(RATE, quiet, A_VUS, 'editorial')],
+        [`b_baseline_${w}`, arm(B_RATE, quiet, B_VUS, 'editorial')],
+        [`a_noise_${w}`, arm(RATE, noisy, A_VUS, 'editorial')],
+        [`b_noise_${w}`, arm(B_RATE, noisy, B_VUS, 'editorial')],
+        [`agent_${w}`, arm(AGENT_RATE, noisy, AGENT_VUS, 'hammer')],
+      ];
+    }).flat(),
+  ),
   thresholds,
   summaryTrendStats: ['avg', 'min', 'med', 'p(90)', 'p(95)', 'p(99)', 'p(99.9)', 'max'],
   setupTimeout: '300s',
 };
 
-// Which pool and arm tag an `editorial` VU works, by the scenario that scheduled it.
-const EDITORIAL = {
+// Which pool, arm tag and window an `editorial` VU works, by the scenario that scheduled it (`a_noise_2`, …).
+const ARMS = {
   a_baseline: { pool: 'a', arm: 'baseline' },
   b_baseline: { pool: 'b', arm: 'b_baseline' },
   a_noise: { pool: 'a', arm: 'noise' },
   b_noise: { pool: 'b', arm: 'b_noise' },
 };
+function editorialOf(scenario) {
+  const cut = scenario.lastIndexOf('_');
+  return { ...ARMS[scenario.slice(0, cut)], w: scenario.slice(cut + 1) };
+}
 
 /** Signs `username` in with a cookie jar of its own; the headers a browser tab would send. */
 function signIn(username) {
@@ -204,19 +229,20 @@ export function setup() {
   return { owner, a, b, secret };
 }
 
-// Per VU: the ETag of the last revision this VU saved. Each VU belongs to one scenario
-// and owns one article, so the tag can never be another writer's.
-let etag = null;
+// Per VU, per article: the ETag of the last revision this VU saved. An article is reached only by the VU whose id
+// picks it, so a tag is never another writer's; it is keyed by article because k6 reuses a VU across the short
+// windows (D-221), so one VU can work pool A's article in one window and pool B's in the next.
+const etags = {};
 
 /** One editorial iteration — a read, a list, a title search or a draft save — on the
  *  project and under the arm tag of the scenario that scheduled this VU. */
 export function editorial(data) {
-  const which = EDITORIAL[exec.scenario.name];
+  const which = editorialOf(exec.scenario.name);
   const project = data[which.pool];
   const mine = project.articles[(exec.vu.idInTest - 1) % project.articles.length];
-  if (etag === null) etag = mine.etag;
+  const etag = etags[mine.id] ?? mine.etag;
   const url = `${project.entries}/${mine.id}`;
-  const tags = { arm: which.arm };
+  const tags = { arm: which.arm, w: which.w };
   const roll = __ITER % 10;
 
   if (roll < 2) {
@@ -231,7 +257,7 @@ export function editorial(data) {
       'save 200': (r) => r.status === 200,
       'save gives a new ETag': (r) => typeof r.headers['Etag'] === 'string' && r.headers['Etag'] !== etag,
     });
-    if (saved) etag = res.headers['Etag'];
+    if (saved) etags[mine.id] = res.headers['Etag'];
   } else if (roll < 4) {
     const res = http.get(`${project.entries}?limit=20`, {
       headers: { Cookie: data.owner.Cookie }, redirects: 0,
@@ -303,12 +329,26 @@ export function handleSummary(data) {
   const refusedShare = refused.rate !== undefined ? refused.rate : refused.value || 0;
   const refusedCount = refused.passes || 0;
 
-  const base = p95('baseline');
-  const noise = p95('noise');
-  const bBase = p95('b_baseline');
-  const bNoise = p95('b_noise');
+  // The median of an arm's per-window p95s: one stalled window moves it by one rank, not to its own value.
+  const windowsOf = (arm) => Array.from({ length: WINDOWS }, (_, w) => (metric(`http_req_duration{arm:${arm},w:${w}}`) || {})['p(95)'])
+    .filter((v) => v != null);
+  const median = (values) => {
+    if (!values.length) return null;
+    const sorted = [...values].sort((x, y) => x - y);
+    const mid = Math.floor(sorted.length / 2);
+    return sorted.length % 2 ? sorted[mid] : (sorted[mid - 1] + sorted[mid]) / 2;
+  };
+  const base = median(windowsOf('baseline'));
+  const noise = median(windowsOf('noise'));
+  const bBase = median(windowsOf('b_baseline'));
+  const bNoise = median(windowsOf('b_noise'));
   const ratio = base > 0 ? noise / base : null;
   const bRatio = bBase > 0 ? bNoise / bBase : null;
+  // The single-window ratio the gate used to take, kept beside the medians for a week as a comparison (D-221).
+  const single = {
+    editorial_noise_over_baseline: p95('baseline') > 0 ? p95('noise') / p95('baseline') : null,
+    project_b_noise_over_baseline: p95('b_baseline') > 0 ? p95('b_noise') / p95('b_baseline') : null,
+  };
   const gates = {
     agent_throttled: refusedShare > 0.9,
     editorial_held: base != null && noise != null && noise <= 2 * base + EPSILON_MS,
@@ -316,8 +356,10 @@ export function handleSummary(data) {
   };
   data.l08 = {
     spec: 'L08: one noisy agent plus active editors — the agent is throttled; editorial p95 stays within 2x the mixed-workload baseline; no cross-project starvation',
-    gate: 'editorial: noise_p95 <= 2*baseline_p95 + 2ms; project B: b_noise_p95 <= 2*b_baseline_p95 + 2ms; agent: refused share > 0.9, 429 rate_limited with Retry-After',
-    phases_seconds: { baseline: PHASE, gap: GAP, noise: PHASE },
+    gate: 'medians of the per-window p95s — editorial: noise_p95 <= 2*baseline_p95 + 2ms; project B: b_noise_p95 <= 2*b_baseline_p95 + 2ms; agent: refused share > 0.9, 429 rate_limited with Retry-After',
+    phases_seconds: { windows: WINDOWS, window: WINDOW, gap: GAP },
+    window_p95_ms: { baseline: windowsOf('baseline'), noise: windowsOf('noise'), b_baseline: windowsOf('b_baseline'), b_noise: windowsOf('b_noise') },
+    single_window: single,
     agent: { ceiling_per_minute: AGENT_RPM, attempted_per_second: AGENT_RATE },
     arms: {
       editorial_baseline: { requests: count('baseline'), p95_ms: base, p99_ms: p99('baseline') },
@@ -338,6 +380,7 @@ export function handleSummary(data) {
       `    agent: ${(refusedShare * 100).toFixed(1)}% refused of ${count('agent')} (429 rate_limited + Retry-After, ceiling ${AGENT_RPM}/min at ~${AGENT_RATE}/s attempted)`,
       `    editorial p95: ${fmt(base)} baseline -> ${fmt(noise)} under noise (x${ratio == null ? 'n/a' : ratio.toFixed(2)}; gate <=x2 +${EPSILON_MS}ms): ${gates.editorial_held ? 'held' : 'BROKE'}`,
       `    project B p95: ${fmt(bBase)} baseline -> ${fmt(bNoise)} under noise (x${bRatio == null ? 'n/a' : bRatio.toFixed(2)}): ${gates.cross_project_held ? 'held' : 'BROKE'}`,
+      `    (medians of ${WINDOWS} windows of ${WINDOW}s; the single-window ratio would be x${single.editorial_noise_over_baseline == null ? 'n/a' : single.editorial_noise_over_baseline.toFixed(2)})`,
       `    verdict: ${data.l08.held ? 'HELD' : 'BROKE'}`,
       '',
     ].join('\n'),
