@@ -5,10 +5,12 @@
 <h1 align="center">Colophon CMS</h1>
 
 <p align="center">
-  <strong>A Rust + Svelte content management system that can prove what it published, and survives being killed at any moment.</strong>
+  <strong>An open-source, self-hosted headless CMS in Rust and Svelte that can prove what it published, and survives being killed at any moment.</strong>
 </p>
 
 <p align="center">
+  <a href="https://colophon.404human.dev">Website</a> ·
+  <a href="https://docs.colophon.404human.dev">Docs</a> ·
   <a href="https://404human.dev/colophon/">Build log</a> ·
   <a href="docs/END_GOAL.md">End goal</a> ·
   <a href="docs/SYSTEM_DESIGN.md">System design</a> ·
