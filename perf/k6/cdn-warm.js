@@ -157,12 +157,12 @@ const seen = { g: 0 };
 
 export function edge(data) {
   const region = exec.scenario.name;
-  const slot = __ITER % 10;
+  const slot = exec.scenario.iterationInTest % 10;
   let res; let pinned = false;
   if (slot < 6) {
     res = http.get(`${data.delivery}?limit=50`, { redirects: 0, tags: { arm: region, endpoint: 'latest', name: 'content' } });
   } else if (slot < 9) {
-    res = http.get(`${data.delivery}/${data.ids[__ITER % data.ids.length]}`, { redirects: 0, tags: { arm: region, endpoint: 'entry', name: 'content/{entry}' } });
+    res = http.get(`${data.delivery}/${data.ids[exec.scenario.iterationInTest % data.ids.length]}`, { redirects: 0, tags: { arm: region, endpoint: 'entry', name: 'content/{entry}' } });
   } else {
     pinned = true;
     res = http.get(`${data.delivery}?limit=50&generation=1`, { redirects: 0, tags: { arm: region, endpoint: 'pinned', name: 'content' } });

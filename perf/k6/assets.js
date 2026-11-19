@@ -11,6 +11,7 @@
 import http from 'k6/http';
 import { check, fail, sleep } from 'k6';
 import { Counter, Rate, Trend } from 'k6/metrics';
+import exec from 'k6/execution';
 
 const BASE_URL = __ENV.BASE_URL || 'http://127.0.0.1:58000';
 const PUBLIC_URL = __ENV.PUBLIC_URL || 'http://localhost:58000';
@@ -147,10 +148,10 @@ export default function (data) {
     },
     redirects: 0,
   });
-  const roll = __ITER % 10;
+  const roll = exec.scenario.iterationInTest % 10;
   if (roll < 4) {
     // Half the uploads are real, one in ten a fake the verifier will reject.
-    const fake = __ITER % 50 === 49;
+    const fake = exec.scenario.iterationInTest % 50 === 49;
     const body = fake ? FAKE : PNG;
     const res = http.post(data.assets, body.buffer, Object.assign({ tags: { endpoint: 'upload', name: 'assets' } }, write(fake ? 'photo.png' : 'dot.png')));
     uploadRefused.add(res.status === 429 || res.status === 503);
@@ -202,7 +203,7 @@ export default function (data) {
     }
   } else if (roll === 6) {
     // D-179: search over the trigram index — a common term and a rare one.
-    const q = __ITER % 20 === 6 ? 'warm' : 'dot';
+    const q = exec.scenario.iterationInTest % 20 === 6 ? 'warm' : 'dot';
     const res = http.get(`${data.assets}?q=${q}&limit=50`, Object.assign({ tags: { endpoint: 'search', name: 'assets?q' } }, read));
     check(res, { 'search 200': (r) => r.status === 200 && Array.isArray(r.json('data')) });
   } else if (roll === 7) {
@@ -233,7 +234,7 @@ export default function (data) {
   } else {
     // M.1/M.3: the public origin serves the setup's verified object — the original half the
     // time, its w320 rendition the other half — no sign-in, no row reads.
-    const at = __ITER % 2 === 0 ? `${data.media}/${data.mediaId}` : `${data.media}/${data.mediaId}/w320`;
+    const at = exec.scenario.iterationInTest % 2 === 0 ? `${data.media}/${data.mediaId}` : `${data.media}/${data.mediaId}/w320`;
     const object = http.get(at, { tags: { endpoint: 'media', name: 'media/v1/{asset}' }, redirects: 0 });
     check(object, {
       'media 200': (r) => r.status === 200,

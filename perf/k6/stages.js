@@ -13,6 +13,7 @@
 
 import http from 'k6/http';
 import { check, fail } from 'k6';
+import exec from 'k6/execution';
 
 const BASE_URL = __ENV.BASE_URL || 'http://127.0.0.1:58000';
 const PUBLIC_URL = __ENV.PUBLIC_URL || 'http://localhost:58000';
@@ -101,7 +102,7 @@ export function setup() {
 }
 
 export default function (data) {
-  const slot = __ITER % 100;
+  const slot = exec.scenario.iterationInTest % 100;
   const mine = data.sets[(__VU - 1) % data.sets.length];
   const params = (endpoint, extra) => ({ headers: Object.assign({}, data.headers, extra || {}), redirects: 0, tags: { endpoint } });
   if (slot < 40) {
@@ -112,7 +113,7 @@ export default function (data) {
     check(res, { 'stages 200: the workflow and its ETag': (r) => r.status === 200 && r.json('data.stages').length === 2 && (r.headers['Etag'] || '').length > 0 });
   } else if (slot < 80) {
     // Reviews name their stage: the submitter's legal approval is recorded but never counts.
-    const stage = __ITER % 2 === 0 ? 'editorial' : 'legal';
+    const stage = exec.scenario.iterationInTest % 2 === 0 ? 'editorial' : 'legal';
     const res = http.post(`${mine.path}/reviews`, JSON.stringify({ decision: 'approve', stage }), params('review', { 'If-Match': `"${mine.hash}"` }));
     check(res, { 'review 200: same hash': (r) => r.status === 200 && r.json('data.hash') === mine.hash });
   } else if (slot < 95) {
@@ -121,7 +122,7 @@ export default function (data) {
       Object.assign(params('publish', { 'If-Match': `"${mine.hash}"`, 'Idempotency-Key': `k6-${data.run}-${__VU}-${__ITER}` }), { responseCallback: REFUSED }));
     check(res, { 'publish refused not_approved': (r) => r.status === 409 && r.json('error.details.reason') === 'not_approved' });
   } else {
-    const pair = [data.entries[__ITER % 2], data.entries[(__ITER + 1) % 2]];
+    const pair = [data.entries[exec.scenario.iterationInTest % 2], data.entries[(exec.scenario.iterationInTest + 1) % 2]];
     const res = http.post(`${data.base}/changesets`, JSON.stringify({ title: `k6 ${__VU}-${__ITER}`, entries: pair }),
       params('create', { 'Idempotency-Key': `k6-${data.run}-${__VU}-${__ITER}` }));
     check(res, { 'create 201': (r) => r.status === 201 });

@@ -13,6 +13,7 @@
 
 import http from 'k6/http';
 import { check, fail } from 'k6';
+import exec from 'k6/execution';
 
 const BASE_URL = __ENV.BASE_URL || 'http://127.0.0.1:58000';
 const PUBLIC_URL = __ENV.PUBLIC_URL || 'http://localhost:58000';
@@ -94,8 +95,8 @@ export function setup() {
 }
 
 export default function (data) {
-  const slot = __ITER % 100;
-  const collection = data.collections[(__VU + __ITER) % data.collections.length];
+  const slot = exec.scenario.iterationInTest % 100;
+  const collection = data.collections[(__VU + exec.scenario.iterationInTest) % data.collections.length];
   const params = (endpoint, extra) => ({ headers: Object.assign({}, data.headers, extra || {}), redirects: 0, tags: { endpoint } });
   if (slot < 35) {
     const res = http.get(`${data.base}/migrations?limit=100`, params('list'));

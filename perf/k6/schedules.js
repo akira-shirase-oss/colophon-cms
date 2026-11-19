@@ -8,6 +8,7 @@
 
 import http from 'k6/http';
 import { check, fail } from 'k6';
+import exec from 'k6/execution';
 
 const BASE_URL = __ENV.BASE_URL || 'http://127.0.0.1:58000';
 const PUBLIC_URL = __ENV.PUBLIC_URL || 'http://localhost:58000';
@@ -96,7 +97,7 @@ let pending = null;
 export default function (data) {
   const params = { headers: data.owner, redirects: 0 };
   const mine = data.changesets[(__VU - 1) % data.changesets.length];
-  const slot = __ITER % 10;
+  const slot = exec.scenario.iterationInTest % 10;
   if (slot < 6) {
     const res = http.get(`${data.base}/schedules`, Object.assign({ tags: { endpoint: 'list' } }, params));
     check(res, { 'list 200': (r) => r.status === 200 });

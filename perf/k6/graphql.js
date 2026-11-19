@@ -10,6 +10,7 @@
 
 import http from 'k6/http';
 import { check, fail } from 'k6';
+import exec from 'k6/execution';
 
 const BASE_URL = __ENV.BASE_URL || 'http://127.0.0.1:58000';
 const PUBLIC_URL = __ENV.PUBLIC_URL || 'http://localhost:58000';
@@ -108,8 +109,8 @@ const DOCUMENT = '{ entries(where: {section: {eq: "News"}, rating: {gte: 1}}, or
 export default function (data) {
   const vu = data.vus[(__VU - 1) % data.vus.length];
   const read = { Cookie: data.session.cookie, 'X-CSRF-Token': data.session.csrf, Origin: PUBLIC_URL, 'Content-Type': 'application/json' };
-  if (__ITER % 10 === 9) {
-    const res = http.post(vu.graphql, JSON.stringify({ query: `{ entry(id: "${vu.entries[__ITER % vu.entries.length]}") { title rating } }` }), {
+  if (exec.scenario.iterationInTest % 10 === 9) {
+    const res = http.post(vu.graphql, JSON.stringify({ query: `{ entry(id: "${vu.entries[exec.scenario.iterationInTest % vu.entries.length]}") { title rating } }` }), {
       headers: read,
       tags: { endpoint: 'graphql-entry', name: 'graphql-entry' },
     });

@@ -10,6 +10,7 @@
 
 import http from 'k6/http';
 import { check, fail } from 'k6';
+import exec from 'k6/execution';
 
 const BASE_URL = __ENV.BASE_URL || 'http://127.0.0.1:58000';
 const PUBLIC_URL = __ENV.PUBLIC_URL || 'http://localhost:58000';
@@ -290,14 +291,14 @@ export default function (data) {
   if (etag === null) etag = mine.etag;
   const url = `${data.pages}/${mine.id}`;
   const read = { headers: { Cookie: data.session.cookie }, redirects: 0 };
-  const roll = __ITER % 20;
+  const roll = exec.scenario.iterationInTest % 20;
 
   if (roll < 5) {
     const headers = {
       Cookie: data.session.cookie, 'X-CSRF-Token': data.session.csrf, Origin: PUBLIC_URL, 'Content-Type': 'application/json',
       'If-Match': etag, 'Idempotency-Key': key(),
     };
-    const res = http.put(url, page(`Page by VU ${__VU}`, __ITER + __VU), { headers, redirects: 0, tags: { endpoint: 'save', name: 'pages/{entry}' } });
+    const res = http.put(url, page(`Page by VU ${__VU}`, exec.scenario.iterationInTest + __VU), { headers, redirects: 0, tags: { endpoint: 'save', name: 'pages/{entry}' } });
     const saved = check(res, {
       'save 200': (r) => r.status === 200,
       'save gives a new ETag': (r) => typeof r.headers['Etag'] === 'string' && r.headers['Etag'] !== etag,

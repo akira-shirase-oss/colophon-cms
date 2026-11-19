@@ -15,6 +15,7 @@
 
 import http from 'k6/http';
 import { check, fail } from 'k6';
+import exec from 'k6/execution';
 
 const BASE_URL = __ENV.BASE_URL || 'http://127.0.0.1:58000';
 const PUBLIC_URL = __ENV.PUBLIC_URL || 'http://localhost:58000';
@@ -96,7 +97,7 @@ export default function (data) {
   if (etag === null) etag = mine.etag;
   const url = `${data.base}/${mine.id}`;
   const read = { headers: { Cookie: data.session.cookie }, redirects: 0 };
-  const roll = __ITER % 10;
+  const roll = exec.scenario.iterationInTest % 10;
 
   if (roll < 2) {
     const headers = {

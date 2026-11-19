@@ -18,6 +18,7 @@
 
 import http from 'k6/http';
 import { check, fail } from 'k6';
+import exec from 'k6/execution';
 
 const BASE_URL = __ENV.BASE_URL || 'http://127.0.0.1:58000';
 const PUBLIC_URL = __ENV.PUBLIC_URL || 'http://localhost:58000';
@@ -135,7 +136,7 @@ export function setup() {
 const sealed = (r) => r.headers['Cache-Control'] === 'private, no-store' && (r.headers['X-Robots-Tag'] || '').startsWith('noindex');
 
 export default function (data) {
-  const slot = __ITER % 10;
+  const slot = exec.scenario.iterationInTest % 10;
   const as = (token, endpoint, extra = {}) => Object.assign({ headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' }, tags: { endpoint } }, extra);
   const shed = (r) => r.status === 503 || r.status === 429;
   const judge = (res, name, ok) => {
@@ -146,7 +147,7 @@ export default function (data) {
     }
   };
   // Keep the long-lived grant open past its hour on a full run: the Studio renews the same way.
-  if (__ITER % 50000 === 0 && __ITER > 0) http.post(`${data.base}/previews/${data.entryGrant}/renew`, null, { headers: data.headers, tags: { endpoint: 'renew' } });
+  if (exec.scenario.iterationInTest % 50000 === 0 && exec.scenario.iterationInTest > 0) http.post(`${data.base}/previews/${data.entryGrant}/renew`, null, { headers: data.headers, tags: { endpoint: 'renew' } });
   if (slot < 4) {
     const res = http.get(data.reads, as(data.entryToken, 'list'));
     judge(res, 'list: 20 rows, the draft laid over', (r) => r.status === 200 && sealed(r) && r.json('data').length === 20 && r.json('data').some((row) => row.preview.source === 'draft'));
@@ -162,8 +163,8 @@ export default function (data) {
   } else if (slot < 9) {
     const res = http.get(data.reads, as('cpv_nobodyissuedthistokenatallnobodyissuedthis', 'invalid', { responseCallback: http.expectedStatuses(401, 429, 503) }));
     judge(res, 'invalid: 401 preview_invalid', (r) => r.status === 401 && sealed(r) && r.json('error.details.reason') === 'preview_invalid');
-  } else if (__ITER % 200 === 9) {
-    const issued = http.post(`${data.base}/previews`, JSON.stringify({ entry: data.entries[__ITER % 20] }), { headers: data.headers, tags: { endpoint: 'exchange' } });
+  } else if (exec.scenario.iterationInTest % 200 === 9) {
+    const issued = http.post(`${data.base}/previews`, JSON.stringify({ entry: data.entries[exec.scenario.iterationInTest % 20] }), { headers: data.headers, tags: { endpoint: 'exchange' } });
     const swapped = http.post(`${data.reads.replace('/articles', '')}/exchange`, JSON.stringify({ code: issued.json('data.code') }), { headers: { 'Content-Type': 'application/json' }, tags: { endpoint: 'exchange' } });
     judge(swapped, 'exchange: a token', (r) => r.status === 200 && sealed(r) && r.json('data.token').startsWith('cpv_'));
     http.del(`${data.base}/previews/${issued.json('data.id')}`, null, { headers: data.headers, tags: { endpoint: 'exchange' } });

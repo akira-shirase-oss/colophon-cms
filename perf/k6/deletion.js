@@ -18,6 +18,7 @@
 
 import http from 'k6/http';
 import { check, fail } from 'k6';
+import exec from 'k6/execution';
 
 const BASE_URL = __ENV.BASE_URL || 'http://127.0.0.1:58000';
 const PUBLIC_URL = __ENV.PUBLIC_URL || 'http://localhost:58000';
@@ -132,7 +133,7 @@ export default function (data) {
   const write = {
     Cookie: data.session.cookie, 'X-CSRF-Token': data.session.csrf, Origin: PUBLIC_URL, 'Content-Type': 'application/json',
   };
-  const roll = __ITER % 10;
+  const roll = exec.scenario.iterationInTest % 10;
 
   if (roll < 7) {
     const created = http.post(data.base, article(`Doomed by VU ${__VU}`), {
@@ -149,11 +150,11 @@ export default function (data) {
     });
     if (!ok) return;
     lastDeleted = id;
-    if (__ITER % 3 === 0) {
+    if (exec.scenario.iterationInTest % 3 === 0) {
       const gone = http.get(url, { headers: { Cookie: data.session.cookie }, redirects: 0, responseCallback: GONE, tags: { endpoint: 'gone', name: 'entries/{entry}' } });
       check(gone, { 'a deleted entry is 404': (r) => r.status === 404 });
     }
-    if (__ITER % 5 === 0) {
+    if (exec.scenario.iterationInTest % 5 === 0) {
       const again = http.del(url, null, { headers: once, redirects: 0, tags: { endpoint: 'replay', name: 'entries/{entry}' } });
       check(again, {
         'replay 200': (r) => r.status === 200,
@@ -164,7 +165,7 @@ export default function (data) {
   } else if (roll < 9) {
     const kept = roll === 7 ? data.published : data.pinned;
     const target = kept[__VU % kept.length];
-    const stale = __ITER % 4 === 0;
+    const stale = exec.scenario.iterationInTest % 4 === 0;
     const headers = {
       'If-Match': stale ? '"00000000-0000-7000-8000-000000000000"' : target.etag, 'Idempotency-Key': key(),
       'X-CSRF-Token': data.session.csrf, Cookie: data.session.cookie, Origin: PUBLIC_URL,

@@ -17,6 +17,7 @@
 
 import http from 'k6/http';
 import { check, fail } from 'k6';
+import exec from 'k6/execution';
 
 const BASE_URL = __ENV.BASE_URL || 'http://127.0.0.1:58000';
 const PUBLIC_URL = __ENV.PUBLIC_URL || 'http://localhost:58000';
@@ -103,7 +104,7 @@ export function setup() {
 }
 
 export default function (data) {
-  const slot = __ITER % 100;
+  const slot = exec.scenario.iterationInTest % 100;
   const mine = data.sets[(__VU - 1) % data.sets.length];
   const params = (endpoint, extra) => ({ headers: Object.assign({}, data.headers, extra || {}), redirects: 0, tags: { endpoint } });
   if (slot < 50) {
@@ -113,11 +114,11 @@ export default function (data) {
     const res = http.get(`${data.base}/changesets`, params('list'));
     check(res, { 'list 200': (r) => r.status === 200 && r.body.indexOf('{"data":[') === 0 });
   } else if (slot < 80) {
-    const decision = __ITER % 2 === 0 ? 'approve' : 'request_changes';
+    const decision = exec.scenario.iterationInTest % 2 === 0 ? 'approve' : 'request_changes';
     const res = http.post(`${mine.path}/reviews`, JSON.stringify({ decision }), params('review', { 'If-Match': `"${mine.hash}"` }));
     check(res, { 'review 200': (r) => r.status === 200 && r.json('data.hash') === mine.hash });
   } else if (slot < 90) {
-    const pair = [data.entries[__ITER % 5], data.entries[(__ITER + 1) % 5]];
+    const pair = [data.entries[exec.scenario.iterationInTest % 5], data.entries[(exec.scenario.iterationInTest + 1) % 5]];
     const res = http.post(`${data.base}/changesets`, JSON.stringify({ title: `k6 ${__VU}-${__ITER}`, entries: pair }),
       params('create', { 'Idempotency-Key': `k6-${data.run}-${__VU}-${__ITER}` }));
     check(res, { 'create 201': (r) => r.status === 201 });

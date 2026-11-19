@@ -18,6 +18,7 @@
 
 import http from 'k6/http';
 import { check, fail } from 'k6';
+import exec from 'k6/execution';
 
 const BASE_URL = __ENV.BASE_URL || 'http://127.0.0.1:58000';
 const PUBLIC_URL = __ENV.PUBLIC_URL || 'http://localhost:58000';
@@ -126,7 +127,7 @@ export default function (data) {
   const write = {
     Cookie: data.session.cookie, 'X-CSRF-Token': data.session.csrf, Origin: PUBLIC_URL, 'Content-Type': 'application/json',
   };
-  const roll = __ITER % 10;
+  const roll = exec.scenario.iterationInTest % 10;
 
   if (roll < 6) {
     const slug = `vu-${__VU}-${__ITER.toString(36)}`;
@@ -143,7 +144,7 @@ export default function (data) {
     });
     if (!ok) return;
     lastDeleted = slug;
-    if (__ITER % 5 === 0) {
+    if (exec.scenario.iterationInTest % 5 === 0) {
       const again = http.del(url, null, { headers: once, redirects: 0, tags: { endpoint: 'replay', name: 'content-types/{slug}' } });
       check(again, {
         'replay 200': (r) => r.status === 200,
@@ -152,8 +153,8 @@ export default function (data) {
       });
     }
   } else if (roll < 9) {
-    const kept = ['full', 'linked', 'history'][__ITER % 3];
-    const stale = __ITER % 4 === 0;
+    const kept = ['full', 'linked', 'history'][exec.scenario.iterationInTest % 3];
+    const stale = exec.scenario.iterationInTest % 4 === 0;
     const headers = {
       'If-Match': stale ? '"v99"' : '"v1"', 'Idempotency-Key': key(),
       'X-CSRF-Token': data.session.csrf, Cookie: data.session.cookie, Origin: PUBLIC_URL,

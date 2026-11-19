@@ -6,6 +6,7 @@
 
 import http from 'k6/http';
 import { check, fail } from 'k6';
+import exec from 'k6/execution';
 
 const BASE_URL = __ENV.BASE_URL || 'http://127.0.0.1:58000';
 const SCENARIO = __ENV.SCENARIO || 'throughput';
@@ -49,15 +50,15 @@ export function setup() {
 const pages = ['/studio/', '/studio/projects/0192/articles/0193'];
 
 export default function (data) {
-  if (__ITER % 2 === 0) {
-    const res = http.get(`${BASE_URL}${pages[__ITER % 4 === 0 ? 0 : 1]}`, { tags: { endpoint: 'page' } });
+  if (exec.scenario.iterationInTest % 2 === 0) {
+    const res = http.get(`${BASE_URL}${pages[exec.scenario.iterationInTest % 4 === 0 ? 0 : 1]}`, { tags: { endpoint: 'page' } });
     check(res, {
       'page 200': (r) => r.status === 200,
       'page revalidates': (r) => r.headers['Cache-Control'] === 'no-cache',
       'page is the app': (r) => r.body.indexOf('/studio/_app/immutable/') !== -1,
     });
   } else {
-    const asset = data.assets[__ITER % data.assets.length];
+    const asset = data.assets[exec.scenario.iterationInTest % data.assets.length];
     const res = http.get(`${BASE_URL}${asset}`, { tags: { endpoint: 'asset' } });
     check(res, {
       'asset 200': (r) => r.status === 200,

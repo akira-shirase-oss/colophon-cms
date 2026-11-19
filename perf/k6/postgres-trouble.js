@@ -265,15 +265,15 @@ export function read(data) {
   const tags = { phase: phase() };
   const headers = { Cookie: data.owner.Cookie };
   let res;
-  const roll = __ITER % 5;
+  const roll = exec.scenario.iterationInTest % 5;
   if (roll < 2) {
     res = http.get(data.content, Object.assign({ redirects: 0, tags: Object.assign({ name: 'content' }, tags) }, EXPECTED));
   } else if (roll === 2) {
-    res = http.get(`${data.content}/${data.live[__ITER % data.live.length]}`, Object.assign({ redirects: 0, tags: Object.assign({ name: 'content/{entry}' }, tags) }, EXPECTED));
+    res = http.get(`${data.content}/${data.live[exec.scenario.iterationInTest % data.live.length]}`, Object.assign({ redirects: 0, tags: Object.assign({ name: 'content/{entry}' }, tags) }, EXPECTED));
   } else if (roll === 3) {
     res = http.get(`${data.entries}?limit=10`, Object.assign({ headers, redirects: 0, tags: Object.assign({ name: 'entries?limit' }, tags) }, EXPECTED));
   } else {
-    res = http.get(`${data.entries}/${data.live[(__ITER + 1) % data.live.length]}`, Object.assign({ headers, redirects: 0, tags: Object.assign({ name: 'entries/{entry}' }, tags) }, EXPECTED));
+    res = http.get(`${data.entries}/${data.live[(exec.scenario.iterationInTest + 1) % data.live.length]}`, Object.assign({ headers, redirects: 0, tags: Object.assign({ name: 'entries/{entry}' }, tags) }, EXPECTED));
   }
   note(res);
   // Classify the answer by the window it ARRIVED in, not the window the request was
@@ -336,7 +336,7 @@ export function write(data) {
     return;
   }
   const url = `${data.entries}/${mine}`;
-  if (__ITER % 3 === 0) {
+  if (exec.scenario.iterationInTest % 3 === 0) {
     // The title IS the identity a read-back resyncs onto: it has to be unique, not the
     // body's text, because data.revision.title is what the served revision reports.
     const title = `VU ${exec.vu.idInTest} save ${__ITER}`;

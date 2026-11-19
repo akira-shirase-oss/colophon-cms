@@ -8,6 +8,7 @@
 
 import http from 'k6/http';
 import { check, fail } from 'k6';
+import exec from 'k6/execution';
 
 const BASE_URL = __ENV.BASE_URL || 'http://127.0.0.1:58000';
 const PUBLIC_URL = __ENV.PUBLIC_URL || 'http://localhost:58000';
@@ -89,7 +90,7 @@ export function setup() {
 const refusedOk = http.expectedStatuses(403);
 
 export default function (data) {
-  const slot = __ITER % 20;
+  const slot = exec.scenario.iterationInTest % 20;
   if (slot < 9) {
     const body = JSON.stringify({ slug: `k6-no-${__VU}-${__ITER}`, name: 'Never created' });
     const res = http.post(`${BASE_URL}/api/v1/projects`, body,

@@ -13,6 +13,7 @@
 
 import http from 'k6/http';
 import { check, fail } from 'k6';
+import exec from 'k6/execution';
 
 const BASE_URL = __ENV.BASE_URL || 'http://127.0.0.1:58000';
 const PUBLIC_URL = __ENV.PUBLIC_URL || 'http://localhost:58000';
@@ -162,10 +163,10 @@ export default function (data) {
     'If-Match': etag, 'Idempotency-Key': key(),
   });
   const someone = () => data.people[Math.floor(Math.random() * data.people.length)];
-  const roll = __ITER % 10;
+  const roll = exec.scenario.iterationInTest % 10;
 
   if (roll < 2) {
-    const res = http.put(url, page(`Page by VU ${__VU}`, __ITER + __VU, someone(), someone()), {
+    const res = http.put(url, page(`Page by VU ${__VU}`, exec.scenario.iterationInTest + __VU, someone(), someone()), {
       headers: writing(), redirects: 0, tags: { endpoint: 'save', name: 'pages/{entry}' },
     });
     const saved = check(res, {
@@ -188,7 +189,7 @@ export default function (data) {
       'person 200': (r) => r.status === 200,
       'says what references them': (r) => Array.isArray(r.json('data.referenced_by')),
     });
-  } else if (roll < 5 && Math.floor(__ITER / 10) % 2 === 0) {
+  } else if (roll < 5 && Math.floor(exec.scenario.iterationInTest / 10) % 2 === 0) {
     const res = http.get(`${data.base}?limit=20`, Object.assign({ tags: { endpoint: 'list', name: 'pages?limit' } }, read));
     check(res, { 'list 200': (r) => r.status === 200 });
   } else if (roll < 5) {
