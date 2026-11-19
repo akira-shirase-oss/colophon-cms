@@ -256,7 +256,8 @@ test("buttons are flat, with one accent primary and quiet secondaries", async ({
   expect(secondary.ground).not.toBe(accent);
   for (const button of [primary, secondary]) {
     expect(button.shadow).toBe("none");
-    expect(button.radius).toBe("8px");
+    // D-210: the theme's scale, a control a step under the 1.15rem radius (18.4px - 2px).
+    expect(button.radius).toBe("16.4px");
   }
 });
 

@@ -9,6 +9,8 @@
  *   --destructive       a deeper red: white on it reads ≥ 4.5:1 (the pasted red read 3.63:1). In dark mode a lighter
  *                       red with a dark label instead, so it also reads as error text on a dark card (4.64:1).
  *   dark --accent and --sidebar-accent: deep enough that their foreground reads ≥ 4.5:1 (pasted 3.09:1).
+ *   --muted-foreground  a hair darker in light (0.5471 → 0.5296): the pasted grey read 4.28:1 on a status ground
+ *                       and 4.46:1 on --secondary; now ≥ 4.6:1 on every light ground.
  *   --input             form-field boundaries only, ≥ 3:1 against the background (WCAG 1.4.11); pasted 1.24:1.
  *                       --border stays as pasted for dividers and cards.
  *   fonts               Inter for text, Geist Pixel for brand titles, the system monospace stack for code; nothing
@@ -31,7 +33,7 @@
   --brand: oklch(0.6225 0.2041 259.9027);
   --link: oklch(0.5460 0.2450 262.8810);
   --secondary: oklch(0.9665 0.0045 258.3247); --secondary-foreground: oklch(0.4419 0.0375 257.2811);
-  --muted: oklch(0.9846 0.0017 247.8389); --muted-foreground: oklch(0.5471 0.0321 263.2921);
+  --muted: oklch(0.9846 0.0017 247.8389); --muted-foreground: oklch(0.5296 0.0321 263.2921);
   --accent: oklch(0.9510 0.0267 237.5723); --accent-foreground: oklch(0.3742 0.1844 263.9420);
   --destructive: oklch(0.5910 0.2362 26.9032); --destructive-foreground: oklch(1.0000 0 0);
   --border: oklch(0.9271 0.0075 260.7315); --input: oklch(0.6650 0.0075 260.7315); --ring: oklch(0.6225 0.2041 259.9027);

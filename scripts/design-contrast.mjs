@@ -71,14 +71,15 @@ const STATUSES = ['live', 'changed', 'pending', 'attention', 'draft'];
 const TEXT = [
 	['foreground', 'background'], ['card-foreground', 'card'], ['popover-foreground', 'popover'],
 	['primary-foreground', 'primary'], ['secondary-foreground', 'secondary'], ['muted-foreground', 'muted'],
-	['muted-foreground', 'background'], ['muted-foreground', 'card'], ['accent-foreground', 'accent'],
+	['muted-foreground', 'background'], ['muted-foreground', 'card'], ['muted-foreground', 'secondary'],
+	['muted-foreground', 'brand-soft'], ['accent-foreground', 'accent'],
 	['destructive-foreground', 'destructive'], ['destructive', 'background'], ['destructive', 'card'], ['link', 'background'], ['link', 'card'], ['link', 'muted'],
 	['foreground', 'muted'], ['foreground', 'secondary'], ['foreground', 'accent'],
 	['sidebar-foreground', 'sidebar'], ['sidebar-primary-foreground', 'sidebar-primary'],
 	['sidebar-accent-foreground', 'sidebar-accent'],
 	['primary-foreground', 'primary-hover'], ['brand-ink', 'background'], ['brand-ink', 'card'],
 	['brand-ink', 'brand-soft'],
-	...STATUSES.flatMap((s) => [[`${s}-ink`, `${s}-soft`], [`${s}-ink`, 'background'], [`${s}-ink`, 'card']])
+	...STATUSES.flatMap((s) => [[`${s}-ink`, `${s}-soft`], [`${s}-ink`, 'background'], [`${s}-ink`, 'card'], ['muted-foreground', `${s}-soft`]])
 ];
 const MARKS = [
 	['input', 'background'], ['input', 'card'], ['ring', 'background'], ['ring', 'card'],
