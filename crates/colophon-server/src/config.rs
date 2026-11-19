@@ -191,7 +191,9 @@ pub struct Config {
     pub table_sweep: Duration,
     /// Rate limits (D-076): `COLOPHON_RATE_LIMIT_PER_ADDRESS` (default `300/600`, requests a
     /// second and burst, or `off`), `COLOPHON_RATE_LIMIT_PER_CREDENTIAL` (default `150/300`),
-    /// `COLOPHON_RATE_LIMIT_DELIVERY` (public delivery per address, default `1000/2000`), and
+    /// `COLOPHON_RATE_LIMIT_DELIVERY` (public delivery per address, default `1000/2000`),
+    /// `COLOPHON_RATE_LIMIT_PASSWORD` (password work — sign-in, sign-up — per address on top of
+    /// the management limits, IPv6 by its /64, default `5/10`; D-213), and
     /// `COLOPHON_TRUSTED_PROXIES` (comma-separated addresses or networks whose
     /// `X-Forwarded-For` names the client; default none). The per-token request quota's
     /// window (D-118) is `COLOPHON_QUOTA_WINDOW_MS`, default `60_000` — the minute
@@ -211,8 +213,8 @@ pub struct Config {
     /// `COLOPHON_MCP_PER_PROJECT` (256) and `COLOPHON_MCP_MAX_SESSIONS` (2048) cap the
     /// sessions; `COLOPHON_MCP_IDLE_MS` (30 min) forgets one untouched for that long.
     pub mcp: colophon_api::mcp::Limits,
-    /// Argon2id jobs that may run at once (D-150): `COLOPHON_PASSWORD_CONCURRENCY`, one a
-    /// core by default (1–256). Past it a password job waits briefly, then the request is
+    /// Argon2id jobs that may run at once (D-150): `COLOPHON_PASSWORD_CONCURRENCY`, one
+    /// fewer than the cores by default, leaving one for everything else (D-213; 1–256). Past it a password job waits briefly, then the request is
     /// shed with `503` and `Retry-After`.
     pub password_concurrency: usize,
     /// Magic-link request bounds (D-161): `COLOPHON_MAGIC_LINKS_PER_ADDRESS` links one client
@@ -561,6 +563,7 @@ impl<F: Fn(&str) -> Option<String>> Reader<F> {
             per_address: self.rate("COLOPHON_RATE_LIMIT_PER_ADDRESS", "300/600"),
             per_credential: self.rate("COLOPHON_RATE_LIMIT_PER_CREDENTIAL", "150/300"),
             delivery_per_address: self.rate("COLOPHON_RATE_LIMIT_DELIVERY", "1000/2000"),
+            password_per_address: self.rate("COLOPHON_RATE_LIMIT_PASSWORD", "5/10"),
             trusted_proxies: self.prefixes("COLOPHON_TRUSTED_PROXIES"),
             // A window under 10 ms is a broken test, not a configuration: the floor keeps
             // one; the ceiling is an hour, far past the minute the column names.

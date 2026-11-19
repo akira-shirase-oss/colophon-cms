@@ -43,7 +43,7 @@ start() {
   COLOPHON_DATABASE_URL=postgres://nobody:nothing@127.0.0.1:1/none \
     COLOPHON_LISTEN_ADDR="127.0.0.1:$PORT" COLOPHON_LOG=warn COLOPHON_LOG_FORMAT=json \
     COLOPHON_RATE_LIMIT_PER_ADDRESS=off COLOPHON_RATE_LIMIT_PER_CREDENTIAL=off \
-    COLOPHON_RATE_LIMIT_DELIVERY=off "$1" >"$work/server.log" 2>&1 &
+    COLOPHON_RATE_LIMIT_DELIVERY=off COLOPHON_RATE_LIMIT_PASSWORD=off "$1" >"$work/server.log" 2>&1 &
   server=$!
   for _ in $(seq 100); do
     curl -fs -o /dev/null "$BASE/livez" && return 0
