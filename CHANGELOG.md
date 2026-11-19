@@ -10,6 +10,9 @@ through `--version` and `GET /version`.
 
 ### Performance
 
+- **The releases page and the schedules list stay fast as an environment grows** (D-219). Each page
+  now reads its releases' or schedules' changesets once as a set, so a database whose statistics
+  lag behind its growth can no longer make one page read every changeset once per row.
 - **An API token over its request quota no longer costs the database anything** (D-214). After
   its first refusal, a token that keeps sending is refused from memory and the rate limiter alone
   until its `Retry-After` runs out, so an agent stuck in a retry loop can't slow other projects'

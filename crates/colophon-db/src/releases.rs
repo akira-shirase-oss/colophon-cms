@@ -576,24 +576,30 @@ pub async fn list(tx: &mut ProjectTransaction, window: Window) -> Result<Vec<Rel
     sqlx::query_as!(
         Release,
         r#"WITH page AS MATERIALIZED (
-               -- The page's rows from releases alone, then each one's title and publisher by
-               -- primary key: joined first, a misjudged plan paired every release with every
-               -- changeset of the environment before the limit (as schedules::read did).
-               -- One changeset row per release, by its key, for its title and `undo_of` alike
-               -- (D-184): the whole row once, read field by field below, not a lookup per field.
+               -- The page's rows from releases alone, before anything is joined: joined first,
+               -- a misjudged plan paired every release with every changeset of the environment
+               -- before the limit (as schedules::read once did).
                SELECT r.project_id, r.environment_id, r.generation, r.epoch, r.changeset_id,
-                      (SELECT c FROM changesets c
-                       WHERE c.project_id = r.project_id AND c.environment_id = r.environment_id
-                         AND c.id = r.changeset_id) AS changeset,
-                      r.changeset_hash, r.review_id, r.published_by,
-                      (SELECT i.display_name FROM identities i WHERE i.id = r.published_by)
-                          AS published_by_name,
-                      r.published_at
-               FROM (SELECT * FROM releases
-                     WHERE project_id = $1 AND environment_id = $2
-                       AND generation >= $3 AND generation < $4
-                     ORDER BY generation DESC
-                     LIMIT $5) r
+                      r.changeset_hash, r.review_id, r.published_by, r.published_at
+               FROM releases r
+               WHERE r.project_id = $1 AND r.environment_id = $2
+                 AND r.generation >= $3 AND r.generation < $4
+               ORDER BY r.generation DESC
+               LIMIT $5
+           ), changeset_rows AS MATERIALIZED (
+               -- The page's changesets as ONE set (D-219), for their title and `undo_of` (D-184):
+               -- one pass whatever the planner believes. A lookup per release was planned as a
+               -- whole-table scan once per release when the statistics called the table tiny
+               -- (100 x 151 rows for one page, CI 44560804246); as a set it is an index probe per
+               -- release or one scan of the environment's changesets, never their product.
+               SELECT c.id, c.title, c.undo_of
+               FROM changesets c
+               WHERE c.project_id = $1 AND c.environment_id = $2
+                 AND c.id IN (SELECT changeset_id FROM page)
+           ), publishers AS MATERIALIZED (
+               SELECT i.id, i.display_name
+               FROM identities i
+               WHERE i.id IN (SELECT published_by FROM page)
            ), latest AS MATERIALIZED (
                SELECT d.id, d.kind,
                       (SELECT max(j.generation) FROM jobs j
@@ -615,8 +621,8 @@ pub async fn list(tx: &mut ProjectTransaction, window: Window) -> Result<Vec<Rel
                GROUP BY o.location
            )
            SELECT p.generation AS "generation!", p.epoch AS "epoch!", p.changeset_id AS "changeset_id!",
-                  (p.changeset).title AS "title!", (p.changeset).undo_of AS "undo_of?", p.changeset_hash AS "changeset_hash!", p.review_id AS "review_id!",
-                  p.published_by AS "published_by!", p.published_by_name, p.published_at AS "published_at!",
+                  cr.title AS "title!", cr.undo_of AS "undo_of?", p.changeset_hash AS "changeset_hash!", p.review_id AS "review_id!",
+                  p.published_by AS "published_by!", pb.display_name AS "published_by_name?", p.published_at AS "published_at!",
                   (SELECT count(*) FROM publications x
                    WHERE x.project_id = p.project_id AND x.environment_id = p.environment_id
                      AND x.valid_from = p.generation) AS "entries!",
@@ -636,6 +642,8 @@ pub async fn list(tx: &mut ProjectTransaction, window: Window) -> Result<Vec<Rel
                    FROM latest l WHERE l.last_job >= p.generation) AS "delivery_open!",
                   (SELECT count(*) FROM seen s WHERE s.last_seen >= p.generation) AS "locations!"
            FROM page p
+           JOIN changeset_rows cr ON cr.id = p.changeset_id
+           LEFT JOIN publishers pb ON pb.id = p.published_by
            ORDER BY p.generation DESC"#,
         tx.project,
         tx.environment,

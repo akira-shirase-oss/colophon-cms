@@ -558,6 +558,30 @@ async fn a_snapshot_transaction_reads_one_moment() {
     db.drop().await;
 }
 
+/// Pads `project`'s production environment with `count` unreleased changesets and analyses the
+/// table, as a long-lived installation's statistics would be: a realistic table the planner
+/// knows the size of (D-219).
+async fn pad_and_analyse(db: &TestDb, project: Uuid, created_by: Uuid, count: i64) {
+    let owner = db.owner().await;
+    sqlx::query(
+        "INSERT INTO changesets (project_id, environment_id, id, title, hash, created_by)
+         SELECT e.project_id, e.id, gen_random_uuid(), 'Padding', decode(repeat('00', 32), 'hex'), $2
+         FROM environments e, generate_series(1, $3)
+         WHERE e.project_id = $1 AND e.slug = 'production'",
+    )
+    .bind(project)
+    .bind(created_by)
+    .bind(count)
+    .execute(&owner)
+    .await
+    .expect("padding");
+    sqlx::query("ANALYZE changesets")
+        .execute(&owner)
+        .await
+        .expect("analyse");
+    owner.close().await;
+}
+
 /// Changeset rows this transaction has read so far, by any kind of scan (an index scan's rows
 /// are counted against the index).
 async fn changesets_read(tx: &mut ProjectTransaction) -> i64 {
@@ -573,11 +597,14 @@ async fn changesets_read(tx: &mut ProjectTransaction) -> i64 {
 }
 
 /// A page of releases reads one changeset row per release it shows, however many the
-/// environment has: the page's rows come from `releases` first, and only then their titles.
+/// environment has, once the statistics know the table's size: the page's rows come from
+/// `releases` first, and only then their changesets, by index (D-219). With statistics that call
+/// the table tiny, the bound is one pass instead (the stale-statistics test below).
 #[tokio::test]
 #[ignore = "needs the local stack: scripts/stack.sh up"]
 async fn a_page_of_releases_reads_only_the_changesets_it_shows() {
     const MANY: i64 = 150;
+    const PADDING: i64 = 20_000;
     let db = TestDb::new().await;
     let (alice, project, entry, _, _) = ready(&db).await;
     for base in 0..MANY {
@@ -590,6 +617,7 @@ async fn a_page_of_releases_reads_only_the_changesets_it_shows() {
         assert!(matches!(committed, Committed::Done { .. }), "{committed:?}");
         tx.commit().await.expect("commit");
     }
+    pad_and_analyse(&db, project, alice, PADDING).await;
     // As the server runs it after a few calls: one generic plan for every project.
     let mut tx = enter(&db.app, alice, project).await;
     sqlx::query("SET LOCAL plan_cache_mode = force_generic_plan")
@@ -613,7 +641,168 @@ async fn a_page_of_releases_reads_only_the_changesets_it_shows() {
     assert!(
         read <= shown,
         "a page of {shown} releases read {read} changeset rows (the environment has {})",
-        MANY + 1
+        MANY + 1 + PADDING
+    );
+    drop(tx);
+    db.drop().await;
+}
+
+/// Commits one more release of `entry` in `project`, on `base`, titled `title`; its changeset.
+async fn release_titled(
+    db: &TestDb,
+    alice: Uuid,
+    project: Uuid,
+    entry: Uuid,
+    base: i64,
+    title: &str,
+) -> Uuid {
+    let mut tx = enter(&db.app, alice, project).await;
+    let pins = changesets::pins(&mut tx, &[entry]).await.expect("pins");
+    let changeset = Uuid::now_v7();
+    changesets::create(&mut tx, changeset, title, &pins, &[6; 32], None)
+        .await
+        .expect("created");
+    changesets::submit(&mut tx, changeset)
+        .await
+        .expect("submitted");
+    changesets::lock(&mut tx, changeset).await.expect("lock");
+    changesets::review(&mut tx, changeset, &[6; 32], "approve", "", None)
+        .await
+        .expect("approved");
+    let review = changesets::reviews(&mut tx, changeset, None)
+        .await
+        .expect("reviews")[0]
+        .id;
+    let committed = releases::commit(&mut tx, base, changeset, &[6; 32], review, HOUR)
+        .await
+        .expect("commit");
+    assert!(matches!(committed, Committed::Done { .. }), "{committed:?}");
+    tx.commit().await.expect("commit");
+    changeset
+}
+
+/// D-219: a page reads its releases' changesets as one set, so whatever the planner believes the
+/// read stays one pass: here the statistics say the environment has two changesets when it has
+/// 151 (analysed early, autovacuum off for the table), the belief under which a per-release lookup
+/// scanned the whole table once per release, 100 x 151 rows for one page (CI 44560804246). Run
+/// as the application login, under row-level security, with the server's generic plan.
+#[tokio::test]
+#[ignore = "needs the local stack: scripts/stack.sh up"]
+async fn a_page_reads_its_changesets_in_one_pass_even_on_stale_statistics() {
+    const MANY: i64 = 150;
+    let db = TestDb::new().await;
+    let (alice, project, entry, _, _) = ready(&db).await;
+    let owner = db.owner().await;
+    sqlx::query("ALTER TABLE changesets SET (autovacuum_enabled = false)")
+        .execute(&owner)
+        .await
+        .expect("no autovacuum");
+    release_titled(&db, alice, project, entry, 0, "Release 1").await;
+    sqlx::query("ANALYZE changesets")
+        .execute(&owner)
+        .await
+        .expect("analyse while small");
+    for base in 1..MANY {
+        release_titled(
+            &db,
+            alice,
+            project,
+            entry,
+            base,
+            &format!("Release {}", base + 1),
+        )
+        .await;
+    }
+    let environment_changesets = MANY + 1;
+
+    let mut tx = enter(&db.app, alice, project).await;
+    sqlx::query("SET LOCAL plan_cache_mode = force_generic_plan")
+        .execute(&mut *tx.transaction)
+        .await
+        .expect("set");
+    let before = changesets_read(&mut tx).await;
+    let page = releases::list(
+        &mut tx,
+        releases::Window::Page {
+            before: None,
+            limit: releases::MAX_PAGE,
+        },
+    )
+    .await
+    .expect("page");
+    let read = changesets_read(&mut tx).await - before;
+    assert_eq!(
+        i64::try_from(page.len()).expect("small"),
+        releases::MAX_PAGE
+    );
+    assert_eq!(page[0].generation, MANY);
+    assert_eq!(
+        page[0].title,
+        format!("Release {MANY}"),
+        "each row keeps its own title"
+    );
+    assert!(
+        read <= environment_changesets,
+        "a page of {} releases read {read} changeset rows: more than one pass over the environment's {environment_changesets}",
+        page.len()
+    );
+    drop(tx);
+    owner.close().await;
+    db.drop().await;
+}
+
+/// D-219: the page's changesets are joined by project, environment and id, so a page never
+/// shows another project's changeset, even one whose id it names nowhere else.
+#[tokio::test]
+#[ignore = "needs the local stack: scripts/stack.sh up"]
+async fn a_page_shows_only_its_own_projects_changesets() {
+    let db = TestDb::new().await;
+    let (alice, project, entry, _, _) = ready(&db).await;
+    let mine = release_titled(&db, alice, project, entry, 0, "Mine").await;
+    // Another project with its own release.
+    let other = projects::create(&db.app, alice, "beta", "Beta")
+        .await
+        .expect("created")
+        .id;
+    let mut tx = enter(&db.app, alice, other).await;
+    let (theirs_entry, revision) = (Uuid::now_v7(), Uuid::now_v7());
+    entries::create(
+        &mut tx,
+        theirs_entry,
+        "articles",
+        NewRevision {
+            id: revision,
+            content: r#"{"title":"Theirs"}"#,
+            content_hash: &[4; 32],
+            title: "Theirs",
+            slug: None,
+            schema_version: 1,
+            references: &[],
+            assets: &[],
+            unique: &[],
+            visibility: None,
+        },
+        None,
+    )
+    .await
+    .expect("created");
+    tx.commit().await.expect("commit");
+    release_titled(&db, alice, other, theirs_entry, 0, "Theirs").await;
+
+    let mut tx = enter(&db.app, alice, project).await;
+    let page = releases::list(
+        &mut tx,
+        releases::Window::Page {
+            before: None,
+            limit: releases::MAX_PAGE,
+        },
+    )
+    .await
+    .expect("page");
+    assert_eq!(page.len(), 1, "{page:?}");
+    assert_eq!(
+        (page[0].changeset_id, page[0].title.as_str()),
+        (mine, "Mine")
     );
     drop(tx);
     db.drop().await;
