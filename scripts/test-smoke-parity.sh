@@ -7,6 +7,48 @@
 #   scripts/test-smoke-parity.sh
 set -euo pipefail
 cd "$(dirname "$0")/.."
+# A scenario's mix (which operation, which target) comes from the scenario-wide iteration index,
+# exec.scenario.iterationInTest, never __ITER: __ITER counts per VU, so with many VUs and few
+# iterations each, slots past the first few never run (members at 20/s for 5 s made no writes at
+# all), and a write share that depends on rate x duration / VUs under-measures writes. __ITER stays
+# fine as part of a key or label (`${__VU}-${__ITER}`, an argument); in arithmetic or a comparison
+# it's a mix selector, and fails here.
+# `typeof __ITER` is the setup test (__ITER exists only in iterations), not a mix, so it's removed before matching.
+mixed=$(awk '{ l = $0; gsub(/typeof __ITER/, "", l)
+  if (l ~ /__ITER[[:space:]]*([-+*\/%<>]|[=!]=)|[-+*\/%][[:space:]]*__ITER([^A-Za-z0-9_]|$)/) print FILENAME ":" FNR ": " $0 }' \
+  perf/k6/*.js perf/*.mjs 2>/dev/null || true)
+if [[ -n "$mixed" ]]; then
+  echo "FAIL: $(wc -l <<<"$mixed" | tr -d ' ') load-scenario line(s) choose their mix from __ITER, not exec.scenario.iterationInTest:" >&2
+  echo "$mixed" >&2
+  exit 1
+fi
+# Every Idempotency-Key a scenario sends is built by perf/k6/lib/idempotency-key.js, which refuses one outside the
+# API's rule (16 to 128 letters, digits, '-' or '_') at the line that built it: hand-built ones fell under 16
+# characters at small VU and iteration numbers and were refused 400 mid-run (changesets, CI 44632793507). A header
+# value written as a literal, or a key helper returning a bare `k6-...` template, fails here.
+handbuilt=$(grep -nE "'Idempotency-Key'[[:space:]]*:[[:space:]]*[\`'\"]|(return|=>)[[:space:]]+\`k6-" perf/k6/*.js || true)
+if [[ -n "$handbuilt" ]]; then
+  echo "FAIL: $(wc -l <<<"$handbuilt" | tr -d ' ') Idempotency-Key(s) built by hand, not through perf/k6/lib/idempotency-key.js:" >&2
+  echo "$handbuilt" >&2
+  exit 1
+fi
+# A key held in a name is checked at its definition: once its builder calls are removed, no template may remain, so
+# a key derived by hand from a built one (undo's replay) or one built without the VU (bulk) fails here.
+node scripts/check-idempotency-keys.mjs perf/k6/*.js >&2 \
+  || { echo "FAIL: an Idempotency-Key above is built by hand, not by perf/k6/lib's builders" >&2; exit 1; }
+# The scenario-wide index can give one VU the same slot twice, so a scenario that keeps per-VU state
+# (a module-level `let`) must not depend on its slots coming in order: schedules did (schedule in
+# slot 8, cancel in 9) and got 767 409s in CI 44632793507. Each such variable is marked on the line
+# above with `// per-VU state: <why any slot order is valid>`, so the question is answered for it.
+unmarked=$(for f in perf/k6/*.js; do
+  grep -q 'iterationInTest' "$f" || continue
+  awk -v f="$f" '/^(let|var) [A-Za-z_]/ && prev !~ /^\/\/ per-VU state: / {print f ":" NR ": " $0} {prev = $0}' "$f"
+done)
+if [[ -n "$unmarked" ]]; then
+  echo "FAIL: per-VU state in a scenario whose mix comes from the scenario-wide iteration, not marked '// per-VU state: <why any slot order is valid>':" >&2
+  echo "$unmarked" >&2
+  exit 1
+fi
 # The scenarios a text names as `scripts/load.sh <endpoint>`; nothing found is an empty list, not an exit.
 endpoints() { { grep -oE 'scripts/load\.sh [a-z][a-z-]*' || true; } | awk '{print $2}' | sort -u; }
 # check.sh's list is read from the plan it runs (its smokes are data, SMOKES=(...), not literal commands), as

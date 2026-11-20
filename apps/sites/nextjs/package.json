@@ -1,0 +1,23 @@
+{
+  "name": "@colophon/site-nextjs",
+  "private": true,
+  "version": "0.0.0",
+  "description": "The Next.js demo site (apps/sites/README.md, D-220): Butter & Thyme's recipes, statically exported from the published `demo-sites` project's delivery API at one release, rebuilt on publish.",
+  "type": "module",
+  "scripts": {
+    "build": "node scripts/pin-release.mjs && next build && node scripts/place-output.mjs",
+    "serve": "node ./serve.mjs",
+    "check": "tsc --noEmit",
+    "test": "node --test lib/colophon.test.ts"
+  },
+  "dependencies": {
+    "next": "16.4.5",
+    "react": "19.1.10",
+    "react-dom": "19.1.10"
+  },
+  "devDependencies": {
+    "@types/node": "24.19.2",
+    "@types/react": "19.1.17",
+    "typescript": "6.0.3"
+  }
+}

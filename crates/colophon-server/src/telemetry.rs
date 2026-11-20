@@ -1,6 +1,8 @@
 //! Logging: JSON lines in production, pretty locally, one `EnvFilter` for both, and a
 //! fallible setup so a bad filter fails startup loudly. Slow statements are said in two tiers
-//! (D-224, [`SlowStatementTiers`]).
+//! (D-224, [`SlowStatementTiers`]). Beside the log layers, the database's begin tripwire (D-226)
+//! watches sqlx's backend notices with a filter of its own, so the log filter (`COLOPHON_LOG`)
+//! can't blind it: that filter applies to the log layers, not globally.
 
 use std::time::Duration;
 
@@ -10,7 +12,7 @@ use tracing::{
 };
 use tracing_subscriber::{
     EnvFilter,
-    filter::ParseError,
+    filter::{FilterExt as _, ParseError},
     fmt,
     layer::{Context, Layer, SubscriberExt as _},
     util::{SubscriberInitExt as _, TryInitError},
@@ -61,10 +63,17 @@ pub fn init(format: LogFormat, directives: &str) -> Result<(), TelemetryError> {
         LogFormat::Pretty => (None, Some(fmt::layer().pretty())),
     };
     tracing_subscriber::registry()
-        .with(filter)
+        // Before the log layers and the tripwire: an INFO statement under the INFO tier is dropped
+        // for every layer (D-224). The tripwire reads backend notices, never `sqlx::query`.
         .with(SlowStatementTiers::default())
-        .with(json)
-        .with(pretty)
+        // `Layer::and_then` named in full: `Option` has an `and_then` of its own.
+        // The startup self-test's deliberate nested BEGIN logs no WARN (D-226): its notice is
+        // dropped from the log layers by where it was raised; a real one still logs.
+        .with(
+            tracing_subscriber::Layer::and_then(json, pretty)
+                .with_filter(filter.and(colophon_db::transactions::hide_the_self_test_notice())),
+        )
+        .with(colophon_db::transactions::begin_tripwire())
         .try_init()?;
     Ok(())
 }

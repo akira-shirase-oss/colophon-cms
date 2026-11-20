@@ -1,0 +1,30 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "WITH open AS (\n             SELECT project_id, environment_id, id FROM asset_jobs\n             WHERE project_id = $1 AND environment_id = $2 AND asset_id = $3\n               AND kind IN ('verify', 'reverify') AND status IN ('pending', 'retrying')\n               AND quarantine_key IS NOT NULL\n             ORDER BY id\n             FOR UPDATE\n         )\n         UPDATE asset_jobs j SET status = 'superseded', last_error = 'the asset is being deleted',\n                                 lease_owner = NULL, lease_expires_at = NULL,\n                                 updated_at = now(), finished_at = now()\n         FROM open\n         WHERE j.project_id = open.project_id AND j.environment_id = open.environment_id\n           AND j.id = open.id\n         RETURNING j.quarantine_key",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "quarantine_key",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "asset_jobs",
+            "name": "quarantine_key"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid",
+        "Uuid"
+      ]
+    },
+    "nullable": [
+      true
+    ]
+  },
+  "hash": "9218292f85aad2715139304cf2dbc2bcd99697d65d7fef62227535dbc4e76ce6"
+}

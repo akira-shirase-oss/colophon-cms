@@ -14,6 +14,7 @@
 import http from 'k6/http';
 import { check, fail, sleep } from 'k6';
 import { Counter } from 'k6/metrics';
+import { idempotencyKey } from './lib/idempotency-key.js';
 
 const BASE_URL = __ENV.BASE_URL || 'http://127.0.0.1:58405';
 const PUBLIC_URL = __ENV.PUBLIC_URL || 'http://localhost:58405';
@@ -68,7 +69,7 @@ const retryable = (status) => status === 0 || status === 502 || status === 503 |
 
 export default function (data) {
   const title = `op ${__VU}-${__ITER}`;
-  const headers = Object.assign({ 'Idempotency-Key': `failover-${__VU}-${__ITER}-${Math.random().toString(36).slice(2, 10)}` }, data.write);
+  const headers = Object.assign({ 'Idempotency-Key': idempotencyKey(`failover-${__VU}-${__ITER}-${Math.random().toString(36).slice(2, 10)}`, 'failover') }, data.write);
   const body = article(title);
   let res = null;
   for (let attempt = 0; attempt <= RETRIES; attempt++) {

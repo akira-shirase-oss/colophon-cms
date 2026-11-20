@@ -21,6 +21,8 @@
 import http from 'k6/http';
 import { check, fail } from 'k6';
 import { Rate } from 'k6/metrics';
+import exec from 'k6/execution';
+import { idempotencyKey } from './lib/idempotency-key.js';
 
 const anonCacheHits = new Rate('anon_cache_hits');
 
@@ -86,7 +88,7 @@ export function setup() {
   };
   const run = Date.now().toString(36);
   let n = 0;
-  const key = () => `k6-audience-${run}-${(n += 1)}`;
+  const key = () => idempotencyKey(`k6-audience-${run}-${(n += 1)}`, 'audience');
   const project = http.post(`${BASE_URL}/api/v1/projects`, JSON.stringify({ slug: `k6-${run}`, name: 'k6 audience' }), { headers });
   if (project.status !== 201) fail(`project: HTTP ${project.status}`);
   const projectId = project.json('data.id');
@@ -133,6 +135,7 @@ export function setup() {
 
 // This VU's visitor: set on its first iteration, its token refreshed by every sign-in it
 // makes, so member reads never carry a session MAX_SESSIONS already pushed out.
+// per-VU state: picked once per VU and only read after; no step order.
 let mine = null;
 
 export default function (data) {
@@ -141,7 +144,7 @@ export default function (data) {
   }
   const params = (endpoint, headers) => ({ redirects: 0, tags: { endpoint }, headers });
   const bearer = { Authorization: `Bearer ${mine.token}` };
-  const slot = __ITER % 100;
+  const slot = exec.scenario.iterationInTest % 100;
   let res;
   if (slot < 65) {
     res = http.get(data.list, params('member_list', bearer));

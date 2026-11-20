@@ -17,6 +17,8 @@
 
 import http from 'k6/http';
 import { check, fail } from 'k6';
+import exec from 'k6/execution';
+import { idempotencyKey } from './lib/idempotency-key.js';
 
 const BASE_URL = __ENV.BASE_URL || 'http://127.0.0.1:58000';
 const PUBLIC_URL = __ENV.PUBLIC_URL || 'http://localhost:58000';
@@ -70,14 +72,14 @@ export function setup() {
   const entries = [];
   for (let i = 0; i < 5; i += 1) {
     const body = { title: `Article ${i}`, body: { schema: 'colophon/rich-text', version: 1, doc: { type: 'doc', content: [{ type: 'paragraph' }] } } };
-    const created = http.post(`${base}/collections/articles/entries`, JSON.stringify(body), { headers: Object.assign({ 'Idempotency-Key': `k6-setup-entry-${Date.now()}-${i}` }, headers) });
+    const created = http.post(`${base}/collections/articles/entries`, JSON.stringify(body), { headers: Object.assign({ 'Idempotency-Key': idempotencyKey(`k6-setup-entry-${Date.now()}-${i}`, 'changesets') }, headers) });
     if (created.status !== 201) fail(`entry: HTTP ${created.status}`);
     entries.push(created.json('data.id'));
   }
   // One submitted changeset per virtual user (the steady scenario can use twice as many).
   const sets = [];
   for (let i = 0; i < VUS * 2; i += 1) {
-    const set = http.post(`${base}/changesets`, JSON.stringify({ title: `k6 ${i}`, entries }), { headers: Object.assign({ 'Idempotency-Key': `k6-setup-set-${Date.now()}-${i}` }, headers) });
+    const set = http.post(`${base}/changesets`, JSON.stringify({ title: `k6 ${i}`, entries }), { headers: Object.assign({ 'Idempotency-Key': idempotencyKey(`k6-setup-set-${Date.now()}-${i}`, 'changesets') }, headers) });
     if (set.status !== 201) fail(`changeset: HTTP ${set.status} ${set.body}`);
     const path = `${base}/changesets/${set.json('data.id')}`;
     const hash = set.json('data.hash');
@@ -88,13 +90,13 @@ export function setup() {
   // Two releases — articles 0-2, then 3-4 — so there is a past to list, receipt and roll back to:
   // rolling back to 1 unpins nothing and unpublishes 3-4, the two pins the rollback arm expects.
   const release = (ids, generation) => {
-    const set = http.post(`${base}/changesets`, JSON.stringify({ title: `release ${generation + 1}`, entries: ids }), { headers: Object.assign({ 'Idempotency-Key': `k6-setup-rel-${Date.now()}-${generation}` }, headers) });
+    const set = http.post(`${base}/changesets`, JSON.stringify({ title: `release ${generation + 1}`, entries: ids }), { headers: Object.assign({ 'Idempotency-Key': idempotencyKey(`k6-setup-rel-${Date.now()}-${generation}`, 'changesets') }, headers) });
     if (set.status !== 201) fail(`release changeset: HTTP ${set.status} ${set.body}`);
     const path = `${base}/changesets/${set.json('data.id')}`;
     const ifMatch = Object.assign({ 'If-Match': `"${set.json('data.hash')}"` }, headers);
     http.post(`${path}/submit`, null, { headers: ifMatch });
     http.post(`${path}/reviews`, JSON.stringify({ decision: 'approve' }), { headers: ifMatch });
-    const published = http.post(`${path}/publish`, JSON.stringify({ base_generation: generation }), { headers: Object.assign({ 'Idempotency-Key': `k6-setup-pub-${Date.now()}-${generation}` }, ifMatch) });
+    const published = http.post(`${path}/publish`, JSON.stringify({ base_generation: generation }), { headers: Object.assign({ 'Idempotency-Key': idempotencyKey(`k6-setup-pub-${Date.now()}-${generation}`, 'changesets') }, ifMatch) });
     if (published.status !== 201) fail(`publish: HTTP ${published.status} ${published.body}`);
   };
   release(entries.slice(0, 3), 0);
@@ -103,7 +105,7 @@ export function setup() {
 }
 
 export default function (data) {
-  const slot = __ITER % 100;
+  const slot = exec.scenario.iterationInTest % 100;
   const mine = data.sets[(__VU - 1) % data.sets.length];
   const params = (endpoint, extra) => ({ headers: Object.assign({}, data.headers, extra || {}), redirects: 0, tags: { endpoint } });
   if (slot < 50) {
@@ -113,13 +115,13 @@ export default function (data) {
     const res = http.get(`${data.base}/changesets`, params('list'));
     check(res, { 'list 200': (r) => r.status === 200 && r.body.indexOf('{"data":[') === 0 });
   } else if (slot < 80) {
-    const decision = __ITER % 2 === 0 ? 'approve' : 'request_changes';
+    const decision = exec.scenario.iterationInTest % 2 === 0 ? 'approve' : 'request_changes';
     const res = http.post(`${mine.path}/reviews`, JSON.stringify({ decision }), params('review', { 'If-Match': `"${mine.hash}"` }));
     check(res, { 'review 200': (r) => r.status === 200 && r.json('data.hash') === mine.hash });
   } else if (slot < 90) {
-    const pair = [data.entries[__ITER % 5], data.entries[(__ITER + 1) % 5]];
+    const pair = [data.entries[exec.scenario.iterationInTest % 5], data.entries[(exec.scenario.iterationInTest + 1) % 5]];
     const res = http.post(`${data.base}/changesets`, JSON.stringify({ title: `k6 ${__VU}-${__ITER}`, entries: pair }),
-      params('create', { 'Idempotency-Key': `k6-${data.run}-${__VU}-${__ITER}` }));
+      params('create', { 'Idempotency-Key': idempotencyKey(`k6-${data.run}-${__VU}-${__ITER}`, 'changesets') }));
     check(res, { 'create 201': (r) => r.status === 201 });
   } else if (slot < 93) {
     const res = http.get(`${data.base}/releases`, params('releases'));
@@ -153,7 +155,7 @@ export default function (data) {
     // Restoring release 1 is always the same work here — the live set never moves — and every
     // build must answer the same changeset: two unpublish pins, for articles 3 and 4.
     const res = http.post(`${data.base}/releases/1/rollback`, JSON.stringify({ title: `k6 rollback ${__VU}-${__ITER}` }),
-      params('rollback', { 'Idempotency-Key': `k6-${data.run}-${__VU}-${__ITER}-rb` }));
+      params('rollback', { 'Idempotency-Key': idempotencyKey(`k6-${data.run}-${__VU}-${__ITER}-rb`, 'changesets') }));
     check(res, {
       'rollback 201: two unpublish pins': (r) =>
         r.status === 201 && r.json('data.status.state') === 'open' && r.json('data.items').filter((item) => item.kind === 'unpublish').length === 2,

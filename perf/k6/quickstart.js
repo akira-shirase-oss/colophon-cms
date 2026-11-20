@@ -15,6 +15,7 @@
 
 import http from 'k6/http';
 import { check } from 'k6';
+import exec from 'k6/execution';
 
 const BASE_URL = __ENV.BASE_URL || 'http://localhost:8080';
 const SCENARIO = __ENV.SCENARIO || 'steady';
@@ -75,7 +76,7 @@ const requests = [
 ];
 
 export default function () {
-  const request = requests[(__ITER + __VU) % requests.length];
+  const request = requests[(exec.scenario.iterationInTest + __VU) % requests.length];
   const response = http.get(`${BASE_URL}${request.path}`, { tags: { path: request.path } });
   check(response, { [`${request.path} answers`]: request.ok });
 }

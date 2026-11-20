@@ -21,6 +21,8 @@ sqlx.workspace = true
 thiserror.workspace = true
 # The pool reports a connection it had to close (D-217).
 tracing.workspace = true
+# The BEGIN tripwire is a tracing layer: sqlx reports a backend notice only as a tracing event (D-226).
+tracing-subscriber.workspace = true
 # The ledger export writes `deleted_at` as RFC 3339 and the replay parses it back.
 time = { workspace = true, features = ["formatting", "parsing"] }
 tokio.workspace = true

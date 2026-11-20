@@ -15,6 +15,8 @@
 
 import http from 'k6/http';
 import { check, fail } from 'k6';
+import exec from 'k6/execution';
+import { idempotencyKey } from './lib/idempotency-key.js';
 
 const BASE_URL = __ENV.BASE_URL || 'http://127.0.0.1:58000';
 const PUBLIC_URL = __ENV.PUBLIC_URL || 'http://localhost:58000';
@@ -64,7 +66,7 @@ function article(title, text) {
 }
 
 function key() {
-  return `k6-${__VU}-${__ITER}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+  return idempotencyKey(`k6-${__VU}-${__ITER}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`, 'entries');
 }
 
 export function setup() {
@@ -81,7 +83,7 @@ export function setup() {
 
   const articles = [];
   for (let i = 0; i < ARTICLES; i++) {
-    const created = http.post(base, article(`Article ${i}`, 'Start'), { headers: Object.assign({ 'Idempotency-Key': `k6-setup-${slug}-${i}` }, write) });
+    const created = http.post(base, article(`Article ${i}`, 'Start'), { headers: Object.assign({ 'Idempotency-Key': idempotencyKey(`k6-setup-${slug}-${i}`, 'entries') }, write) });
     if (created.status !== 201) fail(`article ${i}: HTTP ${created.status} ${created.body}`);
     articles.push({ id: created.json('data.id'), etag: created.headers['Etag'] });
   }
@@ -89,6 +91,7 @@ export function setup() {
 }
 
 // Per VU: the ETag of the last revision this VU saved (each VU has its own copy).
+// per-VU state: the VU's own resource's version, refreshed by every save and read; any read/save order is valid.
 let etag = null;
 
 export default function (data) {
@@ -96,7 +99,7 @@ export default function (data) {
   if (etag === null) etag = mine.etag;
   const url = `${data.base}/${mine.id}`;
   const read = { headers: { Cookie: data.session.cookie }, redirects: 0 };
-  const roll = __ITER % 10;
+  const roll = exec.scenario.iterationInTest % 10;
 
   if (roll < 2) {
     const headers = {

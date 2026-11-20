@@ -10,6 +10,7 @@
 
 mod fault;
 pub mod guard;
+pub mod payload;
 pub mod retention;
 pub mod schedules;
 pub mod tables;

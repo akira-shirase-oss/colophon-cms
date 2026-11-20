@@ -69,6 +69,7 @@
 	import RichTextToolbar from './RichTextToolbar.svelte';
 	import { imageFileHandlers, imageView } from './richTextImage.svelte.ts';
 	import StatusBadge from './shell/StatusBadge.svelte';
+	import { Skeleton } from '@colophon/ui/ui/skeleton';
 	import TechnicalDetails from './shell/TechnicalDetails.svelte';
 	import { releaseName } from './words.ts';
 	import { applies, blockingProblem, EMPTY_DOCUMENT, type FormValue, formValue, storedValue, titleLabel } from './content.ts';
@@ -385,6 +386,11 @@
 		return null;
 	});
 
+	/** Whether the entry waits in a request is known only once the requests, the schedules and each
+	 *  waiting request's own read have settled (answered or failed; a background refresh doesn't
+	 *  count). Until then the badge holds: "Live" for an entry that is in fact waiting for review
+	 *  would be false, however briefly. */
+	const reviewKnown = $derived(!requests.isPending && !schedules.isPending && waitingReads.every((read) => !read.isPending));
 	/** The badge: where it stands for readers, or that it waits for review. */
 	const shownState = $derived<Status>(
 		review !== null ? (review.runAt ? 'scheduled' : 'review') : takenDown && standing === 'draft' ? 'taken_down' : standing
@@ -393,7 +399,7 @@
 	const runsAt = $derived(review?.runAt ? new Date(review.runAt).toLocaleString(undefined, { weekday: 'short', day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' }) : '');
 	/** The status card's rule, in the badge's tone: the editor's mark for "what readers have". */
 	const RULE: Record<Tone, string> = { live: 'bg-live', changed: 'bg-changed', pending: 'bg-pending', attention: 'bg-attention', draft: 'bg-draft' };
-	const rule = $derived(RULE[STATUS[shownState].tone]);
+	const rule = $derived(reviewKnown ? RULE[STATUS[shownState].tone] : 'bg-muted');
 	/** The release readers have it from, and when that went out, when this page has it. */
 	const liveRelease = $derived.by(() => {
 		const live = published;
@@ -990,7 +996,14 @@
 			     release, marked by a rule in the badge's tone. -->
 			<div class="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1 max-xl:flex-auto xl:grid xl:gap-2" data-testid="entry-status">
 				<div class="flex min-w-0 flex-wrap items-center justify-between gap-x-3 gap-y-1">
-					<StatusBadge state={shownState} generation={published?.generation ?? null} testid="entry-state" />
+					{#if reviewKnown}
+						<StatusBadge state={shownState} generation={published?.generation ?? null} testid="entry-state" />
+					{:else}
+						<span class="inline-flex" data-testid="entry-state" data-state="checking" aria-busy="true">
+							<Skeleton class="h-6 w-20 rounded-full" />
+							<span class="sr-only">Checking where it stands…</span>
+						</span>
+					{/if}
 					<p class="flex min-w-0 items-center gap-1.5 text-sm" role="status" data-testid="save-status" data-status={saver.status}>
 						{#if saver.status === 'saved'}
 							<CloudCheckIcon class="pop size-4 shrink-0 text-muted-foreground" aria-hidden="true" />
@@ -1060,6 +1073,7 @@
 					mine={mine.data}
 					{standing}
 					{review}
+					{reviewKnown}
 					{takenDown}
 					saved={saver.status === 'saved'}
 					seenGeneration={releases.data?.generation}

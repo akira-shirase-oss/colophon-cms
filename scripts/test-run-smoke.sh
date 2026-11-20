@@ -46,17 +46,28 @@ echo "{\"endpoint\":\"x\",\"attempt\":$n,\"hard_failures_total\":$hard}" >"$RECO
 exit "$status"
 EOF
 chmod +x "$work/smoke.sh"
+# The pre-re-run hook: records each call's argument, one per line.
+# shellcheck disable=SC2016 # the hook's own `$1`, written literally into it
+printf '#!/usr/bin/env bash\necho "$1" >>"%s/hook"\n' "$work" >"$work/hook.sh"
+chmod +x "$work/hook.sh"
 
 fail=0
 check() { # case, plan lines..., then: expected exit, expected attempts, expect stalled file (yes|no)
   local name=$1 exit_want=$2 attempts_want=$3 stalled_want=$4; shift 4
   rm -f "$work"/attempts "$work"/x.* ; printf '%s\n' "$@" >"$work/plan"
   local got=0
-  WORK=$work COMMIT=$commit REFUSAL=$refusal CALM_REFUSAL=$calm_refusal SELECT_SLOW=$select_slow \
+  rm -f "$work/hook"
+  RUN_SMOKE_BEFORE_RERUN=$work/hook.sh WORK=$work COMMIT=$commit REFUSAL=$refusal CALM_REFUSAL=$calm_refusal SELECT_SLOW=$select_slow \
     scripts/run-smoke.sh x "$work/x.record.json" "$work/x.server.log" "$work/pressure.txt" -- "$work/smoke.sh" \
     >"$work/out" 2>&1 || got=$?
   local attempts; attempts=$(cat "$work/attempts")
   local stalled=no; [[ -f $work/x.stalled.record.json ]] && stalled=yes
+  # The pre-re-run hook ran exactly once, with the stalled smoke's stem, when there was a re-run; never otherwise.
+  local hooked; hooked=$(cat "$work/hook" 2>/dev/null || true)
+  local hooked_want=""; [[ $stalled == yes ]] && hooked_want="$work/x"
+  if [[ $hooked != "$hooked_want" ]]; then
+    echo "FAIL $name: the pre-re-run hook was called with [$hooked], want [$hooked_want]" >&2; fail=1; return
+  fi
   if [[ $got != "$exit_want" || $attempts != "$attempts_want" || $stalled != "$stalled_want" ]]; then
     echo "FAIL $name: exit $got (want $exit_want), attempts $attempts (want $attempts_want), stalled record $stalled (want $stalled_want)" >&2
     sed 's/^/    /' "$work/out" >&2; fail=1; return
