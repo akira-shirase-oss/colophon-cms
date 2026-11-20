@@ -150,11 +150,15 @@ test('each role sees only what it may do, in every state, and the server refuses
 	expect(undo.status, JSON.stringify(undo.body)).toBe(403);
 
 	// A reader: no next step at all, nothing to take down, and not even a request allowed.
+	// The editor's request to take `live` down (above) now waits for review, so a reader sees `live`
+	// as in review: the badge is read once the page's reads have settled, never from the frame drawn
+	// before the waiting requests arrive (which showed `live` and let a stale expectation pass).
 	await makeReader(page, editor, made.project);
 	for (const state of made.states) {
 		await editor.goto(`/studio/projects/${made.project}/${state.collection}/${state.entry}`);
-		await expect(editor.getByTestId('entry-state')).toHaveAttribute('data-state', state.badge);
 		await editor.waitForLoadState('networkidle');
+		const badge = state.entry === live ? 'review' : state.badge;
+		await expect(editor.getByTestId('entry-state'), `reader, ${state.name}`).toHaveAttribute('data-state', badge);
 		expect.soft(await primaries(editor), `reader, ${state.name}`).toEqual([]);
 		await expect.soft(editor.getByTestId('publish-button')).toHaveCount(0);
 		await editor.getByTestId('more-menu').click();
