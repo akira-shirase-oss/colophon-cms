@@ -600,6 +600,14 @@ pub struct Claimed {
 
 /// Claims up to `limit` due asset jobs for `owner` under `lease`, rows another worker is
 /// claiming skipped not waited for (the delivery jobs' discipline, minus destinations).
+///
+/// The two kinds of due job are found separately, each by an ordered scan of its own partial
+/// index that stops at the limit: waiting jobs on `asset_jobs_due`, lapsed leases on
+/// `asset_jobs_leased` (0080). One `WHERE … OR …` over both could use neither index in order,
+/// so it read the whole table, finished jobs and dead row versions included, and sorted the due
+/// set on every claim (1-3.5 s claims in the assets smoke). Each half locks its own rows (a
+/// UNION can't carry `FOR UPDATE`); the merge keeps the oldest `limit`, so a claim locks at most
+/// twice that for the moment it commits.
 pub async fn claim(
     pool: &PgPool,
     owner: &str,
@@ -610,15 +618,28 @@ pub async fn claim(
     let lease_ms = i64::try_from(lease.as_millis()).unwrap_or(i64::MAX);
     let claimed = sqlx::query_as!(
         Claimed,
-        "WITH due AS (
-             SELECT j.project_id, j.environment_id, j.id
+        "WITH waiting AS (
+             SELECT j.project_id, j.environment_id, j.id, j.next_attempt_at
              FROM asset_jobs j
-             WHERE ((j.status IN ('pending', 'retrying') AND j.next_attempt_at <= now())
-                    OR (j.status = 'running' AND j.lease_expires_at < now()))
+             WHERE j.status IN ('pending', 'retrying') AND j.next_attempt_at <= now()
                AND j.deadline_at > now()
              ORDER BY j.next_attempt_at
              LIMIT $3
              FOR UPDATE OF j SKIP LOCKED
+         ), lapsed AS (
+             SELECT j.project_id, j.environment_id, j.id, j.next_attempt_at
+             FROM asset_jobs j
+             WHERE j.status = 'running' AND j.lease_expires_at < now()
+               AND j.deadline_at > now()
+             ORDER BY j.lease_expires_at
+             LIMIT $3
+             FOR UPDATE OF j SKIP LOCKED
+         ), due AS (
+             SELECT * FROM waiting
+             UNION ALL
+             SELECT * FROM lapsed
+             ORDER BY next_attempt_at
+             LIMIT $3
          )
          UPDATE asset_jobs j SET status = 'running', lease_owner = $1,
                             lease_expires_at = now() + make_interval(secs => $2::bigint / 1000.0),
