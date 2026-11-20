@@ -1073,6 +1073,7 @@
 					mine={mine.data}
 					{standing}
 					{review}
+					{reviewKnown}
 					{takenDown}
 					saved={saver.status === 'saved'}
 					seenGeneration={releases.data?.generation}

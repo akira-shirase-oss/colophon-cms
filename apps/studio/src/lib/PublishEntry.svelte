@@ -41,6 +41,7 @@
 		mine,
 		standing,
 		review = null,
+		reviewKnown = true,
 		takenDown = false,
 		saved,
 		seenGeneration,
@@ -64,6 +65,8 @@
 		standing: EntryState;
 		/** The publish request it waits in, if one is waiting for review. */
 		review?: InReview | null;
+		/** Whether `review` is known yet: false while the reads that find the request still run. */
+		reviewKnown?: boolean;
 		/** A release took it down: readers no longer get it. */
 		takenDown?: boolean;
 		/** Whether the editor's content is saved: only a saved version can be published. */
@@ -99,6 +102,10 @@
 	let keys = newKeys();
 	const named = $derived(title || 'Untitled');
 
+	/** Until the editor knows whether a request waits, no primary is offered and nothing is said about
+	 *  what is left to publish: "Nothing new to publish", or a Publish that would make a second
+	 *  request, could both be false. What pressing just did is known here, so it isn't held. */
+	const held = $derived(!reviewKnown && outcome === null);
 	/** The state the buttons answer, with what pressing just did folded in until the reads catch up. */
 	const now = $derived.by((): 'publish' | 'review' | 'waiting' | 'nothing' => {
 		if (outcome?.kind === 'requested' || (review !== null && outcome?.kind !== 'published' && outcome?.kind !== 'unpublished')) return oneClick && (review !== null || outcome?.kind === 'requested') ? 'review' : 'waiting';
@@ -113,7 +120,7 @@
 	);
 	/** Readers have a version that Unpublish would take down, and no request to do so waits. */
 	const takesDown = $derived(
-		acts && (standing !== 'draft' || outcome?.kind === 'published') && outcome?.kind !== 'unpublished' && !(review?.unpublish ?? false) && !(outcome?.kind === 'requested' && outcome.unpublish)
+		acts && !held && (standing !== 'draft' || outcome?.kind === 'published') && outcome?.kind !== 'unpublished' && !(review?.unpublish ?? false) && !(outcome?.kind === 'requested' && outcome.unpublish)
 	);
 	const nextRelease = $derived(seenGeneration === undefined ? 'the next release' : releaseName(seenGeneration + 1));
 
@@ -195,7 +202,9 @@
 	<!-- Side by side in the phone's bar and the desktop card: the one primary, then More. -->
 	<div class="flex shrink-0 items-center gap-2 max-xl:ml-auto xl:w-full">
 		{#if acts}
-			{#if now === 'publish'}
+			{#if held}
+				<p class="flex h-10 flex-1 items-center text-sm text-muted-foreground max-xl:hidden" aria-busy="true" data-testid="checking-review">Checking whether it waits for review…</p>
+			{:else if now === 'publish'}
 				<Button class="flex-1" onclick={() => go()} disabled={!saved || step !== ''} data-testid="publish-button">
 					{step !== '' ? step : label}
 				</Button>
@@ -234,7 +243,7 @@
 		</DropdownMenu.Root>
 	</div>
 
-	{#if acts && outcome?.kind !== 'stopped'}
+	{#if acts && !held && outcome?.kind !== 'stopped'}
 		<!-- What pressing does, in one line; in the phone's bar the save status already says why it waits. -->
 		<p class="hidden text-sm text-muted-foreground xl:block" data-testid="publish-hint">
 			{#if now === 'publish' && !saved}
