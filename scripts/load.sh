@@ -676,7 +676,6 @@ fi
 # The predicates live in scripts/lib/load-warnings.jq, which scripts/test-load-warnings.sh tests.
 warnings_lib="$(cat scripts/lib/load-warnings.jq)"
 counted_jq="$warnings_lib select(counted)"
-slow_jq="$warnings_lib select(slow_statement)"
 count_logged() { jq -Rn "[inputs | fromjson? | $counted_jq] | length"; }
 if [[ "$cluster" == "1" ]]; then
   server_warnings=0
@@ -739,8 +738,7 @@ fi
 # The evidence the gate no longer counts, kept in the record: how many slow statements, and the slowest.
 slow_logs=("$work/server.log")
 for log in "$work"/worker*.log; do [[ -f "$log" ]] && slow_logs+=("$log"); done
-slow_statements=$(cat "${slow_logs[@]}" | jq -Rsc "[split(\"\\n\")[] | fromjson? | $slow_jq | .elapsed_secs // 0]
-  | {count: length, max_ms: ((max // 0) * 1000 | round)}")
+slow_statements=$(cat "${slow_logs[@]}" | jq -Rsc "$warnings_lib [split(\"\\n\")[] | fromjson? | select(slow_statement) | elapsed] | slow_summary")
 
 # mixed.js cannot read the windows file itself — open() is init-stage only — so
 # with drills announced it stamps every failed assertion `L05FAIL <epoch_s>` on
