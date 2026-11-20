@@ -275,19 +275,8 @@ site_pid=""
 sampler_pid=""
 site_port="${SITE_PORT:-58097}"
 receiver_port="${RECEIVER_PORT:-58096}"
-# A port that already has a listener means a stale process from an earlier run: the
-# child spawned here would die on EADDRINUSE while the squatter — with its old state —
-# answers in its place. (A stale receiver once drove a real Valkey pause through its
-# /control while the run's own receiver.log held only the crash dump, so the warn
-# window read empty and every warning counted.) Fail fast, don't measure it.
-port_busy() { lsof -nP -t -iTCP:"$1" -sTCP:LISTEN >/dev/null 2>&1; }
-refuse_squatter() {
-  if port_busy "$1"; then
-    echo "error: port $1 already has a listener — a stale process would answer in place" >&2
-    echo "of this run's own $2. Find it: lsof -nP -iTCP:$1 -sTCP:LISTEN" >&2
-    exit 1
-  fi
-}
+# shellcheck source=scripts/port-guard.sh
+. scripts/port-guard.sh
 # shellcheck disable=SC2329 # invoked by the EXIT trap below
 cleanup() {
   if [[ -n "$sampler_pid" ]]; then kill "$sampler_pid" 2>/dev/null || true; fi

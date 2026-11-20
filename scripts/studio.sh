@@ -11,6 +11,10 @@ if [[ ! -d node_modules ]]; then
   npm ci
 fi
 
+# Fixed ports (CI gives every job its own runner): a taken one is refused, never tested.
+# shellcheck source=scripts/port-guard.sh
+. scripts/port-guard.sh
+refuse_squatter "${COLOPHON_STUDIO_PORT:-58093}" "colophon-server"
 scripts/check-toolchain.sh >/dev/null
 scripts/migrate.sh
 cargo build --quiet --release --locked -p colophon-server

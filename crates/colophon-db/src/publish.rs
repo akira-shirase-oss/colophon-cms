@@ -261,8 +261,9 @@ pub async fn publish(
     now: OffsetDateTime,
     job_lifetime: std::time::Duration,
 ) -> Result<Result<Published, Refusal>, DbError> {
-    // The work bound's admission pair is a publish's first locks (D-131, D-135): they must
-    // precede the content-type locks below and the token-limits row `reserve_jobs` takes
+    // The work bound's admission lock is a publish's first lock (D-131, D-135; the payload
+    // counter, the one lock shared across projects, comes last, at the enqueue's check: D-216).
+    // It must precede the content-type locks below and the token-limits row `reserve_jobs` takes
     // inside the commit, so a publish never holds a lock another admission waits on while it
     // asks for a lock a migration plan or bulk job might already hold. Holding them through a
     // refusal is safe: what they were taken to protect — the outbox insert — never ran.

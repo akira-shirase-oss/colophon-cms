@@ -8,6 +8,7 @@
 
 import http from 'k6/http';
 import { check, fail } from 'k6';
+import exec from 'k6/execution';
 
 const BASE_URL = __ENV.BASE_URL || 'http://127.0.0.1:58000';
 const PUBLIC_URL = __ENV.PUBLIC_URL || 'http://localhost:58000';
@@ -91,19 +92,24 @@ export function setup() {
 }
 
 // This virtual user's pending schedule, between its scheduling and its cancelling.
+// per-VU state: the VU's own cycle: every slot that uses it checks it first (schedule when null, else cancel).
 let pending = null;
 
 export default function (data) {
   const params = { headers: data.owner, redirects: 0 };
   const mine = data.changesets[(__VU - 1) % data.changesets.length];
-  const slot = __ITER % 10;
+  const slot = exec.scenario.iterationInTest % 10;
   if (slot < 6) {
     const res = http.get(`${data.base}/schedules`, Object.assign({ tags: { endpoint: 'list' } }, params));
     check(res, { 'list 200': (r) => r.status === 200 });
   } else if (slot < 8) {
     const res = http.get(`${data.base}/schedules?changeset=${mine.id}`, Object.assign({ tags: { endpoint: 'mine' } }, params));
     check(res, { 'mine 200': (r) => r.status === 200 });
-  } else if (slot === 8 || pending === null) {
+  } else if (pending === null) {
+    // Slots 8 and 9 are this VU's own cycle, one step each: schedule its changeset when nothing is
+    // pending, else cancel what is. The slot comes from the scenario-wide iteration, so a VU can draw
+    // 8 twice; choosing the step by `pending` keeps the 20% write share and never schedules an
+    // already-scheduled changeset (409 — 767 of them in CI 44632793507 when the slot chose the step).
     const res = http.post(`${data.base}/changesets/${mine.id}/schedule`, JSON.stringify({ local_time: data.at, time_zone: 'Europe/London' }), {
       headers: Object.assign({ 'If-Match': `"${mine.hash}"` }, data.owner),
       redirects: 0,

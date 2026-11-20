@@ -9,6 +9,7 @@
 
 import http from 'k6/http';
 import { check, fail } from 'k6';
+import exec from 'k6/execution';
 
 const BASE_URL = __ENV.BASE_URL || 'http://127.0.0.1:58000';
 const PUBLIC_URL = __ENV.PUBLIC_URL || 'http://localhost:58000';
@@ -85,9 +86,9 @@ function code(seed) {
 const refusedOk = http.expectedStatuses(409);
 
 export default function (data) {
-  const slot = __ITER % 20;
+  const slot = exec.scenario.iterationInTest % 20;
   if (slot < 9) {
-    const body = JSON.stringify({ code: code(__VU * 1000003 + __ITER) });
+    const body = JSON.stringify({ code: code(__VU * 1000003 + exec.scenario.iterationInTest) });
     const res = http.post(`${BASE_URL}/api/v1/setup`, body,
       { headers: data.other, redirects: 0, responseCallback: refusedOk, tags: { endpoint: 'setup-refused' } });
     check(res, { 'refused 409 already_set_up': (r) => r.status === 409 && r.body.indexOf('"already_set_up"') !== -1 });

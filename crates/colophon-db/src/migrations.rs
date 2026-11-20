@@ -336,9 +336,9 @@ pub async fn get(tx: &mut ProjectTransaction, id: Uuid) -> Result<Option<Plan>, 
 
 /// The plan, locked until the transaction ends: approvals, applies, cancellations and
 /// resolutions all queue on it, so each sees the state the one before committed. The
-/// admission pair comes first (D-135): a resolution's post-write
-/// [`crate::work::check_payload`] must find the byte lock already held, before this row
-/// lock, so the two locks and the row lock can never queue in a circle.
+/// project's admission lock comes first (D-135): a resolution's post-write
+/// [`crate::work::check_payload`] then locks the payload counter last, so the locks can never
+/// queue in a circle (D-216).
 pub async fn lock(tx: &mut ProjectTransaction, id: Uuid) -> Result<Option<Plan>, DbError> {
     crate::work::admission(tx).await?;
     sqlx::query_as!(
@@ -605,7 +605,8 @@ pub async fn resolve_item(
     .await
     .map_err(DbError::from_query)?;
     // A stored resolution is payload metadata on an open plan (D-135); the install-wide
-    // byte bound answers with it counted, under the pair the plan's `lock` already holds.
+    // byte bound answers with it counted, under the project lock the plan's `lock` holds and
+    // the payload counter's, taken last (D-216).
     crate::work::check_payload(tx).await?;
     let item = item(tx, plan, entry).await?.ok_or(DbError::Corrupt(
         "a migration item vanished as it was resolved",

@@ -10,6 +10,7 @@
 
 import http from 'k6/http';
 import { check, fail } from 'k6';
+import exec from 'k6/execution';
 
 const BASE_URL = __ENV.BASE_URL || 'http://127.0.0.1:58000';
 const PUBLIC_URL = __ENV.PUBLIC_URL || 'http://localhost:58000';
@@ -97,10 +98,11 @@ export function setup() {
 }
 
 // Each virtual user's role, and the version its last edit left it at.
+// per-VU state: refreshed from every successful update; any slot order is valid.
 let version = 1;
 
 export default function (data) {
-  const slot = __ITER % 10;
+  const slot = exec.scenario.iterationInTest % 10;
   if (slot < 5) {
     const res = http.get(data.entries, { headers: data.desk, redirects: 0, tags: { endpoint: 'entries' } });
     check(res, { 'entries 200': (r) => r.status === 200 });
@@ -114,7 +116,7 @@ export default function (data) {
     const res = http.get(`${data.base}/roles`, { headers: data.owner, redirects: 0, tags: { endpoint: 'roles' } });
     check(res, { 'roles 200': (r) => r.status === 200 && r.json('data.#') === EDITORS + 5 });
   } else {
-    const actions = __ITER % 20 < 10 ? ['content.read', 'content.create'] : ['content.read'];
+    const actions = exec.scenario.iterationInTest % 20 < 10 ? ['content.read', 'content.create'] : ['content.read'];
     const res = http.put(`${data.base}/roles/vu-${__VU}`, JSON.stringify({ name: `Editor ${__VU}`, permissions: articles(actions) }), {
       headers: Object.assign({ 'If-Match': `"v${version}"` }, data.owner),
       redirects: 0,

@@ -1,6 +1,6 @@
-# The five demo sites
+# The demo sites
 
-Five independent Astro sites, each a different content category, all reading the published
+Five independent Astro sites, one SvelteKit site and one Next.js site, each a different content category or framework, all reading the published
 content of one `demo-sites` project through Colophon's anonymous delivery API
 (`/content/v1/{project}/{environment}/{collection}`) and media origin (`/media/v1/…`). They are
 the usability surface for the draft → review → publish → site story: an editor changes an entry
@@ -13,9 +13,11 @@ in the Studio, publishes a release, rebuilds a site, and sees the change on a re
 | Butter & Thyme, recipes | `@colophon/site-recipes` | 58112 | `recipes` | a list of objects (ingredients), a list of text (steps), enums, numbers |
 | The Meridian Post, news | `@colophon/site-news` | 58113 | `stories` | a featured flag, categories, datelines, bylines |
 | Wren Hollis, portfolio | `@colophon/site-portfolio` | 58114 | `photos` | real uploaded assets served from `/media/v1` at the version the release published, renditions `w320`/`w1280` as `srcset` |
+| Butter & Thyme, in SvelteKit | `@colophon/site-sveltekit` | 58115 | `recipes` | the same recipes from a second framework: a prerendered SvelteKit site that pins one release for the whole build with `?generation=` and refuses an answer from another release (D-220) |
+| Butter & Thyme, in Next.js | `@colophon/site-nextjs` (its own install) | 58116 | `recipes` | the same recipes as a Next.js static export: a prebuild step pins one release for all of Next's build workers (D-220a) |
 
 One project, five collections: the point is that the same published projection can feed front
-ends that share nothing but the API.
+ends that share nothing but the API — and, with the SvelteKit site, more than one framework.
 
 ## Images: the version a release published
 
@@ -116,6 +118,47 @@ token — the audience client and the render wrapper, together about two hundred
 
 A site that cannot reach its API fails the build rather than going live silently empty; a site
 built before any seeding draws the "run the seed" page instead.
+
+## The SvelteKit site (D-220)
+
+`apps/sites/sveltekit` is Butter & Thyme again, built with SvelteKit 3 and `@sveltejs/adapter-static`, and
+the reference for the website's guide on using Colophon with SvelteKit, which quotes its code. It is fully
+prerendered:
+
+- **One release per build.** `src/lib/server/colophon.ts` learns the newest release from the first read's
+  `Colophon-Generation` header, once per build, and every read after it asks for that release with
+  `?generation=N`. An answer naming any other release fails the build, so a publish that lands mid-build can't
+  give two pages two releases. Every page carries `<meta name="colophon-generation">`.
+- **Plain `fetch`, written out.** The delivery read is about fifty lines in the site rather than a
+  `@colophon/site-kit` call, because the guide teaches it; the site still uses the kit for its connection
+  and for rich text.
+- **Rebuilt like the others.** `scripts/serve-demo-sites.sh` builds it into `dist.next` (`SITE_OUT_DIR`) and
+  swaps it in, so the website connection's hook rebuilds it on publish with the other static sites; its
+  small `serve.mjs` serves `dist/` on 58115.
+- **Unseeded, it still builds:** one page that says to seed first. Seeded, a prerenderable route that
+  produced no page fails the build.
+
+`npm test -w @colophon/site-sveltekit` runs the delivery read against a stub API (the release pin, the cursor,
+the refusal of another release, a failed answer), and `npm run check` runs `svelte-check`; both run in CI with
+every workspace's. Live per-request rendering stays The Draft's job: this site shows the static model.
+
+## The Next.js site (D-220a)
+
+`apps/sites/nextjs` is Butter & Thyme a third time, as a Next.js 16 static export (`output: 'export'`), and the
+reference for the website's Next.js guide. Two things differ from the SvelteKit site:
+
+- **The release is pinned before the build.** Next.js renders pages in several worker processes, so a release
+  learned in memory isn't shared between them. `scripts/pin-release.mjs` reads the newest release once and
+  writes `.release.json`; every worker reads that file (`lib/colophon.ts`), and every read asks for that release
+  with `?generation=N` and refuses an answer from any other.
+- **It isn't one of the CMS's npm workspaces.** It has its own `package.json` and `package-lock.json`
+  (`next` 16.4.5, `react` and `react-dom` 19.1.10, pinned exactly), so the CMS's install, audits and supply-chain
+  gate never carry a framework that only a demo uses. `scripts/serve-demo-sites.sh` runs `npm ci` in it the first
+  time, builds it into `dist.next` (`SITE_OUT_DIR`) and swaps it in. CI installs and checks it in a job of its own
+  that runs when it or the API contract changes, and on main, and audits its tree separately.
+
+`npm test` (in `apps/sites/nextjs`) runs the delivery read against a stub API, and `npm run check` runs `tsc`.
+Unseeded, it builds a "seed first" page.
 
 ## The Draft's members area
 

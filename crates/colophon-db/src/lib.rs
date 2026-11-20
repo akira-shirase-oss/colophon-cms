@@ -109,6 +109,11 @@ pub enum DbError {
     /// capacity. Nothing was sent to it, so the caller can safely answer "try again".
     #[error("no database connection became free in time")]
     Busy,
+    /// Postgres aborted the transaction to break a lock cycle (`40P01`) or a serialization
+    /// conflict (`40001`): it rolled back whole, nothing committed, so the caller can answer "try
+    /// again" as for [`Self::Busy`], never a 500.
+    #[error("the database aborted the transaction for a conflicting one; nothing was committed")]
+    Contended,
     /// No answer within the deadline.
     #[error("database did not answer within {0:?}")]
     Timeout(Duration),
@@ -182,7 +187,7 @@ pub enum DbError {
     },
     /// The installation already retains all the pending payload metadata its bound allows
     /// (spec §33, D-135): [`work::check_payload`] refused this transaction's stored bytes,
-    /// under the install-wide byte lock. The transaction is aborted and the caller rolls it
+    /// under the payload counter's lock (D-216). The transaction is aborted and the caller rolls it
     /// back.
     #[error(
         "the installation's pending payload is over its bound ({pending} of {limit} bytes held)"
@@ -202,10 +207,16 @@ pub enum DbError {
 }
 
 impl DbError {
-    /// A query's error: an exhausted pool becomes `Busy`, everything else `Query`.
+    /// A query's error: an exhausted pool becomes `Busy`, a deadlock or serialization abort
+    /// `Contended`, everything else `Query`.
     pub(crate) fn from_query(error: sqlx::Error) -> Self {
         match error {
             sqlx::Error::PoolTimedOut => Self::Busy,
+            sqlx::Error::Database(database)
+                if matches!(database.code().as_deref(), Some("40P01" | "40001")) =>
+            {
+                Self::Contended
+            }
             error => Self::Query(error),
         }
     }
@@ -439,7 +450,36 @@ pub fn set_slow_statement_threshold(threshold: Duration) {
 /// (and reports "not ready") while the database is down, instead of failing to start. The URL
 /// is held to [`check_url`]'s TLS rule first.
 pub fn connect_lazy(url: &str, settings: PoolSettings) -> Result<PgPool, DbError> {
-    let options = check_url(url)?
+    let options = pool_connect_options(url, &settings)?;
+    // No ping on checkout: it is a round trip on every query. sqlx still pings each connection
+    // as it returns to the pool and drops broken ones, so only a connection that breaks while
+    // idle (a database restart) reaches a caller, and fails that one request (D-033).
+    Ok(PgPoolOptions::new()
+        .max_connections(settings.max_connections)
+        .min_connections(0)
+        .acquire_timeout(settings.acquire_timeout)
+        .test_before_acquire(false)
+        // A connection handed back inside a transaction is closed, not pooled (D-217), checked on
+        // one release in `transactions::CANARY_EVERY` once the begin tripwire is armed (D-226).
+        .after_release(transactions::release_check)
+        .connect_lazy_with(options))
+}
+
+/// Proves, on one throwaway connection made exactly as [`connect_lazy`] makes them, that the begin
+/// tripwire works in this process, and arms it (D-226): the release check then runs on one release
+/// in [`transactions::CANARY_EVERY`]. Until this succeeds, and whenever it fails, every release is
+/// checked; the error says which dependency is missing. Call once at startup, after the tracing
+/// subscriber (with [`transactions::begin_tripwire`]) is installed.
+pub async fn arm_release_guard(url: &str) -> Result<(), transactions::TripwireOff> {
+    let options = pool_connect_options(url, &PoolSettings::default())
+        .map_err(|error| transactions::TripwireOff::CouldNotRun(error.to_string()))?;
+    transactions::arm_begin_tripwire(options).await
+}
+
+/// The options every pool's connections are made with: [`check_url`]'s TLS rule, the server's
+/// application name, its statement timeout and the slow-statement log (D-221).
+fn pool_connect_options(url: &str, settings: &PoolSettings) -> Result<PgConnectOptions, DbError> {
+    Ok(check_url(url)?
         .application_name("colophon-server")
         .options([(
             "statement_timeout",
@@ -451,18 +491,7 @@ pub fn connect_lazy(url: &str, settings: PoolSettings) -> Result<PgPool, DbError
                 .get()
                 .copied()
                 .unwrap_or(Duration::from_secs(1)),
-        );
-    // No ping on checkout: it is a round trip on every query. sqlx still pings each connection
-    // as it returns to the pool and drops broken ones, so only a connection that breaks while
-    // idle (a database restart) reaches a caller, and fails that one request (D-033).
-    Ok(PgPoolOptions::new()
-        .max_connections(settings.max_connections)
-        .min_connections(0)
-        .acquire_timeout(settings.acquire_timeout)
-        .test_before_acquire(false)
-        // A connection handed back inside a transaction is closed, not pooled (D-217).
-        .after_release(transactions::release_check)
-        .connect_lazy_with(options))
+        ))
 }
 
 /// Opens the change-hint listener's connection (D-108): its own, not one of the pool's, since
@@ -528,6 +557,56 @@ pub async fn ping(pool: &PgPool, deadline: Duration) -> Result<(), DbError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A driver error carrying only a SQLSTATE, as Postgres reports one.
+    #[derive(Debug)]
+    struct Coded(&'static str);
+
+    impl std::fmt::Display for Coded {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            write!(f, "SQLSTATE {}", self.0)
+        }
+    }
+
+    impl std::error::Error for Coded {}
+
+    impl sqlx::error::DatabaseError for Coded {
+        fn message(&self) -> &'static str {
+            "coded"
+        }
+        fn code(&self) -> Option<std::borrow::Cow<'_, str>> {
+            Some(self.0.into())
+        }
+        fn as_error(&self) -> &(dyn std::error::Error + Send + Sync + 'static) {
+            self
+        }
+        fn as_error_mut(&mut self) -> &mut (dyn std::error::Error + Send + Sync + 'static) {
+            self
+        }
+        fn into_error(self: Box<Self>) -> Box<dyn std::error::Error + Send + Sync + 'static> {
+            self
+        }
+        fn kind(&self) -> sqlx::error::ErrorKind {
+            sqlx::error::ErrorKind::Other
+        }
+    }
+
+    #[test]
+    fn a_deadlock_or_serialization_abort_is_contended_never_a_query_failure() {
+        // CI 44719897863: a sweep aborted with 40P01 reached its caller as `Query`, which the
+        // API answers 500. The transaction rolled back whole, so it is a retryable refusal.
+        for code in ["40P01", "40001"] {
+            let error = DbError::from_query(sqlx::Error::Database(Box::new(Coded(code))));
+            assert!(matches!(error, DbError::Contended), "{code}: {error:?}");
+            let error = DbError::from_write(sqlx::Error::Database(Box::new(Coded(code))));
+            assert!(
+                matches!(error, DbError::Contended),
+                "{code} on a write: {error:?}"
+            );
+        }
+        let other = DbError::from_query(sqlx::Error::Database(Box::new(Coded("42P01"))));
+        assert!(matches!(other, DbError::Query(_)), "{other:?}");
+    }
 
     #[test]
     fn invalid_urls_are_reported_without_echoing_them() {

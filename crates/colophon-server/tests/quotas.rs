@@ -13,9 +13,11 @@
 
 mod common;
 
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
-use common::{Reply, Server, Session, Stopped, app, call, entries, key, project, sign_in};
+use common::{
+    PORT, Reply, Server, Session, Stopped, app, article, call, entries, key, project, sign_in,
+};
 use reqwest::{Method, StatusCode, header};
 use serde_json::{Value, json};
 
@@ -43,13 +45,25 @@ async fn send(session: &Session, method: Method, path: &str, body: Option<&Value
 
 /// A request made with an API token's secret, as a script would send it.
 async fn as_token(secret: &str, method: Method, path: &str) -> Reply {
-    let response = app()
-        .request(method, format!("{}{path}", common::ORIGIN))
+    as_token_at(common::ORIGIN, secret, method, path, None).await
+}
+
+/// [`as_token`] to the server at `base`, with an optional JSON body.
+async fn as_token_at(
+    base: &str,
+    secret: &str,
+    method: Method,
+    path: &str,
+    body: Option<&Value>,
+) -> Reply {
+    let mut request = app()
+        .request(method, format!("{base}{path}"))
         .header(header::AUTHORIZATION, format!("Bearer {secret}"))
-        .header("idempotency-key", key())
-        .send()
-        .await
-        .expect("request");
+        .header("idempotency-key", key());
+    if let Some(body) = body {
+        request = request.json(body);
+    }
+    let response = request.send().await.expect("request");
     let status = response.status();
     let headers = response.headers().clone();
     let body = response.json().await.unwrap_or(Value::Null);
@@ -259,5 +273,170 @@ async fn without_valkey_a_token_is_still_limited_never_unlimited() {
     assert!(
         statuses.ends_with(&[StatusCode::TOO_MANY_REQUESTS; 3]),
         "{statuses:?}"
+    );
+}
+
+/// Spends `secret`'s two requests a minute on the server at `base` until it is refused, and
+/// returns the refusal's `Retry-After`: long enough here (the real minute, not [`WINDOW`]) that
+/// a remembered refusal (D-214) still stands for everything the caller does next.
+async fn throttle(base: &str, secret: &str, list: &str) -> u64 {
+    for _ in 0..4 {
+        let reply = as_token_at(base, secret, Method::GET, list, None).await;
+        if reply.status == StatusCode::TOO_MANY_REQUESTS {
+            let wait = retry_after(&reply);
+            assert!(
+                wait >= 10,
+                "a refusal that outlasts the test's next steps: {wait} s"
+            );
+            // Refused again: the memo's answer, not a fresh one.
+            let again = as_token_at(base, secret, Method::GET, list, None).await;
+            assert_eq!(
+                again.status,
+                StatusCode::TOO_MANY_REQUESTS,
+                "{}",
+                again.body
+            );
+            return wait;
+        }
+        assert_eq!(reply.status, StatusCode::OK, "{}", reply.body);
+    }
+    panic!("two requests a minute never refused the third");
+}
+
+/// The second server's base URL: beside the first, sharing its database and Valkey.
+fn second_base() -> String {
+    format!("http://127.0.0.1:{}", PORT + 1)
+}
+
+/// A remembered refusal ends when the token does (D-214's addendum): revoked, the token hears
+/// 401 on its very next request — on the server that revoked it at once, and on another
+/// server as soon as the change hint reaches it — never the old episode's 429 and its advice
+/// to retry. Red before the fix: both servers answered 429 for the rest of the minute.
+#[tokio::test]
+#[ignore = "needs the local stack and migrations: scripts/stack.sh up && scripts/migrate.sh"]
+async fn a_revoked_token_hears_401_at_once_on_every_server_not_a_remembered_429() {
+    let _server = Server::start().await;
+    let _second = Server::start_on(PORT + 1, &[]).await;
+    let other = second_base();
+    let owner = sign_in("dev-owner").await;
+    let project = project(&owner).await;
+    let (secret, id, _) = make(&owner, &project, &json!({"requests_per_minute": 2})).await;
+    let list = entries(&project);
+    throttle(common::ORIGIN, &secret, &list).await;
+    // The shared count is spent: the second server refuses on its first request and remembers.
+    let refused = as_token_at(&other, &secret, Method::GET, &list, None).await;
+    assert_eq!(
+        refused.status,
+        StatusCode::TOO_MANY_REQUESTS,
+        "{}",
+        refused.body
+    );
+    let refused = as_token_at(&other, &secret, Method::GET, &list, None).await;
+    assert_eq!(
+        refused.status,
+        StatusCode::TOO_MANY_REQUESTS,
+        "{}",
+        refused.body
+    );
+
+    let revoked = send(
+        &owner,
+        Method::DELETE,
+        &format!("{}/{id}", tokens(&project)),
+        None,
+    )
+    .await;
+    assert_eq!(revoked.status, StatusCode::OK, "{}", revoked.body);
+
+    let here = as_token(&secret, Method::GET, &list).await;
+    assert_eq!(
+        (here.status, &here.body["error"]["code"]),
+        (StatusCode::UNAUTHORIZED, &json!("unauthorized")),
+        "the revoking server: {}",
+        here.body
+    );
+    // The other server hears the change through the change-hint channel (a pump pass every
+    // 100 ms, then its listener): two seconds is twenty passes.
+    let started = Instant::now();
+    loop {
+        let there = as_token_at(&other, &secret, Method::GET, &list, None).await;
+        if there.status == StatusCode::UNAUTHORIZED {
+            break;
+        }
+        assert_eq!(
+            there.status,
+            StatusCode::TOO_MANY_REQUESTS,
+            "{}",
+            there.body
+        );
+        assert!(
+            started.elapsed() < Duration::from_secs(2),
+            "the second server still answers the revoked token 429: {}",
+            there.body
+        );
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+}
+
+/// Removing the ceiling takes effect at once (D-214's addendum): the token's next request is
+/// judged on its limits as they are now, not on the episode the memo remembers. Red before the
+/// fix: 429 for the rest of the minute.
+#[tokio::test]
+#[ignore = "needs the local stack and migrations: scripts/stack.sh up && scripts/migrate.sh"]
+async fn removing_the_ceiling_admits_the_next_request_at_once() {
+    let _server = Server::start().await;
+    let owner = sign_in("dev-owner").await;
+    let project = project(&owner).await;
+    let (secret, id, _) = make(&owner, &project, &json!({"requests_per_minute": 2})).await;
+    let list = entries(&project);
+    throttle(common::ORIGIN, &secret, &list).await;
+
+    let cleared = send(
+        &owner,
+        Method::PATCH,
+        &format!("{}/{id}", tokens(&project)),
+        Some(&json!({"limits": null})),
+    )
+    .await;
+    assert_eq!(cleared.status, StatusCode::OK, "{}", cleared.body);
+    for n in 0..4 {
+        let reply = as_token(&secret, Method::GET, &list).await;
+        assert_eq!(reply.status, StatusCode::OK, "request {n}: {}", reply.body);
+    }
+}
+
+/// A ceiling replaced by a budget is judged by the budget (D-214's addendum): with
+/// `documents_per_day: 1` and no request ceiling, the token reads freely, writes once, and its
+/// second write hears the budget's own 403 `budget_exceeded` — not the old episode's 429.
+#[tokio::test]
+#[ignore = "needs the local stack and migrations: scripts/stack.sh up && scripts/migrate.sh"]
+async fn a_ceiling_replaced_by_a_budget_is_judged_by_the_budget() {
+    let _server = Server::start().await;
+    let owner = sign_in("dev-owner").await;
+    let project = project(&owner).await;
+    let (secret, id, _) = make(&owner, &project, &json!({"requests_per_minute": 2})).await;
+    let list = entries(&project);
+    throttle(common::ORIGIN, &secret, &list).await;
+
+    let replaced = send(
+        &owner,
+        Method::PATCH,
+        &format!("{}/{id}", tokens(&project)),
+        Some(&json!({"limits": {"documents_per_day": 1}})),
+    )
+    .await;
+    assert_eq!(replaced.status, StatusCode::OK, "{}", replaced.body);
+    let read = as_token(&secret, Method::GET, &list).await;
+    assert_eq!(read.status, StatusCode::OK, "{}", read.body);
+    let body = article("The one a day", "x");
+    let written = as_token_at(common::ORIGIN, &secret, Method::POST, &list, Some(&body)).await;
+    assert_eq!(written.status, StatusCode::CREATED, "{}", written.body);
+    let body = article("One too many", "x");
+    let refused = as_token_at(common::ORIGIN, &secret, Method::POST, &list, Some(&body)).await;
+    assert_eq!(
+        (refused.status, &refused.body["error"]["details"]["reason"]),
+        (StatusCode::FORBIDDEN, &json!("budget_exceeded")),
+        "{}",
+        refused.body
     );
 }

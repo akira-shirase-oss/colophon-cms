@@ -37,6 +37,7 @@ import http from 'k6/http';
 import { check, fail } from 'k6';
 import exec from 'k6/execution';
 import { Rate } from 'k6/metrics';
+import { idempotencyKey } from './lib/idempotency-key.js';
 
 const BASE_URL = __ENV.BASE_URL || 'http://127.0.0.1:58000';
 const PUBLIC_URL = __ENV.PUBLIC_URL || 'http://localhost:58000';
@@ -178,7 +179,7 @@ function article(title, text) {
 }
 
 function key() {
-  return `k6-${__VU}-${__ITER}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+  return idempotencyKey(`k6-${__VU}-${__ITER}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`, 'noisy-agent');
 }
 
 export function setup() {
@@ -212,7 +213,7 @@ export function setup() {
       const batch = [];
       for (let j = i; j < Math.min(i + 40, ARTICLES); j += 1) {
         batch.push(['POST', project.entries, article(`Article ${j}`, 'Start'), {
-          headers: Object.assign({ 'Idempotency-Key': `k6-l08-${stamp}-${project.base.slice(-6)}-${j}` }, owner),
+          headers: Object.assign({ 'Idempotency-Key': idempotencyKey(`k6-l08-${stamp}-${project.base.slice(-6)}-${j}`, 'noisy-agent') }, owner),
           tags: { name: 'setup' },
         }]);
       }
@@ -243,7 +244,7 @@ export function editorial(data) {
   const etag = etags[mine.id] ?? mine.etag;
   const url = `${project.entries}/${mine.id}`;
   const tags = { arm: which.arm, w: which.w };
-  const roll = __ITER % 10;
+  const roll = exec.scenario.iterationInTest % 10;
 
   if (roll < 2) {
     const headers = {

@@ -33,6 +33,7 @@ import http from 'k6/http';
 import { check, fail, sleep } from 'k6';
 import exec from 'k6/execution';
 import { Counter } from 'k6/metrics';
+import { idempotencyKey } from './lib/idempotency-key.js';
 
 const BASE_URL = __ENV.BASE_URL || 'http://127.0.0.1:58000';
 const PUBLIC_URL = __ENV.PUBLIC_URL || 'http://localhost:58000';
@@ -190,18 +191,18 @@ export function setup() {
   // A release behind the delivery reads: 20 published articles.
   const live = [];
   for (let i = 0; i < 20; i += 1) {
-    const created = http.post(entries, JSON.stringify(article(`Public ${i}`, 'published')), { headers: Object.assign({ 'Idempotency-Key': `k6-l11-${run}-p${i}` }, owner) });
+    const created = http.post(entries, JSON.stringify(article(`Public ${i}`, 'published')), { headers: Object.assign({ 'Idempotency-Key': idempotencyKey(`k6-l11-${run}-p${i}`, 'cache-down') }, owner) });
     if (created.status !== 201) fail(`public article ${i}: HTTP ${created.status}`);
     live.push(created.json('data.id'));
   }
   const changes = { title: 'release 1', entries: live };
-  const set = http.post(`${base}/changesets`, JSON.stringify(changes), { headers: Object.assign({ 'Idempotency-Key': `k6-l11-${run}-c` }, owner) });
+  const set = http.post(`${base}/changesets`, JSON.stringify(changes), { headers: Object.assign({ 'Idempotency-Key': idempotencyKey(`k6-l11-${run}-c`, 'cache-down') }, owner) });
   if (set.status !== 201) fail(`changeset: HTTP ${set.status} ${set.body}`);
   const path = `${base}/changesets/${set.json('data.id')}`;
   const ifMatch = Object.assign({ 'If-Match': `"${set.json('data.hash')}"` }, owner);
   http.post(`${path}/submit`, null, { headers: ifMatch });
   http.post(`${path}/reviews`, JSON.stringify({ decision: 'approve' }), { headers: ifMatch });
-  const published = http.post(`${path}/publish`, JSON.stringify({ base_generation: 0 }), { headers: Object.assign({ 'Idempotency-Key': `k6-l11-${run}-p` }, ifMatch) });
+  const published = http.post(`${path}/publish`, JSON.stringify({ base_generation: 0 }), { headers: Object.assign({ 'Idempotency-Key': idempotencyKey(`k6-l11-${run}-p`, 'cache-down') }, ifMatch) });
   if (published.status !== 201) fail(`publish: HTTP ${published.status} ${published.body}`);
 
   return { owner, entries, content: `${BASE_URL}/content/v1/${project.json('data.id')}/production/articles`, live, run };
@@ -215,8 +216,8 @@ function note(res) {
 export function read(data) {
   const tags = { phase: phase() };
   let res;
-  if (__ITER % 4 === 0) {
-    res = http.get(`${data.content}/${data.live[__ITER % data.live.length]}`, { redirects: 0, tags: Object.assign({ name: 'content/{entry}' }, tags) });
+  if (exec.scenario.iterationInTest % 4 === 0) {
+    res = http.get(`${data.content}/${data.live[exec.scenario.iterationInTest % data.live.length]}`, { redirects: 0, tags: Object.assign({ name: 'content/{entry}' }, tags) });
   } else {
     res = http.get(data.content, { redirects: 0, tags: Object.assign({ name: 'content' }, tags) });
   }
@@ -233,7 +234,9 @@ export function read(data) {
 // acknowledged with. Lazy creation, not a setup pool: exec.vu.idInTest is global across
 // every scenario, so a fixed pool could hand one article to two VUs and their saves
 // would conflict — a fake failure the scenario would manufacture itself.
+// per-VU state: picked once per VU and only read after; no step order.
 let mine = null;
+// per-VU state: the VU's own resource's version, refreshed by every save and read; any read/save order is valid.
 let etag = null;
 
 /** One signed-in iteration: a save on this VU's own article, or a read-back of it. The
@@ -245,7 +248,7 @@ export function write(data) {
   };
   if (mine === null) {
     const created = http.post(data.entries, JSON.stringify(article(`Draft by VU ${exec.vu.idInTest}`, 'start')), {
-      headers: Object.assign({ 'Idempotency-Key': `k6-l11-${data.run}-w${exec.vu.idInTest}` }, headers),
+      headers: Object.assign({ 'Idempotency-Key': idempotencyKey(`k6-l11-${data.run}-w${exec.vu.idInTest}`, 'cache-down') }, headers),
       redirects: 0, tags: Object.assign({ name: 'entries', endpoint: 'create' }, tags),
     });
     note(created);
@@ -258,9 +261,9 @@ export function write(data) {
     return;
   }
   const url = `${data.entries}/${mine}`;
-  if (__ITER % 3 === 0) {
+  if (exec.scenario.iterationInTest % 3 === 0) {
     const res = http.put(url, JSON.stringify(article(`Article by VU ${exec.vu.idInTest}`, `iteration ${__ITER}`)), {
-      headers: Object.assign({ 'If-Match': etag, 'Idempotency-Key': `k6-l11-${data.run}-${exec.vu.idInTest}-${__ITER}` }, headers),
+      headers: Object.assign({ 'If-Match': etag, 'Idempotency-Key': idempotencyKey(`k6-l11-${data.run}-${exec.vu.idInTest}-${__ITER}`, 'cache-down') }, headers),
       redirects: 0, tags: Object.assign({ name: 'entries/{entry}', endpoint: 'save' }, tags),
     });
     note(res);
@@ -304,7 +307,7 @@ export function probe() {
  *  accepted work is not lost. */
 export function sentinel(data) {
   const created = http.post(data.entries, JSON.stringify(article(`Sentinel ${data.run}`, 'written while the cache was down')), {
-    headers: Object.assign({ 'Idempotency-Key': `k6-l11-${data.run}-sentinel` }, data.owner),
+    headers: Object.assign({ 'Idempotency-Key': idempotencyKey(`k6-l11-${data.run}-sentinel`, 'cache-down') }, data.owner),
     redirects: 0, tags: { name: 'entries', phase: 'outage' },
   });
   note(created);

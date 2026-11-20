@@ -311,9 +311,9 @@ pub async fn append(
     }
     // The items' inputs are the manifest's payload metadata: a chunk can carry a megabyte
     // where the job row carried almost nothing, so the install-wide byte bound answers with
-    // this append's own bytes counted (D-135). The admission pair is already held — the
-    // caller's `lock` took it before this row's lock — so the count can't stale against a
-    // concurrent admission.
+    // this append's own bytes counted (D-135). The project's admission lock is already held
+    // (the caller's `lock` took it before this row's lock), and the check locks the payload
+    // counter last, to commit, so the count can't stale against a concurrent admission (D-216).
     crate::work::check_payload(tx).await?;
     Ok((landed, duplicates))
 }
@@ -337,9 +337,9 @@ pub async fn get(tx: &mut ProjectTransaction, id: Uuid) -> Result<Option<Job>, D
 }
 
 /// The job, locked for a state change (seal, cancel, or an append that adds payload). The
-/// admission pair comes first (D-135): an append's post-write [`crate::work::check_payload`]
-/// must find the byte lock already held, before this row lock, so the two locks and the row
-/// lock can never queue in a circle.
+/// project's admission lock comes first (D-135): an append's post-write
+/// [`crate::work::check_payload`] then locks the payload counter last, so the locks can never
+/// queue in a circle (D-216).
 pub async fn lock(tx: &mut ProjectTransaction, id: Uuid) -> Result<Option<Job>, DbError> {
     crate::work::admission(tx).await?;
     let row = sqlx::query_as!(
@@ -417,10 +417,18 @@ pub async fn cancel(tx: &mut ProjectTransaction, id: Uuid) -> Result<bool, DbErr
         return Ok(false);
     }
     sqlx::query!(
-        "UPDATE bulk_items SET outcome = 'skipped',
+        "WITH pending AS (
+             SELECT project_id, environment_id, job_id, key FROM bulk_items
+             WHERE project_id = $1 AND environment_id = $2 AND job_id = $3 AND outcome = 'pending'
+             ORDER BY key
+             FOR UPDATE
+         )
+         UPDATE bulk_items i SET outcome = 'skipped',
             problem = jsonb_build_object('reason', 'cancelled', 'pointer', '',
                                          'message', 'the job was cancelled before this item ran')
-         WHERE project_id = $1 AND environment_id = $2 AND job_id = $3 AND outcome = 'pending'",
+         FROM pending
+         WHERE i.project_id = pending.project_id AND i.environment_id = pending.environment_id
+           AND i.job_id = pending.job_id AND i.key = pending.key",
         tx.project,
         tx.environment,
         id

@@ -9,11 +9,16 @@
 //! notification Postgres sent while the connection was dead is gone, so every reconnect (and
 //! every hard error) ends in a `resync` to all streams — clients reload instead of trusting a
 //! view that may have skipped a commit. There is no durable replay anywhere in the chain.
+//!
+//! The listener also ends the quota refusals this process remembers (D-214's addendum): a hint
+//! that a project's tokens, members or roles changed ends that project's, and a reconnect —
+//! whose gap may hold such a hint — ends them all. A lost hint costs at most the refusal's own
+//! `Retry-After`: a remembered refusal never outlives the window it was refused in.
 
 use std::{sync::Arc, time::Duration};
 
-use colophon_api::events::EventBus;
-use colophon_db::events::{CHANNEL, Hint};
+use colophon_api::{admission::Admission, events::EventBus};
+use colophon_db::events::{CHANNEL, Hint, Kind};
 use tokio_util::sync::CancellationToken;
 
 /// How often the pump sends queued hints (D-180): the most a live list's hint waits.
@@ -64,7 +69,12 @@ const RECONNECT_DELAY: Duration = Duration::from_secs(2);
 /// listener silently stops the live lists, and the reconnect itself is what tells streams to
 /// resync. Every blocking call is wrapped in the cancellation token — `connect` and `listen`
 /// can wait out sqlx's internal retries on a dead database, and a shutdown must not.
-pub async fn run(bus: Arc<EventBus>, database_url: String, cancel: CancellationToken) {
+pub async fn run(
+    bus: Arc<EventBus>,
+    admission: Arc<Admission>,
+    database_url: String,
+    cancel: CancellationToken,
+) {
     'reconnect: loop {
         let connected = tokio::select! {
             () = cancel.cancelled() => return,
@@ -95,6 +105,9 @@ pub async fn run(bus: Arc<EventBus>, database_url: String, cancel: CancellationT
                 () = tokio::time::sleep(RECONNECT_DELAY) => continue 'reconnect,
             }
         }
+        // Listening from here on: whatever changed before is unknown, so no refusal remembered
+        // before now stands.
+        admission.forget_every_refusal();
         loop {
             let message = tokio::select! {
                 () = cancel.cancelled() => return,
@@ -103,6 +116,7 @@ pub async fn run(bus: Arc<EventBus>, database_url: String, cancel: CancellationT
             match message {
                 Ok(Some(notification)) => {
                     if let Some(hint) = Hint::decode(notification.payload()) {
+                        ends_refusals(&admission, &hint);
                         bus.publish(hint);
                     } else {
                         // A payload we don't read can only under-deliver; it still means
@@ -117,10 +131,12 @@ pub async fn run(bus: Arc<EventBus>, database_url: String, cancel: CancellationT
                 // anything notified in the gap is gone, so every stream resyncs.
                 Ok(None) => {
                     tracing::warn!("the change-hint listener reconnected; streams resync");
+                    admission.forget_every_refusal();
                     bus.resync();
                 }
                 Err(error) => {
                     tracing::warn!(%error, "the change-hint listener failed; reconnecting");
+                    admission.forget_every_refusal();
                     bus.resync();
                     tokio::select! {
                         () = cancel.cancelled() => return,
@@ -129,5 +145,14 @@ pub async fn run(bus: Arc<EventBus>, database_url: String, cancel: CancellationT
                 }
             }
         }
+    }
+}
+
+/// Ends `hint.project`'s remembered quota refusals when the hint says something a refusal was
+/// judged on changed (D-214's addendum): a token (its row, permissions or limits), or the
+/// members and roles a token's access rests on.
+fn ends_refusals(admission: &Admission, hint: &Hint) {
+    if matches!(hint.kind, Kind::Tokens | Kind::Members | Kind::Roles) {
+        admission.tokens_changed(hint.project);
     }
 }

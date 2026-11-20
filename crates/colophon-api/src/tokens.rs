@@ -413,7 +413,13 @@ pub(crate) async fn update(
         .await?;
     }
     let usage = usage(&state, &mut tx, &token).await?;
+    let project = tx.project;
     tx.commit().await.map_err(ApiError::from_db)?;
+    // The token's refusals end with its old limits, on this server at once (D-214's
+    // addendum); every other server hears the change hint.
+    if let Some(admission) = &state.admission {
+        admission.tokens_changed(project);
+    }
     Ok(Json(Data {
         data: TokenView::new(token, None, Some(usage))?,
     }))
@@ -585,7 +591,13 @@ pub(crate) async fn revoke(
         Revoked::Already(token) => *token,
         Revoked::NotFound => return Err(ApiError::NotFound),
     };
+    let project = tx.project;
     tx.commit().await.map_err(ApiError::from_db)?;
+    // A revoked token's remembered refusals end with it, on this server at once (D-214's
+    // addendum): its next request hears 401. Every other server hears the change hint.
+    if let Some(admission) = &state.admission {
+        admission.tokens_changed(project);
+    }
     Ok(Json(Data {
         data: TokenView::new(token, None, None)?,
     }))

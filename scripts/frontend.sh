@@ -21,6 +21,10 @@ npm test --workspaces --if-present
 node --test perf/k6/lib/*.test.mjs
 # Light animations only: nothing moves forever but the listed work-in-progress indicators.
 node --test scripts/test-motion.mjs
+# The e2e server's port is picked free, never fixed (two checks on one machine can't meet).
+node --test scripts/test-free-ports.mjs
+# The integration half's fixed-port starters refuse a port someone else holds.
+scripts/test-port-guard.sh
 # What npm would ship of @colophon-cms/sdk and @colophon-cms/rich-text, installed and used from
 # the tarballs (D-170): allowlist, budgets, publint, attw, Node, TypeScript, a browser bundle.
 node packages/sdk/scripts/pack-check.mjs
