@@ -683,10 +683,16 @@ if (( post_run_ready == 0 )); then
   echo "error: the server is not ready after the run" >&2
   k6_status=1
 fi
+# D-221's evidence (a slow statement under a second) is not a failure; every other WARN or ERROR is.
+# The predicates live in scripts/lib/load-warnings.jq, which scripts/test-load-warnings.sh tests.
+warnings_lib="$(cat scripts/lib/load-warnings.jq)"
+counted_jq="$warnings_lib select(counted)"
+slow_jq="$warnings_lib select(slow_statement)"
+count_logged() { jq -Rn "[inputs | fromjson? | $counted_jq] | length"; }
 if [[ "$cluster" == "1" ]]; then
   server_warnings=0
   while read -r file size; do
-    added=$(tail -c +"$(( size + 1 ))" "$file" | grep -c '"level":"\(WARN\|ERROR\)"' || true)
+    added=$(tail -c +"$(( size + 1 ))" "$file" | count_logged)
     server_warnings=$(( server_warnings + added ))
   done <"$work/log-sizes"
 elif [[ "$endpoint" == "cache-down" || "$endpoint" == "postgres-trouble" ]]; then
@@ -712,9 +718,9 @@ elif [[ "$endpoint" == "cache-down" || "$endpoint" == "postgres-trouble" ]]; the
       --argjson lo "$lo" --argjson hi "$hi" '
       def epoch: try ((.timestamp[0:19] + "Z") | fromdateiso8601) catch -1;
       [split("\n")[] | fromjson? | select(.level == "WARN" or .level == "ERROR")
-       | select(epoch == -1 or epoch < $lo or epoch > $hi)]')
+       | select(epoch == -1 or epoch < $lo or epoch > $hi) | '"$counted_jq"']')
   else
-    warnings_outside=$(cat "${warn_logs[@]}" | jq -Rsc '[split("\n")[] | fromjson? | select(.level == "WARN" or .level == "ERROR")]')
+    warnings_outside=$(cat "${warn_logs[@]}" | jq -Rsc '[split("\n")[] | fromjson? | '"$counted_jq"']')
   fi
   server_warnings=$(jq 'length' <<<"$warnings_outside")
 elif [[ -n "${DRILL_WINDOWS:-}" && -f "$DRILL_WINDOWS" ]]; then
@@ -732,15 +738,20 @@ elif [[ -n "${DRILL_WINDOWS:-}" && -f "$DRILL_WINDOWS" ]]; then
     def epoch: try ((.timestamp[0:19] + "Z") | fromdateiso8601) catch -1;
     [split("\n")[] | fromjson? | select(.level == "WARN" or .level == "ERROR")
      | . as $l | ($l | epoch) as $t
-     | select($t == -1 or ([$ws[] | select($t >= .s and $t <= .e)] | length) == 0)]')
+     | select($t == -1 or ([$ws[] | select($t >= .s and $t <= .e)] | length) == 0) | '"$counted_jq"']')
   server_warnings=$(jq 'length' <<<"$warnings_outside")
   warnings_all=$(cat "${warn_logs[@]}" | jq -Rsc \
-    '[split("\n")[] | fromjson? | select(.level == "WARN" or .level == "ERROR")] | length')
+    '[split("\n")[] | fromjson? | '"$counted_jq"'] | length')
   warnings_in=$(( warnings_all - server_warnings ))
   drills_windows=1
 else
-  server_warnings=$(grep -c '"level":"\(WARN\|ERROR\)"' "$work/server.log" || true)
+  server_warnings=$(count_logged <"$work/server.log")
 fi
+# The evidence the gate no longer counts, kept in the record: how many slow statements, and the slowest.
+slow_logs=("$work/server.log")
+for log in "$work"/worker*.log; do [[ -f "$log" ]] && slow_logs+=("$log"); done
+slow_statements=$(cat "${slow_logs[@]}" | jq -Rsc "[split(\"\\n\")[] | fromjson? | $slow_jq | .elapsed_secs // 0]
+  | {count: length, max_ms: ((max // 0) * 1000 | round)}")
 
 # mixed.js cannot read the windows file itself — open() is init-stage only — so
 # with drills announced it stamps every failed assertion `L05FAIL <epoch_s>` on
@@ -862,7 +873,7 @@ record=$(jq -c \
   --arg scenario "$scenario" --arg endpoint "$endpoint" --arg stamp "$stamp" --arg commit "$commit" --argjson dirty "$dirty" \
   --arg cpu "$cpu" --argjson cores "$cores" --argjson memory_gb "$memory_gb" --arg machine "$machine" \
   --arg os "$(uname -s) $(uname -r)" --arg k6 "$("$k6" version | awk '{print $2}')" \
-  --argjson tx "$(( tx_after - tx_before ))" --argjson warnings "$server_warnings" \
+  --argjson tx "$(( tx_after - tx_before ))" --argjson warnings "$server_warnings" --argjson slow "${slow_statements:-null}" \
   --argjson k6_status "$k6_status" --argjson topology "$topology" --argjson resources "$resources" \
   --argjson drills "$drills_json" \
   --arg total "${TOTAL:-1000000}" --arg vus "$VUS" --arg rate "$RATE" --arg duration "${DURATION:-60s}" \
@@ -889,6 +900,11 @@ record=$(jq -c \
       failed_checks: [.root_group | .. | objects | .checks? // empty | (if type == "object" then to_entries | map(.value) else . end)[]
                       | select((.fails // 0) > 0) | "\(.name): \(.fails) of \((.passes // 0) + .fails)"]
     }),
+    # Every check by name with its passes and fails, so a limit decision has the measured mix (how
+    # many of each operation ran), not the one the scenario was designed for. Nested groups included;
+    # k6 <0.5x exports checks as a map, later versions as a list.
+    checks_by_name: ([.root_group | .. | objects | .checks? // empty | (if type == "object" then to_entries | map(.value) else . end)[]
+      | {key: .name, value: {passes: (.passes // 0), fails: (.fails // 0)}}] | from_entries),
     dropped: (.metrics.dropped_iterations.count // 0),
     latency_ms: (.metrics.http_req_duration | {
       avg: (.avg * 1000 | round / 1000), p50: (.med * 1000 | round / 1000),
@@ -897,6 +913,7 @@ record=$(jq -c \
       max: (.max * 1000 | round / 1000) }),
     database_transactions_during_run: $tx,
     server_warnings: $warnings,
+    slow_statements: $slow,
     thresholds_passed: ($k6_status == 0)
   } + (if $resources then {resources: $resources} else {} end)
     + (if $drills then {drills: $drills} else {} end)

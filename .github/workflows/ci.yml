@@ -156,6 +156,8 @@ jobs:
         run: scripts/test-smoke-parity.sh
       - name: The smokes job's strict verdict on its expected failures (scripts/test-smoke-verdict.sh, D-209)
         run: scripts/test-smoke-verdict.sh
+      - name: The load runs' warnings gate (scripts/test-load-warnings.sh, D-221 evidence under 1 s excused)
+        run: scripts/test-load-warnings.sh
 
   # The testing rule (D-018) from a clean clone: the real stack, the real binary, real outages,
   # the testbed in a browser, and a load smoke run.
