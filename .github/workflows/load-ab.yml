@@ -83,7 +83,7 @@ jobs:
                 tag="$endpoint.$variant.$run"
                 echo "::group::$tag: $line"
                 env K6_OUT="json=$out/$tag.k6.json" RECORD_OUT="$out/$tag.record.json" SERVER_LOG="$out/$tag.server.log" \
-                  bash -c "$line" || echo "::warning::$tag failed its own verdict (recorded, not hidden)"
+                  bash -c "$line" </dev/null || echo "::warning::$tag failed its own verdict (recorded, not hidden)"
                 echo "::endgroup::"
                 evidence=""
                 if [[ "$endpoint" == cold-cache && -s "$out/$tag.k6.json" ]]; then
@@ -93,6 +93,9 @@ jobs:
                 elif [[ "$endpoint" == noisy-agent && -s "$out/$tag.record.json" ]]; then
                   evidence=$(jq -r '.l08.ratios | to_entries | map("\(.key) \(.value)") | join("; ")' "$out/$tag.record.json" 2>/dev/null || true)
                 fi
+                # The evidence in the artifact too (a job summary can't be read back), then printed.
+                printf '%s\t%s\t%s\t%s\n' "$endpoint" "$variant" "$run" "$evidence" >>"$out/evidence.tsv"
+                echo "$tag: ${evidence:-no extra evidence}"
                 # The JSON stream is large and has served its count; the record and the log stay.
                 rm -f "$out/$tag.k6.json"
                 if [[ -s "$out/$tag.record.json" ]]; then
@@ -106,6 +109,11 @@ jobs:
             done
             cp "$out/$endpoint.fixed.js" "$script"
           done <<<"$COMMANDS"
+          # Every command line must have produced its four runs: a loop that lost a line (a command
+          # reading the loop's stdin did, once) fails here instead of passing on fewer runs.
+          expected=$(grep -cv '^[[:space:]]*$' <<<"$COMMANDS")
+          got=$(cut -f1 "$out/evidence.tsv" 2>/dev/null | sort -u | wc -l)
+          if (( got != expected )); then echo "::error::$got of $expected commands ran"; status=1; fi
           exit "$status"
       - name: Keep the records
         if: always()
