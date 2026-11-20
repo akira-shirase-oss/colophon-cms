@@ -7,6 +7,7 @@
 
 import http from 'k6/http';
 import { check, fail } from 'k6';
+import exec from 'k6/execution';
 
 const BASE_URL = __ENV.BASE_URL || 'http://127.0.0.1:58000';
 const PUBLIC_URL = __ENV.PUBLIC_URL || 'http://localhost:58000';
@@ -83,7 +84,7 @@ export function setup() {
 
 export default function (data) {
   const params = { headers: { Cookie: data.cookie }, redirects: 0 };
-  if (__ITER % 2 === 0) {
+  if (exec.scenario.iterationInTest % 2 === 0) {
     const res = http.get(`${BASE_URL}/me`, Object.assign({ tags: { endpoint: 'me' } }, params));
     check(res, {
       'me 200': (r) => r.status === 200,

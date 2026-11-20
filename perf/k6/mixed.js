@@ -28,6 +28,7 @@ import http from 'k6/http';
 import { check, fail } from 'k6';
 import exec from 'k6/execution';
 import { Counter } from 'k6/metrics';
+import { idempotencyKey } from './lib/idempotency-key.js';
 
 const BASE_URL = __ENV.BASE_URL || 'http://127.0.0.1:58000';
 const PUBLIC_URL = __ENV.PUBLIC_URL || 'http://localhost:58000';
@@ -133,13 +134,14 @@ const article = (title, text) => JSON.stringify({
 });
 
 function key() {
-  return `k6-l05-${__VU}-${__ITER}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+  return idempotencyKey(`k6-l05-${__VU}-${__ITER}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`, 'mixed');
 }
 
 // A session lives 12 hours absolute however busy (SessionSettings::default), so a 24 h soak
 // must re-authenticate at the boundary instead of collecting 401s — the 2026-11-09 run's
 // entire second half was exactly that. Each VU keeps its own credential snapshot: `data` is
 // per-VU already, and a re-login here signs in as the same dev-owner the setup() session did.
+// per-VU state: set once on first use and only read after; no step order.
 let creds = null;
 function session(data) {
   if (creds === null) creds = { cookie: data.session.cookie, csrf: data.session.csrf };
@@ -199,7 +201,7 @@ export function setup() {
     file += JSON.stringify({ title: `Article ${i}`, body: { schema: 'colophon/rich-text', version: 1, doc: { type: 'doc', content: [{ type: 'paragraph', content: [{ type: 'text', text: 'first' }] }] } } }) + '\n';
     if ((i + 1) % 512 === 0 || i === CORPUS - 1) {
       const imported = http.post(`${env}/collections/articles/import`, file, {
-        headers: Object.assign({}, write, { 'Content-Type': 'application/jsonlines', 'Idempotency-Key': `k6-seed-${slug}-${i}` }),
+        headers: Object.assign({}, write, { 'Content-Type': 'application/jsonlines', 'Idempotency-Key': idempotencyKey(`k6-seed-${slug}-${i}`, 'mixed') }),
       });
       if (imported.status !== 201) fail(`seed import: HTTP ${imported.status} ${imported.body}`);
       for (const outcome of imported.json('data.outcomes')) ids.push(outcome.entry);
@@ -209,7 +211,7 @@ export function setup() {
   let generation = 0;
   for (let c = 0; c * 100 < ids.length; c += 1) {
     const set = http.post(`${env}/changesets`, JSON.stringify({ title: `release ${c}`, entries: ids.slice(c * 100, c * 100 + 100) }), {
-      headers: Object.assign({ 'Idempotency-Key': `k6-cs-${slug}-${c}` }, write),
+      headers: Object.assign({ 'Idempotency-Key': idempotencyKey(`k6-cs-${slug}-${c}`, 'mixed') }, write),
     });
     if (set.status !== 201) fail(`changeset ${c}: HTTP ${set.status} ${set.body}`);
     const path = `${env}/changesets/${set.json('data.id')}`;
@@ -217,7 +219,7 @@ export function setup() {
     http.post(`${path}/submit`, null, { headers: ifMatch });
     http.post(`${path}/reviews`, JSON.stringify({ decision: 'approve' }), { headers: ifMatch });
     const published = http.post(`${path}/publish`, JSON.stringify({ base_generation: generation }), {
-      headers: Object.assign({ 'Idempotency-Key': `k6-pub-${slug}-${c}` }, ifMatch),
+      headers: Object.assign({ 'Idempotency-Key': idempotencyKey(`k6-pub-${slug}-${c}`, 'mixed') }, ifMatch),
     });
     if (published.status !== 201) fail(`publish ${c}: HTTP ${published.status} ${published.body}`);
     generation = published.json('data.generation');
@@ -252,19 +254,19 @@ function account(res, params) {
 
 export function reads(data) {
   const params = (endpoint) => ({ redirects: 0, tags: { arm: 'read', endpoint } });
-  const slot = __ITER % 10;
+  const slot = exec.scenario.iterationInTest % 10;
   let res; let pinned = false;
   if (slot < 4) {
     res = http.get(`${data.delivery}?limit=50`, params('latest'));
   } else if (slot < 6) {
     pinned = true;
-    const generation = 1 + (__ITER % data.generation);
+    const generation = 1 + (exec.scenario.iterationInTest % data.generation);
     res = http.get(`${data.delivery}?limit=50&generation=${generation}`, params('pinned'));
     verify(res, {
       'pinned list answers at the release asked for': (r) => r.status === 200 && r.headers['Colophon-Generation'] === String(generation),
     });
   } else if (slot < 8) {
-    res = http.get(`${data.delivery}/${data.ids[__ITER % data.ids.length]}`, params('entry'));
+    res = http.get(`${data.delivery}/${data.ids[exec.scenario.iterationInTest % data.ids.length]}`, params('entry'));
   } else {
     pinned = true;
     // Pin at the entry's OWN release: ids publish in 100-entry changesets, so ids[i]
@@ -272,7 +274,7 @@ export function reads(data) {
     // legitimate 404 (the 2026-11-11 v3 run stamped it ~320k times). Pinned to its
     // own release the entry always exists, so 200 plus the echoed generation is
     // still the contract.
-    const idx = __ITER % data.ids.length;
+    const idx = exec.scenario.iterationInTest % data.ids.length;
     const want = 1 + Math.floor(idx / 100);
     res = http.get(`${data.delivery}/${data.ids[idx]}?generation=${want}`, params('pinned_entry'));
     verify(res, {
@@ -285,6 +287,7 @@ export function reads(data) {
 }
 
 // A write VU's own truth: the ETag of the revision it last saved — read-your-writes.
+// per-VU state: the VU's own resource's version, refreshed by every save and read; any read/save order is valid.
 let etag = null;
 export function writes(data) {
   const mine = data.ids[exec.vu.idInTest % data.ids.length];
