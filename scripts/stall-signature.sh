@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Whether a smoke's hard failures are a runner IO stall, from evidence (learning-60, 2026-11-20): every second in
 # which the server logged a failed request must show the runner's disk stalled (all its tasks stalled on IO for
-# 25% or more of that second or one either side, from /proc/pressure/io's `full` total) and a COMMIT queue (of the
+# 20% or more of that second or one either side, from /proc/pressure/io's `full` total) and a COMMIT queue (of the
 # slow statements within five seconds of it, 90% or more are COMMITs, the fsync a stalled disk delays). A failure the server never logged (a
 # wrong body, a check that failed on a 200) has no such seconds, so it is never attributed to the runner.
 #
@@ -12,7 +12,11 @@
 # Exits 0 either way; the caller reads `stall`.
 set -euo pipefail
 log=$1 pressure=$2
-IO_FULL_MIN=25 COMMIT_SHARE_MIN=0.9
+# Calibrated on the two stalls seen (learning-60, 2026-11-20): CI 44673105548's live smoke, all tasks stalled on IO
+# for >=88% of every failure second (its avg10 only 24.7%), and 44630577830's preview refusals, 23.45% at most (avg10
+# 0.74%). 20% takes both; over-attribution is guarded by the COMMIT condition, which an ordinary latency miss or a
+# lock convoy doesn't meet (the server logs no failed request, or its slow statements aren't COMMITs).
+IO_FULL_MIN=20 COMMIT_SHARE_MIN=0.9
 
 # The pressure samples, one a second: the share of that second the runner's tasks were all stalled on IO, from
 # the change in `full total` (microseconds) since the sample before. `full avg10` lags a short stall (a 0.4 s stall

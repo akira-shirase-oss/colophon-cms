@@ -9,11 +9,16 @@ cd "$(dirname "$0")/.."
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
 
-# Pressure: `full total` in microseconds, one sample a second; 12:00:05 stalls for 0.9 s.
-for s in 01 02 03 04 05 06 07; do
-  case $s in 05) total=1940000 ;; 06|07) total=2000000 ;; *) total=$(( 10#$s * 10000 + 1000000 )) ;; esac
-  echo "2026-11-20T12:00:${s}Z cpu: some avg10=1.00 avg60=1.00 avg300=1.00 total=1 full avg10=0.00 avg60=0.00 avg300=0.00 total=0 | io: some avg10=20.00 avg60=5.00 avg300=1.00 total=$total full avg10=20.00 avg60=5.00 avg300=1.00 total=$total | memory: some avg10=0.00 avg60=0.00 avg300=0.00 total=0 full avg10=0.00 avg60=0.00 avg300=0.00 total=0"
-done >"$work/pressure.txt"
+# Pressure: `full total` in microseconds, one sample a second; 12:00:05 stalls for $1 percent of the second, and
+# the seconds around it barely at all (1%), so only 12:00:05 can carry a stall.
+pressure() {
+  local share=$1 total=1000000 s
+  for s in 01 02 03 04 05 06 07; do
+    if [[ $s == 05 ]]; then total=$(( total + share * 10000 )); else total=$(( total + 10000 )); fi
+    echo "2026-11-20T12:00:${s}Z cpu: some avg10=1.00 avg60=1.00 avg300=1.00 total=1 full avg10=0.00 avg60=0.00 avg300=0.00 total=0 | io: some avg10=20.00 avg60=5.00 avg300=1.00 total=$total full avg10=20.00 avg60=5.00 avg300=1.00 total=$total | memory: some avg10=0.00 avg60=0.00 avg300=0.00 total=0 full avg10=0.00 avg60=0.00 avg300=0.00 total=0"
+  done >"$work/pressure.txt"
+}
+pressure 90
 
 refusal='{"timestamp":"2026-11-20T12:00:05.40Z","level":"WARN","target":"colophon_api::error","message":"request refused: no database connection free","code":"unavailable"}'
 calm_refusal='{"timestamp":"2026-11-20T12:00:02.40Z","level":"WARN","target":"colophon_api::error","message":"request refused: no database connection free","code":"unavailable"}'
@@ -70,6 +75,13 @@ check "a stall whose re-run fails is red, with no third run" 1 2 yes hard-stall 
 check "hard failures in a calm second block, no re-run" 1 1 no hard-calm pass
 check "hard failures the server never logged block, no re-run" 1 1 no hard-noserver pass
 check "a stalled disk without a COMMIT queue blocks, no re-run" 1 1 no hard-selects pass
+
+# The threshold, calibrated on the two stalls seen (20%): just under blocks, just over re-runs.
+pressure 19
+check "a 19% stall second blocks, no re-run" 1 1 no hard-stall pass
+pressure 21
+check "a 21% stall second with a COMMIT queue is re-run" 0 2 yes hard-stall pass
+pressure 90
 
 # The signature on its own: the numbers it judged by are in its answer.
 printf '%s\n' "$commit" "$refusal" >"$work/stall.log"
