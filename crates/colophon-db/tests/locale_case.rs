@@ -60,25 +60,73 @@ async fn create(tx: &mut ProjectTransaction, title: &str, locale: &str) -> Uuid 
     entry
 }
 
+/// One entry tagged `locale` with its draft revision, as the old binary's create wrote them: an
+/// `entries` row and a `revisions` row (the entry's revision key is checked at the commit).
+async fn seed(owner: &PgPool, author: Uuid, project: Uuid, title: &str, locale: &str) -> Uuid {
+    let entry = Uuid::now_v7();
+    let revision = Uuid::now_v7();
+    let text = format!(r#"{{"title":"{title}","body":{{}}}}"#);
+    let hash = revision.as_bytes().repeat(2);
+    let mut tx = owner.begin().await.expect("begin");
+    let environment: Uuid = sqlx::query_scalar(
+        "SELECT id FROM environments WHERE project_id = $1 AND slug = 'production'",
+    )
+    .bind(project)
+    .fetch_one(&mut *tx)
+    .await
+    .expect("production");
+    sqlx::query(
+        "INSERT INTO entries (project_id, environment_id, id, collection, draft_revision_id, draft_title, created_by, locale)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)",
+    )
+    .bind(project)
+    .bind(environment)
+    .bind(entry)
+    .bind(ARTICLES)
+    .bind(revision)
+    .bind(title)
+    .bind(author)
+    .bind(locale)
+    .execute(&mut *tx)
+    .await
+    .expect("entry");
+    sqlx::query(
+        "INSERT INTO revisions (project_id, environment_id, entry_id, id, content, content_hash, title, author_id, collection, schema_version)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 1)",
+    )
+    .bind(project)
+    .bind(environment)
+    .bind(entry)
+    .bind(revision)
+    .bind(text)
+    .bind(hash)
+    .bind(title)
+    .bind(author)
+    .bind(ARTICLES)
+    .execute(&mut *tx)
+    .await
+    .expect("revision");
+    tx.commit().await.expect("commit");
+    entry
+}
+
 #[tokio::test]
 #[ignore = "needs the local stack: scripts/stack.sh up"]
 async fn case_only_duplicates_stop_the_migration_until_one_is_deleted() {
     let db = TestDb::before(77).await;
-    // The old schema's rows are written through the Rust API, whose begin needs 0079 (D-227).
-    db.lend_enter_functions().await;
     let alice = db.administrator("alice").await;
     let project = projects::create(&db.app, alice, "alpha", "Alpha")
         .await
         .expect("created")
         .id;
-    let mut tx = enter(&db.app, alice, project).await;
-    let english = create(&mut tx, "Tides", "en").await;
-    let french = create(&mut tx, "Marées", "fr").await;
-    let shouting = create(&mut tx, "MARÉES", "FR").await;
-    let brazil = create(&mut tx, "Marés", "pt-br").await;
-    tx.commit().await.expect("commit");
-    // One group, as the old case-sensitive index allowed: en, fr, FR and pt-br.
+    // What an old binary wrote before 0077, in the old schema's shape: an entry and its draft revision
+    // each. Plain SQL, not today's Rust API: its begin needs a later schema (0079, D-227).
     let owner = db.owner().await;
+    let english = seed(&owner, alice, project, "Tides", "en").await;
+    let french = seed(&owner, alice, project, "Marées", "fr").await;
+    let shouting = seed(&owner, alice, project, "MARÉES", "FR").await;
+    let brazil = seed(&owner, alice, project, "Marés", "pt-br").await;
+    // One group, as the old case-sensitive index allowed: en, fr, FR and pt-br.
     let group = Uuid::now_v7();
     sqlx::query("UPDATE entries SET localization_id = $1 WHERE id = ANY($2)")
         .bind(group)
@@ -86,8 +134,6 @@ async fn case_only_duplicates_stop_the_migration_until_one_is_deleted() {
         .execute(&owner)
         .await
         .expect("grouped under the old schema");
-
-    db.take_back_enter_functions().await;
 
     // 0077 refuses by name, naming the group and both tags, and keeps nothing.
     let refused = colophon_db::migrate(&owner).await.expect_err("refused");
