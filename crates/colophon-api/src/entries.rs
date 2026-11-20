@@ -1204,6 +1204,12 @@ pub(crate) async fn import(
         Some(idempotency_key(&headers)?)
     };
     let mut tx = open(&state, caller, &path.project, &path.environment).await?;
+    // Read and counted before the write lock: a body over the limit is refused without holding
+    // the collection, and is never built past its limit.
+    let ImportItems {
+        items,
+        at: at_index,
+    } = import_items(&body)?;
     content_types::lock_for_write(&mut tx, &path.collection)
         .await
         .map_err(ApiError::from_db)?;
@@ -1213,17 +1219,6 @@ pub(crate) async fn import(
         if let Some(replay) = claim(&mut tx, IMPORT, key, &request).await? {
             return Ok(replay);
         }
-    }
-    let ImportItems {
-        items,
-        at: at_index,
-    } = import_items(&body)?;
-    if items.len() > IMPORT_MAX_ITEMS {
-        return Err(ApiError::Invalid(Refusal {
-            code: "too_many_items",
-            pointer: "/".to_owned(),
-            message: format!("an import is at most {IMPORT_MAX_ITEMS} items"),
-        }));
     }
     // A single type's file holds one item: two of them can't both be its one entry.
     if content_type.single() && items.len() > 1 {
@@ -1493,18 +1488,20 @@ struct ImportItems {
 
 /// One JSON object per line, one JSON array of the same objects (`[{...},{...}]`), or a
 /// Strapi API response's envelope — an object whose `data` is the item list beside a `meta`
-/// pagination block (D-114).
+/// pagination block (D-114). Counted while it is read: more than [`IMPORT_MAX_ITEMS`] items is
+/// `too_many_items`, and the items past the limit are skipped unbuilt, so a large body costs a
+/// scan, not a tree of values (docs/security/attack-surface.md, "Imports").
 fn import_items(body: &str) -> Result<ImportItems, ApiError> {
     let trimmed = body.trim();
     if trimmed.starts_with('[') {
-        let items = serde_json::from_str::<Vec<Value>>(trimmed).map_err(|_| {
+        let Bounded(items) = serde_json::from_str::<Bounded>(trimmed).map_err(|_| {
             ApiError::Invalid(Refusal {
                 code: "invalid_json",
                 pointer: "/".to_owned(),
                 message: "the body isn't a JSON array".to_owned(),
             })
         })?;
-        return Ok(ImportItems {
+        return within_limit(ImportItems {
             items,
             at: |index| format!("/{index}"),
         });
@@ -1512,19 +1509,26 @@ fn import_items(body: &str) -> Result<ImportItems, ApiError> {
     // An object body is only an envelope when `meta` sits beside the `data` list: a lone
     // `{"data": […]}` can as well be a native document's own field.
     if trimmed.starts_with('{')
-        && let Ok(value) = serde_json::from_str::<Value>(trimmed)
-        && let Some(items) = value.get("data").and_then(Value::as_array)
-        && value.get("meta").is_some()
+        && let Ok(Envelope {
+            data: Some(Bounded(items)),
+            meta: Some(_),
+        }) = serde_json::from_str::<Envelope>(trimmed)
     {
-        return Ok(ImportItems {
-            items: items.clone(),
+        return within_limit(ImportItems {
+            items,
             at: |index| format!("/data/{index}"),
         });
     }
-    let items = trimmed
+    let lines: Vec<&str> = trimmed
         .lines()
         .map(str::trim)
         .filter(|line| !line.is_empty())
+        .collect();
+    if lines.len() > IMPORT_MAX_ITEMS {
+        return Err(too_many_items());
+    }
+    let items = lines
+        .into_iter()
         .enumerate()
         .map(|(index, line)| {
             serde_json::from_str::<Value>(line).map_err(|_| {
@@ -1540,6 +1544,60 @@ fn import_items(body: &str) -> Result<ImportItems, ApiError> {
         items,
         at: |index| format!("/line/{}", index + 1),
     })
+}
+
+fn too_many_items() -> ApiError {
+    ApiError::Invalid(Refusal {
+        code: "too_many_items",
+        pointer: "/".to_owned(),
+        message: format!("an import is at most {IMPORT_MAX_ITEMS} items"),
+    })
+}
+
+fn within_limit(items: ImportItems) -> Result<ImportItems, ApiError> {
+    if items.items.len() > IMPORT_MAX_ITEMS {
+        return Err(too_many_items());
+    }
+    Ok(items)
+}
+
+/// A Strapi envelope: `data` and `meta`, anything else ignored. `data` that isn't a list makes
+/// the body a plain document instead.
+#[derive(Deserialize)]
+struct Envelope {
+    data: Option<Bounded>,
+    meta: Option<serde::de::IgnoredAny>,
+}
+
+/// A JSON list read into at most one item more than [`IMPORT_MAX_ITEMS`]: the rest is checked
+/// to be JSON but never built.
+struct Bounded(Vec<Value>);
+
+impl<'de> Deserialize<'de> for Bounded {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        struct Items;
+        impl<'de> serde::de::Visitor<'de> for Items {
+            type Value = Bounded;
+            fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                formatter.write_str("a list of items")
+            }
+            fn visit_seq<A: serde::de::SeqAccess<'de>>(
+                self,
+                mut seq: A,
+            ) -> Result<Bounded, A::Error> {
+                let mut items = Vec::new();
+                while items.len() <= IMPORT_MAX_ITEMS {
+                    match seq.next_element::<Value>()? {
+                        Some(item) => items.push(item),
+                        None => return Ok(Bounded(items)),
+                    }
+                }
+                while seq.next_element::<serde::de::IgnoredAny>()?.is_some() {}
+                Ok(Bounded(items))
+            }
+        }
+        deserializer.deserialize_seq(Items)
+    }
 }
 
 /// One item's place in the report (D-114).
@@ -2951,6 +3009,46 @@ mod tests {
         let items = import_items(bare).expect("one item");
         assert_eq!(items.items.len(), 1);
         assert_eq!((items.at)(0), "/line/1");
+    }
+
+    /// Every form of an import is counted while it is read: one item over the limit is
+    /// refused there, before the handler takes the collection's write lock, and the items past
+    /// the limit are never built (docs/security/attack-surface.md, "Imports").
+    #[test]
+    fn an_import_over_the_limit_is_refused_while_it_is_read() {
+        let many = IMPORT_MAX_ITEMS + 1;
+        let array = format!("[{}]", vec!["{}"; many].join(","));
+        let envelope = format!(r#"{{"data": {array}, "meta": {{}}}}"#);
+        let lines = vec!["{}"; many].join("\n");
+        for body in [&array, &envelope, &lines] {
+            let read = import_items(body).map(|items| items.items.len());
+            assert!(
+                matches!(
+                    &read,
+                    Err(ApiError::Invalid(Refusal {
+                        code: "too_many_items",
+                        ..
+                    }))
+                ),
+                "{:?}",
+                read.as_ref().ok()
+            );
+        }
+        // A line that isn't JSON past the limit is never read: the count refuses first.
+        let broken = format!("{lines}\nnot json");
+        assert!(matches!(
+            import_items(&broken),
+            Err(ApiError::Invalid(Refusal {
+                code: "too_many_items",
+                ..
+            }))
+        ));
+        // Exactly the limit is fine in every form.
+        let array = format!("[{}]", vec!["{}"; IMPORT_MAX_ITEMS].join(","));
+        assert_eq!(
+            import_items(&array).map(|items| items.items.len()).ok(),
+            Some(IMPORT_MAX_ITEMS)
+        );
     }
 
     #[test]

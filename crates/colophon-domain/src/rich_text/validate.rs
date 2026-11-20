@@ -15,6 +15,12 @@ use super::{
 
 /// Checks `value` against `colophon/rich-text` v1 and returns it in canonical form.
 pub fn validate(value: &Value) -> Result<RichText, Rejection> {
+    run(value).0
+}
+
+/// [`validate`], with how long the canonical text grew while checking: tests hold that to the
+/// limit, so a refusal for size never builds the oversized text first.
+fn run(value: &Value) -> (Result<RichText, Rejection>, usize) {
     let mut validator = Validator {
         pointer: Pointer::new(),
         out: String::with_capacity(256),
@@ -23,19 +29,28 @@ pub fn validate(value: &Value) -> Result<RichText, Rejection> {
         images: Vec::new(),
         named: HashSet::new(),
     };
-    validator.envelope(value)?;
-    if validator.out.len() > MAX_BYTES {
-        return Err(Rejection {
-            code: RejectCode::TooLarge,
-            pointer: String::new(),
-        });
+    if let Err(rejection) = validator.envelope(value) {
+        return (Err(rejection), validator.out.len());
     }
-    Ok(RichText {
-        canonical: validator.out,
-        nodes: validator.nodes,
-        depth: validator.depth,
-        images: validator.images,
-    })
+    let grown = validator.out.len();
+    if grown > MAX_BYTES {
+        return (
+            Err(Rejection {
+                code: RejectCode::TooLarge,
+                pointer: String::new(),
+            }),
+            grown,
+        );
+    }
+    (
+        Ok(RichText {
+            canonical: validator.out,
+            nodes: validator.nodes,
+            depth: validator.depth,
+            images: validator.images,
+        }),
+        grown,
+    )
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -448,6 +463,15 @@ impl Validator {
             Some(Value::String(text)) => text,
             Some(_) => return Err(self.reject_at(RejectCode::WrongType, "text")),
         };
+        // Text is the one part whose size no count bounds: refuse before writing what can't
+        // fit (escaping never makes text shorter), so the canonical form never grows past the
+        // limit by more than one escaped text first.
+        if self.out.len().saturating_add(text.len()) > MAX_BYTES {
+            return Err(Rejection {
+                code: RejectCode::TooLarge,
+                pointer: String::new(),
+            });
+        }
         self.out.push_str(r#","text":"#);
         write_string(&mut self.out, text);
 
@@ -679,6 +703,22 @@ mod tests {
             validate(&value).map(|document| document.nodes()),
             Ok(MAX_NODES)
         );
+    }
+
+    /// Text is the one part of a document whose size isn't bounded by a count: a document
+    /// that can't fit is refused before its text is written out, so a body of control
+    /// characters (six bytes each, escaped) never grows to six times its size first.
+    #[test]
+    fn oversized_text_is_refused_before_it_is_written() {
+        let text = "\u{1}".repeat(4 * MAX_BYTES);
+        let value =
+            doc(&json!([{ "type": "paragraph", "content": [{ "type": "text", "text": text }] }]));
+        let (result, grown) = super::run(&value);
+        assert_eq!(
+            result.map(|_| ()).map_err(|rejection| rejection.code),
+            Err(RejectCode::TooLarge)
+        );
+        assert!(grown <= MAX_BYTES, "grew to {grown} bytes before refusing");
     }
 
     #[test]

@@ -88,6 +88,9 @@ url = { version = "2.5.8", default-features = false, features = ["std"] }
 # Text patterns in content types (step M.4): linear-time matching, so no pattern can stall a save.
 regex = { version = "1.13.1", default-features = false, features = ["std", "perf", "unicode"] }
 uuid = { version = "1", features = ["v7", "serde"] }
+# Never-panics property tests over every parser of outside input (docs/security/attack-surface.md):
+# dev-dependency only. `std` for string strategies from regexes; no fork or timeout processes.
+proptest = { version = "1.12.0", default-features = false, features = ["std"] }
 
 [workspace.lints.rust]
 unsafe_code = "forbid"
