@@ -13,6 +13,8 @@ through `--version` and `GET /version`.
 - A SvelteKit demo site (D-220): Butter & Thyme's recipes prerendered with SvelteKit 3 at one release per
   build (`?generation=N` on every read, a build that refuses an answer from another release), the release
   marker on every page, and a rebuild on publish with the other demo sites (`apps/sites/sveltekit`).
+- A Next.js demo site (D-220a): the same recipes as a Next.js 16 static export, with one release pinned for all
+  of Next's build workers before the build, and its own npm install, separate from the CMS's (`apps/sites/nextjs`).
 
 ### Changed — read before upgrading
 
