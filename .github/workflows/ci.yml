@@ -168,8 +168,11 @@ jobs:
     runs-on: ubuntu-latest
     # Measured on main at 94e63c0 (run 44005647998): about 25 minutes to the load smoke runs,
     # which take about 7 more; 30 cancelled the job mid-smoke. Room for the suite to grow, not
-    # for a hang: every step below has deadlines of its own.
-    timeout-minutes: 50
+    # for a hang: every step below has deadlines of its own. 50 → 65 after CI 44680118124 ran out at
+    # 50.5 minutes, still passing (16 of 19 load smokes in): the job took 40–47 minutes on green runs
+    # once the publishing flow's Studio specs came in (stack tests up to 1,127 s, the Studio up to
+    # 1,051 s). Splitting it into two jobs is the follow-up.
+    timeout-minutes: 65
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
