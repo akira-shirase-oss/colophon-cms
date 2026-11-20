@@ -87,7 +87,9 @@ export function setup() {
 
 // Each virtual user publishes in its own project, so it knows the generation it publishes on, and
 // what it published last.
+// per-VU state: advances only on a successful publish; checks compare against the current value.
 let generation = 0;
+// per-VU state: null-checked before use; any slot order is valid.
 let previous = null;
 
 const article = (title) => ({

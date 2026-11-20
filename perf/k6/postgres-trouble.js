@@ -293,8 +293,11 @@ export function read(data) {
 // Per write-arm VU: its lazily-created article, the last etag a save was acknowledged
 // with, and the titles of saves whose fate the client never learned (they may or may
 // not have committed — a read either resyncs onto them or finds the acknowledged etag).
+// per-VU state: picked once per VU and only read after; no step order.
 let mine = null;
+// per-VU state: the VU's own resource's version, refreshed by every save and read; any read/save order is valid.
 let etag = null;
+// per-VU state: a list of titles, checked on use; any slot order is valid.
 let pending = [];
 
 function resync(res) {
@@ -386,8 +389,11 @@ export function probe() {
 
 // The publish arm's per-VU project, created lazily so each VU is the only publisher
 // on it (exec.vu.idInTest is global across scenarios — a fixed pool could collide).
+// per-VU state: picked once per VU and only read after; no step order.
 let mineBase = null;
+// per-VU state: advances only on a successful publish; checks compare against the current value.
 let mineGeneration = 0;
+// per-VU state: picked once per VU and only read after; no step order.
 let mineEntry = null;
 
 /** One publish iteration: the five-request pipeline — entry, changeset, submit,

@@ -19,6 +19,19 @@ if [[ -n "$mixed" ]]; then
   echo "$mixed" >&2
   exit 1
 fi
+# The scenario-wide index can give one VU the same slot twice, so a scenario that keeps per-VU state
+# (a module-level `let`) must not depend on its slots coming in order: schedules did (schedule in
+# slot 8, cancel in 9) and got 767 409s in CI 44632793507. Each such variable is marked on the line
+# above with `// per-VU state: <why any slot order is valid>`, so the question is answered for it.
+unmarked=$(for f in perf/k6/*.js; do
+  grep -q 'iterationInTest' "$f" || continue
+  awk -v f="$f" '/^(let|var) [A-Za-z_]/ && prev !~ /^\/\/ per-VU state: / {print f ":" NR ": " $0} {prev = $0}' "$f"
+done)
+if [[ -n "$unmarked" ]]; then
+  echo "FAIL: per-VU state in a scenario whose mix comes from the scenario-wide iteration, not marked '// per-VU state: <why any slot order is valid>':" >&2
+  echo "$unmarked" >&2
+  exit 1
+fi
 # The scenarios a text names as `scripts/load.sh <endpoint>`; nothing found is an empty list, not an exit.
 endpoints() { { grep -oE 'scripts/load\.sh [a-z][a-z-]*' || true; } | awk '{print $2}' | sort -u; }
 # check.sh's list is read from the plan it runs (its smokes are data, SMOKES=(...), not literal commands), as

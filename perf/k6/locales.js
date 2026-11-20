@@ -87,6 +87,7 @@ export function setup() {
   return { session, entries, vus };
 }
 
+// per-VU state: the VU's own resource's version, refreshed by every save and read; any read/save order is valid.
 let etag = null;
 
 export default function (data) {

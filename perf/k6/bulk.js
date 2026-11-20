@@ -49,6 +49,7 @@ export const options = {
 };
 
 const BODY = { schema: 'colophon/rich-text', version: 1, doc: { type: 'doc', content: [{ type: 'paragraph' }] } };
+// per-VU state: a counter that only makes keys unique; no step order.
 let sequence = 0;
 const nextKey = (prefix) => `${prefix}-${Date.now().toString(36)}-${sequence += 1}`;
 

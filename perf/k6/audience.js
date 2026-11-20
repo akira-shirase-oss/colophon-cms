@@ -134,6 +134,7 @@ export function setup() {
 
 // This VU's visitor: set on its first iteration, its token refreshed by every sign-in it
 // makes, so member reads never carry a session MAX_SESSIONS already pushed out.
+// per-VU state: picked once per VU and only read after; no step order.
 let mine = null;
 
 export default function (data) {

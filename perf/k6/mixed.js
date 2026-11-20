@@ -140,6 +140,7 @@ function key() {
 // must re-authenticate at the boundary instead of collecting 401s — the 2026-11-09 run's
 // entire second half was exactly that. Each VU keeps its own credential snapshot: `data` is
 // per-VU already, and a re-login here signs in as the same dev-owner the setup() session did.
+// per-VU state: set once on first use and only read after; no step order.
 let creds = null;
 function session(data) {
   if (creds === null) creds = { cookie: data.session.cookie, csrf: data.session.csrf };
@@ -285,6 +286,7 @@ export function reads(data) {
 }
 
 // A write VU's own truth: the ETag of the revision it last saved — read-your-writes.
+// per-VU state: the VU's own resource's version, refreshed by every save and read; any read/save order is valid.
 let etag = null;
 export function writes(data) {
   const mine = data.ids[exec.vu.idInTest % data.ids.length];

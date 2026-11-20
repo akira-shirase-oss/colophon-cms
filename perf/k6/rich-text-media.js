@@ -72,6 +72,7 @@ const WIDE = new Uint8Array([
 ]);
 
 // __VU and __ITER exist only in iterations; setup() counts its own keys.
+// per-VU state: counts setup-time keys only (typeof __ITER undefined); unused in iterations.
 let setupKeys = 0;
 function key() {
   const where = typeof exec.scenario.iterationInTest === 'undefined' ? `setup-${(setupKeys += 1)}` : `${__VU}-${__ITER}`;

@@ -234,6 +234,7 @@ export function warm(data) {
 // The churn VU's own truth: the generation it published last and the etag of the entry
 // it keeps revising. It is project A's only publisher (one VU, one loop), so
 // base_generation never conflicts.
+// per-VU state: the churn arm's own state, checked before each use; no step order.
 let churnState = null;
 export function churn(data) {
   for (;;) {

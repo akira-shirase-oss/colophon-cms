@@ -117,7 +117,9 @@ export function setup() {
 
 // The walk's own bookkeeping: one user's truth about what it wrote and published. The
 // generation starts where setup's release 1 left it.
+// per-VU state: the 1-VU walk advances it on each publish; one VU, so the order is the walk.
 let generation = -1;
+// per-VU state: a set of seen ids, checked on use; any slot order is valid.
 let releaseIds = new Set();
 
 export function walk(data) {

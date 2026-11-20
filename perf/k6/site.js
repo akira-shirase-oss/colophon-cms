@@ -114,7 +114,9 @@ function releaseOf(data, ids, generation, tag) {
 }
 
 // The first virtual user's publishing: the release it last published, and when.
+// per-VU state: advances only on a successful publish; checks compare against the current value.
 let generation = 1;
+// per-VU state: time-based, not slot-based; no step order.
 let lastPublish = 0;
 
 function publish(data) {

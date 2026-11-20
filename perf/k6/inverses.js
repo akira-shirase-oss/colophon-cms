@@ -104,7 +104,9 @@ export function setup() {
   return { session, writersBase, postsBase, vus };
 }
 
+// per-VU state: the VU's own resource's version, refreshed by every save and read; any read/save order is valid.
 let etag = null;
+// per-VU state: flips only when a re-link succeeds; each check reads the current value.
 let linked = 0; // which of the VU's two writers the post names, 0 or 1
 
 export default function (data) {

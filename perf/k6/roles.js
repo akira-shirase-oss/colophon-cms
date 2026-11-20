@@ -98,6 +98,7 @@ export function setup() {
 }
 
 // Each virtual user's role, and the version its last edit left it at.
+// per-VU state: refreshed from every successful update; any slot order is valid.
 let version = 1;
 
 export default function (data) {

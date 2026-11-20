@@ -88,6 +88,7 @@ export function setup() {
   return { session, vus };
 }
 
+// per-VU state: counts successful imports, gating at 10; any slot order is valid.
 let imports = 0; // how many of this VU's ten imports have run
 
 export default function (data) {

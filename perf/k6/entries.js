@@ -90,6 +90,7 @@ export function setup() {
 }
 
 // Per VU: the ETag of the last revision this VU saved (each VU has its own copy).
+// per-VU state: the VU's own resource's version, refreshed by every save and read; any read/save order is valid.
 let etag = null;
 
 export default function (data) {

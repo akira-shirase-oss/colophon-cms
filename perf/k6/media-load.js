@@ -164,6 +164,7 @@ export function setup() {
 
 // The editorial arm's own truth: the ETag of the revision it last saved (module state is
 // per-VU).
+// per-VU state: the VU's own resource's version, refreshed by every save and read; any read/save order is valid.
 let etag = null;
 export function editorial(data) {
   const arm = exec.scenario.name === 'baseline' ? 'baseline' : 'media_phase';

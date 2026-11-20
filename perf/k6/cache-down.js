@@ -233,7 +233,9 @@ export function read(data) {
 // acknowledged with. Lazy creation, not a setup pool: exec.vu.idInTest is global across
 // every scenario, so a fixed pool could hand one article to two VUs and their saves
 // would conflict — a fake failure the scenario would manufacture itself.
+// per-VU state: picked once per VU and only read after; no step order.
 let mine = null;
+// per-VU state: the VU's own resource's version, refreshed by every save and read; any read/save order is valid.
 let etag = null;
 
 /** One signed-in iteration: a save on this VU's own article, or a read-back of it. The

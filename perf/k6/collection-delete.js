@@ -121,6 +121,7 @@ export function setup() {
 }
 
 // Per VU: the collection it deleted last, which no list may show again.
+// per-VU state: null-checked before use; any slot order is valid.
 let lastDeleted = null;
 
 export default function (data) {
