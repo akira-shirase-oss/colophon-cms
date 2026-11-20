@@ -5,7 +5,7 @@
 //! length and age, warning when nothing has folded it for a while. A fold never waits for an
 //! admission: when one holds the counter, this turn is skipped (the admission folds instead).
 //!
-//! The projects' open-work counts (D-216 phase 2, migration 0080) are folded the same way, in
+//! The projects' open-work counts (D-216 phase 2, migration 0084) are folded the same way, in
 //! the same tick: each project's logged deltas into its `work_open` row, skipping a project
 //! whose row an admission holds.
 

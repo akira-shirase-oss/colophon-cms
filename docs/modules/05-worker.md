@@ -55,7 +55,7 @@ Step 2.3 (D-046): `crates/colophon-worker`, run by `colophon-server --role worke
 - **The project work bound** (P6, D-131, F09): `colophon_db::work` counts a project's open work —
   `jobs` pending/retrying/running/held, `asset_jobs` pending/running/retrying, `bulk_jobs`
   accepting/running, `migration_plans` proposed/approved/running — and every transaction that adds a
-  durable work row is checked at its end against a per-project running count (migration 0080, D-216 phase
+  durable work row is checked at its end against a per-project running count (migration 0084, D-216 phase
   2: its own rows counted, the project's `work_open` row locked to commit). Over spec §33's 10,000 the
   admission refuses with `DbError::WorkFull` → 503 `unavailable` + `work_full` + `Retry-After`, rolling
   the whole accepting transaction back; a due schedule that hits it stays `scheduled` and retries at the

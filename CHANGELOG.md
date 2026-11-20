@@ -42,7 +42,7 @@ through `--version` and `GET /version`.
   project's 10,000-job bound on open work used to be counted under a lock held from the start of each
   submit to its commit; it is now a running count checked at the end, so a project's bulk jobs,
   uploads and migration plans go through side by side. Publishes in one project still run one at a
-  time. Upgrading runs migration 0080, which briefly holds writes to the work tables while it counts
+  time. Upgrading runs migration 0084, which briefly holds writes to the work tables while it counts
   each project's open work once.
 
 - **An API token over its request quota no longer costs the database anything** (D-214). After

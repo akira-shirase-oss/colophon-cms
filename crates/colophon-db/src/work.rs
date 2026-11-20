@@ -29,7 +29,7 @@
 //! admitting (a worker recording an asset's size) aren't checked against the bound, exactly as
 //! they weren't under the old byte lock: their bytes count once they commit.
 //!
-//! A project's open work is a running count the same way (D-216 phase 2, migration 0080):
+//! A project's open work is a running count the same way (D-216 phase 2, migration 0084):
 //! triggers on the four tables append each statement's change in open rows to `open_deltas`, and
 //! `work_open` holds one row per project, made with the project. [`admit`] refuses early on the
 //! unlocked count, the caller writes, and [`check`] decides at the END: `colophon_work_admit`
