@@ -43,6 +43,17 @@ const notYetVerified = new Counter('not_yet_verified');
 // (the record's hard_failures.upload_refused), so a run that measured refusals can't pass as uploads.
 const uploadRefused = new Rate('upload_refused');
 
+// Every state the API documents for an asset, read from the committed OpenAPI document (docs/api/openapi.json,
+// `AssetView.state`), so a state added there can't make a correct read fail this smoke. The newest asset a
+// read finds may be one another VU just asked to delete (`deleting`), which the hand-written list of three
+// refused: 10 reads in CI 44630577830. open() runs at init, relative to this file.
+const ASSET_STATES = (() => {
+  const spec = JSON.parse(open('../../docs/api/openapi.json'));
+  const states = spec.components?.schemas?.AssetView?.properties?.state?.enum;
+  if (!Array.isArray(states) || !states.includes('usable')) throw new Error('docs/api/openapi.json has no AssetView.state enum: the read check needs it');
+  return states;
+})();
+
 const thresholds = { http_req_failed: ['rate==0'], checks: ['rate==1'], http_req_duration: [`p(99)<${P99_MS}`], upload_refused: ['rate<0.01'] };
 if (SCENARIO === 'steady') {
   thresholds.dropped_iterations = [`count<=${Math.floor(RATE * durationSeconds(DURATION) * 0.0001)}`];
@@ -216,7 +227,7 @@ export default function (data) {
       const one = http.get(`${data.assets}/${id}`, Object.assign({ tags: { endpoint: 'read', name: 'assets/{asset}' } }, read));
       check(one, {
         'read 200': (r) => r.status === 200,
-        'read settles or waits': (r) => ['quarantined', 'usable', 'rejected'].includes(r.json('data.state')),
+        'read settles or waits': (r) => ASSET_STATES.includes(r.json('data.state')),
       });
     }
   } else {
