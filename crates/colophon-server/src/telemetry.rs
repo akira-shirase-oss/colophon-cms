@@ -1,8 +1,10 @@
 //! Logging: JSON lines in production, pretty locally, one `EnvFilter` for both, and a
-//! fallible setup so a bad filter fails startup loudly.
+//! fallible setup so a bad filter fails startup loudly. Beside the log layers, the database's
+//! begin tripwire (D-226) watches sqlx's backend notices with a filter of its own, so the log
+//! filter (`COLOPHON_LOG`) can't blind it: that filter applies to the log layers, not globally.
 
 use tracing_subscriber::{
-    EnvFilter,
+    EnvFilter, Layer as _,
     filter::ParseError,
     fmt,
     layer::SubscriberExt as _,
@@ -54,9 +56,9 @@ pub fn init(format: LogFormat, directives: &str) -> Result<(), TelemetryError> {
         LogFormat::Pretty => (None, Some(fmt::layer().pretty())),
     };
     tracing_subscriber::registry()
-        .with(filter)
-        .with(json)
-        .with(pretty)
+        // `Layer::and_then` named in full: `Option` has an `and_then` of its own.
+        .with(tracing_subscriber::Layer::and_then(json, pretty).with_filter(filter))
+        .with(colophon_db::transactions::begin_tripwire())
         .try_init()?;
     Ok(())
 }

@@ -438,7 +438,36 @@ pub fn set_slow_statement_threshold(threshold: Duration) {
 /// (and reports "not ready") while the database is down, instead of failing to start. The URL
 /// is held to [`check_url`]'s TLS rule first.
 pub fn connect_lazy(url: &str, settings: PoolSettings) -> Result<PgPool, DbError> {
-    let options = check_url(url)?
+    let options = pool_connect_options(url, &settings)?;
+    // No ping on checkout: it is a round trip on every query. sqlx still pings each connection
+    // as it returns to the pool and drops broken ones, so only a connection that breaks while
+    // idle (a database restart) reaches a caller, and fails that one request (D-033).
+    Ok(PgPoolOptions::new()
+        .max_connections(settings.max_connections)
+        .min_connections(0)
+        .acquire_timeout(settings.acquire_timeout)
+        .test_before_acquire(false)
+        // A connection handed back inside a transaction is closed, not pooled (D-217), checked on
+        // one release in `transactions::CANARY_EVERY` once the begin tripwire is armed (D-226).
+        .after_release(transactions::release_check)
+        .connect_lazy_with(options))
+}
+
+/// Proves, on one throwaway connection made exactly as [`connect_lazy`] makes them, that the begin
+/// tripwire works in this process, and arms it (D-226): the release check then runs on one release
+/// in [`transactions::CANARY_EVERY`]. Until this succeeds, and whenever it fails, every release is
+/// checked; the error says which dependency is missing. Call once at startup, after the tracing
+/// subscriber (with [`transactions::begin_tripwire`]) is installed.
+pub async fn arm_release_guard(url: &str) -> Result<(), transactions::TripwireOff> {
+    let options = pool_connect_options(url, &PoolSettings::default())
+        .map_err(|error| transactions::TripwireOff::CouldNotRun(error.to_string()))?;
+    transactions::arm_begin_tripwire(options).await
+}
+
+/// The options every pool's connections are made with: [`check_url`]'s TLS rule, the server's
+/// application name, its statement timeout and the slow-statement log (D-221).
+fn pool_connect_options(url: &str, settings: &PoolSettings) -> Result<PgConnectOptions, DbError> {
+    Ok(check_url(url)?
         .application_name("colophon-server")
         .options([(
             "statement_timeout",
@@ -450,18 +479,7 @@ pub fn connect_lazy(url: &str, settings: PoolSettings) -> Result<PgPool, DbError
                 .get()
                 .copied()
                 .unwrap_or(Duration::from_secs(1)),
-        );
-    // No ping on checkout: it is a round trip on every query. sqlx still pings each connection
-    // as it returns to the pool and drops broken ones, so only a connection that breaks while
-    // idle (a database restart) reaches a caller, and fails that one request (D-033).
-    Ok(PgPoolOptions::new()
-        .max_connections(settings.max_connections)
-        .min_connections(0)
-        .acquire_timeout(settings.acquire_timeout)
-        .test_before_acquire(false)
-        // A connection handed back inside a transaction is closed, not pooled (D-217).
-        .after_release(transactions::release_check)
-        .connect_lazy_with(options))
+        ))
 }
 
 /// Opens the change-hint listener's connection (D-108): its own, not one of the pool's, since
