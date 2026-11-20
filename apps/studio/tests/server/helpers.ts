@@ -298,3 +298,14 @@ export function nextAmbiguous(now: number, days: number): {
 	}
 	return null;
 }
+
+/**
+ * The two reads that decide what a person may do on a page: the project (their role) and who is
+ * signed in. Start it before the navigation and await it before judging anything the role decides,
+ * above all an absence: before these arrive the Studio offers nothing to anyone, so "no Cancel"
+ * would pass on that first frame whatever the role.
+ */
+export function roleReads(page: Page, project: string): Promise<unknown> {
+	const get = (path: string) => page.waitForResponse((response) => response.request().method() === 'GET' && new URL(response.url()).pathname === path && response.ok());
+	return Promise.all([get(`/api/v1/projects/${project}`), get('/me')]);
+}

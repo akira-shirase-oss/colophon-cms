@@ -93,7 +93,13 @@ test('one press is one request: Publish, Unpublish and Undo each send exactly on
 	await expect(unpublished).toBeVisible();
 	expect(sent.filter((write) => write.endsWith('/publish'))).toHaveLength(2);
 
-	await unpublished.getByRole('button', { name: 'Undo' }).dblclick({ force: true });
+	// The press lands only on a settled page: the takedown dialog gone, and no forced click, which
+	// skips Playwright's check that the button itself receives it (a forced double-click on a page
+	// still closing the dialog reached nothing in CI 44663437134: no undo arrived at the server).
+	await expect(page.getByRole('alertdialog')).toHaveCount(0);
+	const undone = page.waitForResponse((response) => response.request().method() === 'POST' && response.url().endsWith('/undo'));
+	await unpublished.getByRole('button', { name: 'Undo' }).dblclick();
+	expect((await undone).status()).toBe(201);
 	await expect(toast(page, 'Back on your site in Release 3')).toBeVisible();
 	expect(sent.filter((write) => write.endsWith('/undo'))).toHaveLength(1);
 	expect(await newest(page, project)).toBe(3);

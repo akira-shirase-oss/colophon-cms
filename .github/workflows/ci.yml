@@ -388,7 +388,12 @@ jobs:
         if: failure()
         with:
           name: playwright-traces
-          path: apps/testbed/test-results/
+          # The testbed's and the Studio's server specs' (playwright.server.config.ts keeps a trace
+          # for each failed test): a UI failure in CI is then read from its trace, not rebuilt from
+          # the server's log.
+          path: |
+            apps/testbed/test-results/
+            apps/studio/test-results/
           retention-days: 7
       - name: Tear down
         if: always()

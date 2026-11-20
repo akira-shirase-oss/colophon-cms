@@ -145,6 +145,9 @@ test('restoring the live version from History reads Live, with nothing to publis
 	await page.reload();
 	await expect(page.getByTestId('entry-state')).toHaveAttribute('data-state', 'live');
 	await expect(page.getByTestId('publish-state')).toContainText(`Live in Release ${generation}`);
+	// Shown only once the role read is in, so the missing button below is an answer, not a frame
+	// drawn before the page knows what this person may do.
+	await expect(page.getByTestId('nothing-to-publish')).toBeVisible();
 	await expect(page.getByTestId('publish-button')).toHaveCount(0);
 });
 

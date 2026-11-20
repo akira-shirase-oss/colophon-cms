@@ -3,7 +3,7 @@
 // see a second tab's approval refused because the version it shows is no longer current.
 
 import { type Page, expect, test } from '@playwright/test';
-import { env, newProject, signIn, violations } from './helpers.ts';
+import { env, newProject, roleReads, signIn, violations } from './helpers.ts';
 
 /** Creates an article through the API as the signed-in page; its id. */
 async function article(page: Page, project: string, title: string): Promise<string> {
@@ -81,9 +81,11 @@ test('a changeset is approved as the exact version on screen, and an edit makes 
 
 	// An edit after approval: the changeset is stale until refreshed, and the approval stops counting.
 	await retitle(page, project, first, 'Spring launch, final');
+	const role = roleReads(page, project);
 	await page.reload();
 	await expect(status(page)).toHaveAttribute('data-state', 'stale');
 	await expect(page.getByTestId('edited')).toHaveCount(1);
+	await role;
 	await expect(page.getByRole('button', { name: 'Approve', exact: true })).toHaveCount(0);
 	await page.getByRole('button', { name: 'Update to the latest versions' }).click();
 	await expect(status(page)).toHaveAttribute('data-state', 'awaiting_review');

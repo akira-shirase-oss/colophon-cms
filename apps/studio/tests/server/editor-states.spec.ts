@@ -119,6 +119,8 @@ test('the editor in every state: one primary where there is something to do, axe
 			await viewer.waitForLoadState('networkidle');
 			// Soft, so one run reports every state that has a problem.
 			await expect.soft(viewer.getByTestId('entry-state'), `${state}, ${size.width}`).toHaveAttribute('data-state', badge);
+			// The role read has arrived: before it no primary shows, so an expected "none" proves nothing.
+			await expect(viewer.getByTestId('publish-entry')).not.toContainText('Checking what your role may do');
 			for (const scheme of ['light', 'dark'] as const) {
 				await viewer.emulateMedia({ colorScheme: scheme });
 				await expect(viewer.locator('html')).toHaveClass(scheme === 'dark' ? /\bdark\b/ : /^(?!.*\bdark\b)/);

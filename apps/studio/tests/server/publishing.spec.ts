@@ -251,9 +251,9 @@ test('the Overview counts an entry live while it has unpublished changes, and ne
 });
 
 /** The visible primary buttons on the request page. */
-async function primaries(page: Page): Promise<string[]> {
-	return page.locator('main button[data-variant="default"]:visible, main a[data-variant="default"]:visible').allInnerTexts();
-}
+/** The request page's primary buttons, for a retrying check: which one leads depends on the role
+ *  reads (the project and who is signed in), which can arrive after the request itself. */
+const primary = (page: Page) => page.locator('main button[data-variant="default"]:visible, main a[data-variant="default"]:visible');
 
 test('the request page leads with one primary per state and does each thing once', async ({ page }) => {
 	await signIn(page);
@@ -269,27 +269,27 @@ test('the request page leads with one primary per state and does each thing once
 	expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
 	expect(await page.locator('main').evaluate((main) => [...main.querySelectorAll('*')].filter((node) => node.getBoundingClientRect().right > window.innerWidth + 1).length)).toBe(0);
 	await page.setViewportSize({ width: 1280, height: 800 });
-	expect(await primaries(page)).toEqual(['Ask for review']);
+	await expect(primary(page)).toHaveText(['Ask for review']);
 
 	// Sent for review: the owner may approve their own (self review), so Approve leads.
 	expect((await api(page, 'POST', `${env(project)}/changesets/${id}/submit`, undefined, { 'If-Match': `"${hash}"` })).status).toBe(200);
 	await page.reload();
 	await expect(page.getByTestId('changeset-status')).toHaveAttribute('data-state', 'awaiting_review');
-	expect(await primaries(page)).toEqual(['Approve']);
+	await expect(primary(page)).toHaveText(['Approve']);
 	// Double-click Approve: one review.
 	await page.getByRole('button', { name: 'Approve', exact: true }).dblclick();
 	await expect(page.getByTestId('changeset-status')).toHaveAttribute('data-state', 'approved');
 	const reviewed = await api(page, 'GET', `${env(project)}/changesets/${id}`);
 	expect((reviewed.body?.['data'].reviews as unknown[]).length).toBe(1);
 	await expect(page.getByTestId('self-review-note')).toBeVisible();
-	expect(await primaries(page)).toEqual(['Publish now']);
+	await expect(primary(page)).toHaveText(['Publish now']);
 
 	// Double-click Publish now: one release.
 	await page.getByRole('button', { name: 'Publish now', exact: true }).dblclick();
 	await expect(page.getByTestId('changeset-status')).toHaveAttribute('data-state', 'published');
 	const releases = await page.evaluate(async (at) => (await fetch(at)).headers.get('colophon-generation'), `${env(project)}/releases`);
 	expect(releases).toBe('1');
-	expect(await primaries(page)).toEqual([]);
+	await expect(primary(page)).toHaveText([]);
 });
 
 test('asking for review names only members, and a removed member cannot be assigned', async ({ page, browser }) => {

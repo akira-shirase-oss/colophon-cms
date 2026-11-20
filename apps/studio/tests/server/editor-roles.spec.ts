@@ -125,11 +125,16 @@ test('each role sees only what it may do, in every state, and the server refuses
 			const where = `${role}, ${state.name}`;
 			await expect.soft(viewer.getByTestId('entry-state'), where).toHaveAttribute('data-state', state.badge);
 			const expected = role === 'owner' ? state.owner : state.editor;
+			// The role read has arrived (the page no longer says it is checking): before it, no primary
+			// shows for anyone, and an expected "none" would pass on that frame.
+			await expect(viewer.getByTestId('publish-entry')).not.toContainText('Checking what your role may do');
 			expect.soft(await primaries(viewer), where).toEqual(expected === null ? [] : [expected]);
 			await viewer.getByTestId('more-menu').click();
-			const items = await viewer.getByRole('menuitem').allTextContents();
-			const takedown = items.filter((item) => /unpublish/i.test(item));
-			expect.soft(takedown, where).toEqual(state.takesDown ? [role === 'owner' ? 'Unpublish…' : 'Ask to unpublish…'] : []);
+			// The menu is open (its always-there item shows) before its takedown item is judged, so an
+			// absent item means absent, not "not drawn yet".
+			await expect(viewer.getByTestId('technical-menu')).toBeVisible();
+			const takedown = viewer.getByRole('menuitem').filter({ hasText: /unpublish/i });
+			await expect.soft(takedown, where).toHaveText(state.takesDown ? [role === 'owner' ? 'Unpublish…' : 'Ask to unpublish…'] : []);
 			await viewer.keyboard.press('Escape');
 			await expect.soft(viewer.getByTestId('entry-language'), where).toHaveCount(state.language ? 1 : 0);
 		}
@@ -159,9 +164,13 @@ test('each role sees only what it may do, in every state, and the server refuses
 		await editor.waitForLoadState('networkidle');
 		const badge = state.entry === live ? 'review' : state.badge;
 		await expect(editor.getByTestId('entry-state'), `reader, ${state.name}`).toHaveAttribute('data-state', badge);
+		// Before the role read arrives the page offers nothing to anyone, so "no next step" proves
+		// something only once it says why: the reader's sentence comes from the role read itself.
+		await expect(editor.getByTestId('publish-entry')).toContainText('Your role can’t publish or ask for review here.');
 		expect.soft(await primaries(editor), `reader, ${state.name}`).toEqual([]);
 		await expect.soft(editor.getByTestId('publish-button')).toHaveCount(0);
 		await editor.getByTestId('more-menu').click();
+		await expect(editor.getByTestId('technical-menu')).toBeVisible();
 		await expect.soft(editor.getByTestId('unpublish-button'), `reader, ${state.name}`).toHaveCount(0);
 		await editor.keyboard.press('Escape');
 	}

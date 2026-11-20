@@ -72,8 +72,11 @@ test('a commit made while the stream is slow to open still shows, without a relo
 		await new Promise((resolve) => setTimeout(resolve, 1_500));
 		await route.continue();
 	});
+	// The page's own read of the releases, answered, before anything is published: otherwise the
+	// release can commit before that read and arrive in it, and the catch-up is never exercised.
+	const read = page.waitForResponse((response) => response.request().method() === 'GET' && /\/environments\/production\/releases(\?|$)/.test(response.url()));
 	await page.goto(`/studio/projects/${project}/releases`);
-	await page.waitForLoadState('domcontentloaded');
+	await read;
 	// A release committed after the page's reads, before the stream listens: its hint goes to nobody.
 	expect(await publishThroughApi(page, project, 'Made while the stream opened', [entry])).toBe(1);
 	// The first open re-reads what went early, so the release appears without a reload.
