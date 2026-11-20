@@ -18,6 +18,10 @@
 CREATE INDEX publications_media_named ON publications USING gin (media jsonb_ops)
     WHERE revoked_in IS NULL;
 
+-- The bare address picks the newest published version by its landing order, which the delivery role (the function's
+-- owner) could not read until now; it still reads nothing else of a version.
+GRANT SELECT (seq) ON asset_versions TO colophon_delivery;
+
 DROP FUNCTION media_object(uuid, text, uuid, text);
 
 CREATE FUNCTION media_object(project uuid, environment_slug text, asset uuid,

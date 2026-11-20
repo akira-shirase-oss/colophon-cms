@@ -755,7 +755,9 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 25
     env:
-      FUZZ_TOOLCHAIN: nightly-2026-11-01
+      # The gnu host's: the runner's default rustup host is musl, whose static libc the sanitizers refuse.
+      FUZZ_TOOLCHAIN: nightly-2026-11-01-x86_64-unknown-linux-gnu
+      FUZZ_TARGET: x86_64-unknown-linux-gnu
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -769,13 +771,14 @@ jobs:
         with:
           workspaces: fuzz
       - name: Build every target
-        run: cargo "+$FUZZ_TOOLCHAIN" fuzz build --fuzz-dir fuzz
+        run: cargo "+$FUZZ_TOOLCHAIN" fuzz build --fuzz-dir fuzz --target "$FUZZ_TARGET"
       - name: Run each target for 60 s from its corpus (a 2 s input is a stall, a crash fails)
         run: |
           set -euo pipefail
           for target in $(cargo "+$FUZZ_TOOLCHAIN" fuzz list --fuzz-dir fuzz); do
             mkdir -p "fuzz/run-corpus/$target"
-            cargo "+$FUZZ_TOOLCHAIN" fuzz run --fuzz-dir fuzz "$target" "fuzz/run-corpus/$target" "fuzz/corpus/$target" -- \
+            cargo "+$FUZZ_TOOLCHAIN" fuzz run --fuzz-dir fuzz --target "$FUZZ_TARGET" "$target" \
+              "fuzz/run-corpus/$target" "fuzz/corpus/$target" -- \
               -max_total_time=60 -timeout=2 -rss_limit_mb=2048 -max_len=65536
           done
       - if: failure()
@@ -799,8 +802,8 @@ jobs:
         with:
           manifest-path: fuzz/Cargo.toml
           arguments: --locked
-          command: check advisories sources
-          command-arguments: --config deny.toml
+          command: check
+          command-arguments: --config deny.toml advisories sources
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 24
