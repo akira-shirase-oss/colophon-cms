@@ -109,6 +109,11 @@ pub enum DbError {
     /// capacity. Nothing was sent to it, so the caller can safely answer "try again".
     #[error("no database connection became free in time")]
     Busy,
+    /// Postgres aborted the transaction to break a lock cycle (`40P01`) or a serialization
+    /// conflict (`40001`): it rolled back whole, nothing committed, so the caller can answer "try
+    /// again" as for [`Self::Busy`], never a 500.
+    #[error("the database aborted the transaction for a conflicting one; nothing was committed")]
+    Contended,
     /// No answer within the deadline.
     #[error("database did not answer within {0:?}")]
     Timeout(Duration),
@@ -202,10 +207,16 @@ pub enum DbError {
 }
 
 impl DbError {
-    /// A query's error: an exhausted pool becomes `Busy`, everything else `Query`.
+    /// A query's error: an exhausted pool becomes `Busy`, a deadlock or serialization abort
+    /// `Contended`, everything else `Query`.
     pub(crate) fn from_query(error: sqlx::Error) -> Self {
         match error {
             sqlx::Error::PoolTimedOut => Self::Busy,
+            sqlx::Error::Database(database)
+                if matches!(database.code().as_deref(), Some("40P01" | "40001")) =>
+            {
+                Self::Contended
+            }
             error => Self::Query(error),
         }
     }
@@ -546,6 +557,56 @@ pub async fn ping(pool: &PgPool, deadline: Duration) -> Result<(), DbError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A driver error carrying only a SQLSTATE, as Postgres reports one.
+    #[derive(Debug)]
+    struct Coded(&'static str);
+
+    impl std::fmt::Display for Coded {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            write!(f, "SQLSTATE {}", self.0)
+        }
+    }
+
+    impl std::error::Error for Coded {}
+
+    impl sqlx::error::DatabaseError for Coded {
+        fn message(&self) -> &'static str {
+            "coded"
+        }
+        fn code(&self) -> Option<std::borrow::Cow<'_, str>> {
+            Some(self.0.into())
+        }
+        fn as_error(&self) -> &(dyn std::error::Error + Send + Sync + 'static) {
+            self
+        }
+        fn as_error_mut(&mut self) -> &mut (dyn std::error::Error + Send + Sync + 'static) {
+            self
+        }
+        fn into_error(self: Box<Self>) -> Box<dyn std::error::Error + Send + Sync + 'static> {
+            self
+        }
+        fn kind(&self) -> sqlx::error::ErrorKind {
+            sqlx::error::ErrorKind::Other
+        }
+    }
+
+    #[test]
+    fn a_deadlock_or_serialization_abort_is_contended_never_a_query_failure() {
+        // CI 44719897863: a sweep aborted with 40P01 reached its caller as `Query`, which the
+        // API answers 500. The transaction rolled back whole, so it is a retryable refusal.
+        for code in ["40P01", "40001"] {
+            let error = DbError::from_query(sqlx::Error::Database(Box::new(Coded(code))));
+            assert!(matches!(error, DbError::Contended), "{code}: {error:?}");
+            let error = DbError::from_write(sqlx::Error::Database(Box::new(Coded(code))));
+            assert!(
+                matches!(error, DbError::Contended),
+                "{code} on a write: {error:?}"
+            );
+        }
+        let other = DbError::from_query(sqlx::Error::Database(Box::new(Coded("42P01"))));
+        assert!(matches!(other, DbError::Query(_)), "{other:?}");
+    }
 
     #[test]
     fn invalid_urls_are_reported_without_echoing_them() {
