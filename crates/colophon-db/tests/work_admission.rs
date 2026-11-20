@@ -4,6 +4,24 @@
 //! today on WA's serialisation and stay as guards when phase 2 replaces WA's count with a
 //! counter row taken at the end. The one proof that needs phase 2's internals (its open-deltas
 //! fold) skips until those exist. Needs the local stack.
+//!
+//! The proofs are themselves proven: each must FAIL on an admission that doesn't hold the bound.
+//! To re-run that check, delete the `admission(tx).await?;` line in `work::admit` (the project's
+//! lock, so the count and the insert stop being one step) and run, by name:
+//!
+//! ```sh
+//! cargo test -p colophon-db --test work_admission -- --ignored --exact --test-threads=1 \
+//!   two_admissions_at_the_last_slot_admit_exactly_one
+//! ```
+//!
+//! and the same for `sixteen_admissions_at_the_last_slot_admit_exactly_one` and
+//! `admitters_and_finishers_never_pass_the_bound_at_any_commit`. Measured 2026-11-19: 2 of 2 and
+//! 16 of 16 racers admitted, and a committed state of 10,007 open against a bound of 10,000. Two
+//! weaker versions passed that mutant and were fixed: racers that reached the count one after
+//! another (now every racer's transaction is open before a barrier releases them together), and
+//! a stress run whose finishers outran its admitters so the bound was never reached (now it
+//! asserts the bound was reached and admissions were refused there). Phase 2 re-runs the check
+//! with its own mutant: the guard `open + n <= MAX_OPEN` removed from its UPDATE.
 #![expect(
     clippy::expect_used,
     reason = "database tests: a failed connection or setup step is a test failure"
@@ -340,8 +358,10 @@ async fn admitters_and_finishers_never_pass_the_bound_at_any_commit() {
 }
 
 /// Phase 2's fold: workers' open-count deltas, inserted while admissions fold them, are folded
-/// exactly once, so at rest the counter row equals the true count. Phase 2 enables it by
-/// removing the skip below; until its `work_open` table exists there is nothing to compare.
+/// exactly once, so at rest the counter row equals the true count. Until phase 2 there is
+/// nothing to compare and it skips; the skip can't outlive phase 2, because it applies only while
+/// no migration creates `work_open`: once one does, a missing table fails the test (phase 2's
+/// commit turns the skip into a plain assertion).
 #[tokio::test]
 #[ignore = "needs the local stack: scripts/stack.sh up"]
 async fn the_open_counter_equals_the_true_count_at_rest() {
@@ -351,6 +371,17 @@ async fn the_open_counter_equals_the_true_count_at_rest() {
         .fetch_one(&owner)
         .await
         .expect("catalog");
+    let migrated = std::fs::read_dir(concat!(env!("CARGO_MANIFEST_DIR"), "/migrations"))
+        .expect("the migrations directory")
+        .filter_map(Result::ok)
+        .any(|file| {
+            std::fs::read_to_string(file.path())
+                .is_ok_and(|sql| sql.contains("CREATE TABLE work_open"))
+        });
+    assert!(
+        built || !migrated,
+        "a migration creates work_open but the database has none: phase 2 is half-deployed"
+    );
     if !built {
         eprintln!(
             "pending: D-216 phase 2's work_open counter isn't built yet; its commit removes this skip"
