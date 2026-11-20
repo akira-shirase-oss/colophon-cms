@@ -7,7 +7,7 @@ use reqwest::{Method, StatusCode};
 use serde_json::json;
 
 use super::{anonymous, as_token, refused, send, token};
-use crate::common::{Server, article, entries, project, sign_in};
+use crate::common::{Server, article, entries, join, project, sign_in};
 
 #[tokio::test]
 #[ignore = "needs the stack and scripts/migrate.sh"]
@@ -15,8 +15,10 @@ async fn another_project_s_rows_are_not_found_by_anyone_outside_it() {
     let _server = Server::start().await;
     let owner = sign_in("dev-owner").await;
     let stranger = sign_in("dev-editor").await;
+    // Two projects; the stranger is a member of the second only.
     let theirs = project(&owner).await;
-    let mine = project(&stranger).await;
+    let mine = project(&owner).await;
+    join(&owner, &stranger, &mine, "editor").await;
     let created = send(
         &owner,
         Method::POST,
@@ -30,7 +32,7 @@ async fn another_project_s_rows_are_not_found_by_anyone_outside_it() {
         .expect("an id")
         .to_owned();
     let other_token = token(
-        &stranger,
+        &owner,
         &mine,
         &json!({"name": "Mine", "kind": "full-access", "expires_in_days": 1}),
     )

@@ -764,9 +764,16 @@ jobs:
           persist-credentials: false
       - name: Install a dated nightly (cargo-fuzz needs its sanitizer flags)
         run: rustup toolchain install "$FUZZ_TOOLCHAIN" --profile minimal
+      - name: Install the pinned toolchain too (cargo-deny reads the fuzz lockfile with it)
+        run: |
+          channel=$(sed -n 's/^channel = "\(.*\)"$/\1/p' rust-toolchain.toml)
+          rustup toolchain install "$channel" --profile minimal
       - uses: taiki-e/install-action@cfdb7ed4ccc7c7dce37759eae89dc5674b469b39 # v2.90.3
         with:
-          tool: cargo-fuzz@0.13.2
+          tool: cargo-fuzz@0.13.2,cargo-deny@0.20.2
+      # The fuzz crate's own lockfile: outside the workspace, so the supply-chain job never sees it.
+      - name: Advisories and sources of the fuzz lockfile
+        run: cargo deny --manifest-path fuzz/Cargo.toml --locked --config deny.toml check advisories sources
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
           workspaces: fuzz
@@ -797,13 +804,6 @@ jobs:
         with:
           persist-credentials: false
       - uses: EmbarkStudios/cargo-deny-action@3c6349835b2b7b196a839186cb8b78e02f7b5f25 # v2.1.1
-      # The fuzz crate's own lockfile (D-231): outside the workspace, so checked on its own.
-      - uses: EmbarkStudios/cargo-deny-action@3c6349835b2b7b196a839186cb8b78e02f7b5f25 # v2.1.1
-        with:
-          manifest-path: fuzz/Cargo.toml
-          arguments: --locked
-          command: check
-          command-arguments: --config deny.toml advisories sources
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 24
