@@ -71,7 +71,8 @@ export default defineConfig({
 			timeout: 30_000
 		},
 		{
-			command: `npm run preview -- --port ${TESTBED_PORT}`,
+			// --strictPort: a taken port fails the start instead of Vite moving to the next one.
+			command: `npm run preview -- --port ${TESTBED_PORT} --strictPort`,
 			env: { COLOPHON_SERVER: `http://127.0.0.1:${SERVER_PORT}` },
 			url: `http://127.0.0.1:${TESTBED_PORT}`,
 			reuseExistingServer: false,
