@@ -510,6 +510,8 @@ jobs:
           fi
           echo "| runner | ${runner_cpu:-unknown}: health $health_rps req/s (median of 3), scale $scale of $REFERENCE_RPS, latency judged: $judged |" >>"$GITHUB_STEP_SUMMARY"
           export RUNNER_HEALTH_RPS=$health_rps RUNNER_REFERENCE_RPS=$REFERENCE_RPS RUNNER_SCALE=$scale RUNNER_JUDGED=$judged SMOKE_LATENCY_JUDGED=$judged
+          # The verdict scales a flapper's p99 ceiling by the same factor as its limit (limit() below: P99 / scale).
+          export SMOKE_LIMIT_SCALE=$scale
           rate() { awk -v r="$1" -v s="$scale" 'BEGIN {v = int(r * s + 0.5); if (v < 1) v = 1; print v}'; }
           limit() { awk -v l="$1" -v s="$scale" 'BEGIN {printf "%d", l / s + 0.5}'; }
           smoke() {

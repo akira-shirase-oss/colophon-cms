@@ -113,6 +113,13 @@ for smoke in $listed; do
   ceiling=$(column "$smoke" 5)
   what=${ceiling%%<=*} bound=${ceiling#*<=}
   bound=${bound%% *}
+  # The smokes job scales its back-to-back limits to the runner (D-221: P99 / scale, SMOKE_LIMIT_SCALE), so a p99
+  # ceiling (2x the reference limit) scales the same way and stays 2x the limit the smoke ran under; unscaled, it was
+  # 1.13x on a runner at scale 0.565 (CI 44680118124). The integration job scales rates, not limits, and sets no
+  # scale: its ceilings stay as listed. A ratio ceiling (l08) has no unit to scale.
+  if [[ "$what" == p99 && -n "${SMOKE_LIMIT_SCALE:-}" ]]; then
+    bound=$(awk -v b="$bound" -v s="$SMOKE_LIMIT_SCALE" 'BEGIN {if (s > 0 && s < 1) b = b / s; printf "%.1f", b}')
+  fi
   case "$what" in
     p99) value=$(metric "$smoke" 2) unit=" ms" ;;
     l08) value=$(metric "$smoke" 3) unit="x" ;;

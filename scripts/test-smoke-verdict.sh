@@ -66,6 +66,20 @@ expect_fail "$tmp/list.tsv" "$ran" "assets bulk" "$tmp/run2.tsv"
 sed 's/^migrations\t408.022/migrations\t1200/' "$tmp/run2.tsv" >"$tmp/over.tsv"
 label='mutant: a flapper past its ceiling while PASSING its outcome'; want='migrations is past its CEILING: p99 1200 ms > 1000 ms'
 expect_fail "$list" "$ran" "assets bulk" "$tmp/over.tsv"
+# The smokes job scales its limits to the runner (D-221: P99 / scale), so a flapper's p99 ceiling scales with it:
+# 2x the limit stays 2x. At scale 0.565 migrations' ceiling is 1000 / 0.565 = 1770 ms (CI 44680118124 measured
+# 1178 ms there, which an unscaled 1000 ms ceiling failed). A ratio ceiling (l08) doesn't scale.
+sed 's/^migrations\t408.022/migrations\t1500/' "$tmp/run2.tsv" >"$tmp/scaled.tsv"
+label='a flapper over its reference ceiling but under the scaled one'
+SMOKE_LIMIT_SCALE=0.565 scripts/smoke-verdict.sh "$list" "$ran" "assets bulk" "$tmp/scaled.tsv" >"$tmp/out" 2>&1 \
+  || { echo "FAIL: $label:"; cat "$tmp/out"; exit 1; }
+grep -q 'migrations, p99 1500 ms (85% of its ceiling' "$tmp/out" || { echo "FAIL: $label: no scaled margin:"; cat "$tmp/out"; exit 1; }
+sed 's/^migrations\t408.022/migrations\t1800/' "$tmp/run2.tsv" >"$tmp/scaled-over.tsv"
+label='mutant: a flapper past its scaled ceiling'
+if SMOKE_LIMIT_SCALE=0.565 scripts/smoke-verdict.sh "$list" "$ran" "assets bulk" "$tmp/scaled-over.tsv" >"$tmp/out" 2>&1; then
+  echo "FAIL: $label accepted"; cat "$tmp/out"; exit 1
+fi
+grep -q 'migrations is past its CEILING: p99 1800 ms > 1769.9 ms' "$tmp/out" || { echo "FAIL: $label: wrong reason:"; cat "$tmp/out"; exit 1; }
 grep -v '^stages	' "$tmp/run2.tsv" >"$tmp/unmeasured.tsv"
 label='a flapper with nothing measured'; want='stages has no p99 measured this run'
 expect_fail "$list" "$ran" "assets bulk" "$tmp/unmeasured.tsv"
