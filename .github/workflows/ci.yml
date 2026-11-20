@@ -158,6 +158,8 @@ jobs:
         run: scripts/test-smoke-verdict.sh
       - name: The load runs' warnings gate (scripts/test-load-warnings.sh, D-221 evidence under 1 s excused)
         run: scripts/test-load-warnings.sh
+      - name: A smoke is re-run only for a runner IO stall, once, and the re-run decides (scripts/test-run-smoke.sh)
+        run: scripts/test-run-smoke.sh
 
   # The testing rule (D-018) from a clean clone: the real stack, the real binary, real outages,
   # the testbed in a browser, and a load smoke run.
@@ -294,7 +296,8 @@ jobs:
             local file="${name//\//_}"
             ran+=("$name")
             echo "$(date -u +%FT%TZ) start $name" >>"$logs/windows.txt"
-            if ! env SERVER_LOG="$logs/$file.server.log" RECORD_OUT="$logs/$file.record.json" "$@"; then
+            # A hard failure inside a runner IO stall is re-run once and the re-run decides (scripts/run-smoke.sh).
+            if ! scripts/run-smoke.sh "$name" "$logs/$file.record.json" "$logs/$file.server.log" "$logs/pressure.txt" -- "$@"; then
               echo "::warning::smoke failed: $* (the verdict below decides whether it was expected)"
               failed+=("$name")
             fi
@@ -516,7 +519,8 @@ jobs:
             pgq -c "SELECT pg_stat_statements_reset()" >/dev/null || true
             (while :; do echo "$(date -u +%FT%TZ) $(docker stats --no-stream --format '{{.CPUPerc}}' "$pgc" 2>/dev/null)"; sleep 1; done) >"$logs/$name.postgres-cpu.txt" &
             sampler=$!
-            if env SERVER_LOG="$logs/$name.server.log" RECORD_OUT="$logs/$name.record.json" "$@"; then echo "::endgroup::"; else
+            # A hard failure inside a runner IO stall is re-run once and the re-run decides (scripts/run-smoke.sh).
+            if scripts/run-smoke.sh "$name" "$logs/$name.record.json" "$logs/$name.server.log" "$logs/pressure.txt" -- "$@"; then echo "::endgroup::"; else
               echo "::endgroup::"; echo "::warning::smoke failed: $* (the verdict below decides whether it was expected)"; failed+=("$name")
               # The work tables as the failure left them: what was queued, claimed, retried.
               docker compose -f deploy/compose.yaml exec -T postgres psql -U colophon -d colophon -XAq \
