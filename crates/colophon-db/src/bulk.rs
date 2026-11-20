@@ -417,10 +417,18 @@ pub async fn cancel(tx: &mut ProjectTransaction, id: Uuid) -> Result<bool, DbErr
         return Ok(false);
     }
     sqlx::query!(
-        "UPDATE bulk_items SET outcome = 'skipped',
+        "WITH pending AS (
+             SELECT project_id, environment_id, job_id, key FROM bulk_items
+             WHERE project_id = $1 AND environment_id = $2 AND job_id = $3 AND outcome = 'pending'
+             ORDER BY key
+             FOR UPDATE
+         )
+         UPDATE bulk_items i SET outcome = 'skipped',
             problem = jsonb_build_object('reason', 'cancelled', 'pointer', '',
                                          'message', 'the job was cancelled before this item ran')
-         WHERE project_id = $1 AND environment_id = $2 AND job_id = $3 AND outcome = 'pending'",
+         FROM pending
+         WHERE i.project_id = pending.project_id AND i.environment_id = pending.environment_id
+           AND i.job_id = pending.job_id AND i.key = pending.key",
         tx.project,
         tx.environment,
         id

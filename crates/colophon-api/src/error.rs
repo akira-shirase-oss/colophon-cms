@@ -568,7 +568,9 @@ impl ApiError {
     /// such as a conflict, match it first.
     pub fn from_db(error: DbError) -> Self {
         match error {
-            DbError::Busy => Self::Busy,
+            // A transaction Postgres aborted for a deadlock or a serialization conflict rolled back
+            // whole: the same retryable answer as a saturated pool, never a 500.
+            DbError::Busy | DbError::Contended => Self::Busy,
             DbError::SlugTaken => Self::slug_taken(
                 "",
                 "another entry in this collection has the same slug, as a draft or published",
@@ -1121,6 +1123,19 @@ mod tests {
         assert_eq!(
             response.headers()[header::RETRY_AFTER],
             HeaderValue::from(WORK_FULL_RETRY_AFTER_SECONDS)
+        );
+    }
+
+    #[test]
+    fn a_transaction_aborted_for_a_deadlock_is_a_retryable_503_never_a_500() {
+        // Postgres rolled it back whole (40P01, 40001): the client may safely try again.
+        let error = ApiError::from_db(DbError::Contended);
+        assert_eq!(error.status(), StatusCode::SERVICE_UNAVAILABLE);
+        assert_eq!(error.code().as_str(), "unavailable");
+        let response = error.into_response();
+        assert_eq!(
+            response.headers()[header::RETRY_AFTER],
+            HeaderValue::from(BUSY_RETRY_AFTER_SECONDS)
         );
     }
 

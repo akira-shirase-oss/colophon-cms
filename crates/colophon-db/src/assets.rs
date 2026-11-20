@@ -757,14 +757,24 @@ async fn removing(
     job: &Claimed,
     asset_key: String,
 ) -> Result<Deletion, DbError> {
+    // Every open verify of the asset must go, so this waits for each, in id order (the work
+    // tables' one multi-row lock order).
     let open_jobs = sqlx::query!(
-        "UPDATE asset_jobs SET status = 'superseded', last_error = 'the asset is being deleted',
-                               lease_owner = NULL, lease_expires_at = NULL,
-                               updated_at = now(), finished_at = now()
-         WHERE project_id = $1 AND environment_id = $2 AND asset_id = $3
-           AND kind IN ('verify', 'reverify') AND status IN ('pending', 'retrying')
-           AND quarantine_key IS NOT NULL
-         RETURNING quarantine_key",
+        "WITH open AS (
+             SELECT project_id, environment_id, id FROM asset_jobs
+             WHERE project_id = $1 AND environment_id = $2 AND asset_id = $3
+               AND kind IN ('verify', 'reverify') AND status IN ('pending', 'retrying')
+               AND quarantine_key IS NOT NULL
+             ORDER BY id
+             FOR UPDATE
+         )
+         UPDATE asset_jobs j SET status = 'superseded', last_error = 'the asset is being deleted',
+                                 lease_owner = NULL, lease_expires_at = NULL,
+                                 updated_at = now(), finished_at = now()
+         FROM open
+         WHERE j.project_id = open.project_id AND j.environment_id = open.environment_id
+           AND j.id = open.id
+         RETURNING j.quarantine_key",
         job.project_id,
         job.environment_id,
         job.asset_id
@@ -1007,14 +1017,22 @@ async fn land_usable(
 }
 
 /// Fails unfinished asset jobs that ran out of time (swept with the delivery jobs'); how many.
+/// Like `jobs::expire` it never waits: a job another transaction holds is the next pass's.
 pub async fn expire(pool: &PgPool) -> Result<u64, DbError> {
     let mut transaction = worker(pool).await?;
     let expired = sqlx::query!(
-        "UPDATE asset_jobs SET status = 'failed', last_error = 'ran out of time',
-                              lease_owner = NULL, lease_expires_at = NULL,
-                              updated_at = now(), finished_at = now()
-         WHERE deadline_at <= now() AND status IN ('pending', 'retrying', 'running')
-           AND (status <> 'running' OR lease_expires_at < now())"
+        "WITH due AS (
+             SELECT project_id, environment_id, id FROM asset_jobs
+             WHERE deadline_at <= now() AND status IN ('pending', 'retrying', 'running')
+               AND (status <> 'running' OR lease_expires_at < now())
+             ORDER BY id
+             FOR UPDATE SKIP LOCKED
+         )
+         UPDATE asset_jobs j SET status = 'failed', last_error = 'ran out of time',
+                                 lease_owner = NULL, lease_expires_at = NULL,
+                                 updated_at = now(), finished_at = now()
+         FROM due
+         WHERE j.project_id = due.project_id AND j.environment_id = due.environment_id AND j.id = due.id"
     )
     .execute(&mut *transaction)
     .await
