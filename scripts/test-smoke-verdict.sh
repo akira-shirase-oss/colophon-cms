@@ -20,7 +20,8 @@ ran=$(grep -oE 'smoke .*scripts/load\.sh [a-z][a-z-]*' .github/workflows/ci.yml 
 printf 'audience\t580.731\t\t0\t\nmigrations\t408.022\t\t0\t\nstages\t128.171\t\t0\t\nnoisy-agent\t18.466\t1.6\t0\t\nassets\t300\t\t0\t\nbulk\t2500\t\t0\t\n' >"$tmp/run2.tsv"
 # The first run (CI 44543394086): all six failed; noisy-agent's L08 ratios were 5.79 and 6.56.
 printf 'audience\t747.707\t\t0\t\nmigrations\t681.471\t\t0\t\nstages\t254.202\t\t0\t\nnoisy-agent\t103.657\t6.56\t0\t\nassets\t619.375\t\t0\t\nbulk\t2876.506\t\t0\t\n' >"$tmp/run1.tsv"
-# D-216's run (CI 44585574138): every smoke passed; bulk and assets flap under their 1000 ms ceilings now.
+# D-216's run (CI 44585574138): every smoke passed. bulk, undo and assets left the list with D-216 (perf-compare
+# 44697596006, EPYC 7763: bulk p99 795–2955 → 319–327 ms, undo 866–1013 → 350–395, assets 686–836 → 436–442).
 printf 'audience\t549.583\t\t0\t\nmigrations\t258.603\t\t0\t\nstages\t101.837\t\t0\t\nnoisy-agent\t10.036\t1.264\t0\t\nassets\t306.718\t\t0\t\nbulk\t188.31\t\t0\t\n' >"$tmp/run3.tsv"
 # The first run's other smokes with D-216's bulk and assets, for the noisy-agent cases below.
 sed -e 's/^assets\t619.375/assets\t306.718/' -e 's/^bulk\t2876.506/bulk\t188.31/' "$tmp/run1.tsv" >"$tmp/run1b.tsv"
@@ -38,21 +39,21 @@ expect_fail() {
 }
 with() { { cat "$list"; printf '%s\n' "$1"; } >"$tmp/list.tsv"; }
 
-# The second run is from before D-216: its bulk p99 of 2500 ms is past the ceiling the list now gives bulk.
-label='the second run, from before D-216'; want='bulk is past its CEILING: p99 2500 ms > 1000 ms'
+# The second run is from before D-216: bulk failed it, and with D-216 bulk is off the list, so that failure fails.
+label='the second run, from before D-216'; want='smoke bulk failed and is not on'
 expect_fail "$list" "$ran" "assets bulk" "$tmp/run2.tsv"
 label="D-216's run"; expect_pass "$list" "$ran" "" "$tmp/run3.tsv"
 grep -q '^pass: migrations, p99 258.603 ms (26% of its ceiling' "$tmp/out" || { echo "FAIL: no margin line:"; cat "$tmp/out"; exit 1; }
 label="D-216's run with every flapper failing its limit, under its ceiling"
-expect_pass "$list" "$ran" "assets bulk audience migrations stages noisy-agent" "$tmp/run3.tsv"
+expect_pass "$list" "$ran" "audience migrations stages noisy-agent" "$tmp/run3.tsv"
 grep -q '^flap: stages failed its limit' "$tmp/out" || { echo "FAIL: no flap line:"; cat "$tmp/out"; exit 1; }
 # The first run: noisy-agent's L08 6.56x was the D-214 defect itself, under the temporary ceiling of 8 that D-214's
 # merge retired; at the ordinary ceiling of 4 (2x its limit) that run fails, as it should now that the defect is fixed.
 label='the first run, past the ordinary ceiling'; want='noisy-agent is past its CEILING: l08 6.56x > 4x'
-expect_fail "$list" "$ran" "assets audience bulk migrations noisy-agent stages" "$tmp/run1b.tsv"
+expect_fail "$list" "$ran" "audience migrations noisy-agent stages" "$tmp/run1b.tsv"
 sed 's/^noisy-agent\t103.657\t6.56/noisy-agent\t103.657\t3.1/' "$tmp/run1b.tsv" >"$tmp/under4.tsv"
 label='noisy-agent failing its limit under its ceiling'
-expect_pass "$list" "$ran" "assets audience bulk migrations noisy-agent stages" "$tmp/under4.tsv"
+expect_pass "$list" "$ran" "audience migrations noisy-agent stages" "$tmp/under4.tsv"
 grep -q '^flap: noisy-agent failed its limit, l08 3.1x, under its ceiling 4x' "$tmp/out" || { echo "FAIL: no noisy-agent flap line:"; cat "$tmp/out"; exit 1; }
 # The expiry: a temporary ceiling whose decision's row is in DECISIONS (its fix merged) is refused. D-214's is.
 sed 's/^\(noisy-agent\t[^\t]*\t[^\t]*\t[^\t]*\t\)l08<=4\t/\1l08<=8 EXPIRES-WITH D-214\t/' "$list" >"$tmp/expired.tsv"
@@ -61,9 +62,9 @@ label='mutant: D-214 merged while noisy-agent keeps its temporary ceiling'; want
 if scripts/smoke-verdict.sh "$tmp/expired.tsv" "$ran" "" "$tmp/run3.tsv" >"$tmp/out" 2>&1; then echo "FAIL: $label accepted"; cat "$tmp/out"; exit 1; fi
 grep -q -- "$want" "$tmp/out" || { echo "FAIL: $label: no '$want' in:"; cat "$tmp/out"; exit 1; }
 
-grep -v '^assets	' "$list" >"$tmp/deleted.tsv"
-label='mutant: assets deleted from the list'; want='smoke assets failed and is not on'
-expect_fail "$tmp/deleted.tsv" "$ran" "assets" "$tmp/run3.tsv"
+grep -v '^migrations	' "$list" >"$tmp/deleted.tsv"
+label='mutant: migrations deleted from the list'; want='smoke migrations failed and is not on'
+expect_fail "$tmp/deleted.tsv" "$ran" "migrations" "$tmp/run3.tsv"
 with $'cache-down\tstrict\tD-000\tnobody\t-\tplanted\tnothing'
 label='mutant: a passing smoke planted as strict'; want='smoke cache-down PASSED: remove it'
 expect_fail "$tmp/list.tsv" "$ran" "" "$tmp/run3.tsv"
@@ -128,11 +129,10 @@ with $'integration/publishing-steady\tflapping\tD-221\tlearning-95\tp99<=400 EXP
 label='integration mutant: a D-221 tolerance planted back after D-221 closed'
 if SMOKE_SCOPE=integration scripts/smoke-verdict.sh "$tmp/list.tsv" "$iran" "" "$tmp/irun.tsv" >"$tmp/out" 2>&1; then echo "FAIL: $label accepted"; cat "$tmp/out"; exit 1; fi
 grep -q 'temporary ceiling expired with D-221' "$tmp/out" || { echo "FAIL: $label:"; cat "$tmp/out"; exit 1; }
-# undo's temporary ceiling expires with D-216, whose row this branch adds: planted back, it is refused.
-sed 's/^\(undo\t[^\t]*\t[^\t]*\t[^\t]*\t\)p99<=1400\t/\1p99<=1400 EXPIRES-WITH D-216\t/' "$list" >"$tmp/undo-expired.tsv"
-grep -q 'EXPIRES-WITH D-216' "$tmp/undo-expired.tsv" || { echo "FAIL: could not plant undo's expired ceiling"; exit 1; }
+# undo's temporary ceiling expired with D-216, whose row this branch adds: planted back, it is refused.
+with $'undo\tflapping\tD-216\tlearning-a4\tp99<=1400 EXPIRES-WITH D-216\tp99 2291 → 395 ms\tnothing'
 label='mutant: D-216 merged while undo keeps its temporary ceiling'
-if scripts/smoke-verdict.sh "$tmp/undo-expired.tsv" "$ran" "" "$tmp/run3.tsv" >"$tmp/out" 2>&1; then echo "FAIL: $label accepted"; cat "$tmp/out"; exit 1; fi
+if scripts/smoke-verdict.sh "$tmp/list.tsv" "$ran" "" "$tmp/run3.tsv" >"$tmp/out" 2>&1; then echo "FAIL: $label accepted"; cat "$tmp/out"; exit 1; fi
 grep -q 'temporary ceiling expired with D-216' "$tmp/out" || { echo "FAIL: $label:"; cat "$tmp/out"; exit 1; }
 # Under half the reference speed latency isn't judged (SMOKE_LATENCY_JUDGED=no), but hard failures still are.
 label='not judged: smokes failing their limits on a too-slow runner pass the verdict'
@@ -149,8 +149,9 @@ hard migrations 1 'checks_failed=1; release names it: 1 of 400'
 label='hard: a flapper under its ceiling with a failed check'; want='smoke migrations has hard failures (1: checks_failed=1; release names it: 1 of 400)'
 expect_fail "$list" "$ran" "" "$tmp/hard.tsv"
 hard assets 3598 'upload_refused=3598; upload 202: 3598 of 4096'
+with $'assets\tstrict\tD-000\tnobody\t-\tplanted\tnothing'
 label='hard: a strict expected failure that is also a correctness failure'; want='smoke assets has hard failures (3598'
-expect_fail "$list" "$ran" "" "$tmp/hard.tsv"
+expect_fail "$tmp/list.tsv" "$ran" "assets" "$tmp/hard.tsv"
 hard cache-down 2 'requests_failed=2'
 label='hard: an unlisted passing smoke (an outage drill) with real request errors'; want='smoke cache-down has hard failures (2: requests_failed=2)'
 expect_fail "$list" "$ran" "" "$tmp/hard.tsv"
