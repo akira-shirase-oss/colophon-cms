@@ -601,13 +601,13 @@ pub struct Claimed {
 /// Claims up to `limit` due asset jobs for `owner` under `lease`, rows another worker is
 /// claiming skipped not waited for (the delivery jobs' discipline, minus destinations).
 ///
-/// The two kinds of due job are found separately, each by an ordered scan of its own partial
-/// index that stops at the limit: waiting jobs on `asset_jobs_due`, lapsed leases on
-/// `asset_jobs_leased` (0080). One `WHERE … OR …` over both could use neither index in order,
-/// so it read the whole table, finished jobs and dead row versions included, and sorted the due
-/// set on every claim (1-3.5 s claims in the assets smoke). Each half locks its own rows (a
-/// UNION can't carry `FOR UPDATE`); the merge keeps the oldest `limit`, so a claim locks at most
-/// twice that for the moment it commits.
+/// Only waiting jobs, by an ordered scan of `asset_jobs_due` that stops at the limit. A job
+/// whose worker stopped answering is made waiting again by [`release_lapsed`], on the sweep's
+/// interval, rather than looked for here: a claim that also searched `lease_expires_at <
+/// now()` walked the dead index entry every finished job leaves there once its lease time
+/// passes, on every claim, for as long as an open snapshot kept those entries from being
+/// marked dead (train-3's assets smoke: claim tails climbing with the run's history). And one
+/// `WHERE … OR …` over both kinds could use no index in order at all (1-3.5 s claims).
 pub async fn claim(
     pool: &PgPool,
     owner: &str,
@@ -618,28 +618,14 @@ pub async fn claim(
     let lease_ms = i64::try_from(lease.as_millis()).unwrap_or(i64::MAX);
     let claimed = sqlx::query_as!(
         Claimed,
-        "WITH waiting AS (
-             SELECT j.project_id, j.environment_id, j.id, j.next_attempt_at
+        "WITH due AS (
+             SELECT j.project_id, j.environment_id, j.id
              FROM asset_jobs j
              WHERE j.status IN ('pending', 'retrying') AND j.next_attempt_at <= now()
                AND j.deadline_at > now()
              ORDER BY j.next_attempt_at
              LIMIT $3
              FOR UPDATE OF j SKIP LOCKED
-         ), lapsed AS (
-             SELECT j.project_id, j.environment_id, j.id, j.next_attempt_at
-             FROM asset_jobs j
-             WHERE j.status = 'running' AND j.lease_expires_at < now()
-               AND j.deadline_at > now()
-             ORDER BY j.lease_expires_at
-             LIMIT $3
-             FOR UPDATE OF j SKIP LOCKED
-         ), due AS (
-             SELECT * FROM waiting
-             UNION ALL
-             SELECT * FROM lapsed
-             ORDER BY next_attempt_at
-             LIMIT $3
          )
          UPDATE asset_jobs j SET status = 'running', lease_owner = $1,
                             lease_expires_at = now() + make_interval(secs => $2::bigint / 1000.0),
@@ -663,6 +649,37 @@ pub async fn claim(
     .map_err(DbError::from_query)?;
     transaction.commit().await.map_err(DbError::from_query)?;
     Ok(claimed)
+}
+
+/// Makes asset jobs whose lease ran out waiting again (`retrying`, keeping their place: their
+/// `next_attempt_at` was due when they were claimed, so the next [`claim`] takes them before
+/// newer work): the worker that held one stopped answering (a crash, a kill), and the job is
+/// anyone's. Runs on the worker's sweep interval, so such a job is picked up within
+/// that interval of its lease running out (D-093's addendum). Never waits: a job another
+/// transaction holds is the next pass's (`SKIP LOCKED`, in id order). Its old holder's late
+/// finish is refused ([`finish`] needs the job running under that holder's lease). How many
+/// it released.
+pub async fn release_lapsed(pool: &PgPool) -> Result<u64, DbError> {
+    let mut transaction = worker(pool).await?;
+    let released = sqlx::query!(
+        "WITH lapsed AS (
+             SELECT project_id, environment_id, id FROM asset_jobs
+             WHERE status = 'running' AND lease_expires_at < now() AND deadline_at > now()
+             ORDER BY id
+             FOR UPDATE SKIP LOCKED
+         )
+         UPDATE asset_jobs j SET status = 'retrying', lease_owner = NULL, lease_expires_at = NULL,
+                                 updated_at = now()
+         FROM lapsed
+         WHERE j.project_id = lapsed.project_id AND j.environment_id = lapsed.environment_id
+           AND j.id = lapsed.id"
+    )
+    .execute(&mut *transaction)
+    .await
+    .map_err(DbError::from_query)?
+    .rows_affected();
+    transaction.commit().await.map_err(DbError::from_query)?;
+    Ok(released)
 }
 
 /// What a delete attempt decided under the asset's row lock (media M3, D-098).
