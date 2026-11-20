@@ -137,8 +137,11 @@ pub struct Config {
     /// `COLOPHON_UPLOAD_MEMORY_MB`, default 256: the memory uploads in flight may hold between them
     /// (D-215); at the 21 MiB body limit that is 12 at once, and never less than one.
     pub upload_memory_mb: usize,
-    /// `COLOPHON_DB_MAX_CONNECTIONS`, default 16.
+    /// The request write pool's size (D-225): `COLOPHON_DB_WRITE_CONNECTIONS`, default 8, or the
+    /// older `COLOPHON_DB_MAX_CONNECTIONS` when only that is set.
     pub db_max_connections: u32,
+    /// The request read pool's size (D-225): `COLOPHON_DB_READ_CONNECTIONS`, default 12.
+    pub db_read_connections: u32,
     /// Statements slower than this are logged at WARN (D-221). `COLOPHON_DB_SLOW_STATEMENT_MS`,
     /// default 1000 (sqlx's own); CI's smokes lower it to name a stall's statements.
     pub db_slow_statement: Duration,
@@ -738,7 +741,13 @@ impl Config {
         let request_timeout = env.millis("COLOPHON_REQUEST_TIMEOUT_MS", 10_000, 100..=120_000);
         let max_body_bytes = env.ranged("COLOPHON_MAX_BODY_BYTES", 21 * MIB, KIB..=64 * MIB);
         let upload_memory_mb = env.ranged("COLOPHON_UPLOAD_MEMORY_MB", 256, 1..=16 * 1024);
-        let db_max_connections = env.ranged("COLOPHON_DB_MAX_CONNECTIONS", 16, 1..=1_000);
+        let legacy_connections = env.ranged("COLOPHON_DB_MAX_CONNECTIONS", 8, 1..=1_000);
+        let db_max_connections = env.ranged(
+            "COLOPHON_DB_WRITE_CONNECTIONS",
+            legacy_connections,
+            1..=1_000,
+        );
+        let db_read_connections = env.ranged("COLOPHON_DB_READ_CONNECTIONS", 12, 1..=1_000);
         let db_slow_statement = env.millis("COLOPHON_DB_SLOW_STATEMENT_MS", 1_000, 1..=600_000);
         let (probe_interval, probe_timeout) = env.probe();
         let (drain_delay, shutdown_grace) = env.drain();
@@ -847,6 +856,7 @@ impl Config {
                 max_body_bytes,
                 upload_memory_mb,
                 db_max_connections,
+                db_read_connections,
                 db_slow_statement,
                 probe_interval,
                 probe_timeout,

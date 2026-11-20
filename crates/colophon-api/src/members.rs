@@ -66,10 +66,14 @@ pub(crate) async fn open(
     if caller.project.is_some() {
         return Err(ApiError::NotFound);
     }
-    scope::begin_as_member(&services.pool, caller.identity, project)
-        .await
-        .map_err(ApiError::from_db)?
-        .ok_or(ApiError::NotFound)
+    scope::begin_as_member(
+        crate::session::pool_for(services, caller.reads),
+        caller.identity,
+        project,
+    )
+    .await
+    .map_err(ApiError::from_db)?
+    .ok_or(ApiError::NotFound)
 }
 
 /// The caller's role as of now, for a change that must not act on a role read a moment ago (a

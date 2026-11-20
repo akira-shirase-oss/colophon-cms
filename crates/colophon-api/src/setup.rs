@@ -158,7 +158,7 @@ struct InstallationView {
 /// changes once, when someone presents the setup code.
 pub(crate) async fn installation(State(state): State<AppState>) -> Result<Response, ApiError> {
     let services = services(&state)?;
-    let has_administrator = setup::has_administrator(&services.pool)
+    let has_administrator = setup::has_administrator(&services.read_pool)
         .await
         .map_err(ApiError::from_db)?;
     Ok(no_store(

@@ -153,7 +153,7 @@ pub(crate) async fn show(
     Path(code): Path<String>,
 ) -> Result<Json<Data<Pending>>, ApiError> {
     let services = services(&state)?;
-    let login = access::device_login(&services.pool, &code.to_ascii_uppercase())
+    let login = access::device_login(&services.read_pool, &code.to_ascii_uppercase())
         .await
         .map_err(ApiError::from_db)?
         .ok_or(ApiError::NotFound)?;

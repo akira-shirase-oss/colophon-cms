@@ -283,7 +283,7 @@ async fn resolve(
     project: Uuid,
     environment: &str,
 ) -> Result<delivery::Environment, ApiError> {
-    delivery::environment(&services.pool, project, environment)
+    delivery::environment(&services.read_pool, project, environment)
         .await
         .map_err(ApiError::from_db)?
         .ok_or(ApiError::NotFound)
@@ -536,7 +536,7 @@ pub(crate) async fn list(
             let mut rows = if generation == 0 {
                 Vec::new()
             } else {
-                let mut tx = delivery::begin(&services.pool, project, audience)
+                let mut tx = delivery::begin(&services.read_pool, project, audience)
                     .await
                     .map_err(ApiError::from_db)?;
                 let rows = tx
@@ -609,7 +609,7 @@ pub(crate) async fn get(
     let fill = || {
         let audience = &audience;
         async move {
-            let mut tx = delivery::begin(&services.pool, project, audience)
+            let mut tx = delivery::begin(&services.read_pool, project, audience)
                 .await
                 .map_err(ApiError::from_db)?;
             let found = tx
@@ -693,7 +693,7 @@ pub(crate) async fn query(
     // The collection's current definition — as the API role, since `colophon_delivery`
     // may not read it. An unknown collection is 404, like an empty list's.
     let definition = content_types::current_definition(
-        &services.pool,
+        &services.read_pool,
         project,
         environment.id,
         &path.collection,
@@ -750,7 +750,7 @@ pub(crate) async fn query(
                     next_cursor: None,
                 }
             } else {
-                let mut tx = delivery::begin(&services.pool, project, audience)
+                let mut tx = delivery::begin(&services.read_pool, project, audience)
                     .await
                     .map_err(ApiError::from_db)?;
                 let mut found = db_query::published_page(

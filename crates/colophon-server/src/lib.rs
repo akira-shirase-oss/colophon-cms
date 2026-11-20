@@ -250,12 +250,14 @@ fn delivery_cache(config: &Config) -> anyhow::Result<colophon_api::DeliveryCache
 fn api_services(
     config: &Config,
     pool: &colophon_db::PgPool,
+    read_pool: &colophon_db::PgPool,
     events: Arc<colophon_api::events::EventBus>,
 ) -> anyhow::Result<colophon_api::Services> {
     let mut trusted_origins = vec![config.public_origin.clone()];
     trusted_origins.extend(config.extra_trusted_origins.iter().cloned());
     Ok(colophon_api::Services {
         pool: pool.clone(),
+        read_pool: read_pool.clone(),
         oidc: oidc_client(config)?,
         sessions: colophon_api::SessionSettings::default(),
         trusted_origins,
@@ -336,14 +338,17 @@ pub async fn run(
 
     // Before any pool exists, so every pool logs statements past the configured threshold (D-221).
     colophon_db::set_slow_statement_threshold(config.db_slow_statement);
+    // Two request pools (D-225): writes and reads never wait on each other's connections.
     let pool = colophon_db::connect_lazy(
         config.database_url.expose(),
-        PoolSettings {
-            max_connections: config.db_max_connections,
-            ..PoolSettings::default()
-        },
+        PoolSettings::writes(config.db_max_connections),
     )
     .context("configuring the database pool")?;
+    let read_pool = colophon_db::connect_lazy(
+        config.database_url.expose(),
+        PoolSettings::reads(config.db_read_connections),
+    )
+    .context("configuring the database read pool")?;
 
     let cancel = CancellationToken::new();
     // D-221's evidence: when this process stops running on time (off unless its DEBUG target is on).
@@ -379,7 +384,7 @@ pub async fn run(
     );
 
     let event_bus = colophon_api::events::EventBus::new(config.events);
-    let services = api_services(&config, &pool, event_bus.clone())?;
+    let services = api_services(&config, &pool, &read_pool, event_bus.clone())?;
     let admission = colophon_api::admission::Admission::new(
         config.admission.clone(),
         config.cache_url.as_ref().map(config::Secret::expose),

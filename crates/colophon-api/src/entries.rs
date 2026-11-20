@@ -491,11 +491,13 @@ pub(crate) async fn open_isolated(
 ) -> Result<ProjectTransaction, ApiError> {
     let services = services(state)?;
     let project = Uuid::try_parse(project).map_err(|_| ApiError::NotFound)?;
+    // A GET or HEAD reads on the read pool, read-only; everything else on the write pool (D-225).
+    let pool = crate::session::pool_for(services, caller.reads);
     let opened = match caller.project {
         // An API token: only in its own project, with its own permissions (D-063).
         Some(own) if own == project => {
             scope::begin_in_project_as_token_isolated(
-                &services.pool,
+                pool,
                 caller.identity,
                 project,
                 environment,
@@ -505,20 +507,14 @@ pub(crate) async fn open_isolated(
         }
         Some(_) => return Err(ApiError::NotFound),
         None => {
-            scope::begin_in_project_isolated(
-                &services.pool,
-                caller.identity,
-                project,
-                environment,
-                isolation,
-            )
-            .await
+            scope::begin_in_project_isolated(pool, caller.identity, project, environment, isolation)
+                .await
         }
     };
     let tx = opened
         .map_err(ApiError::from_db)?
         .ok_or(ApiError::NotFound)?;
-    quota(state, tx, caller.secret_hash).await
+    quota(state, tx, caller.secret_hash, caller.reads).await
 }
 
 /// The token's own request ceiling (D-118): Postgres's row is the only authority for
@@ -529,8 +525,9 @@ pub(crate) async fn open_isolated(
 /// `secret_hash`, so its next requests are refused before they reach Postgres (D-214).
 async fn quota(
     state: &AppState,
-    mut tx: ProjectTransaction,
+    tx: ProjectTransaction,
     secret_hash: Option<[u8; 32]>,
+    reads: bool,
 ) -> Result<ProjectTransaction, ApiError> {
     let (Some(admission), Some(token)) = (&state.admission, tx.token) else {
         return Ok(tx);
@@ -555,23 +552,49 @@ async fn quota(
     }
     if throttle.transition {
         // The episode's first refusal is the one the audit log hears. When that write can't
-        // land, the refusal still stands: the count never waits on the log.
-        if colophon_db::audit::record_in(
-            &mut tx.transaction,
-            tx.project,
-            tx.identity,
-            "token.rate_limited",
-            &token.id.to_string(),
-            &serde_json::json!({
-                "requests_per_minute": requests_per_minute,
-                "retry_after": throttle.retry_after(),
-            })
-            .to_string(),
-        )
-        .await
-        .is_ok()
+        // land, the refusal still stands: the count never waits on the log. A read's own
+        // transaction is read-only (D-225), so its record goes in a write transaction of its own,
+        // scoped as the token, once per episode.
+        let details = serde_json::json!({
+            "requests_per_minute": requests_per_minute,
+            "retry_after": throttle.retry_after(),
+        })
+        .to_string();
+        let (project, identity) = (tx.project, tx.identity);
+        let mut writing = if reads {
+            drop(tx);
+            match scope::begin(
+                &services(state)?.pool,
+                scope::Scope {
+                    identity: Some(identity),
+                    project: Some(project),
+                },
+            )
+            .await
+            {
+                Ok(transaction) => Some(transaction),
+                Err(error) => {
+                    tracing::warn!(%error, "could not record a quota refusal");
+                    None
+                }
+            }
+        } else {
+            Some(tx.transaction)
+        };
+        if let Some(transaction) = writing.as_mut()
+            && colophon_db::audit::record_in(
+                transaction,
+                project,
+                identity,
+                "token.rate_limited",
+                &token.id.to_string(),
+                &details,
+            )
+            .await
+            .is_ok()
+            && let Some(transaction) = writing
         {
-            drop(tx.commit().await);
+            drop(transaction.commit().await);
         }
     }
     Err(ApiError::TooManyRequests {

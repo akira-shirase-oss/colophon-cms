@@ -83,6 +83,7 @@ async fn world(window_ms: u64) -> World {
     let state = AppState {
         readiness: Readiness::new("all", true),
         services: Some(Arc::new(Services {
+            read_pool: pool.clone(),
             pool,
             oidc: None,
             sessions: SessionSettings::default(),

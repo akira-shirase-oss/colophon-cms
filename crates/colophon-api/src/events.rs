@@ -387,7 +387,7 @@ pub(crate) async fn delivery_events(
     // The environment must resolve exactly as a delivery read would, so an unknown project or
     // slug answers 404 rather than holding a stream open.
     let environment =
-        colophon_db::delivery::environment(&services.pool, project, &path.environment)
+        colophon_db::delivery::environment(&services.read_pool, project, &path.environment)
             .await
             .map_err(ApiError::from_db)?
             .ok_or(ApiError::NotFound)?;

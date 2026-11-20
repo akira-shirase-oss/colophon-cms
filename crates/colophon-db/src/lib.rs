@@ -72,8 +72,13 @@ pub struct PoolSettings {
     pub max_connections: u32,
     /// How long a caller waits for a connection before failing.
     pub acquire_timeout: Duration,
-    /// Server-side limit on any single statement (`statement_timeout`).
+    /// Server-side limit on any single statement (`statement_timeout`). It is also the bound on
+    /// abandoned work: sqlx 0.9 can't cancel a statement whose future was dropped, so a request
+    /// given up mid-statement holds its connection until the statement ends (D-226, D-225).
     pub statement_timeout: Duration,
+    /// Every transaction on the pool is read-only (`default_transaction_read_only`): the
+    /// request read pool's (D-225), so a read path that writes fails instead of writing.
+    pub read_only: bool,
 }
 
 impl Default for PoolSettings {
@@ -82,6 +87,34 @@ impl Default for PoolSettings {
             max_connections: 16,
             acquire_timeout: Duration::from_secs(2),
             statement_timeout: Duration::from_secs(5),
+            read_only: false,
+        }
+    }
+}
+
+impl PoolSettings {
+    /// The request read pool (D-225): GET and HEAD requests' transactions, read-only, with a
+    /// short acquire (a saturated read pool answers 503 within a second) and a 2 s statement
+    /// bound (an abandoned read gives its connection back within that).
+    #[must_use]
+    pub fn reads(max_connections: u32) -> Self {
+        Self {
+            max_connections,
+            acquire_timeout: Duration::from_secs(1),
+            statement_timeout: Duration::from_secs(2),
+            read_only: true,
+        }
+    }
+
+    /// The request write pool (D-225): every other request's transactions, and the reads'
+    /// bookkeeping writes (a session's last use), with a 2 s acquire and a 5 s statement bound.
+    #[must_use]
+    pub fn writes(max_connections: u32) -> Self {
+        Self {
+            max_connections,
+            acquire_timeout: Duration::from_secs(2),
+            statement_timeout: Duration::from_secs(5),
+            read_only: false,
         }
     }
 }
@@ -451,11 +484,21 @@ pub fn set_slow_statement_threshold(threshold: Duration) {
 /// is held to [`check_url`]'s TLS rule first.
 pub fn connect_lazy(url: &str, settings: PoolSettings) -> Result<PgPool, DbError> {
     let options = check_url(url)?
-        .application_name("colophon-server")
-        .options([(
-            "statement_timeout",
-            settings.statement_timeout.as_millis().to_string(),
-        )])
+        .application_name(if settings.read_only {
+            "colophon-server-read"
+        } else {
+            "colophon-server"
+        })
+        .options([
+            (
+                "statement_timeout",
+                settings.statement_timeout.as_millis().to_string(),
+            ),
+            (
+                "default_transaction_read_only",
+                if settings.read_only { "on" } else { "off" }.to_owned(),
+            ),
+        ])
         .log_slow_statements(
             log::LevelFilter::Warn,
             SLOW_STATEMENT

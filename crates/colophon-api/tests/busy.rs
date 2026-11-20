@@ -41,6 +41,7 @@ async fn a_request_that_cannot_get_a_connection_is_told_to_retry() {
     let state = AppState {
         readiness: Readiness::new("all", true),
         services: Some(Arc::new(Services {
+            read_pool: pool.clone(),
             pool,
             oidc: None,
             sessions: SessionSettings::default(),

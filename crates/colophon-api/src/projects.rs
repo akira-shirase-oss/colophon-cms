@@ -76,12 +76,15 @@ pub(crate) async fn list(
 ) -> Result<Json<Page<ProjectView>>, ApiError> {
     let services = services(&state)?;
     if query.limit.is_none() && query.cursor.is_none() && query.q.is_none() {
-        let data = projects::list(&services.pool, caller.identity)
-            .await
-            .map_err(ApiError::from_db)?
-            .into_iter()
-            .map(ProjectView::from)
-            .collect();
+        let data = projects::list(
+            crate::session::pool_for(services, caller.reads),
+            caller.identity,
+        )
+        .await
+        .map_err(ApiError::from_db)?
+        .into_iter()
+        .map(ProjectView::from)
+        .collect();
         return Ok(Json(Page {
             data,
             next_cursor: None,
@@ -107,9 +110,15 @@ pub(crate) async fn list(
         .map(|cursor| after_cursor(caller.identity, cursor))
         .transpose()?;
     // One more than the page, to know whether there is another.
-    let mut found = projects::page(&services.pool, caller.identity, after, search, limit + 1)
-        .await
-        .map_err(ApiError::from_db)?;
+    let mut found = projects::page(
+        crate::session::pool_for(services, caller.reads),
+        caller.identity,
+        after,
+        search,
+        limit + 1,
+    )
+    .await
+    .map_err(ApiError::from_db)?;
     let more = found.len() > usize::try_from(limit).map_err(ApiError::internal)?;
     found.truncate(usize::try_from(limit).map_err(ApiError::internal)?);
     let next_cursor = more
@@ -210,10 +219,14 @@ pub(crate) async fn get(
     let services = services(&state)?;
     // An id that isn't a UUID can't name a project: not found, same as any other.
     let id = Uuid::parse_str(&id).map_err(|_| ApiError::NotFound)?;
-    let mut tx = scope::begin_as_member(&services.pool, caller.identity, id)
-        .await
-        .map_err(ApiError::from_db)?
-        .ok_or(ApiError::NotFound)?;
+    let mut tx = scope::begin_as_member(
+        crate::session::pool_for(services, caller.reads),
+        caller.identity,
+        id,
+    )
+    .await
+    .map_err(ApiError::from_db)?
+    .ok_or(ApiError::NotFound)?;
     let project = projects::describe(&mut tx)
         .await
         .map_err(ApiError::from_db)?;

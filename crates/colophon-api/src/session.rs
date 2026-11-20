@@ -103,6 +103,33 @@ pub struct SignedIn {
     /// For an API token, the SHA-256 of its secret: what a quota refusal is remembered under,
     /// so the token's next requests can be refused before Postgres is asked (D-214).
     pub secret_hash: Option<[u8; 32]>,
+    /// Whether the request only reads (GET or HEAD): its transactions run on the read pool,
+    /// read-only (D-225).
+    pub reads: bool,
+}
+
+/// Whether `method` only reads: GET and HEAD, the requests the read pool serves (D-225).
+#[must_use]
+pub fn reads(method: &Method) -> bool {
+    matches!(*method, Method::GET | Method::HEAD)
+}
+
+/// The pool a request's lookups and transactions use (D-225).
+pub(crate) fn pool_for(services: &Services, reads: bool) -> &colophon_db::PgPool {
+    if reads {
+        &services.read_pool
+    } else {
+        &services.pool
+    }
+}
+
+/// Whether the write pool can serve a bookkeeping write (a session's or a token's last use) at
+/// once: an idle connection or room to open one. A request never queues on the write pool for
+/// bookkeeping; when it is full, the touch is skipped and the next request a minute on records
+/// it (D-225). The check and the acquire aren't one step, so in the race where the pool fills
+/// between them the touch waits at most the write pool's acquire timeout.
+fn spare(pool: &colophon_db::PgPool) -> bool {
+    pool.num_idle() > 0 || pool.size() < pool.options().get_max_connections()
 }
 
 /// The caller behind `Authorization: Bearer <token>`.
@@ -111,6 +138,7 @@ async fn bearer(
     admission: Option<&Admission>,
     value: &HeaderValue,
     path: &str,
+    reads: bool,
 ) -> Result<SignedIn, ApiError> {
     let token = value
         .to_str()
@@ -118,16 +146,17 @@ async fn bearer(
         .and_then(|text| text.strip_prefix("Bearer "))
         .ok_or(ApiError::Unauthorized)?;
     if let Some(secret) = token.strip_prefix(API_TOKEN_PREFIX) {
-        return api_token(services, admission, secret, token, path).await;
+        return api_token(services, admission, secret, token, path, reads).await;
     }
     if token.len() != 43 {
         return Err(ApiError::Unauthorized);
     }
-    let found = access::find_access_token(&services.pool, &tokens::hash(token))
+    let found = access::find_access_token(pool_for(services, reads), &tokens::hash(token))
         .await
         .map_err(ApiError::from_db)?
         .ok_or(ApiError::Unauthorized)?;
     if OffsetDateTime::now_utc() - found.last_used_at >= access::TOUCH_INTERVAL
+        && spare(&services.pool)
         && let Err(error) = access::touch_access_token(&services.pool, found.id).await
     {
         tracing::warn!(%error, "could not record token use");
@@ -138,6 +167,7 @@ async fn bearer(
         credential: Credential::Token,
         project: None,
         secret_hash: None,
+        reads,
     })
 }
 
@@ -148,6 +178,7 @@ async fn api_token(
     secret: &str,
     token: &str,
     path: &str,
+    reads: bool,
 ) -> Result<SignedIn, ApiError> {
     if secret.len() != 43 {
         return Err(ApiError::Unauthorized);
@@ -164,7 +195,7 @@ async fn api_token(
             retry_after: throttle.retry_after(),
         });
     }
-    let found = api_tokens::find(&services.pool, &hash)
+    let found = api_tokens::find(pool_for(services, reads), &hash)
         .await
         .map_err(ApiError::from_db)?
         .ok_or(ApiError::Unauthorized)?;
@@ -195,6 +226,7 @@ async fn api_token(
     if found
         .last_used_at
         .is_none_or(|last| now - last >= api_tokens_touch_interval())
+        && spare(&services.pool)
         && let Err(error) = api_tokens::touch(&services.pool, &found).await
     {
         tracing::warn!(%error, "could not record API token use");
@@ -205,6 +237,7 @@ async fn api_token(
         credential: Credential::ApiToken,
         project: Some(found.project_id),
         secret_hash: Some(hash),
+        reads,
     })
 }
 
@@ -222,12 +255,14 @@ impl FromRequestParts<AppState> for SignedIn {
 
     async fn from_request_parts(parts: &mut Parts, state: &AppState) -> Result<Self, ApiError> {
         let services = services(state)?;
+        let reads = reads(&parts.method);
         if let Some(value) = parts.headers.get(header::AUTHORIZATION) {
             return bearer(
                 services,
                 state.admission.as_deref(),
                 value,
                 parts.uri.path(),
+                reads,
             )
             .await;
         }
@@ -235,7 +270,7 @@ impl FromRequestParts<AppState> for SignedIn {
         if token.len() != 43 {
             return Err(ApiError::Unauthorized);
         }
-        let session = identity::find_session(&services.pool, &tokens::hash(token))
+        let session = identity::find_session(pool_for(services, reads), &tokens::hash(token))
             .await
             .map_err(ApiError::from_db)?
             .ok_or(ApiError::Unauthorized)?;
@@ -277,6 +312,7 @@ impl FromRequestParts<AppState> for SignedIn {
         }
         // At most one write a minute per session: most requests only read.
         if unused_for >= identity::TOUCH_INTERVAL
+            && spare(&services.pool)
             && let Err(error) = identity::touch_session(&services.pool, session.id).await
         {
             tracing::warn!(%error, "could not record session use");
@@ -287,6 +323,7 @@ impl FromRequestParts<AppState> for SignedIn {
             credential: Credential::Session,
             secret_hash: None,
             project: None,
+            reads,
         })
     }
 }

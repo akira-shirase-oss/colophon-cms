@@ -134,10 +134,14 @@ async fn published_definition(
     collection: &str,
 ) -> Result<Option<Arc<ContentType>>, ApiError> {
     if !definitions.contains_key(collection) {
-        let Some(definition) =
-            content_types::current_definition(&services.pool, project, environment, collection)
-                .await
-                .map_err(ApiError::from_db)?
+        let Some(definition) = content_types::current_definition(
+            &services.read_pool,
+            project,
+            environment,
+            collection,
+        )
+        .await
+        .map_err(ApiError::from_db)?
         else {
             return Ok(None);
         };

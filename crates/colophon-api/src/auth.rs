@@ -465,10 +465,13 @@ pub(crate) async fn me(
     caller: SignedIn,
 ) -> Result<Json<Data<Me>>, ApiError> {
     let services = services(&state)?;
-    let profile = identity::profile(&services.pool, caller.identity)
-        .await
-        .map_err(ApiError::from_db)?
-        .ok_or(ApiError::Unauthorized)?;
+    let profile = identity::profile(
+        crate::session::pool_for(services, caller.reads),
+        caller.identity,
+    )
+    .await
+    .map_err(ApiError::from_db)?
+    .ok_or(ApiError::Unauthorized)?;
     Ok(Json(Data {
         data: Me {
             id: profile.identity.id,

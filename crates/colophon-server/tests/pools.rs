@@ -84,7 +84,10 @@ async fn reads_answer_at_once_while_writers_hold_every_write_connection() {
     }
     let deadline = Instant::now() + Duration::from_secs(10);
     while waiting_on_locks(&database).await < 6 {
-        assert!(Instant::now() < deadline, "the writers never filled the pool");
+        assert!(
+            Instant::now() < deadline,
+            "the writers never filled the pool"
+        );
         tokio::time::sleep(Duration::from_millis(50)).await;
     }
 
@@ -104,20 +107,33 @@ async fn reads_answer_at_once_while_writers_hold_every_write_connection() {
         }
         while let Some(done) = batch.join_next().await {
             let (status, took) = done.expect("reader");
-            assert_eq!(status, StatusCode::OK, "a read refused while writers waited");
+            assert_eq!(
+                status,
+                StatusCode::OK,
+                "a read refused while writers waited"
+            );
             assert!(took < Duration::from_secs(1), "a read took {took:?}");
             latencies.push(took);
         }
     }
     latencies.sort_unstable();
     let p99 = latencies[latencies.len() * 99 / 100 - 1];
-    assert!(p99 < Duration::from_millis(200), "reads p99 {p99:?} with writers stuck");
+    eprintln!(
+        "reads with the write pool full: p50 {:?}, p99 {p99:?}, max {:?}",
+        latencies[latencies.len() / 2],
+        latencies[latencies.len() - 1]
+    );
+    assert!(
+        p99 < Duration::from_millis(200),
+        "reads p99 {p99:?} with writers stuck"
+    );
 
     holder.rollback().await.expect("release");
     while let Some(done) = writers.join_next().await {
         let reply = done.expect("writer").expect("request");
+        // One save lands; the rest carried its now-stale revision (409 stale_revision).
         assert!(
-            reply.status.is_success() || reply.status == StatusCode::PRECONDITION_FAILED,
+            reply.status.is_success() || reply.status == StatusCode::CONFLICT,
             "a writer: {} {}",
             reply.status,
             reply.body

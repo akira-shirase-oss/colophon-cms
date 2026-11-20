@@ -31,8 +31,12 @@ impl Default for SessionSettings {
 
 /// The database, sign-in, and the origins allowed to send cookie-authenticated writes.
 pub struct Services {
-    /// The application role's pool.
+    /// The application role's write pool (D-225): every request but a GET or HEAD, and the
+    /// reads' bookkeeping writes.
     pub pool: PgPool,
+    /// The application role's read pool (D-225): GET and HEAD requests' transactions, every
+    /// one read-only, so writers stuck behind a lock can never take a reader's connection.
+    pub read_pool: PgPool,
     /// The OpenID Connect client; `None` when sign-in isn't configured.
     pub oidc: Option<Arc<OidcClient>>,
     /// Session lifetimes.
