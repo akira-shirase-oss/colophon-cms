@@ -13,7 +13,10 @@ cd "$(dirname "$0")/.."
 # all), and a write share that depends on rate x duration / VUs under-measures writes. __ITER stays
 # fine as part of a key or label (`${__VU}-${__ITER}`, an argument); in arithmetic or a comparison
 # it's a mix selector, and fails here.
-mixed=$(grep -nE '__ITER[[:space:]]*([-+*/%<>]|[=!]=)|[-+*/%][[:space:]]*__ITER\b' perf/k6/*.js perf/*.mjs 2>/dev/null || true)
+# `typeof __ITER` is the setup test (__ITER exists only in iterations), not a mix, so it's removed before matching.
+mixed=$(awk '{ l = $0; gsub(/typeof __ITER/, "", l)
+  if (l ~ /__ITER[[:space:]]*([-+*\/%<>]|[=!]=)|[-+*\/%][[:space:]]*__ITER([^A-Za-z0-9_]|$)/) print FILENAME ":" FNR ": " $0 }' \
+  perf/k6/*.js perf/*.mjs 2>/dev/null || true)
 if [[ -n "$mixed" ]]; then
   echo "FAIL: $(wc -l <<<"$mixed" | tr -d ' ') load-scenario line(s) choose their mix from __ITER, not exec.scenario.iterationInTest:" >&2
   echo "$mixed" >&2
@@ -29,6 +32,10 @@ if [[ -n "$handbuilt" ]]; then
   echo "$handbuilt" >&2
   exit 1
 fi
+# A key held in a name is checked at its definition: once its builder calls are removed, no template may remain, so
+# a key derived by hand from a built one (undo's replay) or one built without the VU (bulk) fails here.
+node scripts/check-idempotency-keys.mjs perf/k6/*.js >&2 \
+  || { echo "FAIL: an Idempotency-Key above is built by hand, not by perf/k6/lib's builders" >&2; exit 1; }
 # The scenario-wide index can give one VU the same slot twice, so a scenario that keeps per-VU state
 # (a module-level `let`) must not depend on its slots coming in order: schedules did (schedule in
 # slot 8, cancel in 9) and got 767 409s in CI 44632793507. Each such variable is marked on the line
