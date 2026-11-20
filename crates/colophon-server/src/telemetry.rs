@@ -5,7 +5,7 @@
 
 use tracing_subscriber::{
     EnvFilter, Layer as _,
-    filter::ParseError,
+    filter::{FilterExt as _, ParseError},
     fmt,
     layer::SubscriberExt as _,
     util::{SubscriberInitExt as _, TryInitError},
@@ -57,7 +57,12 @@ pub fn init(format: LogFormat, directives: &str) -> Result<(), TelemetryError> {
     };
     tracing_subscriber::registry()
         // `Layer::and_then` named in full: `Option` has an `and_then` of its own.
-        .with(tracing_subscriber::Layer::and_then(json, pretty).with_filter(filter))
+        // The startup self-test's deliberate nested BEGIN logs no WARN (D-226): its notice is
+        // dropped from the log layers by where it was raised; a real one still logs.
+        .with(
+            tracing_subscriber::Layer::and_then(json, pretty)
+                .with_filter(filter.and(colophon_db::transactions::hide_the_self_test_notice())),
+        )
         .with(colophon_db::transactions::begin_tripwire())
         .try_init()?;
     Ok(())
