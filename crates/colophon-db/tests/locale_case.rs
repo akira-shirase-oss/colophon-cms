@@ -64,6 +64,8 @@ async fn create(tx: &mut ProjectTransaction, title: &str, locale: &str) -> Uuid 
 #[ignore = "needs the local stack: scripts/stack.sh up"]
 async fn case_only_duplicates_stop_the_migration_until_one_is_deleted() {
     let db = TestDb::before(77).await;
+    // The old schema's rows are written through the Rust API, whose begin needs 0079 (D-227).
+    db.lend_enter_functions().await;
     let alice = db.administrator("alice").await;
     let project = projects::create(&db.app, alice, "alpha", "Alpha")
         .await
@@ -84,6 +86,8 @@ async fn case_only_duplicates_stop_the_migration_until_one_is_deleted() {
         .execute(&owner)
         .await
         .expect("grouped under the old schema");
+
+    db.take_back_enter_functions().await;
 
     // 0077 refuses by name, naming the group and both tags, and keeps nothing.
     let refused = colophon_db::migrate(&owner).await.expect_err("refused");

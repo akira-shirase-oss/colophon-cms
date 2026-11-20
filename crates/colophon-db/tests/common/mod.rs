@@ -175,6 +175,31 @@ impl TestDb {
     }
 
     /// A pool for the table owner, which row-level security doesn't apply to.
+    /// Today's begin enters a project through migration 0079's functions (D-227). A test stopped before
+    /// 0079 that writes through the Rust API lends its schema those functions for that setup only, then
+    /// takes them back (`take_back_enter_functions`) before it migrates, so 0079 applies as on an upgrade.
+    pub(crate) async fn lend_enter_functions(&self) {
+        let owner = self.owner().await;
+        sqlx::raw_sql(include_str!("../../migrations/0079_enter_project.sql"))
+            .execute(&owner)
+            .await
+            .expect("0079's functions, lent to an earlier schema");
+        owner.close().await;
+    }
+
+    /// Takes back what `lend_enter_functions` lent, leaving the schema exactly as its migrations made it.
+    pub(crate) async fn take_back_enter_functions(&self) {
+        let owner = self.owner().await;
+        sqlx::raw_sql(
+            "DROP FUNCTION colophon_enter_project(uuid, uuid, text);
+             DROP FUNCTION colophon_enter_project_as_token(uuid, uuid, text);",
+        )
+        .execute(&owner)
+        .await
+        .expect("0079's functions taken back");
+        owner.close().await;
+    }
+
     pub(crate) async fn owner(&self) -> PgPool {
         PgPool::connect(&format!(
             "postgres://colophon:colophon-dev@{}/{}",
