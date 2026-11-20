@@ -161,12 +161,47 @@ pub(crate) struct MediaView {
     renditions: BTreeMap<String, String>,
 }
 
-/// Where an answer's media URLs start: `{origin}/media/v1/{project}/{environment}`.
-pub(crate) struct MediaBase(String);
+/// Where an answer's media URLs start: `{origin}/media/v1/{project}/{environment}` — and, for an
+/// answer that shows what isn't public (a preview, a site member's read), the key and expiry its
+/// addresses are signed with (D-229).
+pub(crate) struct MediaBase {
+    origin: String,
+    path: String,
+    signer: Option<(std::sync::Arc<aws_lc_rs::hmac::Key>, i64)>,
+}
 
 impl MediaBase {
     pub(crate) fn new(origin: &str, project: Uuid, environment: &str) -> Self {
-        Self(format!("{origin}/media/v1/{project}/{environment}"))
+        Self {
+            origin: origin.to_owned(),
+            path: format!("/media/v1/{project}/{environment}"),
+            signer: None,
+        }
+    }
+
+    /// The same base, its addresses signed for [`crate::media_sign::SIGNED_FOR_SECS`] from now:
+    /// the media of unpublished or members-only content is private until it is published.
+    pub(crate) async fn signed(
+        mut self,
+        services: &crate::state::Services,
+    ) -> Result<Self, ApiError> {
+        let key = std::sync::Arc::clone(services.media_keys.key(&services.pool).await?);
+        let expires =
+            time::OffsetDateTime::now_utc().unix_timestamp() + crate::media_sign::SIGNED_FOR_SECS;
+        self.signer = Some((key, expires));
+        Ok(self)
+    }
+
+    /// `{origin}{path}`, with its signature when this base signs.
+    fn address(&self, path: &str) -> String {
+        match &self.signer {
+            None => format!("{}{path}", self.origin),
+            Some((key, expires)) => format!(
+                "{}{path}?{}",
+                self.origin,
+                crate::media_sign::query(key, path, *expires)
+            ),
+        }
     }
 
     /// The views of a publication's recorded `media`. Only what the server itself wrote is
@@ -176,7 +211,7 @@ impl MediaBase {
     fn views(&self, media: &str) -> Result<BTreeMap<String, MediaView>, ApiError> {
         let stamps: BTreeMap<String, Stamp> =
             serde_json::from_str(media).map_err(ApiError::internal)?;
-        let base = &self.0;
+        let base = &self.path;
         Ok(stamps
             .into_iter()
             .filter_map(|(asset, stamp)| {
@@ -194,7 +229,7 @@ impl MediaBase {
                 ))
             })
             .map(|(asset, sha, kind, width, height, renditions)| {
-                let url = format!("{base}/{asset}/{sha}");
+                let path = format!("{base}/{asset}/{sha}");
                 let renditions = renditions
                     .iter()
                     .filter(|name| {
@@ -204,11 +239,11 @@ impl MediaBase {
                                 .bytes()
                                 .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit())
                     })
-                    .map(|name| (name.clone(), format!("{url}/{name}")))
+                    .map(|name| (name.clone(), self.address(&format!("{path}/{name}"))))
                     .collect();
                 let view = MediaView {
-                    current_url: format!("{base}/{asset}"),
-                    url,
+                    current_url: self.address(&format!("{base}/{asset}")),
+                    url: self.address(&path),
                     kind,
                     width,
                     height,
@@ -520,6 +555,12 @@ pub(crate) async fn list(
     // Who the read is for: a live site session makes it a member's, reading as its role
     // (D-137) — otherwise anonymous, which the generation-keyed cache is for.
     let audience = audience::reader(services, project, &request).await?;
+    // A member's answer may name media only members may see: its addresses are signed (D-229).
+    let media = if matches!(audience, Audience::Member { .. }) {
+        media.signed(services).await?
+    } else {
+        media
+    };
     let scope = Scope {
         project: project.as_u128(),
         environment: environment.id.as_u128(),
@@ -595,6 +636,12 @@ pub(crate) async fn get(
     }
     // Who the read is for (D-137), as in `list`.
     let audience = audience::reader(services, project, &request).await?;
+    // A member's answer may name media only members may see: its addresses are signed (D-229).
+    let media = if matches!(audience, Audience::Member { .. }) {
+        media.signed(services).await?
+    } else {
+        media
+    };
     let scope = Scope {
         project: project.as_u128(),
         environment: environment.id.as_u128(),
@@ -727,6 +774,12 @@ pub(crate) async fn query(
         .map(|inner| format!("q1:{generation}:{inner}"));
     // Who the read is for (D-137), as in `list`.
     let audience = audience::reader(services, project, &request).await?;
+    // A member's answer may name media only members may see: its addresses are signed (D-229).
+    let media = if matches!(audience, Audience::Member { .. }) {
+        media.signed(services).await?
+    } else {
+        media
+    };
     let scope = Scope {
         project: project.as_u128(),
         environment: environment.id.as_u128(),

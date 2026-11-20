@@ -769,12 +769,14 @@ fn read_metadata(value: &Value) -> Result<assets::Metadata, ApiError> {
 /// ends, so it revalidates after a minute rather than caching forever (D-157).
 pub(crate) async fn serve(
     State(state): State<AppState>,
+    uri: axum::http::Uri,
     Path(path): Path<OnePath>,
     request: HeaderMap,
 ) -> Result<Response, ApiError> {
     stream(
         &state,
         &request,
+        &uri,
         path.project,
         path.environment,
         path.asset,
@@ -790,6 +792,7 @@ pub(crate) async fn serve(
 /// bytes it named, so rolling back serves the media the old release saw.
 pub(crate) async fn serve_rendition(
     State(state): State<AppState>,
+    uri: axum::http::Uri,
     Path(path): Path<RenditionPath>,
     request: HeaderMap,
 ) -> Result<Response, ApiError> {
@@ -801,6 +804,7 @@ pub(crate) async fn serve_rendition(
     stream(
         &state,
         &request,
+        &uri,
         path.project,
         path.environment,
         path.asset,
@@ -816,12 +820,14 @@ pub(crate) async fn serve_rendition(
 /// version's digest matches no row and is a 404 exactly like an unknown asset.
 pub(crate) async fn serve_versioned(
     State(state): State<AppState>,
+    uri: axum::http::Uri,
     Path(path): Path<VersionedPath>,
     request: HeaderMap,
 ) -> Result<Response, ApiError> {
     stream(
         &state,
         &request,
+        &uri,
         path.project,
         path.environment,
         path.asset,
@@ -841,6 +847,63 @@ const UNVERSIONED_CACHE: &str = "public, max-age=60, must-revalidate";
 /// never change, so caches keep them for a year.
 const VERSIONED_CACHE: &str = "public, max-age=31536000, immutable";
 
+/// What unpublished media and every refusal answer (D-229): for this one viewer, kept by no
+/// cache, so a draft never sits in a CDN and a publish is seen at once.
+const PRIVATE_CACHE: &str = "private, no-store";
+
+/// Whether the request's address is signed and still valid (D-229).
+async fn signed(state: &AppState, uri: &axum::http::Uri) -> Result<bool, ApiError> {
+    if uri.query().is_none() {
+        return Ok(false);
+    }
+    let services = services(state)?;
+    let key = services.media_keys.key(&services.pool).await?;
+    let now = time::OffsetDateTime::now_utc().unix_timestamp();
+    Ok(crate::media_sign::verifies(
+        key,
+        uri.path(),
+        uri.query(),
+        now,
+    ))
+}
+
+/// Whether the request is signed in (a session or a bearer) as someone who may read this
+/// project's assets in this environment: the Studio's own previews and thumbnails (D-229). Any
+/// refusal on the way is just "no", never an error: the caller hears the same 404 either way.
+async fn member_reads(
+    state: &AppState,
+    request: &HeaderMap,
+    uri: &axum::http::Uri,
+    project: Uuid,
+    environment: &str,
+) -> bool {
+    if !request.contains_key(header::AUTHORIZATION) && !request.contains_key(header::COOKIE) {
+        return false;
+    }
+    let Ok(built) = axum::http::Request::builder()
+        .method(axum::http::Method::GET)
+        .uri(uri.clone())
+        .body(())
+    else {
+        return false;
+    };
+    let (mut parts, ()) = built.into_parts();
+    parts.headers = request.clone();
+    let Ok(caller) =
+        <crate::session::SignedIn as axum::extract::FromRequestParts<AppState>>::from_request_parts(
+            &mut parts, state,
+        )
+        .await
+    else {
+        return false;
+    };
+    let Ok(tx) = crate::entries::open(state, caller, &project.to_string(), environment).await
+    else {
+        return false;
+    };
+    may_read(&tx).is_ok()
+}
+
 /// Whether `If-None-Match` names `etag`: a list, `*`, or weak tags all count (RFC 9110's weak
 /// comparison, which is what a `GET`'s revalidation uses).
 fn none_match(request: &HeaderMap, etag: &str) -> bool {
@@ -858,9 +921,44 @@ fn none_match(request: &HeaderMap, etag: &str) -> bool {
 /// key — the usable asset's current version, or the version `sha` pins — then the object
 /// streams back with its stored type. A pinned version caches forever; the current-version
 /// address revalidates (D-157), and a matching `If-None-Match` answers `304`.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the media path's parts, as the three routes take them"
+)]
 async fn stream(
     state: &AppState,
     request: &HeaderMap,
+    uri: &axum::http::Uri,
+    project: String,
+    environment: String,
+    asset: String,
+    sha: Option<String>,
+    name: Option<String>,
+) -> Result<Response, ApiError> {
+    match streamed(state, request, uri, project, environment, asset, sha, name).await {
+        // Not found, or not yours to see (D-229): the same answer, and one no cache keeps, so an
+        // asset published a moment later is served at once.
+        Err(ApiError::NotFound) => {
+            let mut response = axum::response::IntoResponse::into_response(ApiError::NotFound);
+            response.headers_mut().insert(
+                header::CACHE_CONTROL,
+                header::HeaderValue::from_static(PRIVATE_CACHE),
+            );
+            Ok(response)
+        }
+        other => other,
+    }
+}
+
+#[expect(
+    clippy::too_many_arguments,
+    clippy::too_many_lines,
+    reason = "the media path's parts, as the three routes take them, and its one read in order: resolve, decide who may see it, stream"
+)]
+async fn streamed(
+    state: &AppState,
+    request: &HeaderMap,
+    uri: &axum::http::Uri,
     project: String,
     environment: String,
     asset: String,
@@ -894,7 +992,21 @@ async fn stream(
     .await
     .map_err(ApiError::from_db)?
     .ok_or(ApiError::NotFound)?;
-    let mut key = resolved.public_key.ok_or(ApiError::NotFound)?;
+    let current = resolved.public_key.ok_or(ApiError::NotFound)?;
+    // Published media is anyone's; anything else only a signed address's or a member's, and
+    // never a shared cache's. The public's bare address shows the newest published version
+    // while a newer one waits for its publish (D-229).
+    let (mut key, public) = if resolved.published {
+        (current, true)
+    } else if signed(state, uri).await?
+        || member_reads(state, request, uri, project, &environment).await
+    {
+        (current, false)
+    } else if let Some(published) = resolved.published_key {
+        (published, true)
+    } else {
+        return Err(ApiError::NotFound);
+    };
     if let Some(name) = name {
         key = format!("{key}/{name}");
     }
@@ -929,7 +1041,9 @@ async fn stream(
             .parse()
             .map_err(ApiError::internal)?,
     );
-    let cache = if pinned {
+    let cache = if !public {
+        PRIVATE_CACHE
+    } else if pinned {
         VERSIONED_CACHE
     } else {
         UNVERSIONED_CACHE

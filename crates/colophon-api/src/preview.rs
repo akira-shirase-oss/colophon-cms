@@ -993,11 +993,14 @@ pub(crate) async fn list(
                 return Err(ApiError::InvalidHeader("limit must be between 1 and 100"));
             }
             let mut reading = reading(&state, &path.project, &path.environment, &headers).await?;
+            // A preview shows drafts, whose media is private until published: signed (D-229).
             let media = MediaBase::new(
                 &services(&state)?.media_origin,
                 reading.tx.project,
                 &path.environment,
-            );
+            )
+            .signed(services(&state)?)
+            .await?;
             let project = reading.tx.project;
             let before = params
                 .cursor
@@ -1063,11 +1066,14 @@ pub(crate) async fn get(
             latest_only(params.generation)?;
             let entry = Uuid::try_parse(&path.entry).map_err(|_| ApiError::NotFound)?;
             let mut reading = reading(&state, &path.project, &path.environment, &headers).await?;
+            // A preview shows drafts, whose media is private until published: signed (D-229).
             let media = MediaBase::new(
                 &services(&state)?.media_origin,
                 reading.tx.project,
                 &path.environment,
-            );
+            )
+            .signed(services(&state)?)
+            .await?;
             may_read(&reading.tx, &path.collection).map_err(|_| ApiError::NotFound)?;
             let (content_type, _) = content_type(&state, &mut reading.tx, &path.collection).await?;
             let fields = field_ids(&content_type);
@@ -1119,11 +1125,14 @@ pub(crate) async fn query(
             latest_only(params.generation)?;
             let Json(document) = body?;
             let mut reading = reading(&state, &path.project, &path.environment, &headers).await?;
+            // A preview shows drafts, whose media is private until published: signed (D-229).
             let media = MediaBase::new(
                 &services(&state)?.media_origin,
                 reading.tx.project,
                 &path.environment,
-            );
+            )
+            .signed(services(&state)?)
+            .await?;
             may_read(&reading.tx, &path.collection).map_err(|_| ApiError::NotFound)?;
             let (content_type, _) = content_type(&state, &mut reading.tx, &path.collection).await?;
             let language =

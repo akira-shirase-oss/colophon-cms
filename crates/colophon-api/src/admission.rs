@@ -214,7 +214,8 @@ impl Class {
     fn of(method: &Method, path: &str) -> Option<Self> {
         if *method == Method::POST && is_password_work(path) {
             Some(Self::Password)
-        } else if path.starts_with("/content/") {
+        } else if path.starts_with("/content/") || path.starts_with("/media/") {
+            // The media origin is delivery's (D-136): per address, at delivery's rate (D-231).
             Some(Self::Delivery)
         } else if path.starts_with("/api/")
             || path.starts_with("/auth/")
@@ -222,6 +223,8 @@ impl Class {
             // Preview reads and exchanges (D-172): per address and per bearer, like the
             // management API — a preview token is a credential, not anonymous delivery.
             || path.starts_with("/preview/")
+            // `/me` reads the session's identity from Postgres on every request (D-231).
+            || path == "/me"
         {
             Some(Self::Management)
         } else {
@@ -1148,6 +1151,17 @@ mod tests {
         );
         assert_eq!(
             Class::of(&Method::POST, "/preview/v1/p/production/exchange"),
+            Some(Class::Management)
+        );
+        // Every route that reads Postgres counts (D-231): the session's `/me`, the media origin,
+        // and a preview preflight.
+        assert_eq!(Class::of(&Method::GET, "/me"), Some(Class::Management));
+        assert_eq!(
+            Class::of(&Method::GET, "/media/v1/p/production/a"),
+            Some(Class::Delivery)
+        );
+        assert_eq!(
+            Class::of(&Method::OPTIONS, "/preview/v1/p/production/articles"),
             Some(Class::Management)
         );
     }

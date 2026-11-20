@@ -1,0 +1,1 @@
+{"schema": "colophon/rich-text", "version": 1, "doc": {"type": "doc", "content": [{"type": "html", "text": "<script>alert(1)</script>"}]}}

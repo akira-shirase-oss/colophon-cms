@@ -1,0 +1,1 @@
+{"ops": [{"op": "fill", "path": "tags/0", "value": "x"}, {"op": "move", "from": "meta/seo", "to": "notes"}], "doc": {"tags": ["a"], "meta": {"seo": "s"}}}

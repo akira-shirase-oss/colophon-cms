@@ -22,6 +22,8 @@ colophon-db.workspace = true
 colophon-media.workspace = true
 colophon-version.workspace = true
 colophon-worker.workspace = true
+hyper.workspace = true
+hyper-util.workspace = true
 object_store.workspace = true
 redis.workspace = true
 # The Resend mail adapter's one outbound call (D-145); tests keep the cookies feature below.
@@ -31,6 +33,7 @@ thiserror.workspace = true
 time.workspace = true
 tokio.workspace = true
 tokio-util.workspace = true
+tower.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
 url.workspace = true

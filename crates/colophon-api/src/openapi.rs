@@ -225,12 +225,24 @@ struct OpDoc {
     /// import dry run's plan (D-114).
     also: Option<Res>,
     extra: &'static [Refusal],
-    /// The most body bytes the operation reads, when it is smaller than the server-wide limit
-    /// (which is sized for uploads): the routes anyone may call with a body before signing in
-    /// read [`PUBLIC_FORM_BYTES`], so a stranger's body is never buffered past what its fields
-    /// could need.
+    /// The most body bytes the operation reads, when it isn't the 1 MiB every JSON route reads
+    /// (`middleware::JSON_BODY_BYTES`, D-230): the routes anyone may call with a body before
+    /// signing in read [`PUBLIC_FORM_BYTES`], so a stranger's body is never buffered past what its
+    /// fields could need; imports, bulk chunks and MCP messages document a larger need.
     body_limit: Option<usize>,
 }
+
+/// What an import may send (D-230): up to 512 items, each an entry of at most 257 KiB of
+/// content, in a file people make by hand or with another CMS's export — larger than the 1 MiB
+/// every other JSON route reads, smaller than an upload.
+pub(crate) const IMPORT_BODY_BYTES: usize = 16 * 1024 * 1024;
+
+/// What a bulk job's chunk may send (D-230): its items are at most 1 MiB of canonical JSON
+/// (`CHUNK_BYTES`), with room for the envelope and the whitespace a client writes.
+pub(crate) const BULK_CHUNK_BODY_BYTES: usize = 2 * 1024 * 1024;
+
+/// What one remote-MCP message may be (D-230): the session refuses more (`MAX_MESSAGE_BYTES`).
+pub(crate) const MCP_BODY_BYTES: usize = 2 * 1024 * 1024;
 
 /// What the public sign-in forms may send (D-164): an email (254 bytes), a password (512), a
 /// display name or a `return_to` (2 KiB), JSON around them — with room to spare.
@@ -1448,6 +1460,7 @@ pub(crate) static TABLE: &[Route] = &[
                             "the project's or the server's session cap is full",
                         ),
                     ],
+                    body_limit: Some(MCP_BODY_BYTES),
                     ..MIN
                 },
             ),
@@ -2015,6 +2028,7 @@ pub(crate) static TABLE: &[Route] = &[
                         ),
                         REUSED_KEY,
                     ],
+                    body_limit: Some(BULK_CHUNK_BODY_BYTES),
                     ..MIN
                 },
             ),
@@ -2100,6 +2114,7 @@ pub(crate) static TABLE: &[Route] = &[
                         BAD_MATCH,
                         REUSED_KEY,
                     ],
+                    body_limit: Some(BULK_CHUNK_BODY_BYTES),
                     ..MIN
                 },
             ),
@@ -2353,7 +2368,7 @@ pub(crate) static TABLE: &[Route] = &[
                     BAD_MATCH,
                     REUSED_KEY,
                 ],
-                body_limit: None,
+                body_limit: Some(IMPORT_BODY_BYTES),
             },
         )],
     ),
@@ -4373,7 +4388,7 @@ pub(crate) static TABLE: &[Route] = &[
             |f| on(f, assets::serve),
             OpDoc {
                 id: "serveAsset",
-                summary: "The asset's current version's verified bytes, publicly",
+                summary: "The asset's verified bytes: its newest published version to anyone, its current one to a member or a signed address (D-229)",
                 tag: "media",
                 security: Security::Public,
                 ok: Res {
@@ -4381,7 +4396,7 @@ pub(crate) static TABLE: &[Route] = &[
                     shape: Shape::Empty,
                     headers: &[],
                     media: "*/*",
-                    note: "the stored `Content-Type`; `max-age=60, must-revalidate` with the version's `ETag` (a replace or delete moves this address, D-157) — a matching `If-None-Match` answers 304; a version's sha address is `immutable`",
+                    note: "the stored `Content-Type`; published: `max-age=60, must-revalidate` with the version's `ETag` (a publish or delete moves this address, D-157) — a matching `If-None-Match` answers 304; a version's sha address is `immutable`. Not yet published: only to a signed-in member or with `?expires=&signature=` (the addresses preview and members' delivery answers carry), `private, no-store`; anyone else gets 404",
                 },
                 extra: &[
                     NOT_FOUND,

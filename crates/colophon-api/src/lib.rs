@@ -27,6 +27,7 @@ mod graphql;
 pub mod health;
 pub mod mail;
 pub mod mcp;
+pub mod media_sign;
 mod members;
 pub mod middleware;
 mod migrations;
@@ -94,9 +95,12 @@ pub fn routes(state: AppState) -> Router {
             }),
         )
         .fallback(fallback)
-        // Rate limits (D-076): inside the error envelope, before any handler does work.
-        .layer(admission)
+        // The preview CORS layer reads Postgres for a preflight's origin (D-172), so it sits inside
+        // the rate limits like every other read: a flood of preflights is limited per address
+        // before any reaches the database (D-231, gap G).
         .layer(preview_cors)
+        // Rate limits (D-076): inside the error envelope, before any handler or lookup does work.
+        .layer(admission)
         .with_state(state)
 }
 

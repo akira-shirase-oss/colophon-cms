@@ -88,6 +88,10 @@ url = { version = "2.5.8", default-features = false, features = ["std"] }
 # Text patterns in content types (step M.4): linear-time matching, so no pattern can stall a save.
 regex = { version = "1.13.1", default-features = false, features = ["std", "perf", "unicode"] }
 uuid = { version = "1", features = ["v7", "serde"] }
+# The server's own accept loop (D-230): hyper's connections with a timer, so a request's headers
+# have a deadline (axum::serve sets no timer, and hyper's header-read timeout needs one).
+hyper = { version = "1.12.0", default-features = false, features = ["server", "http1", "http2"] }
+hyper-util = { version = "0.1.21", default-features = false, features = ["server-auto", "server-graceful", "service", "tokio", "http1", "http2"] }
 # Never-panics property tests over every parser of outside input (docs/security/attack-surface.md):
 # dev-dependency only. `std` for string strategies from regexes; no fork or timeout processes.
 proptest = { version = "1.12.0", default-features = false, features = ["std"] }
