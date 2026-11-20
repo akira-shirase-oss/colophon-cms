@@ -38,6 +38,12 @@ pub enum Isolation {
 /// before, but a read-only transaction may not lock rows, and an advisory lock it may take.
 pub const TOKEN_LOCK_CLASS: i32 = 0x544B;
 
+/// The first key of the advisory lock a member's read-only transactions hold shared and every
+/// membership update or delete takes exclusive (migration 0081, D-225): "MB", keyed by
+/// `project/identity`. A write transaction share-locks the membership row instead
+/// ([`crate::members::current_policy`]).
+pub const MEMBER_LOCK_CLASS: i32 = 0x4D42;
+
 /// Begins a transaction with `scope` as its row-level-security context.
 pub async fn begin(pool: &PgPool, scope: Scope) -> Result<Transaction<'static, Postgres>, DbError> {
     begin_isolated(pool, scope, Isolation::PerStatement).await
@@ -150,6 +156,9 @@ pub struct MemberTransaction {
     pub policy: Policy,
     /// The API token this transaction runs as, when it does (D-118); `None` for a person.
     pub token: Option<TokenScope>,
+    /// Whether the transaction is read-only (the read pool's, D-225): it holds the member's
+    /// advisory lock shared from its first statement, and never locks a row.
+    pub read_only: bool,
 }
 
 impl MemberTransaction {
@@ -177,15 +186,27 @@ pub async fn begin_as_member_isolated(
     project: Uuid,
     isolation: Isolation,
 ) -> Result<Option<MemberTransaction>, DbError> {
-    let mut transaction = begin_isolated(
-        pool,
-        Scope {
-            identity: Some(identity),
-            project: None,
-        },
-        isolation,
+    let mut transaction = match isolation {
+        Isolation::PerStatement => crate::begin_tx(pool).await,
+        Isolation::Snapshot => crate::begin_tx_snapshot(pool).await,
+    }
+    .map_err(DbError::from_query)?;
+    // The scope, and on a read-only transaction the member's lock, shared (migration 0081): the
+    // membership is read in the next statement, so after waiting on a change it sees it.
+    let opened = sqlx::query!(
+        r#"SELECT set_config('app.identity_id', $1::uuid::text, true) AS "identity_scope!",
+                  set_config('app.project_id', '', true) AS "project_scope!",
+                  current_setting('transaction_read_only') = 'on' AS "read_only!",
+                  CASE WHEN current_setting('transaction_read_only') = 'on'
+                       THEN pg_advisory_xact_lock_shared($3, hashtext($2::uuid::text || '/' || $1::uuid::text))
+                  END IS NULL AS "locked!""#,
+        identity,
+        project,
+        MEMBER_LOCK_CLASS
     )
-    .await?;
+    .fetch_one(&mut *transaction)
+    .await
+    .map_err(DbError::from_query)?;
     // The role and its permissions in one statement and one pass over them, as parallel arrays
     // in one order (D-058).
     let member = sqlx::query!(
@@ -235,6 +256,7 @@ pub async fn begin_as_member_isolated(
         role,
         policy,
         token: None,
+        read_only: opened.read_only,
     }))
 }
 
@@ -267,10 +289,11 @@ pub async fn begin_as_token_isolated(
         Isolation::Snapshot => crate::begin_tx_snapshot(pool).await,
     }
     .map_err(DbError::from_query)?;
-    sqlx::query!(
+    let opened = sqlx::query!(
         r#"SELECT set_config('app.identity_id', $1::uuid::text, true) AS "identity_scope!",
                   set_config('app.project_id', $2::uuid::text, true) AS "project_scope!",
-                  pg_advisory_xact_lock_shared($3, hashtext($1::uuid::text)) IS NULL AS "locked!""#,
+                  pg_advisory_xact_lock_shared($3, hashtext($1::uuid::text)) IS NULL AS "locked!",
+                  current_setting('transaction_read_only') = 'on' AS "read_only!""#,
         identity,
         project,
         TOKEN_LOCK_CLASS
@@ -327,6 +350,7 @@ pub async fn begin_as_token_isolated(
         role: TOKEN_ROLE.to_owned(),
         policy,
         token: Some(scope),
+        read_only: opened.read_only,
     }))
 }
 

@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "SELECT set_config('app.identity_id', $1::uuid::text, true) AS \"identity_scope!\",\n                  set_config('app.project_id', $2::uuid::text, true) AS \"project_scope!\",\n                  pg_advisory_xact_lock_shared($3, hashtext($1::uuid::text)) IS NULL AS \"locked!\"",
+  "query": "SELECT set_config('app.identity_id', $1::uuid::text, true) AS \"identity_scope!\",\n                  set_config('app.project_id', $2::uuid::text, true) AS \"project_scope!\",\n                  pg_advisory_xact_lock_shared($3, hashtext($1::uuid::text)) IS NULL AS \"locked!\",\n                  current_setting('transaction_read_only') = 'on' AS \"read_only!\"",
   "describe": {
     "columns": [
       {
@@ -20,6 +20,12 @@
         "name": "locked!",
         "type_info": "Bool",
         "origin": "Expression"
+      },
+      {
+        "ordinal": 3,
+        "name": "read_only!",
+        "type_info": "Bool",
+        "origin": "Expression"
       }
     ],
     "parameters": {
@@ -32,8 +38,9 @@
     "nullable": [
       null,
       null,
+      null,
       null
     ]
   },
-  "hash": "ae90bcc8ff39ebc2be8fd0bf8a4b4952a885580c1e3e0962d33931238e3683c2"
+  "hash": "ab7e3e59d659e1fc5a35f1bb67aa65c326cd9717c402eccbd60da0c168eb31aa"
 }

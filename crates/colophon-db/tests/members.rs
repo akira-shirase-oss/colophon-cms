@@ -394,3 +394,46 @@ async fn another_project_s_owner_cannot_revoke_or_see_these_invitations() {
     drop(tx);
     db.drop().await;
 }
+
+/// A role change waits for a member's read as it waits for their writes (D-225, migration 0081):
+/// a read runs read-only on the read pool, where it can't lock the membership row, so it holds the
+/// member's advisory lock shared; the change takes it exclusive and waits, and the read after it
+/// sees the new role. It failed first without the trigger: the change committed while the read
+/// ran under the old role.
+#[tokio::test]
+#[ignore = "needs the local stack: scripts/stack.sh up"]
+async fn a_role_change_waits_for_the_members_read() {
+    let db = TestDb::new().await;
+    let (alice, bob, project) = alice_and_bob(&db, "editor").await;
+    let reads = db.read_pool(2);
+    let read = as_member(&reads, bob, project).await;
+    assert!(read.read_only, "the read pool's transactions are read-only");
+    assert_eq!(read.role, "editor");
+    let writes = db.app_pool(2).await;
+    let changing = tokio::spawn({
+        let writes = writes.clone();
+        async move {
+            let mut tx = as_member(&writes, alice, project).await;
+            let changed = members::change_role(&mut tx, bob, "publisher")
+                .await
+                .expect("change");
+            tx.commit().await.expect("commit");
+            changed
+        }
+    });
+    tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+    assert!(
+        !changing.is_finished(),
+        "the role change committed while a read ran under the old role"
+    );
+    read.commit().await.expect("the read finishes");
+    let changed = tokio::time::timeout(std::time::Duration::from_secs(5), changing)
+        .await
+        .expect("the change goes on once the read is done")
+        .expect("joined");
+    assert_eq!(changed, Change::Done);
+    assert_eq!(as_member(&reads, bob, project).await.role, "publisher");
+    reads.close().await;
+    writes.close().await;
+    db.drop().await;
+}

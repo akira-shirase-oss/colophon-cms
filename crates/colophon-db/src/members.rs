@@ -306,6 +306,16 @@ pub async fn remove(tx: &mut MemberTransaction, identity: Uuid) -> Result<Change
     Ok(Change::Done)
 }
 
+/// One role's row in [`caller_and`]: its key, whether the caller holds it, and its permissions.
+struct PolicyRow {
+    key: String,
+    held: bool,
+    actions: Vec<String>,
+    subjects: Vec<String>,
+    fields: Vec<Option<String>>,
+    conditions: Vec<Option<String>>,
+}
+
 /// The caller's role, as it is now, and, when one is named, the role they mean to give, each with
 /// its permissions, in one statement: the caller's membership is share-locked until the
 /// transaction ends (a change to it that is in flight is waited for), and the role offered is
@@ -319,8 +329,37 @@ async fn caller_and(
     if let Some(role) = offered {
         roles::hold(tx, role).await?;
     }
-    let rows = sqlx::query!(
-        r#"SELECT r.key, r.key = m.role AS "held!",
+    // A write share-locks the membership row; a read-only transaction may not lock rows and holds
+    // the member's advisory lock from its first statement instead (migration 0081, D-225).
+    let rows = if tx.read_only {
+        sqlx::query_as!(
+            PolicyRow,
+            r#"SELECT r.key, r.key = m.role AS "held!",
+                  coalesce(p.actions, '{}') AS "actions!",
+                  coalesce(p.subjects, '{}') AS "subjects!",
+                  coalesce(p.fields, '{}') AS "fields!: Vec<Option<String>>",
+                  coalesce(p.conditions, '{}') AS "conditions!: Vec<Option<String>>"
+           FROM memberships m
+           JOIN roles r ON r.project_id = m.project_id AND (r.key = m.role OR r.key = $3)
+           LEFT JOIN LATERAL (
+               SELECT array_agg(action ORDER BY action, subject) AS actions,
+                      array_agg(subject ORDER BY action, subject) AS subjects,
+                      array_agg(array_to_string(fields, ',') ORDER BY action, subject) AS fields,
+                      array_agg(condition ORDER BY action, subject) AS conditions
+               FROM role_permissions
+               WHERE project_id = r.project_id AND role_key = r.key
+           ) p ON true
+           WHERE m.project_id = $1 AND m.identity_id = $2"#,
+            tx.project,
+            tx.identity,
+            offered
+        )
+        .fetch_all(&mut *tx.transaction)
+        .await
+    } else {
+        sqlx::query_as!(
+            PolicyRow,
+            r#"SELECT r.key, r.key = m.role AS "held!",
                   coalesce(p.actions, '{}') AS "actions!",
                   coalesce(p.subjects, '{}') AS "subjects!",
                   coalesce(p.fields, '{}') AS "fields!: Vec<Option<String>>",
@@ -337,12 +376,13 @@ async fn caller_and(
            ) p ON true
            WHERE m.project_id = $1 AND m.identity_id = $2
            FOR SHARE OF m"#,
-        tx.project,
-        tx.identity,
-        offered
-    )
-    .fetch_all(&mut *tx.transaction)
-    .await
+            tx.project,
+            tx.identity,
+            offered
+        )
+        .fetch_all(&mut *tx.transaction)
+        .await
+    }
     .map_err(DbError::from_query)?;
     let (mut caller, mut given) = (None, None);
     for row in rows {

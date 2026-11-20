@@ -1,0 +1,46 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT set_config('app.identity_id', $1::uuid::text, true) AS \"identity_scope!\",\n                  set_config('app.project_id', '', true) AS \"project_scope!\",\n                  current_setting('transaction_read_only') = 'on' AS \"read_only!\",\n                  CASE WHEN current_setting('transaction_read_only') = 'on'\n                       THEN pg_advisory_xact_lock_shared($3, hashtext($2::uuid::text || '/' || $1::uuid::text))\n                  END IS NULL AS \"locked!\"",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "identity_scope!",
+        "type_info": "Text",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 1,
+        "name": "project_scope!",
+        "type_info": "Text",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 2,
+        "name": "read_only!",
+        "type_info": "Bool",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 3,
+        "name": "locked!",
+        "type_info": "Bool",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid",
+        "Int4"
+      ]
+    },
+    "nullable": [
+      null,
+      null,
+      null,
+      null
+    ]
+  },
+  "hash": "d8278579da2a4fb399a61635b870a1006951d470a13f96b47e4ab59b9246c3f4"
+}
