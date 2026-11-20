@@ -96,12 +96,7 @@ if [[ $suite == admission-throughput ]]; then
         [[ $mode == one-project ]] && test+=_in_one_project
         (cd "$work/$side" && "${binary[$side]}" --ignored --exact "$test" --nocapture --test-threads=1) |
           tee "$out/admission-$side-$mode-r$round.txt" |
-          awk -v round="$round" -v side="$side" -v mode="$mode" '/^N=/ {
-            gsub(/= +/, "=")
-            line = "{\"round\":" round ",\"side\":\"" side "\",\"mode\":\"" mode "\""
-            for (i = 1; i <= NF; i++) { split($i, kv, "="); line = line ",\"" kv[1] "\":" kv[2] }
-            print line "}"; fflush()
-          }' >>"$runs"
+          awk -v round="$round" -v side="$side" -v mode="$mode" -f scripts/admission-lines.awk >>"$runs"
       done
     done
   done
