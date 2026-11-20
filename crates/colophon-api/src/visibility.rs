@@ -6,8 +6,11 @@
 
 use colophon_domain::{
     policy::{Action, Fields, Policy},
-    schema::Refusal,
+    schema::{ContentType, Refusal},
 };
+use std::collections::HashMap;
+
+use colophon_db::scope::ProjectTransaction;
 use serde_json::{Map, Value};
 use uuid::Uuid;
 
@@ -175,6 +178,73 @@ fn not_permitted(field: &str) -> ApiError {
         pointer: format!("/{field}"),
         message: format!("your role can't change the field {field}"),
     })
+}
+
+/// How a row naming one entry shows it to a role, in a list that spans collections and authors —
+/// a receipt's changes, a rollback's preview, a request's items (D-185). It follows the entries
+/// API (D-058, step R.3): an entry the role can't read is left out, as the entries list leaves it
+/// out; one whose title field it can't read is listed with the title blank, and says so.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Shown {
+    /// Left out: the role reads nothing of the entry.
+    Hidden,
+    /// Listed with a blank title: the role reads the entry, not its title field.
+    Untitled,
+    /// Listed as it is.
+    Whole,
+}
+
+/// The title field of `collection`'s current definition; `None` when the collection is gone.
+async fn title_field(
+    tx: &mut ProjectTransaction,
+    collection: &str,
+) -> Result<Option<String>, ApiError> {
+    let Some(stored) = colophon_db::content_types::current(tx, collection)
+        .await
+        .map_err(ApiError::from_db)?
+    else {
+        return Ok(None);
+    };
+    let definition: Value = serde_json::from_str(&stored.definition).map_err(ApiError::internal)?;
+    let parsed = ContentType::parse(&definition).map_err(ApiError::internal)?;
+    Ok(Some(parsed.title_field().to_owned()))
+}
+
+/// What `tx`'s role reads of each `(collection, created_by)`, in order. `created_by` is `None` for
+/// an entry deleted since (D-080): no one owns it any more, so only a role that reads anyone's
+/// entries in that collection reads it. A role reading only some fields reads the title where its
+/// fields include the collection's title field, looked up once per collection; a collection
+/// deleted since has no title field to read, so its titles stay blank.
+pub(crate) async fn shown(
+    tx: &mut ProjectTransaction,
+    rows: &[(&str, Option<Uuid>)],
+) -> Result<Vec<Shown>, ApiError> {
+    let mut title_fields: HashMap<String, Option<String>> = HashMap::new();
+    let mut shown = Vec::with_capacity(rows.len());
+    for &(collection, created_by) in rows {
+        let own = created_by == Some(tx.identity);
+        let read = tx.policy.fields(Action::ContentRead, collection, own);
+        shown.push(match read {
+            None => Shown::Hidden,
+            Some(Fields::All) => Shown::Whole,
+            Some(Fields::Only(fields)) => {
+                if !title_fields.contains_key(collection) {
+                    let field = title_field(tx, collection).await?;
+                    title_fields.insert(collection.to_owned(), field);
+                }
+                let titled = title_fields
+                    .get(collection)
+                    .and_then(Option::as_deref)
+                    .is_some_and(|title| fields.contains(title));
+                if titled {
+                    Shown::Whole
+                } else {
+                    Shown::Untitled
+                }
+            }
+        });
+    }
+    Ok(shown)
 }
 
 #[cfg(test)]

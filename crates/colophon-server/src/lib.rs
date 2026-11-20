@@ -5,6 +5,7 @@
 
 pub mod config;
 pub mod events;
+mod lag;
 mod mail;
 pub mod probes;
 pub mod setup_code;
@@ -275,6 +276,10 @@ fn api_services(
         passwords: colophon_db::passwords::PasswordGate::new(config.password_concurrency),
         magic_links: config.magic_links,
         media_origin: config.media_origin.clone(),
+        uploads: colophon_api::uploads::UploadGate::new(
+            config.upload_memory_mb,
+            config.max_body_bytes,
+        ),
         install_kind: config.install_kind,
     })
 }
@@ -329,6 +334,8 @@ pub async fn run(
         .await
         .with_context(|| format!("binding {}", config.listen_addr))?;
 
+    // Before any pool exists, so every pool logs statements past the configured threshold (D-221).
+    colophon_db::set_slow_statement_threshold(config.db_slow_statement);
     let pool = colophon_db::connect_lazy(
         config.database_url.expose(),
         PoolSettings {
@@ -339,6 +346,8 @@ pub async fn run(
     .context("configuring the database pool")?;
 
     let cancel = CancellationToken::new();
+    // D-221's evidence: when this process stops running on time (off unless its DEBUG target is on).
+    lag::start(&cancel);
     let mut supervisor = Supervisor::new(readiness.clone(), cancel.child_token());
     let database_probe = DatabaseProbe::new(config.database_url.expose(), config.probe_timeout)
         .map_err(|error| anyhow::anyhow!(error))

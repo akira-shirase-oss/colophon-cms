@@ -102,7 +102,9 @@ test('made by someone else at the same moment, the first open opens theirs inste
 		else await route.continue();
 	});
 	await page.goto(`/studio/projects/${project}/site-settings`);
-	await expect(page).toHaveURL(new RegExp(`/site-settings/${theirs}$`));
+	// Several round trips in a row before the page can open theirs: the list, the create's refusal, the list
+	// again, then the editor. 5 s wasn't enough on a busy CI runner (main's 44422489231); nothing was lost.
+	await expect(page).toHaveURL(new RegExp(`/site-settings/${theirs}$`), { timeout: 15_000 });
 	await expect(page.getByLabel('Site name', { exact: true })).toHaveValue('Theirs');
 	expect(tried).toBe(true);
 	await expect(page.getByTestId('create-error')).toHaveCount(0);

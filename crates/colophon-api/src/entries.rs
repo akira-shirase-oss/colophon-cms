@@ -518,17 +518,19 @@ pub(crate) async fn open_isolated(
     let tx = opened
         .map_err(ApiError::from_db)?
         .ok_or(ApiError::NotFound)?;
-    quota(state, tx).await
+    quota(state, tx, caller.secret_hash).await
 }
 
 /// The token's own request ceiling (D-118): Postgres's row is the only authority for
 /// `requests_per_minute`; the limiter only holds the rolling count. A refusal records the
 /// episode's first `token.rate_limited`, committed alone — the transaction's other state is
 /// only the token check — then answers 429. A member's transaction carries no token, and a
-/// `NULL` ceiling no quota, so this is free for both.
+/// `NULL` ceiling no quota, so this is free for both. A refusal is remembered under the token's
+/// `secret_hash`, so its next requests are refused before they reach Postgres (D-214).
 async fn quota(
     state: &AppState,
     mut tx: ProjectTransaction,
+    secret_hash: Option<[u8; 32]>,
 ) -> Result<ProjectTransaction, ApiError> {
     let (Some(admission), Some(token)) = (&state.admission, tx.token) else {
         return Ok(tx);
@@ -542,6 +544,15 @@ async fn quota(
     else {
         return Ok(tx);
     };
+    if let Some(hash) = secret_hash {
+        admission.remember_refusal(
+            hash,
+            tx.project,
+            token.id,
+            requests_per_minute,
+            throttle.wait_us,
+        );
+    }
     if throttle.transition {
         // The episode's first refusal is the one the audit log hears. When that write can't
         // land, the refusal still stands: the count never waits on the log.

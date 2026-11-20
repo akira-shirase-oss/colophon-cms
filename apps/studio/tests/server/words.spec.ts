@@ -4,7 +4,7 @@
 // developers. The first-run journey checks its own screens the same way (journey.spec.ts).
 
 import { expect, type Page, test } from '@playwright/test';
-import { api, env, internalTerms, key, member, newEntry, newProject, signIn, violations } from './helpers.ts';
+import { api, env, internalTerms, key, member, newEntry, newProject, openTechnicalDetails, signIn, toast, violations } from './helpers.ts';
 
 async function plain(page: Page, screen: string) {
 	await page.waitForLoadState('networkidle');
@@ -41,21 +41,22 @@ test('every everyday screen speaks plainly; the Technical details drawer keeps t
 	await page.getByRole('tab', { name: /History/ }).click();
 	await plain(page, 'editor, history');
 	// The drawer has the internal names, closed until asked for.
-	const drawer = page.getByTestId('technical-details');
-	await drawer.getByText('Technical details').click();
+	const drawer = page.getByTestId('entry-details').getByTestId('technical-details');
+	await openTechnicalDetails(page);
 	await expect(drawer).toContainText('Revision');
 	await expect(drawer).toContainText('Content hash');
 
 	await page.getByTestId('publish-button').click();
-	await expect(page.getByTestId('publish-outcome')).toContainText('Live as Release');
+	await expect(toast(page, /Published in Release/)).toBeVisible();
 	await plain(page, 'editor, published');
-	await page.getByTestId('publish-outcome').getByRole('link').click();
+	await page.getByTestId('publish-state').getByRole('link').first().click();
 	await expect(page.getByTestId('receipt-label')).toBeVisible();
 	await plain(page, 'receipt');
 	await page.getByRole('link', { name: 'The publish request' }).click();
 	await expect(page.getByTestId('changeset-status')).toHaveAttribute('data-state', 'published');
 	// One click approved it as its sender: allowed (D-044), and said.
-	await expect(page.getByTestId('self-review-note')).toContainText('their own request');
+	// Said neutrally in the history (P1-5): approved by the person who sent it.
+	await expect(page.getByTestId('self-review-note')).toContainText('who sent it');
 	await plain(page, 'publish request');
 	await page.getByTestId('changesets-link').click();
 	await expect(page.getByTestId('changesets')).toContainText('Plain words');
@@ -75,7 +76,9 @@ test('every everyday screen speaks plainly; the Technical details drawer keeps t
 	// check sees them there, so it would see them anywhere.
 	await page.goto(`${base}/settings/connections`);
 	await expect(page.getByRole('heading', { name: 'Website connections' })).toBeVisible();
-	expect((await internalTerms(page)).join('\n')).toMatch(/webhook/i);
+	// The intro renders after the heading: wait for it rather than read once (a race the full
+	// suite hit twice, with the intro on screen in the failure's snapshot).
+	await expect.poll(async () => (await internalTerms(page)).join('\n')).toMatch(/webhook/i);
 });
 
 // Refusals in plain words (D-059, rule 3). The server's messages for these two say "changeset"
@@ -108,7 +111,7 @@ test('a review refused because an entry was edited meanwhile says what happened 
 	);
 	expect(saved).toBe(200);
 
-	await page.getByRole('button', { name: 'Approve this version' }).click();
+	await page.getByRole('button', { name: 'Approve', exact: true }).click();
 	const said = page.getByRole('alert').filter({ hasText: 'edited after' });
 	await expect(said).toContainText('An entry in it was edited after the publish request was made. Update it to the latest versions, then review it again.');
 	await plain(page, 'publish request, review refused');

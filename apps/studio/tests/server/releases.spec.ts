@@ -40,15 +40,16 @@ test('an approved changeset is published as release 1, and a stale tab is told a
 
 	await page.goto(first);
 	await expect(status(page)).toHaveAttribute('data-state', 'approved');
-	await page.getByRole('button', { name: 'Publish', exact: true }).click();
+	await page.getByRole('button', { name: 'Publish now', exact: true }).click();
 	await expect(status(page)).toHaveAttribute('data-state', 'published');
-	await expect(page.getByTestId('release-link')).toHaveText('release 1');
+	await expect(page.getByTestId('release-link')).toHaveText('Release 1');
 
 	// The release link opens its receipt; the Releases page lists it too.
 	await page.getByTestId('release-link').click();
 	await expect(page.getByTestId('receipt-label')).toBeVisible();
 	await page.getByTestId('releases-link').click();
-	await expect(page.getByTestId('current-generation')).toContainText('Live: Release 1');
+	await expect(page.getByTestId('releases').locator(':scope > li').first().getByTestId('live-now')).toBeVisible();
+	await expect(page.getByTestId('releases').locator(':scope > li').first()).toHaveAttribute('data-generation', '1');
 	await expect(page.getByTestId('releases')).toContainText('Opening day');
 	expect(await violations(page)).toEqual([]);
 	const delivered = await page.evaluate(async (path) => {
@@ -84,17 +85,17 @@ test('an approved changeset is published as release 1, and a stale tab is told a
 	);
 
 	await page.goto(second);
-	await page.getByRole('button', { name: 'Publish', exact: true }).click();
-	await expect(page.getByTestId('release-link')).toHaveText('release 2');
+	await page.getByRole('button', { name: 'Publish now', exact: true }).click();
+	await expect(page.getByTestId('release-link')).toHaveText('Release 2');
 
-	await other.getByRole('button', { name: 'Publish', exact: true }).click();
+	await other.getByRole('button', { name: 'Publish now', exact: true }).click();
 	await expect(other.getByTestId('changeset-notice')).toContainText('Another release was published first');
 	await expect(status(other)).toHaveAttribute('data-state', 'approved');
 	await other.unroute(`**/environments/production/releases*`);
 	await other.reload();
 	await expect(status(other)).toHaveAttribute('data-state', 'approved');
-	await other.getByRole('button', { name: 'Publish', exact: true }).click();
-	await expect(other.getByTestId('release-link')).toHaveText('release 3');
+	await other.getByRole('button', { name: 'Publish now', exact: true }).click();
+	await expect(other.getByTestId('release-link')).toHaveText('Release 3');
 	expect(await violations(other)).toEqual([]);
 });
 
@@ -102,8 +103,8 @@ test('an article is taken down through a reviewed changeset, and delivery says i
 	await signIn(page);
 	const project = await newProject(page);
 	await page.goto(await approvedChangeset(page, project, 'Short-lived'));
-	await page.getByRole('button', { name: 'Publish', exact: true }).click();
-	await expect(page.getByTestId('release-link')).toHaveText('release 1');
+	await page.getByRole('button', { name: 'Publish now', exact: true }).click();
+	await expect(page.getByTestId('release-link')).toHaveText('Release 1');
 	const entry = await page.evaluate(async (path) => {
 		const response = await fetch(path, { credentials: 'omit' });
 		return ((await response.json()) as { data: { id: string }[] }).data[0]?.id ?? '';
@@ -112,17 +113,19 @@ test('an article is taken down through a reviewed changeset, and delivery says i
 	await page.goto(`/studio/projects/${project}/changesets`);
 	await page.getByRole('button', { name: 'New publish request' }).click();
 	await page.getByLabel('Title', { exact: true }).fill('Take it down');
-	await page.getByRole('checkbox', { name: 'Unpublish Short-lived' }).check();
-	await expect(page.getByRole('checkbox', { name: 'Short-lived', exact: true })).toBeDisabled();
+	// One Publish | Unpublish control on the live entry (P1-3); choosing Unpublish picks it.
+	await page.locator('[aria-label="Unpublish Short-lived"]:visible').click();
+	await expect(page.getByRole('checkbox', { name: 'Short-lived', exact: true })).toBeChecked();
 	expect(await violations(page)).toEqual([]);
 	await page.getByRole('button', { name: 'Create publish request' }).click();
 	await expect(page.getByTestId('changeset-items')).toContainText('Short-lived');
 	await expect(page.getByTestId('unpublish')).toBeVisible();
-	await page.getByRole('button', { name: 'Ask for review' }).click();
-	await page.getByRole('button', { name: 'Approve this version' }).click();
+	await page.getByTestId('ask-review').click();
+	await page.getByRole('button', { name: 'Send for review' }).click();
+	await page.getByRole('button', { name: 'Approve', exact: true }).click();
 	await expect(status(page)).toHaveAttribute('data-state', 'approved');
-	await page.getByRole('button', { name: 'Publish', exact: true }).click();
-	await expect(page.getByTestId('release-link')).toHaveText('release 2');
+	await page.getByRole('button', { name: 'Publish now', exact: true }).click();
+	await expect(page.getByTestId('release-link')).toHaveText('Release 2');
 
 	// A published request links to its release's receipt.
 	await page.getByTestId('release-link').click();
@@ -130,7 +133,7 @@ test('an article is taken down through a reviewed changeset, and delivery says i
 	await expect(page.getByRole('heading', { level: 1 })).toContainText('Release 2');
 	await expect(page.getByText('1 taken down')).toBeVisible();
 	await page.getByTestId('releases-link').click();
-	await expect(page.locator('[data-generation="2"]').getByTestId('unpublished')).toHaveText('1 unpublished');
+	await expect(page.locator('[data-generation="2"]')).toContainText('1 taken down');
 	const after = await page.evaluate(
 		async ({ list, one }) => {
 			const listed = (await (await fetch(list, { credentials: 'omit' })).json()) as { data: unknown[] };
@@ -206,7 +209,7 @@ test('the Releases page shows the newest 100, and older releases a page at a tim
 	await manyReleases(page, project, 101);
 
 	await page.goto(`/studio/projects/${project}/releases`);
-	await expect(page.getByTestId('current-generation')).toContainText('Live: Release 101');
+	await expect(page.getByTestId('live-now')).toHaveCount(1);
 	const rows = page.getByTestId('releases').locator(':scope > li');
 	await expect(rows).toHaveCount(100);
 	await expect(rows.first()).toHaveAttribute('data-generation', '101');

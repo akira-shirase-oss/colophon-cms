@@ -1028,6 +1028,206 @@ async fn a_rollback_pin_must_still_fit_the_type() {
     assert_eq!(generation, Some(2));
 }
 
+/// A GET as `session`, expected to answer 200; its body.
+async fn read(session: &Session, path: &str) -> Value {
+    let reply = call(session, Method::GET, path, None, &[])
+        .await
+        .expect("request");
+    assert_eq!(reply.status, StatusCode::OK, "{path}: {}", reply.body);
+    reply.body
+}
+
+/// A release's changes page as `(kind, entry, revision, previous)` rows, in the order it lists them.
+fn changes(receipt: &Value) -> Vec<(String, String, String, Option<String>)> {
+    receipt["data"]
+        .as_array()
+        .expect("changes")
+        .iter()
+        .map(|change| {
+            assert_eq!(change["entry_deleted"], false, "{change}");
+            (
+                change["kind"].as_str().expect("a kind").to_owned(),
+                change["entry_id"].as_str().expect("an entry").to_owned(),
+                change["revision_id"]
+                    .as_str()
+                    .expect("a revision")
+                    .to_owned(),
+                change["previous_revision_id"].as_str().map(str::to_owned),
+            )
+        })
+        .collect()
+}
+
+/// The audit's F1 path (the Studio UI pass, 2026-11-18): publish A, take A down, publish B, then
+/// look at rolling back to release 1. A takedown survives a rollback (D-049, D-097), so the
+/// rollback only takes B down; the preview says exactly that before anything is made — the same
+/// pins `POST` builds — and names A as taken down in release 2. Each receipt lists what it changed
+/// for readers: new, a newer version (with the one it replaced) or taken down.
+#[tokio::test]
+#[ignore = "needs the stack and scripts/migrate.sh"]
+#[expect(
+    clippy::too_many_lines,
+    reason = "one story in order: three releases, their changes, the preview, the rollback"
+)]
+async fn a_rollback_preview_and_receipts_say_what_changes_for_readers() {
+    let _server = Server::start().await;
+    let owner = sign_in("dev-owner").await;
+    let project = project(&owner).await;
+    let first = new_article(&owner, &project, "Harbour notes", "version one").await;
+    let (path, hash) = approved(&owner, &owner, &project, &[&first]).await;
+    let released = publish(&owner, &path, &hash, 0, &key()).await;
+    assert_eq!(released.body["data"]["generation"], 1, "{}", released.body);
+    let takedown = json!({"title": "Take it down", "unpublish": [first]});
+    let (path, hash) = approved_changeset(&owner, &owner, &project, &takedown).await;
+    let released = publish(&owner, &path, &hash, 1, &key()).await;
+    assert_eq!(released.body["data"]["generation"], 2, "{}", released.body);
+    let second = new_article(&owner, &project, "Ferry times", "version one").await;
+    let (path, hash) = approved(&owner, &owner, &project, &[&second]).await;
+    let released = publish(&owner, &path, &hash, 2, &key()).await;
+    assert_eq!(released.body["data"]["generation"], 3, "{}", released.body);
+
+    // Each receipt: A new in 1, A taken down in 2 (what readers had is what went), B new in 3.
+    let first_revision = |receipt: &Value| changes(receipt)[0].2.clone();
+    let one = read(&owner, &format!("{}/releases/1/changes", base(&project))).await;
+    assert_eq!(
+        changes(&one),
+        [(
+            "publish".to_owned(),
+            first.clone(),
+            first_revision(&one),
+            None
+        )]
+    );
+    assert_eq!(one["data"][0]["title"], "Harbour notes");
+    assert_eq!(one["data"][0]["collection"], "articles");
+    let two = read(&owner, &format!("{}/releases/2/changes", base(&project))).await;
+    let a_revision = first_revision(&one);
+    assert_eq!(
+        changes(&two),
+        [(
+            "unpublish".to_owned(),
+            first.clone(),
+            a_revision.clone(),
+            Some(a_revision.clone())
+        )]
+    );
+    let three = read(&owner, &format!("{}/releases/3/changes", base(&project))).await;
+    let b_revision = first_revision(&three);
+    assert_eq!(
+        changes(&three),
+        [(
+            "publish".to_owned(),
+            second.clone(),
+            b_revision.clone(),
+            None
+        )]
+    );
+
+    // Bad generations are refused as POST refuses them: none before 1, and not the live one.
+    for generation in ["0", "3", "99"] {
+        let reply = call(
+            &owner,
+            Method::GET,
+            &format!("{}/releases/{generation}/rollback", base(&project)),
+            None,
+            &[],
+        )
+        .await
+        .expect("request");
+        assert_eq!(
+            reply.body["error"]["details"]["reason"], "invalid_generation",
+            "{generation}: {}",
+            reply.body
+        );
+    }
+
+    // The preview makes nothing: the project's requests are the same three before and after.
+    let requests = |body: &Value| body["data"].as_array().map(Vec::len);
+    let before = read(&owner, &format!("{}/changesets", base(&project))).await;
+    let preview = read(&owner, &format!("{}/releases/1/rollback", base(&project))).await;
+    let after = read(&owner, &format!("{}/changesets", base(&project))).await;
+    assert_eq!(requests(&before), Some(3));
+    assert_eq!(requests(&after), Some(3), "{after}");
+    let data = &preview["data"];
+    assert_eq!(data["generation"], 1);
+    assert_eq!(data["latest"], 3);
+    assert_eq!(
+        data["restore"],
+        json!([{
+            "kind": "unpublish", "entry_id": second, "collection": "articles", "title": "Ferry times",
+            "title_hidden": false, "revision_id": b_revision, "live_revision_id": b_revision,
+        }]),
+        "{preview}"
+    );
+    assert_eq!(
+        data["kept_down"],
+        json!([{
+            "entry_id": first, "collection": "articles", "title": "Harbour notes",
+            "title_hidden": false, "revision_id": a_revision, "taken_down_in": 2, "entry_deleted": false,
+        }]),
+        "{preview}"
+    );
+    assert_eq!(data["kept_down_total"], 1);
+
+    // POST builds exactly the previewed pins.
+    let created = call(
+        &owner,
+        Method::POST,
+        &format!("{}/releases/1/rollback", base(&project)),
+        Some(&json!({"title": "Back to one"})),
+        &[("idempotency-key", &key())],
+    )
+    .await
+    .expect("request");
+    assert_eq!(created.status, StatusCode::CREATED, "{}", created.body);
+    let pins: Vec<(Value, Value, Value)> = created.body["data"]["items"]
+        .as_array()
+        .expect("items")
+        .iter()
+        .map(|item| {
+            (
+                item["kind"].clone(),
+                item["entry_id"].clone(),
+                item["revision_id"].clone(),
+            )
+        })
+        .collect();
+    assert_eq!(
+        pins,
+        [(json!("unpublish"), json!(second), json!(b_revision))]
+    );
+
+    // A newer version: its receipt names the version it replaced, and a preview of rolling back
+    // to release 3 puts that one back, saying what readers get now.
+    edit(&owner, &project, &second, "Ferry times", "version two").await;
+    let (path, hash) = approved(&owner, &owner, &project, &[&second]).await;
+    let released = publish(&owner, &path, &hash, 3, &key()).await;
+    assert_eq!(released.body["data"]["generation"], 4, "{}", released.body);
+    let four = read(&owner, &format!("{}/releases/4/changes", base(&project))).await;
+    let newer = first_revision(&four);
+    assert_ne!(newer, b_revision);
+    assert_eq!(
+        changes(&four),
+        [(
+            "publish".to_owned(),
+            second.clone(),
+            newer.clone(),
+            Some(b_revision.clone())
+        )]
+    );
+    let preview = read(&owner, &format!("{}/releases/3/rollback", base(&project))).await;
+    assert_eq!(
+        preview["data"]["restore"],
+        json!([{
+            "kind": "publish", "entry_id": second, "collection": "articles", "title": "Ferry times",
+            "title_hidden": false, "revision_id": b_revision, "live_revision_id": newer,
+        }]),
+        "{preview}"
+    );
+    assert_eq!(preview["data"]["kept_down"], json!([]));
+    assert_eq!(preview["data"]["kept_down_total"], 0);
+}
+
 /// One changeset's `undo_of`, as its own view, the list and (once published) its release say it.
 async fn undo_of_everywhere(session: &Session, project: &str, changeset: &str) -> [Value; 2] {
     let view = call(

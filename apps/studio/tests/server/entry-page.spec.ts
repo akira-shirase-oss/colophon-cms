@@ -1,11 +1,12 @@
-// The entry page, tidied like the builder (D-081): the trail names the entry by its title; the side
-// panel says where it stands in one line (not "Live in" and "Readers see this version" both);
-// "Save now" shows only with something to save; the public address and "See what readers get" wait
-// in Technical details; and on a phone the status and Publish share one bar at the bottom. The
-// fields follow the type's order, rich text included (D-147).
+// The entry page, tidied like the builder (D-081) and then in three blocks (D-184): the trail names
+// the entry by its title, which is the page's heading, edited in place; the status card says where
+// it stands in one line beside the save state; "Save now" shows only with something to save; the
+// public address and "See what readers get" wait in Details › Technical details; and on a phone the
+// status and the next step share one bar at the bottom. The fields follow the type's order, rich
+// text included (D-147).
 
 import { expect, test } from '@playwright/test';
-import { api, env, key, newEntry, newProject, publishThroughApi, signIn, violations } from './helpers.ts';
+import { api, env, key, newEntry, newProject, openTechnicalDetails, publishThroughApi, signIn, violations } from './helpers.ts';
 
 const paragraphs = (count: number) => ({
 	schema: 'colophon/rich-text',
@@ -27,15 +28,19 @@ test('the side panel says where an entry stands once, offers Save now only when 
 	const status = page.getByTestId('save-status');
 	await expect(status).toHaveAttribute('data-status', 'saved');
 
-	// The trail names the entry, not "Entry".
+	// The trail names the entry, not "Entry"; the title is the page's one heading, and the field to
+	// edit it (no eyebrow, no second Title field).
 	const trail = page.getByRole('navigation', { name: 'breadcrumb' });
 	await expect(trail).toContainText('Spring menu is here');
 	await expect(trail.getByText('Entry', { exact: true })).toHaveCount(0);
+	await expect(page.getByRole('heading', { level: 1 })).toHaveCount(1);
+	await expect(page.getByRole('heading', { level: 1 }).getByRole('textbox', { name: 'Title' })).toHaveValue('Spring menu is here');
+	await expect(page.getByLabel('Title', { exact: true })).toHaveCount(1);
 
 	// A draft: one line says so, and Publish is there.
 	const panel = page.getByTestId('entry-actions');
 	await expect(page.getByTestId('entry-state')).toHaveAttribute('data-state', 'draft');
-	await expect(page.getByTestId('publish-state')).toHaveText('Readers can’t see it: it isn’t published.');
+	await expect(page.getByTestId('publish-state')).toHaveText('Not on your site yet');
 	await expect(page.getByTestId('publish-button')).toBeVisible();
 	await expect(page.getByTestId('save-now')).toHaveCount(0);
 	await expect(page.getByTestId('public-address')).toHaveCount(0);
@@ -45,7 +50,7 @@ test('the side panel says where an entry stands once, offers Save now only when 
 	await page.reload();
 	await expect(status).toHaveAttribute('data-status', 'saved');
 	await expect(page.getByTestId('entry-state')).toHaveAttribute('data-state', 'live');
-	await expect(page.getByTestId('publish-state')).toHaveText(`Readers see this version, in Release ${generation}.`);
+	await expect(page.getByTestId('publish-state')).toContainText(`Live in Release ${generation}`);
 	await expect(page.getByTestId('publish-state').getByRole('link', { name: `Release ${generation}` })).toHaveAttribute(
 		'href',
 		`/studio/projects/${project}/releases/${generation}`
@@ -53,13 +58,18 @@ test('the side panel says where an entry stands once, offers Save now only when 
 	await expect(panel.getByText(`Release ${generation}`)).toHaveCount(1);
 	await expect(panel.getByText('Live in', { exact: true })).toHaveCount(0);
 	await expect(page.getByTestId('save-now')).toHaveCount(0);
+	// Nothing new to publish: no primary, and Unpublish waits in ⋯ More.
+	await expect(page.getByTestId('publish-button')).toHaveCount(0);
+	await expect(page.getByTestId('nothing-to-publish')).toBeVisible();
+	await page.getByTestId('more-menu').click();
 	await expect(page.getByTestId('unpublish-button')).toBeVisible();
+	await page.keyboard.press('Escape');
 
 	// The public address and what readers get are closed until Technical details is opened.
 	await expect(page.getByTestId('public-address')).toBeHidden();
 	await expect(page.getByTestId('see-what-readers-get')).toBeHidden();
 	await expect(page.getByText('Where readers get it')).toBeHidden();
-	await page.getByTestId('entry-details').getByTestId('technical-details').locator('summary').click();
+	await openTechnicalDetails(page);
 	await expect(page.getByTestId('public-address')).toBeVisible();
 	await expect(page.getByTestId('see-what-readers-get')).toBeVisible();
 	expect(await violations(page)).toEqual([]);
@@ -72,7 +82,7 @@ test('the side panel says where an entry stands once, offers Save now only when 
 	});
 	await page.getByLabel('Title', { exact: true }).fill('Spring menu is here, with tarts');
 	await expect(page.getByTestId('save-now')).toBeVisible();
-	await expect(page.getByTestId('publish-state')).toHaveText(`Readers see the version in Release ${generation}, not your newer changes.`);
+	await expect(page.getByTestId('publish-state')).toHaveText(`Live in Release ${generation} · edited since`);
 	await expect(page.getByTestId('entry-state')).toHaveAttribute('data-state', 'changed');
 	hold = false;
 	await page.unrouteAll({ behavior: 'ignoreErrors' });
@@ -102,7 +112,7 @@ test('on a phone, the status and Publish share one bar that stays at the bottom 
 	await phone.context().addCookies(await page.context().cookies());
 
 	const bar = phone.getByTestId('entry-actions');
-	async function barHolds(button: 'publish-button' | 'unpublish-button') {
+	async function barHolds(button: 'publish-button' | 'more-menu') {
 		await expect(phone.getByTestId('save-status')).toHaveAttribute('data-status', 'saved');
 		// At the top, and halfway down the body.
 		for (const share of [0, 0.5]) {
@@ -129,7 +139,7 @@ test('on a phone, the status and Publish share one bar that stays at the bottom 
 	await publishThroughApi(page, project, 'Out', [draft]);
 	await phone.reload();
 	await expect(phone.getByTestId('entry-state')).toHaveAttribute('data-state', 'live');
-	await barHolds('unpublish-button');
+	await barHolds('more-menu');
 	// The details follow the fields, below the bar's place at the end of the page.
 	await phone.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
 	await expect(phone.getByTestId('entry-details')).toBeInViewport();

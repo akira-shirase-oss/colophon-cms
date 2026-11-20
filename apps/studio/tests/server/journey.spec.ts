@@ -12,7 +12,7 @@ import { mkdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { type Browser, expect, type Page, test } from '@playwright/test';
-import { internalTerms, violations } from './helpers.ts';
+import { internalTerms, toast, violations } from './helpers.ts';
 
 const repo = fileURLToPath(new URL('../../../../', import.meta.url));
 // Its own port — sign-in is the built-in password card (D-146), so any port works.
@@ -209,13 +209,13 @@ test('a new person sets up Colophon, publishes a first article, and brings in a 
 	await test.step('one click publishes it, with their approval recorded', async () => {
 		await expect(owner.getByTestId('publish-button')).toHaveText('Publish');
 		await owner.getByTestId('publish-button').click();
-		await expect(owner.getByTestId('publish-outcome')).toContainText('Live as Release 1');
+		await expect(toast(owner, 'Published in Release 1')).toBeVisible();
 		await expect(owner.getByTestId('entry-state').first()).toHaveAttribute('data-state', 'live');
 		await screen(owner, 'published');
 	});
 
 	await test.step('they see its receipt', async () => {
-		await owner.getByTestId('publish-outcome').getByRole('link', { name: 'Release 1' }).click();
+		await owner.getByTestId('publish-state').getByRole('link', { name: 'Release 1' }).click();
 		// Spec §05's "Published in CMS", in the product's name (D-147); no "CDN" either.
 		await expect(owner.getByTestId('receipt-label')).toHaveText('Published');
 		await expect(owner.locator('main')).not.toContainText(/\bCDN\b|\bCMS\b/);
@@ -291,14 +291,15 @@ test('a new person sets up Colophon, publishes a first article, and brings in a 
 		await expect(teammate.getByTestId('save-status')).toHaveAttribute('data-status', 'saved');
 		await expect(teammate.getByTestId('publish-button')).toHaveText('Ask for review');
 		await teammate.getByTestId('publish-button').click();
-		await expect(teammate.getByTestId('publish-outcome')).toContainText('Sent for review');
+		await expect(toast(teammate, 'Sent for review')).toBeVisible();
+		await expect(teammate.getByTestId('entry-state').first()).toHaveAttribute('data-state', 'review');
 		await screen(teammate, 'asked-for-review');
 	});
 
 	await test.step('every project screen reads on a phone, and a reviewer finds Approve without scrolling (D-059, rule 7)', async () => {
 		const base = new URL(owner.url()).pathname.replace(/\/$/, '');
 		const entry = new URL(teammate.url()).pathname;
-		const request = await teammate.getByTestId('publish-outcome').getByRole('link').getAttribute('href');
+		const request = await teammate.getByTestId('publish-state').getByRole('link').getAttribute('href');
 		expect(request).toBeTruthy();
 		const phone = await (await browser.newContext({ baseURL: ORIGIN, viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true })).newPage();
 		await phone.context().addCookies(await owner.context().cookies());
@@ -322,13 +323,14 @@ test('a new person sets up Colophon, publishes a first article, and brings in a 
 			const overflow = await phone.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
 			expect(overflow, `${path} (${name}) scrolls sideways on a phone`).toBeLessThanOrEqual(0);
 			if (name === 'editor') {
-				// The save and publish bar stays on screen below the fields.
+				// The status and next-step bar stays on screen below the fields: waiting in a request,
+				// the next step for someone who can approve is to review it.
 				await expect(phone.getByTestId('save-status')).toHaveAttribute('data-status', 'saved');
-				await expect(phone.getByTestId('publish-button')).toBeInViewport();
+				await expect(phone.getByTestId('review-button')).toBeInViewport();
 			}
 			if (name === 'review') {
 				await expect(phone.getByTestId('changeset-status')).toHaveAttribute('data-state', 'awaiting_review');
-				await expect(phone.getByRole('button', { name: 'Approve this version' })).toBeInViewport();
+				await expect(phone.getByRole('button', { name: 'Approve', exact: true })).toBeInViewport();
 			}
 			// Settings is the developer area, where the internal names stay (D-059, rule 5).
 			await screen(phone, `phone-${name}`, { words: !name.startsWith('settings') });
@@ -343,13 +345,14 @@ test('a new person sets up Colophon, publishes a first article, and brings in a 
 		await screen(owner, 'publish-requests');
 		await owner.getByTestId('changesets').getByRole('link', { name: 'A second voice' }).click();
 		await expect(owner.getByTestId('changeset-status')).toHaveAttribute('data-state', 'awaiting_review');
-		await expect(owner.getByTestId('diff')).toBeVisible();
+		// A new entry reads as a preview of what goes live; an update as a diff (P2-13).
+		await expect(owner.getByTestId('version-preview').or(owner.getByTestId('diff')).first()).toBeVisible();
 		await screen(owner, 'review');
-		await owner.getByRole('button', { name: 'Approve this version' }).click();
+		await owner.getByRole('button', { name: 'Approve', exact: true }).click();
 		await expect(owner.getByTestId('changeset-status')).toHaveAttribute('data-state', 'approved');
-		await owner.getByRole('button', { name: 'Publish', exact: true }).click();
+		await owner.getByRole('button', { name: 'Publish now', exact: true }).click();
 		await expect(owner.getByTestId('changeset-status')).toHaveAttribute('data-state', 'published');
-		await expect(owner.getByTestId('release-link')).toHaveText('release 2');
+		await expect(owner.getByTestId('release-link')).toHaveText('Release 2');
 		await screen(owner, 'approved-and-published');
 	});
 
@@ -365,7 +368,7 @@ test('a new person sets up Colophon, publishes a first article, and brings in a 
 		}
 		await phone.goto(request);
 		// Opened directly, a published request's comparison once stayed "Loading…" for good.
-		await expect(phone.getByTestId('diff')).toBeVisible();
+		await expect(phone.getByTestId('version-preview').or(phone.getByTestId('diff')).first()).toBeVisible();
 		await screen(phone, 'phone-publish-request');
 		await phone.context().close();
 	});

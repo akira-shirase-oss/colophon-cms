@@ -148,7 +148,8 @@ async function secondRelease(page: Page, project: string, first: string): Promis
 // change. The restore is submitted, approved and published like any other changeset, and the
 // generation still moves forward. Pinned reads keep serving what is still deliverable at their
 // generation: the retitled article's earlier and later revisions both stay readable — but what
-// the restore took down is revoked, and a revoked article is gone at every generation (D-049).
+// the restore took down is revoked, and a revoked article is gone at every generation it was
+// published in, and from its takedown on — before it existed it is simply not found (D-049).
 test('roll back to an earlier release through an ordinary changeset', async ({ page }) => {
 	await signIn(page, 'dev-owner');
 	const { project, first } = await rollbackSetup(page);
@@ -181,11 +182,27 @@ test('roll back to an earlier release through an ordinary changeset', async ({ p
 		await expect(page.getByTestId('restored')).toHaveText('422 validation_failed (invalid_generation)');
 	}
 
-	// Rolling back to 1 builds an open changeset; the Changesets page opens it like any other:
-	// "Time traveller" back at its first revision, "Farewell" taken down.
+	// Release 2's changes, one a page (D-185): its two entries, then nothing more.
+	await page.getByLabel('Changes of generation').fill('2');
+	await page.getByLabel('Changes per page (empty for the default, 100)').fill('1');
+	await page.getByRole('button', { name: 'Read its changes' }).click();
+	await expect(page.getByTestId('changes')).toContainText('; more');
+	await page.getByRole('button', { name: 'Next changes' }).click();
+	await expect(page.getByTestId('changes')).toContainText('; last page');
+	// A bad page size is refused, not clamped.
+	await page.getByLabel('Changes per page (empty for the default, 100)').fill('101');
+	await page.getByRole('button', { name: 'Read its changes' }).click();
+	await expect(page.getByTestId('changes')).toHaveText('400 bad_request');
+
+	// The preview says what rolling back to 1 would do before anything is made (D-185).
 	await page.getByLabel('Roll back to generation').fill('1');
 	await page.getByLabel('Restore changeset title').fill('Back to one');
-	await page.getByRole('button', { name: 'Roll back to this release' }).click();
+	await page.getByRole('button', { name: 'Preview the rollback' }).click();
+	await expect(page.getByTestId('previewed')).toHaveText('puts back 1, takes down 1, keeps down 0');
+
+	// Rolling back to 1 as previewed builds an open changeset; the Changesets page opens it like
+	// any other: "Time traveller" back at its first revision, "Farewell" taken down.
+	await page.getByRole('button', { name: 'Roll back as previewed' }).click();
 	await expect(page.getByTestId('restored')).toContainText('(open)');
 
 	await page.goto('/changesets');
@@ -208,7 +225,8 @@ test('roll back to an earlier release through an ordinary changeset', async ({ p
 	await expect(page.getByTestId('message')).toHaveText('published as generation 3');
 
 	// Generation 3 serves what generation 1 served; at generation 2 the article's newer revision
-	// is still delivered — but "Farewell" is gone even there: a revocation is for all history.
+	// is still delivered — but "Farewell" is gone even there: a revocation is for all history. At generation 1 it
+	// didn't exist yet, so it is not found there, not gone.
 	await page.getByRole('button', { name: 'Read published articles' }).click();
 	await expect(page.getByTestId('delivered')).toHaveText('HTTP 200, generation 3: Time traveller');
 	await page.getByLabel('Read at generation').fill('1');
@@ -218,10 +236,15 @@ test('roll back to an earlier release through an ordinary changeset', async ({ p
 	await page.getByRole('button', { name: 'Read published articles' }).click();
 	await expect(page.getByTestId('delivered')).toHaveText('HTTP 200, generation 2: Time traveller returns');
 	await page.getByLabel("One article's id (empty for the list)").fill(gone);
-	for (const at of ['', '1', '2']) {
+	// Each read is awaited before its answer is checked: the text on screen is the previous read's until this one
+	// lands, so checking it straight after the click could pass on a stale answer (the flake in CI 44579704651).
+	const reads: [string, string][] = [['', 'HTTP 410, gone'], ['1', 'HTTP 404, not_found'], ['2', 'HTTP 410, gone']];
+	for (const [at, answer] of reads) {
 		await page.getByLabel('Read at generation').fill(at);
+		const answered = page.waitForResponse((response) => response.url().includes(`/articles/${gone}`) && (at === '' ? !response.url().includes('generation=') : response.url().endsWith(`generation=${at}`)));
 		await page.getByRole('button', { name: 'Read published articles' }).click();
-		await expect(page.getByTestId('delivered')).toHaveText('HTTP 410, gone');
+		await answered;
+		await expect(page.getByTestId('delivered')).toHaveText(answer);
 	}
 
 	// Restoring what is already live builds nothing.
@@ -298,4 +321,26 @@ test('refuse to unpublish a draft, take a published article down, and read it as
 		await page.getByRole('button', { name: 'Read published articles' }).click();
 		await expect(page.getByTestId('delivered')).toHaveText('HTTP 410, gone');
 	}
+
+	// Undo of the takedown (D-184): only the newest release, one request, replayed by its key.
+	await page.getByLabel('Undo the takedown in generation').fill('1');
+	await page.getByRole('button', { name: 'Undo this takedown' }).click();
+	await expect(page.getByTestId('undone')).toContainText('409');
+	await expect(page.getByTestId('undone')).toContainText('(changed_since)');
+	await page.getByLabel('Undo the takedown in generation').fill('2');
+	await page.getByLabel('Idempotency key (empty for a new one; kept for a resend)').fill('');
+	await page.getByRole('button', { name: 'Undo this takedown' }).click();
+	await expect(page.getByTestId('undone')).toHaveText('undid 2 as generation 3, 1 back');
+	await expect(page.getByTestId('releases')).toContainText('generation 3: Undo of release 2: Take it down (1 changed)');
+	await page.getByRole('button', { name: 'Undo this takedown' }).click();
+	await expect(page.getByTestId('undone')).toHaveText('undid 2 as generation 3, 1 back (replayed)');
+	await expect(page.getByTestId('generation')).toHaveText('3');
+	await page.getByLabel('Read at generation').fill('');
+	await page.getByRole('button', { name: 'Read published articles' }).click();
+	await expect(page.getByTestId('delivered')).toHaveText('HTTP 200, generation 3: Gone soon');
+	// An undo published something, so it can't be undone in turn.
+	await page.getByLabel('Undo the takedown in generation').fill('3');
+	await page.getByLabel('Idempotency key (empty for a new one; kept for a resend)').fill('');
+	await page.getByRole('button', { name: 'Undo this takedown' }).click();
+	await expect(page.getByTestId('undone')).toContainText('(not_undoable)');
 });

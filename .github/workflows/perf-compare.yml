@@ -1,0 +1,83 @@
+name: perf-compare
+
+# Two commits measured side by side on ONE runner in ONE job, alternating before and after, so
+# the comparison is fair on a machine whose speed we don't control. Dispatched by hand with the
+# two refs and the suite; the numbers are a CI observation on a shared GitHub runner, never
+# capacity (AGENTS.md, the load-test standard). The result JSON names the runner's CPU and
+# cores and both commits, and is uploaded as the run's artifact.
+on:
+  workflow_dispatch:
+    inputs:
+      before:
+        description: The baseline (a commit or a branch of this repository)
+        required: true
+      after:
+        description: The candidate (a commit or a branch of this repository)
+        required: true
+      suite:
+        description: What to measure
+        required: true
+        type: choice
+        options:
+          - admission-throughput
+          - l08-noisy-agent
+          - smoke
+      rounds:
+        description: Rounds of before-then-after (each round runs both once)
+        required: false
+        default: "2"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: perf-compare-${{ inputs.suite }}
+  cancel-in-progress: false
+
+jobs:
+  compare:
+    name: compare (${{ inputs.suite }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 150
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - name: Keep outgoing ports below the stack's
+        run: sudo sysctl -w net.ipv4.ip_local_port_range="20000 50999"
+      - name: Start the stack
+        run: scripts/stack.sh up
+      - name: Install the pinned toolchain
+        run: |
+          channel=$(sed -n 's/^channel = "\(.*\)"$/\1/p' rust-toolchain.toml)
+          rustup toolchain install "$channel" --profile minimal
+      # The smoke suite's lock-wait totals (D-216): pg_stat_statements loads only at start, so this
+      # restarts the runner's own stack before anything is measured, as the smokes job does.
+      - name: Load pg_stat_statements
+        if: inputs.suite == 'smoke'
+        run: |
+          set -euo pipefail
+          pg() { docker compose -f deploy/compose.yaml exec -T postgres "$@"; }
+          pg psql -U colophon -d postgres -XAtqc "ALTER SYSTEM SET shared_preload_libraries = 'pg_stat_statements'" >/dev/null
+          docker compose -f deploy/compose.yaml restart postgres >/dev/null
+          for _ in $(seq 60); do pg pg_isready -q -U colophon && break; sleep 1; done
+          pg psql -U colophon -d postgres -XAtqc "CREATE EXTENSION IF NOT EXISTS pg_stat_statements" >/dev/null
+      - name: Install k6 (pinned)
+        if: inputs.suite == 'l08-noisy-agent' || inputs.suite == 'smoke'
+        run: |
+          scripts/install-k6.sh "$RUNNER_TEMP/bin"
+          echo "$RUNNER_TEMP/bin" >>"$GITHUB_PATH"
+      - name: Measure before and after, alternating
+        env:
+          BEFORE: ${{ inputs.before }}
+          AFTER: ${{ inputs.after }}
+          SUITE: ${{ inputs.suite }}
+          ROUNDS: ${{ inputs.rounds }}
+        run: scripts/perf-compare.sh "$BEFORE" "$AFTER" "$SUITE" "$ROUNDS" "$RUNNER_TEMP/perf-compare"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: always()
+        with:
+          name: perf-compare-${{ inputs.suite }}
+          path: ${{ runner.temp }}/perf-compare/out/
+          retention-days: 30
