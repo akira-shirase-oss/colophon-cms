@@ -13,6 +13,7 @@
 import http from 'k6/http';
 import { check, fail } from 'k6';
 import { idempotencyKey } from './lib/idempotency-key.js';
+import { raceKeys } from './lib/keys.js';
 
 const BASE_URL = __ENV.BASE_URL || 'http://127.0.0.1:58000';
 const PUBLIC_URL = __ENV.PUBLIC_URL || 'http://localhost:58000';
@@ -115,12 +116,14 @@ export default function (data) {
   if (down === null) return;
   generation = down;
 
-  // Two undos of the one takedown at once, each with its own key: exactly one commits.
+  // Two undos of the one takedown at once, each with its own key: exactly one commits. The keys are built once,
+  // so the replay below sends exactly the key the winner sent.
+  const keys = raceKeys(key, 2, 'undo');
   const undo = (which) => ({
     method: 'POST',
     url: `${world.base}/releases/${down}/undo`,
     body: null,
-    params: Object.assign(params('undo', { 'Idempotency-Key': idempotencyKey(`${key}-u${which}`, 'undo') }), { responseCallback: http.expectedStatuses(201, 409) }),
+    params: Object.assign(params('undo', { 'Idempotency-Key': keys[which - 1] }), { responseCallback: http.expectedStatuses(201, 409) }),
   });
   const [left, right] = http.batch([undo(1), undo(2)]);
   const winners = [left, right].filter((r) => r.status === 201);
@@ -131,7 +134,7 @@ export default function (data) {
   });
   if (!raced) return;
   generation = down + 1;
-  const winningKey = left.status === 201 ? `${key}-u1` : `${key}-u2`;
+  const winningKey = left.status === 201 ? keys[0] : keys[1];
 
   const replay = http.post(`${world.base}/releases/${down}/undo`, null, params('replay', { 'Idempotency-Key': winningKey }));
   check(replay, {

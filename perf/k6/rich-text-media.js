@@ -76,8 +76,9 @@ const WIDE = new Uint8Array([
 // per-VU state: counts setup-time keys only (typeof __ITER undefined); unused in iterations.
 let setupKeys = 0;
 function key() {
-  const where = typeof exec.scenario.iterationInTest === 'undefined' ? `setup-${(setupKeys += 1)}` : `${__VU}-${__ITER}`;
-  return idempotencyKey(`k6-rtm-${where}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`, 'rich-text-media');
+  // Not exec.scenario: k6 throws reading it outside a VU (setup), CI 44698136206.
+  const where = typeof __ITER === 'undefined' ? ['setup', (setupKeys += 1)] : [__VU, __ITER];
+  return idempotencyKey('k6-rtm', ...where, Date.now().toString(36), Math.random().toString(36).slice(2, 10), 'rich-text-media');
 }
 
 const post = (title, images) => ({

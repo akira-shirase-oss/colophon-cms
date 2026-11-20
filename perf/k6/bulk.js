@@ -11,6 +11,7 @@
 import http from 'k6/http';
 import { check, fail } from 'k6';
 import exec from 'k6/execution';
+import { sequenceKey } from './lib/keys.js';
 
 const BASE_URL = __ENV.BASE_URL || 'http://127.0.0.1:58000';
 const PUBLIC_URL = __ENV.PUBLIC_URL || 'http://localhost:58000';
@@ -51,7 +52,7 @@ export const options = {
 const BODY = { schema: 'colophon/rich-text', version: 1, doc: { type: 'doc', content: [{ type: 'paragraph' }] } };
 // per-VU state: a counter that only makes keys unique; no step order.
 let sequence = 0;
-const nextKey = (prefix) => `${prefix}-${Date.now().toString(36)}-${sequence += 1}`;
+const nextKey = (prefix) => sequenceKey(prefix, __VU, Date.now(), (sequence += 1), 'bulk');
 
 export function setup() {
   const signedIn = http.post(`${PUBLIC_URL}/auth/signin`, JSON.stringify({ email: 'dev-owner@colophon.test', password: 'colophon-dev' }), { headers: { 'Content-Type': 'application/json' } });
