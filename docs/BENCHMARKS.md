@@ -93,7 +93,7 @@ and L17 belong to milestone S and are outside this matrix.
 |---|---|---|---:|---:|---:|---:|
 | L01 | smoke throughput | 2026-11-04T204202Z-smoke-throughput-apple-m2-pro-12c.json | 139 | 3 | 16.06 | 21.447 |
 | L02 | warm-baseline steady | 2026-11-04T211814Z-warm-baseline-steady-apple-m2-pro-12c.json | 36063 | 398 | 3.757 | 6.885 |
-| L03 | cold-cache throughput | 2026-11-04T210933Z-cold-cache-throughput-apple-m2-pro-12c.json | 30095 | 1017 | 62.089 | 68.165 |
+| L03 | cold-cache throughput | 2026-11-19T231708Z-cold-cache-throughput-amd-epyc-9v74-80-core-processor-4c.json | 30091 | 505 | 137.87 | 152.6 |
 | L04 | stampede throughput | 2026-11-04T204739Z-stampede-throughput-apple-m2-pro-12c.json | 22106 | 292 | 77.139 | 108.148 |
 | L05 | mixed throughput | 2026-11-04T204256Z-mixed-throughput-apple-m2-pro-12c.json | 3338 | 72 | 12.426 | 20.618 |
 | L06 | spike throughput | 2026-11-04T211410Z-spike-throughput-apple-m2-pro-12c.json | 34506 | 582 | 3.729 | 24.013 |
@@ -112,7 +112,9 @@ lengths below are derived from request counts over the recorded rate and marked 
 And the runs cited were made on dirty working trees during the D-127/D-128 build
 sessions: the artifacts record their base commits (`7d29742` for L08, `e06ae75` for
 L11 to L13, `080053e` for the rest), which is honest but means the code that ran was
-the commit plus its uncommitted diff.
+the commit plus its uncommitted diff. L03 is the exception since 2026-11-19: a clean CI run at
+`079e44d` on an AMD EPYC 9V74 runner, which replaced a laptop run that covered less of its corpus
+than it said (see L03).
 
 ### L01, smoke: held
 
@@ -144,12 +146,20 @@ the commit plus its uncommitted diff.
 ### L03, cold cache: held
 
 - Command: `TOTAL=30000 scripts/load.sh cold-cache throughput`
-- 30,000 iterations of one read each over a 2,048-entry corpus, every key unique:
-  30,095 requests at ~1,017/s, p95 62.1 ms, p99 68.2 ms. Every read was a real
-  origin fill: 24,029 `miss`, 5,971 `bypass`, and 0 `hit`, 0 `coalesced`, 0 errors;
-  the cold arm's own p95 was 62.2 ms and p99 68.6 ms, inside the 300/750 ms cold
-  gate; 88,766 database transactions (~3 per request); server RSS under 39 MB, CPU
-  peak 68.5%.
+- 30,000 iterations of one read each over a 2,048-entry corpus, every key unique, every entry read
+  (2,048 of 2,048 counted): 30,091 requests at 505/s, p95 137.9 ms, p99 152.6 ms, 0 failures; 24,000
+  `miss` + 6,000 `bypass` fills, 0 `hit`, 0 `coalesced`; 182,665 database transactions (~6 per request).
+  A second run on the same runner: 512/s, p95 139.1 ms, p99 153.0 ms. CI runner, AMD EPYC 9V74,
+  commit 079e44d (load A/B run 44635083698), not the laptop.
+- **Correction (2026-11-19).** The run this entry cited until now (`2026-11-04T210933Z-cold-cache-throughput-
+  apple-m2-pro-12c.json`: 30,095 requests at ~1,017/s, p95 62.1 ms, p99 68.2 ms) read 675 of the 2,048
+  entries, not the corpus: its targets came from `__ITER`, which counts per VU, so 64 VUs each walked the
+  same first ~470 iterations' entries in step. Counted in load A/B 44657418986; the scenarios now choose
+  from `exec.scenario.iterationInTest`, and `scripts/test-smoke-parity.sh` refuses `__ITER` in a mix or
+  target. The old and the fixed selection, run back to back on one runner, were within 4% at p99 in three of
+  four pairs (156.1 vs 152.6, 192.4 vs 185.7, 333.6 vs 327.6 ms) and 52% slower for the old one in the
+  fourth (233.3 vs 153.0), so the old latency wasn't flattered, but it didn't cover what it claimed. The
+  stored file stays, as failed and superseded runs do.
 - Two earlier iterations stored `held: false` (`...T210606Z-`, `...T210727Z-`).
 
 ### L04, hot-key stampede: held

@@ -51,6 +51,16 @@ through `--version` and `GET /version`.
   until the old window ran out. The remembered refusal now ends as the change commits, on every
   server.
 
+### Correction
+
+- **The cold-read benchmark (L03) read fewer than a third of its corpus.** Its load test chose which
+  entries to read by a counter each simulated user keeps for itself, so every user read the same
+  entries in step: 675 of the 2,048 it was meant to cover. The test now numbers reads across all
+  users and reads all 2,048. The published figure is replaced by a CI run of the fixed test (p99
+  152.6 ms at 505 requests a second on an AMD EPYC 9V74, commit `079e44d`); the earlier laptop figure
+  (p99 68.2 ms at 1,017 a second) came from different hardware, and the old and fixed tests run side
+  by side showed no consistent latency difference. `docs/BENCHMARKS.md` has the details.
+
 ### Performance
 
 - **Submitting work no longer waits on every other project's submissions** (D-216). The
