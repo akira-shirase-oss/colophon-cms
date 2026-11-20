@@ -9,22 +9,7 @@
 
 import { expect, type Page, test } from '@playwright/test';
 import { FIELD_TYPES } from '../../src/lib/api.ts';
-import {
-	api,
-	applyField,
-	editField,
-	env,
-	internalTerms,
-	key,
-	member,
-	newEntry,
-	newProject,
-	publishThroughApi,
-	saveBuilder,
-	signIn,
-	startField,
-	violations
-} from './helpers.ts';
+import { api, applyField, editField, env, internalTerms, key, member, newEntry, newProject, openTechnicalDetails, publishThroughApi, saveBuilder, signIn, startField, violations } from './helpers.ts';
 
 /** The labels of the top-level field rows, in order. */
 const order = (page: Page) => page.getByTestId('field-list').locator(':scope > li [data-testid="field-label-text"]').allTextContents();
@@ -241,7 +226,7 @@ test('a new type asks what each one is called; that names its entries in the bui
 	await publishThroughApi(page, project, 'Beanie', [beanie]);
 	await page.goto(`/studio/projects/${project}/products/${beanie}`);
 	await expect(page.getByLabel('Name', { exact: true })).toHaveValue('Wool beanie');
-	await page.getByTestId('entry-details').getByTestId('technical-details').locator('summary').click();
+	await openTechnicalDetails(page);
 	await page.getByTestId('see-what-readers-get').click();
 	await expect(page.getByTestId('reader-title-label')).toHaveText('Name');
 	await expect(page.getByTestId('reader-title')).toHaveText('Wool beanie');

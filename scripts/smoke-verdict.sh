@@ -5,8 +5,10 @@
 #   scripts/smoke-verdict.sh LIST "smoke smoke ..." "failed failed ..." [METRICS]
 #     LIST      the expected list (tab-separated; # comments)
 #     second    every smoke that ran; third, the ones that failed
-#     METRICS   tab-separated `smoke p99_ms l08_worst_ratio` per smoke that ran (from each run's record)
+#     METRICS   tab-separated `smoke p99_ms l08_worst_ratio hard_failures detail` per smoke that ran (from each run's
+#               record); hard_failures counts failed checks, real request errors and (assets) refused uploads
 # Fails, naming each, on:
+#   - any smoke with hard failures, or none measured: correctness is never tolerated, listed or not, flapping or not;
 #   - a failure not on the list;
 #   - a strict entry that passed (remove it from the list);
 #   - a flapping entry past its CEILING, whatever its outcome, or with no measurement to judge it by;
@@ -18,6 +20,12 @@ read -r -a ran <<<"$2"
 failed=()
 [[ -n "${3:-}" ]] && read -r -a failed <<<"$3"
 metrics=${4:-/dev/null}
+# Which job's entries this run judges (D-221): the smokes job's are plain names (`assets`); another job's carry its
+# scope (`integration/members-steady`, with SMOKE_SCOPE=integration). Entries outside the scope are not this run's.
+scope=${SMOKE_SCOPE:-}
+in_scope() {
+  if [[ -z "$scope" ]]; then [[ "$1" != */* ]]; else [[ "$1" == "$scope"/* ]]; fi
+}
 # Where a temporary ceiling's decision is looked up: its row there means its fix merged and the tolerance expired.
 decisions=${SMOKE_DECISIONS:-docs/DECISIONS.md}
 
@@ -32,6 +40,7 @@ problem() { echo "::error::$*"; problems=$((problems + 1)); }
 
 while IFS=$'\t' read -r smoke kind decision owner ceiling measured owed; do
   [[ -z "$smoke" || "$smoke" == \#* ]] && continue
+  in_scope "$smoke" || continue
   if [[ -z "$decision" || -z "$owner" || -z "$measured" || -z "$owed" ]]; then
     echo "smoke-verdict: $list: '$smoke' needs a decision, an owner, what it measured and what is owed" >&2
     exit 1
@@ -45,8 +54,9 @@ while IFS=$'\t' read -r smoke kind decision owner ceiling measured owed; do
       fi
       if [[ "$ceiling" == *" EXPIRES-WITH "* ]]; then
         reason=${ceiling##* }
-        if grep -q "^| $reason |" "$decisions"; then
-          echo "smoke-verdict: $list: '$smoke''s temporary ceiling expired with $reason, which has merged ($decisions has its row): remove the entry, or restore it as an ordinary flapper at 2x its limit" >&2
+        # A decision is done once its row exists and no longer says `Open:` (D-221's row exists while it is open).
+        if grep "^| $reason |" "$decisions" | grep -qv "Open:"; then
+          echo "smoke-verdict: $list: '$smoke''s temporary ceiling expired with $reason, which is done ($decisions has its row, no longer Open): remove the entry, or restore it as an ordinary flapper at 2x its limit" >&2
           exit 1
         fi
       fi
@@ -60,6 +70,25 @@ while IFS=$'\t' read -r smoke kind decision owner ceiling measured owed; do
   listed+="$smoke "
 done <"$list"
 
+# Correctness first, for every smoke that ran: neither a list entry nor a ceiling can absorb a hard failure.
+for smoke in ${ran[@]+"${ran[@]}"}; do
+  hard=$(metric "$smoke" 4)
+  if [[ -z "$hard" ]]; then
+    problem "smoke $smoke has no hard-failure count measured: correctness can't be judged"
+  elif [[ "$hard" != 0 ]]; then
+    problem "smoke $smoke has hard failures ($hard: $(metric "$smoke" 5)): correctness is never tolerated, listed or not, flapping or not"
+  fi
+done
+# Below half the reference speed (D-221, SMOKE_LATENCY_JUDGED=no) latency is not judged on this runner: a too-slow
+# runner can't fail us on latency, and can't hide errors either, so only the hard failures above count.
+if [[ "${SMOKE_LATENCY_JUDGED:-yes}" == no ]]; then
+  echo "latency not judged on this runner (under half the reference speed, D-221): only hard failures count"
+  if ((problems > 0)); then
+    exit 1
+  fi
+  echo "smoke-verdict: ${#ran[@]} ran; no hard failures; latency not judged on this runner"
+  exit 0
+fi
 for smoke in ${failed[@]+"${failed[@]}"}; do
   in_set "$smoke" "$listed" || problem "smoke $smoke failed and is not on $list"
 done
@@ -84,6 +113,13 @@ for smoke in $listed; do
   ceiling=$(column "$smoke" 5)
   what=${ceiling%%<=*} bound=${ceiling#*<=}
   bound=${bound%% *}
+  # The smokes job scales its back-to-back limits to the runner (D-221: P99 / scale, SMOKE_LIMIT_SCALE), so a p99
+  # ceiling (2x the reference limit) scales the same way and stays 2x the limit the smoke ran under; unscaled, it was
+  # 1.13x on a runner at scale 0.565 (CI 44680118124). The integration job scales rates, not limits, and sets no
+  # scale: its ceilings stay as listed. A ratio ceiling (l08) has no unit to scale.
+  if [[ "$what" == p99 && -n "${SMOKE_LIMIT_SCALE:-}" ]]; then
+    bound=$(awk -v b="$bound" -v s="$SMOKE_LIMIT_SCALE" 'BEGIN {if (s > 0 && s < 1) b = b / s; printf "%.1f", b}')
+  fi
   case "$what" in
     p99) value=$(metric "$smoke" 2) unit=" ms" ;;
     l08) value=$(metric "$smoke" 3) unit="x" ;;

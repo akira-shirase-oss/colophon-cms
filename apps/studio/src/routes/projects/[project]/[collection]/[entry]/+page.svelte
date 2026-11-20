@@ -1,10 +1,9 @@
 <script lang="ts">
 	import { page } from '$app/state';
-	import { createQuery } from '@tanstack/svelte-query';
+	import { createQuery, useQueryClient } from '@tanstack/svelte-query';
 	import { Skeleton } from '@colophon/ui/ui/skeleton';
 	import EntryEditor from '#lib/EntryEditor.svelte';
 	import { getContentType, getEntry } from '#lib/api.ts';
-	import PageHeader from '#lib/shell/PageHeader.svelte';
 	import Problem from '#lib/shell/Problem.svelte';
 
 	const project = $derived(page.params.project ?? '');
@@ -12,19 +11,27 @@
 	const entry = $derived(page.params.entry ?? '');
 	const type = createQuery(() => ({ queryKey: ['type', project, collection], queryFn: () => getContentType(project, collection) }));
 	// Loaded once per visit: after that the editor owns the content, and saving keeps it current.
-	const draft = createQuery(() => ({
+	const draftQuery = (project: string, collection: string, entry: string) => ({
 		queryKey: ['draft', project, collection, entry],
 		queryFn: () => getEntry(project, collection, entry),
 		staleTime: Infinity,
 		refetchOnWindowFocus: false
-	}));
+	});
+	const draft = createQuery(() => draftQuery(project, collection, entry));
+	const queryClient = useQueryClient();
+	// The entry's first state read is the editor's own read (one request on opening, P3-12); every later one,
+	// after a save or a publish invalidates the entries, asks the server again.
+	const seeded = new Set<string>();
 	// What readers get now: the entry's own answer says (B1), however old it is. Keyed under the
 	// collection's entries, so saving and publishing, which refresh those, refresh this too.
 	// Its read also says which entries link to it (D-065).
 	const state = createQuery(() => ({
 		queryKey: ['entries', project, collection, 'state', entry],
 		queryFn: async () => {
-			const { draft } = await getEntry(project, collection, entry);
+			const at = `${project}/${collection}/${entry}`;
+			const first = !seeded.has(at);
+			seeded.add(at);
+			const { draft } = first ? await queryClient.ensureQueryData(draftQuery(project, collection, entry)) : await getEntry(project, collection, entry);
 			return { published: draft.published ?? null, referencedBy: draft.referenced_by ?? [] };
 		}
 	}));
@@ -42,14 +49,11 @@
 {:else if type.data === undefined && type.isError}
 	<Problem error={type.error as Error} />
 {:else if draft.data === undefined || type.data === undefined}
-	<Skeleton class="mb-3 h-10 w-2/3" />
-	<Skeleton class="mb-8 h-4 w-48" />
+	<Skeleton class="mb-8 h-10 w-2/3" />
 	<Skeleton class="h-64 w-full rounded-xl" />
 {:else}
-	<!-- When it was saved is said once, beside the fields, where it stays current (D-081). -->
-	<PageHeader title={draft.data.draft.revision.title || 'Untitled'} userContent>
-		{#snippet eyebrow()}{type.data.definition.name}{/snippet}
-	</PageHeader>
+	<!-- The editor draws the title itself, as the page's heading it edits in place (D-184); the
+	     trail above already names the collection, so there is no eyebrow repeating it. -->
 	{#key entry}
 		<EntryEditor {project} {collection} {entry} type={type.data} initial={draft.data} {published} {referencedBy} />
 	{/key}

@@ -8,6 +8,11 @@
 #             regression can't hide here. It leaves this list when D-209's normalised gate judges it by margin over the
 #             runner's measured baseline.
 # A smoke that fails and isn't listed fails the job.
+# Each job judges only its own entries (SMOKE_SCOPE): the smokes job's are plain names; the integration job's load
+# smokes are `integration/<endpoint>-<scenario>`. Runner speed needs no entry (D-221): each job measures its runner
+# (scripts/runner-speed.sh) and scales fixed rates down, and back-to-back limits up, to it; under half the reference
+# speed latency isn't judged. Hard failures (a failed check, a real request error, assets' uploads refused) are never
+# tolerated, listed or not.
 #
 # Columns, tab-separated: smoke, kind, decision, owner, ceiling, measured (CI 44543394086 → 44551888337, the 4-core
 # runner), what is owed. A ceiling is `p99<=MS` (the run's overall p99) or `l08<=RATIO` (L08's worst noise/baseline ratio).
@@ -21,3 +26,5 @@ audience	flapping	D-209	learning-95	p99<=1400	p99 748 ms → 581 ms (limit 700);
 migrations	flapping	D-209	learning-95	p99<=1000	p99 681 ms → 408 ms (limit 500)	judge by margin over the runner's measured commit latency (D-209 normalised gate)
 noisy-agent	flapping	D-214	learning-a4	l08<=4	L08 editorial 5.79x, project B 6.56x (limit 2x) → held; overall p99 104 → 18 ms	L08's ordinary noise at 2x its limit: D-214 took refused requests off the pool; this entry leaves when D-209's normalised gate judges L08 by margin
 stages	flapping	D-209	learning-95	p99<=400	p99 254 ms → 128 ms (limit 200)	judge by margin over the runner's measured baseline (D-209 normalised gate)
+integration/members-steady	flapping	D-223	learning-95	p99<=1500 EXPIRES-WITH D-223	p99 50 ms (469577c) → 221 ms (34e82a6, scale 0.69) → 1314 ms in CI 44673105548 (scale 0.994, limit 200; 226 dropped), no server change between: 236 slow lock_involved SELECT … FOR UPDATE on memberships (≤148 ms), 218 in one 3 s burst, io full 0 → 2.5%: the per-project member queue turning into a convoy behind a slow COMMIT	D-223: commit latency on the write path; the member-change queue is pre-existing (R.2) and leaves this list with its fix
+undo	flapping	D-216	learning-a4	p99<=1400 EXPIRES-WITH D-216	p99 1128 ms (scale 0.42) → 813 ms (0.67) → 2291 ms in CI 44680118124 (0.565; limit 700, scaled 1239), 0 slow statements and no IO stall: pg_stat_statements has the work-admission locks as nearly all its time, WB pg_advisory_xact_lock($1, $2) 6128 waits at 38–95 ms mean (233–585 s), WA 12–30 ms mean, every other statement under 2 ms: an undo is a publish, admitted through the installation-wide byte lock	D-216: the work-admission locks (WB removed by D-216); the entry leaves with it

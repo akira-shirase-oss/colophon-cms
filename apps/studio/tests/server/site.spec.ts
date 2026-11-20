@@ -76,8 +76,8 @@ test('an article published in the Studio is live on the site, verified, and acce
 			return set.id;
 		}, project);
 		await page.goto(`/studio/projects/${project}/changesets/${changeset}`);
-		await page.getByRole('button', { name: 'Publish', exact: true }).click();
-		await expect(page.getByTestId('release-link')).toHaveText('release 1');
+		await page.getByRole('button', { name: 'Publish now', exact: true }).click();
+		await expect(page.getByTestId('release-link')).toHaveText('Release 1');
 
 		// The receipt: the site built it and the probe saw it there.
 		// The release link opens its receipt, which settles by itself.

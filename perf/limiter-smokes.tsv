@@ -1,0 +1,6 @@
+# Load smokes whose purpose is a FIXED limit (D-221 addendum): each ones rate exists to exceed a production
+# limiter, so CI must never scale its rate to the runner (rate()); a scaled rate can fall under the limit and
+# measure nothing. Its latency limit may still scale (limit()). scripts/test-smoke-parity.sh enforces this.
+# Columns, tab-separated: smoke, the fixed limit it exceeds, why.
+spike	delivery 1000/s, burst 2000 (D-076)	its spike phase (5x RATE) must be refused: l06_refused_429 > 0
+password-flood	password 5/s, burst 10 (D-213)	its sign-in flood must be refused per client address

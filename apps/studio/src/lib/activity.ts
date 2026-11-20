@@ -17,7 +17,8 @@ export const KINDS: { action: string; label: string }[] = [
 	{ action: 'role.updated', label: 'Role changed' },
 	{ action: 'role.deleted', label: 'Role deleted' },
 	{ action: 'token.created', label: 'API token made' },
-	{ action: 'token.revoked', label: 'API token revoked' }
+	{ action: 'token.revoked', label: 'API token revoked' },
+	{ action: 'release.undone', label: 'Release undone' }
 ];
 
 /** What a page knows to name things with. */
@@ -96,6 +97,12 @@ export function sentence(event: AuditEvent, names: Names): string {
 		}
 		case 'token.revoked':
 			return `${who} revoked the API token ${quoted(text(detail['name']) ?? 'without a name')}.`;
+		case 'release.undone': {
+			// An undo of a takedown (D-184): named for the release it undid, never as a rollback.
+			const title = text(detail['title']);
+			const back = typeof detail['generation'] === 'number' ? ` as Release ${detail['generation']}` : '';
+			return `${who} undid Release ${event.subject}${title === undefined ? '' : ` (${quoted(title)})`}, putting back what it took down${back}.`;
+		}
 		default:
 			return `${who} made a change this Studio can't describe yet.`;
 	}
