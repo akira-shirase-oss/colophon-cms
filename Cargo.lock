@@ -677,7 +677,9 @@ name = "colophon-server"
 version = "0.1.0-alpha.1"
 dependencies = [
  "anyhow",
+ "aws-lc-rs",
  "axum",
+ "base64 0.22.1",
  "clap",
  "colophon-api",
  "colophon-auth",
