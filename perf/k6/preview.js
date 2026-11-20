@@ -19,6 +19,7 @@
 import http from 'k6/http';
 import { check, fail } from 'k6';
 import exec from 'k6/execution';
+import { idempotencyKey } from './lib/idempotency-key.js';
 
 const BASE_URL = __ENV.BASE_URL || 'http://127.0.0.1:58000';
 const PUBLIC_URL = __ENV.PUBLIC_URL || 'http://localhost:58000';
@@ -81,7 +82,7 @@ export function setup() {
   };
   const run = Date.now().toString(36);
   let n = 0;
-  const key = () => `k6-preview-${run}-${(n += 1)}`;
+  const key = () => idempotencyKey(`k6-preview-${run}-${(n += 1)}`, 'preview');
   const project = http.post(`${BASE_URL}/api/v1/projects`, JSON.stringify({ slug: `k6p-${run}`, name: 'k6 preview' }), { headers });
   if (project.status !== 201) fail(`project: HTTP ${project.status}`);
   const projectId = project.json('data.id');

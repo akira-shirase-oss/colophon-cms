@@ -11,6 +11,7 @@
 import http from 'k6/http';
 import { check, fail } from 'k6';
 import exec from 'k6/execution';
+import { idempotencyKey } from './lib/idempotency-key.js';
 
 const BASE_URL = __ENV.BASE_URL || 'http://127.0.0.1:58000';
 const PUBLIC_URL = __ENV.PUBLIC_URL || 'http://localhost:58000';
@@ -227,7 +228,7 @@ function page(title, n, slug = `page-${n % 1000}-${__VU}`) {
 }
 
 function key() {
-  return `k6-${__VU}-${__ITER}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+  return idempotencyKey(`k6-${__VU}-${__ITER}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`, 'site-starter');
 }
 
 export function setup() {
@@ -243,35 +244,35 @@ export function setup() {
   const env = `${BASE_URL}/api/v1/projects/${project.json('data.id')}/environments/production`;
 
   const component = http.post(`${env}/components`, JSON.stringify(SECTION_STYLE), {
-    headers: Object.assign({ 'Idempotency-Key': `k6-component-${slug}` }, write),
+    headers: Object.assign({ 'Idempotency-Key': idempotencyKey(`k6-component-${slug}`, 'site-starter') }, write),
   });
   if (component.status !== 201) fail(`component: HTTP ${component.status} ${component.body}`);
   for (const type of [PAGES, NAVIGATION, THEME]) {
     const made = http.post(`${env}/content-types`, JSON.stringify(type), {
-      headers: Object.assign({ 'Idempotency-Key': `k6-type-${slug}-${type.slug}` }, write),
+      headers: Object.assign({ 'Idempotency-Key': idempotencyKey(`k6-type-${slug}-${type.slug}`, 'site-starter') }, write),
     });
     if (made.status !== 201) fail(`type ${type.slug}: HTTP ${made.status} ${made.body}`);
   }
 
   const pages = `${env}/collections/pages/entries`;
-  const home = http.post(pages, page('Home', 0, 'home'), { headers: Object.assign({ 'Idempotency-Key': `k6-home-${slug}` }, write) });
+  const home = http.post(pages, page('Home', 0, 'home'), { headers: Object.assign({ 'Idempotency-Key': idempotencyKey(`k6-home-${slug}`, 'site-starter') }, write) });
   if (home.status !== 201) fail(`home page: HTTP ${home.status} ${home.body}`);
   const navigation = http.post(
     `${env}/collections/navigation/entries`,
     JSON.stringify({ title: 'Navigation', items: [{ label: 'Home', page: home.json('data.id') }] }),
-    { headers: Object.assign({ 'Idempotency-Key': `k6-nav-${slug}` }, write) }
+    { headers: Object.assign({ 'Idempotency-Key': idempotencyKey(`k6-nav-${slug}`, 'site-starter') }, write) }
   );
   if (navigation.status !== 201) fail(`navigation: HTTP ${navigation.status} ${navigation.body}`);
   const theme = http.post(
     `${env}/collections/theme/entries`,
     JSON.stringify({ title: 'Site theme', light: { primary: '#6d28d9', text: '#18181b', radius_md: 8, base_size: 16 } }),
-    { headers: Object.assign({ 'Idempotency-Key': `k6-theme-${slug}` }, write) }
+    { headers: Object.assign({ 'Idempotency-Key': idempotencyKey(`k6-theme-${slug}`, 'site-starter') }, write) }
   );
   if (theme.status !== 201) fail(`theme: HTTP ${theme.status} ${theme.body}`);
 
   const entries = [];
   for (let i = 0; i < ENTRIES; i++) {
-    const created = http.post(pages, page(`Page ${i}`, i, `setup-${i}`), { headers: Object.assign({ 'Idempotency-Key': `k6-setup-${slug}-${i}` }, write) });
+    const created = http.post(pages, page(`Page ${i}`, i, `setup-${i}`), { headers: Object.assign({ 'Idempotency-Key': idempotencyKey(`k6-setup-${slug}-${i}`, 'site-starter') }, write) });
     if (created.status !== 201) fail(`entry ${i}: HTTP ${created.status} ${created.body}`);
     entries.push({ id: created.json('data.id'), etag: created.headers['Etag'] });
   }

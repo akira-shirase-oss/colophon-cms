@@ -35,6 +35,7 @@ import http from 'k6/http';
 import { check, fail, sleep } from 'k6';
 import exec from 'k6/execution';
 import { Counter } from 'k6/metrics';
+import { idempotencyKey } from './lib/idempotency-key.js';
 
 const BASE_URL = __ENV.BASE_URL || 'http://127.0.0.1:58000';
 const PUBLIC_URL = __ENV.PUBLIC_URL || 'http://localhost:58000';
@@ -104,7 +105,7 @@ export function setup() {
   const id = project.json('data.id');
   const env = `${BASE_URL}/api/v1/projects/${id}/environments/production`;
   const made = http.post(`${env}/content-types`, JSON.stringify({ slug: 'posts', definition: POSTS }), {
-    headers: Object.assign({ 'Idempotency-Key': `k6-type-${slug}` }, write),
+    headers: Object.assign({ 'Idempotency-Key': idempotencyKey(`k6-type-${slug}`, 'import-scale') }, write),
   });
   if (made.status !== 201) fail(`content type: HTTP ${made.status} ${made.body}`);
   return {
@@ -135,7 +136,7 @@ function chunkFile(c) {
 
 function importKey(c) {
   // 16-128 letters, digits, '-' or '_' — the API's key rule; the zero-pad keeps it ≥16.
-  return `k6-l09-chunk-${String(c).padStart(4, '0')}`;
+  return idempotencyKey(`k6-l09-chunk-${String(c).padStart(4, '0')}`, 'import-scale');
 }
 
 function post(data, file, idemKey, endpoint) {

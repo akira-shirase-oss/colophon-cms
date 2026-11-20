@@ -12,6 +12,7 @@
 import http from 'k6/http';
 import { check, fail } from 'k6';
 import exec from 'k6/execution';
+import { idempotencyKey } from './lib/idempotency-key.js';
 
 const BASE_URL = __ENV.BASE_URL || 'http://127.0.0.1:58000';
 const PUBLIC_URL = __ENV.PUBLIC_URL || 'http://localhost:58000';
@@ -56,7 +57,7 @@ const NOTES = {
 };
 
 function key() {
-  return `k6-${__VU}-${__ITER}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+  return idempotencyKey(`k6-${__VU}-${__ITER}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`, 'transfer');
 }
 
 export function setup() {
@@ -75,12 +76,12 @@ export function setup() {
   for (let i = 0; i < VUS; i++) {
     const collection = `notes${i}`;
     const made = http.post(`${env}/content-types`, JSON.stringify({ slug: collection, definition: NOTES }), {
-      headers: Object.assign({ 'Idempotency-Key': `k6-type-${slug}-${i}` }, write),
+      headers: Object.assign({ 'Idempotency-Key': idempotencyKey(`k6-type-${slug}-${i}`, 'transfer') }, write),
     });
     if (made.status !== 201) fail(`content type ${collection}: HTTP ${made.status} ${made.body}`);
     const seed = `{"title":"Seed ${i}","note":"first"}\n{"title":"Also ${i}"}\n`;
     const imported = http.post(`${env}/collections/${collection}/import`, seed, {
-      headers: Object.assign({}, write, { 'Content-Type': 'application/jsonlines', 'Idempotency-Key': `k6-seed-${slug}-${i}` }),
+      headers: Object.assign({}, write, { 'Content-Type': 'application/jsonlines', 'Idempotency-Key': idempotencyKey(`k6-seed-${slug}-${i}`, 'transfer') }),
     });
     if (imported.status !== 201) fail(`seed import: HTTP ${imported.status} ${imported.body}`);
     vus.push(`${env}/collections/${collection}`);

@@ -18,6 +18,7 @@ import http from 'k6/http';
 import { check, fail } from 'k6';
 import { Rate } from 'k6/metrics';
 import exec from 'k6/execution';
+import { idempotencyKey } from './lib/idempotency-key.js';
 
 const cacheHits = new Rate('cache_hits');
 
@@ -76,7 +77,7 @@ export function setup() {
   };
   const run = Date.now().toString(36);
   let n = 0;
-  const key = () => `k6-delivery-${run}-${(n += 1)}`;
+  const key = () => idempotencyKey(`k6-delivery-${run}-${(n += 1)}`, 'delivery');
   const project = http.post(`${BASE_URL}/api/v1/projects`, JSON.stringify({ slug: `k6-${run}`, name: 'k6 delivery' }), { headers });
   if (project.status !== 201) fail(`project: HTTP ${project.status}`);
   const projectId = project.json('data.id');

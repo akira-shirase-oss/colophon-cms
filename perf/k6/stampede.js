@@ -29,6 +29,7 @@ import http from 'k6/http';
 import { check, fail, sleep } from 'k6';
 import exec from 'k6/execution';
 import { Counter } from 'k6/metrics';
+import { idempotencyKey } from './lib/idempotency-key.js';
 
 const BASE_URL = __ENV.BASE_URL || 'http://127.0.0.1:58000';
 const PUBLIC_URL = __ENV.PUBLIC_URL || 'http://localhost:58000';
@@ -101,7 +102,7 @@ const POSTS = {
 };
 
 function key() {
-  return `k6-l04-${__VU}-${__ITER}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+  return idempotencyKey(`k6-l04-${__VU}-${__ITER}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`, 'stampede');
 }
 
 export function setup() {
@@ -118,7 +119,7 @@ export function setup() {
     const id = project.json('data.id');
     const env = `${BASE_URL}/api/v1/projects/${id}/environments/production`;
     const made = http.post(`${env}/content-types`, JSON.stringify({ slug: 'posts', definition: POSTS }), {
-      headers: Object.assign({ 'Idempotency-Key': `k6-type-${slug}-${mark}` }, write),
+      headers: Object.assign({ 'Idempotency-Key': idempotencyKey(`k6-type-${slug}-${mark}`, 'stampede') }, write),
     });
     if (made.status !== 201) fail(`type ${mark}: HTTP ${made.status} ${made.body}`);
     let file = '';
@@ -126,12 +127,12 @@ export function setup() {
       file += JSON.stringify({ headline: `${mark}-Post ${i}`, dek: `dek ${i}` }) + '\n';
     }
     const imported = http.post(`${env}/collections/posts/import`, file, {
-      headers: Object.assign({}, write, { 'Content-Type': 'application/jsonlines', 'Idempotency-Key': `k6-seed-${slug}-${mark}` }),
+      headers: Object.assign({}, write, { 'Content-Type': 'application/jsonlines', 'Idempotency-Key': idempotencyKey(`k6-seed-${slug}-${mark}`, 'stampede') }),
     });
     if (imported.status !== 201) fail(`seed ${mark}: HTTP ${imported.status} ${imported.body}`);
     const ids = imported.json('data.outcomes').map((o) => o.entry);
     const set = http.post(`${env}/changesets`, JSON.stringify({ title: 'release 1', entries: ids }), {
-      headers: Object.assign({ 'Idempotency-Key': `k6-cs-${slug}-${mark}` }, write),
+      headers: Object.assign({ 'Idempotency-Key': idempotencyKey(`k6-cs-${slug}-${mark}`, 'stampede') }, write),
     });
     if (set.status !== 201) fail(`changeset ${mark}: HTTP ${set.status} ${set.body}`);
     const path = `${env}/changesets/${set.json('data.id')}`;
@@ -139,7 +140,7 @@ export function setup() {
     http.post(`${path}/submit`, null, { headers: ifMatch });
     http.post(`${path}/reviews`, JSON.stringify({ decision: 'approve' }), { headers: ifMatch });
     const published = http.post(`${path}/publish`, JSON.stringify({ base_generation: 0 }), {
-      headers: Object.assign({ 'Idempotency-Key': `k6-pub-${slug}-${mark}` }, ifMatch),
+      headers: Object.assign({ 'Idempotency-Key': idempotencyKey(`k6-pub-${slug}-${mark}`, 'stampede') }, ifMatch),
     });
     if (published.status !== 201) fail(`publish ${mark}: HTTP ${published.status} ${published.body}`);
     return {

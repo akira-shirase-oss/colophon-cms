@@ -14,6 +14,7 @@
 import http from 'k6/http';
 import { check, fail } from 'k6';
 import exec from 'k6/execution';
+import { idempotencyKey } from './lib/idempotency-key.js';
 
 const BASE_URL = __ENV.BASE_URL || 'http://127.0.0.1:58000';
 const PUBLIC_URL = __ENV.PUBLIC_URL || 'http://localhost:58000';
@@ -77,20 +78,20 @@ export function setup() {
   const current = http.get(`${base}/review-stages`, { headers });
   if (current.status !== 200) fail(`read stages: HTTP ${current.status}`);
   const defined = http.put(`${base}/review-stages`, JSON.stringify({ stages: WORKFLOW }),
-    { headers: Object.assign({ 'If-Match': current.headers['Etag'], 'Idempotency-Key': `k6-stages-def-${Date.now()}` }, headers) });
+    { headers: Object.assign({ 'If-Match': current.headers['Etag'], 'Idempotency-Key': idempotencyKey(`k6-stages-def-${Date.now()}`, 'stages') }, headers) });
   if (defined.status !== 200) fail(`define stages: HTTP ${defined.status} ${defined.body}`);
 
   const entries = [];
   for (let i = 0; i < 2; i += 1) {
     const body = { title: `Article ${i}`, body: { schema: 'colophon/rich-text', version: 1, doc: { type: 'doc', content: [{ type: 'paragraph' }] } } };
-    const created = http.post(`${base}/collections/articles/entries`, JSON.stringify(body), { headers: Object.assign({ 'Idempotency-Key': `k6-setup-entry-${Date.now()}-${i}` }, headers) });
+    const created = http.post(`${base}/collections/articles/entries`, JSON.stringify(body), { headers: Object.assign({ 'Idempotency-Key': idempotencyKey(`k6-setup-entry-${Date.now()}-${i}`, 'stages') }, headers) });
     if (created.status !== 201) fail(`entry: HTTP ${created.status}`);
     entries.push(created.json('data.id'));
   }
   // One submitted changeset per virtual user (the steady scenario can use twice as many).
   const sets = [];
   for (let i = 0; i < VUS * 2; i += 1) {
-    const set = http.post(`${base}/changesets`, JSON.stringify({ title: `k6 ${i}`, entries }), { headers: Object.assign({ 'Idempotency-Key': `k6-setup-set-${Date.now()}-${i}` }, headers) });
+    const set = http.post(`${base}/changesets`, JSON.stringify({ title: `k6 ${i}`, entries }), { headers: Object.assign({ 'Idempotency-Key': idempotencyKey(`k6-setup-set-${Date.now()}-${i}`, 'stages') }, headers) });
     if (set.status !== 201) fail(`changeset: HTTP ${set.status} ${set.body}`);
     const path = `${base}/changesets/${set.json('data.id')}`;
     const hash = set.json('data.hash');
@@ -119,12 +120,12 @@ export default function (data) {
   } else if (slot < 95) {
     // Legal still waits on someone who isn't the submitter, so publish refuses by name.
     const res = http.post(`${mine.path}/publish`, JSON.stringify({ base_generation: 0 }),
-      Object.assign(params('publish', { 'If-Match': `"${mine.hash}"`, 'Idempotency-Key': `k6-${data.run}-${__VU}-${__ITER}` }), { responseCallback: REFUSED }));
+      Object.assign(params('publish', { 'If-Match': `"${mine.hash}"`, 'Idempotency-Key': idempotencyKey(`k6-${data.run}-${__VU}-${__ITER}`, 'stages') }), { responseCallback: REFUSED }));
     check(res, { 'publish refused not_approved': (r) => r.status === 409 && r.json('error.details.reason') === 'not_approved' });
   } else {
     const pair = [data.entries[exec.scenario.iterationInTest % 2], data.entries[(exec.scenario.iterationInTest + 1) % 2]];
     const res = http.post(`${data.base}/changesets`, JSON.stringify({ title: `k6 ${__VU}-${__ITER}`, entries: pair }),
-      params('create', { 'Idempotency-Key': `k6-${data.run}-${__VU}-${__ITER}` }));
+      params('create', { 'Idempotency-Key': idempotencyKey(`k6-${data.run}-${__VU}-${__ITER}`, 'stages') }));
     check(res, { 'create 201': (r) => r.status === 201 });
   }
 }

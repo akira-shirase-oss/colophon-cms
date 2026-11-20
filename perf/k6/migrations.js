@@ -14,6 +14,7 @@
 import http from 'k6/http';
 import { check, fail } from 'k6';
 import exec from 'k6/execution';
+import { idempotencyKey } from './lib/idempotency-key.js';
 
 const BASE_URL = __ENV.BASE_URL || 'http://127.0.0.1:58000';
 const PUBLIC_URL = __ENV.PUBLIC_URL || 'http://localhost:58000';
@@ -115,7 +116,7 @@ export default function (data) {
     const res = http.get(`${data.base}/migrations/${collection.plan}/items?outcome=needs_input`, params('items'));
     check(res, { 'needs_input items 200': (r) => r.status === 200 && Array.isArray(r.json('data')) });
   } else {
-    const res = http.post(`${data.base}/migrations`, JSON.stringify({ collection: collection.slug, definition: collection.target }), params('plan', { 'Idempotency-Key': `k6-${__VU}-${__ITER}-migrations` }));
+    const res = http.post(`${data.base}/migrations`, JSON.stringify({ collection: collection.slug, definition: collection.target }), params('plan', { 'Idempotency-Key': idempotencyKey(`k6-${__VU}-${__ITER}-migrations`, 'migrations') }));
     check(res, { 'plan 201': (r) => r.status === 201 && r.json('data.state') === 'proposed' });
   }
 }

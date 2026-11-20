@@ -16,6 +16,7 @@
 import http from 'k6/http';
 import { check, fail, sleep } from 'k6';
 import exec from 'k6/execution';
+import { idempotencyKey } from './lib/idempotency-key.js';
 
 const BASE_URL = __ENV.BASE_URL || 'http://127.0.0.1:58000';
 const PUBLIC_URL = __ENV.PUBLIC_URL || 'http://localhost:58000';
@@ -99,7 +100,7 @@ const article = (title) => ({
 
 export default function (data) {
   const base = data.bases[(__VU - 1) % data.bases.length];
-  const key = (step) => `k6-${data.run}-${__VU}-${__ITER}-${step}`;
+  const key = (step) => idempotencyKey(`k6-${data.run}-${__VU}-${__ITER}-${step}`, 'publishing');
   const params = (endpoint, extra) => ({ headers: Object.assign({}, data.headers, extra || {}), redirects: 0, tags: { endpoint, name: endpoint } });
 
   const entry = http.post(`${base}/collections/articles/entries`, JSON.stringify(article(`Article ${__VU}-${__ITER}`)), params('entry', { 'Idempotency-Key': key('e') }));

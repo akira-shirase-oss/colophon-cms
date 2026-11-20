@@ -11,6 +11,7 @@
 import http from 'k6/http';
 import { check, fail } from 'k6';
 import exec from 'k6/execution';
+import { idempotencyKey } from './lib/idempotency-key.js';
 
 const BASE_URL = __ENV.BASE_URL || 'http://127.0.0.1:58000';
 const PUBLIC_URL = __ENV.PUBLIC_URL || 'http://localhost:58000';
@@ -81,12 +82,12 @@ export function setup() {
   for (let i = 0; i < VUS; i++) {
     for (const [collection, definition] of [[`staff${i}`, STAFF], [`posts${i}`, POSTS]]) {
       const made = http.post(`${env}/content-types`, JSON.stringify({ slug: collection, definition: { ...definition, fields: definition.fields.map((f) => (f.to ? { ...f, to: `staff${i}` } : f)) } }), {
-        headers: Object.assign({ 'Idempotency-Key': `k6-type-${slug}-${collection}` }, write),
+        headers: Object.assign({ 'Idempotency-Key': idempotencyKey(`k6-type-${slug}-${collection}`, 'graphql') }, write),
       });
       if (made.status !== 201) fail(`content type ${collection}: HTTP ${made.status} ${made.body}`);
     }
     const writer = http.post(`${env}/collections/staff${i}/entries`, JSON.stringify({ name: `Writer ${i}` }), {
-      headers: Object.assign({ 'Idempotency-Key': `k6-staff-${slug}-${i}` }, write),
+      headers: Object.assign({ 'Idempotency-Key': idempotencyKey(`k6-staff-${slug}-${i}`, 'graphql') }, write),
     });
     if (writer.status !== 201) fail(`staff ${i}: HTTP ${writer.status} ${writer.body}`);
     const ada = writer.json('data.id');
@@ -94,7 +95,7 @@ export function setup() {
     for (let p = 0; p < 5; p++) {
       const post = http.post(`${env}/collections/posts${i}/entries`, JSON.stringify({
         headline: `Post ${i}-${p}`, rating: p % 6, section: p % 2 === 0 ? 'News' : 'Guides', author: ada,
-      }), { headers: Object.assign({ 'Idempotency-Key': `k6-post-${slug}-${i}-${p}` }, write) });
+      }), { headers: Object.assign({ 'Idempotency-Key': idempotencyKey(`k6-post-${slug}-${i}-${p}`, 'graphql') }, write) });
       if (post.status !== 201) fail(`post ${i}/${p}: HTTP ${post.status} ${post.body}`);
       entries.push(post.json('data.id'));
     }

@@ -63,7 +63,7 @@ const article = (title) => ({
 
 /** Request, submit, approve and publish `body` on `generation`; the new generation, or fail. */
 function release(base, headers, body, generation, key, params) {
-  const set = http.post(`${base}/changesets`, JSON.stringify(body), params('changeset', { 'Idempotency-Key': `${key}-c` }));
+  const set = http.post(`${base}/changesets`, JSON.stringify(body), params('changeset', { 'Idempotency-Key': idempotencyKey(`${key}-c`, 'undo') }));
   if (!check(set, { 'changeset 201': (r) => r.status === 201 })) return null;
   const path = `${base}/changesets/${set.json('data.id')}`;
   const ifMatch = { 'If-Match': `"${set.json('data.hash')}"` };
@@ -71,7 +71,7 @@ function release(base, headers, body, generation, key, params) {
   if (!check(submitted, { 'submit 200': (r) => r.status === 200 })) return null;
   const approved = http.post(`${path}/reviews`, JSON.stringify({ decision: 'approve' }), params('review', ifMatch));
   if (!check(approved, { approved: (r) => r.status === 200 && r.json('data.status.state') === 'approved' })) return null;
-  const published = http.post(`${path}/publish`, JSON.stringify({ base_generation: generation }), params('publish', Object.assign({ 'Idempotency-Key': `${key}-p` }, ifMatch)));
+  const published = http.post(`${path}/publish`, JSON.stringify({ base_generation: generation }), params('publish', Object.assign({ 'Idempotency-Key': idempotencyKey(`${key}-p`, 'undo') }, ifMatch)));
   if (!check(published, { 'publish 201': (r) => r.status === 201 })) return null;
   return published.json('data.generation');
 }
@@ -120,7 +120,7 @@ export default function (data) {
     method: 'POST',
     url: `${world.base}/releases/${down}/undo`,
     body: null,
-    params: Object.assign(params('undo', { 'Idempotency-Key': `${key}-u${which}` }), { responseCallback: http.expectedStatuses(201, 409) }),
+    params: Object.assign(params('undo', { 'Idempotency-Key': idempotencyKey(`${key}-u${which}`, 'undo') }), { responseCallback: http.expectedStatuses(201, 409) }),
   });
   const [left, right] = http.batch([undo(1), undo(2)]);
   const winners = [left, right].filter((r) => r.status === 201);

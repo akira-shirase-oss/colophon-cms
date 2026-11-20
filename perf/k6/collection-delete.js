@@ -19,6 +19,7 @@
 import http from 'k6/http';
 import { check, fail } from 'k6';
 import exec from 'k6/execution';
+import { idempotencyKey } from './lib/idempotency-key.js';
 
 const BASE_URL = __ENV.BASE_URL || 'http://127.0.0.1:58000';
 const PUBLIC_URL = __ENV.PUBLIC_URL || 'http://localhost:58000';
@@ -68,13 +69,13 @@ const SIMPLE = {
 };
 
 function key() {
-  return `k6-${__VU}-${__ITER}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+  return idempotencyKey(`k6-${__VU}-${__ITER}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`, 'collection-delete');
 }
 
 /** Creates the `slug` collection with `definition`; fails the run when it is not accepted. */
 function collection(types, write, slug, definition) {
   const made = http.post(types, JSON.stringify({ slug, definition }), {
-    headers: Object.assign({ 'Idempotency-Key': `k6-setup-${slug}-${Date.now().toString(36)}` }, write),
+    headers: Object.assign({ 'Idempotency-Key': idempotencyKey(`k6-setup-${slug}-${Date.now().toString(36)}`, 'collection-delete') }, write),
   });
   if (made.status !== 201) fail(`collection ${slug}: HTTP ${made.status} ${made.body}`);
 }
@@ -96,7 +97,7 @@ export function setup() {
   // that is now a tombstone. All three refuse deletion forever, each for its own reason.
   collection(types, write, 'full', SIMPLE);
   const entry = http.post(`${environment}/collections/full/entries`, JSON.stringify({ title: 'Kept' }), {
-    headers: Object.assign({ 'Idempotency-Key': `k6-setup-entry-${slug}` }, write),
+    headers: Object.assign({ 'Idempotency-Key': idempotencyKey(`k6-setup-entry-${slug}`, 'collection-delete') }, write),
   });
   if (entry.status !== 201) fail(`entry: HTTP ${entry.status} ${entry.body}`);
   collection(types, write, 'linked', SIMPLE);
@@ -110,11 +111,11 @@ export function setup() {
   });
   collection(types, write, 'history', SIMPLE);
   const ghost = http.post(`${environment}/collections/history/entries`, JSON.stringify({ title: 'Gone' }), {
-    headers: Object.assign({ 'Idempotency-Key': `k6-setup-ghost-${slug}` }, write),
+    headers: Object.assign({ 'Idempotency-Key': idempotencyKey(`k6-setup-ghost-${slug}`, 'collection-delete') }, write),
   });
   if (ghost.status !== 201) fail(`ghost entry: HTTP ${ghost.status} ${ghost.body}`);
   const tombstoned = http.del(`${environment}/collections/history/entries/${ghost.json('data.id')}`, null, {
-    headers: { 'If-Match': ghost.headers['Etag'], 'Idempotency-Key': `k6-setup-tombstone-${slug}`, 'X-CSRF-Token': session.csrf, Cookie: session.cookie, Origin: PUBLIC_URL },
+    headers: { 'If-Match': ghost.headers['Etag'], 'Idempotency-Key': idempotencyKey(`k6-setup-tombstone-${slug}`, 'collection-delete'), 'X-CSRF-Token': session.csrf, Cookie: session.cookie, Origin: PUBLIC_URL },
   });
   if (tombstoned.status !== 200) fail(`tombstone: HTTP ${tombstoned.status} ${tombstoned.body}`);
   return { session, types };

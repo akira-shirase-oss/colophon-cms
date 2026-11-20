@@ -12,6 +12,7 @@
 import http from 'k6/http';
 import { check, fail } from 'k6';
 import exec from 'k6/execution';
+import { idempotencyKey } from './lib/idempotency-key.js';
 
 const BASE_URL = __ENV.BASE_URL || 'http://127.0.0.1:58000';
 const PUBLIC_URL = __ENV.PUBLIC_URL || 'http://localhost:58000';
@@ -77,7 +78,7 @@ function product(name, n, slug = `vu-${__VU}-${n % 50}`) {
 }
 
 function key() {
-  return `k6-${__VU}-${__ITER}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+  return idempotencyKey(`k6-${__VU}-${__ITER}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`, 'content-types');
 }
 
 export function setup() {
@@ -92,16 +93,16 @@ export function setup() {
   if (project.status !== 201) fail(`project: HTTP ${project.status} ${project.body}`);
   const env = `${BASE_URL}/api/v1/projects/${project.json('data.id')}/environments/production`;
   const type = http.post(`${env}/content-types`, JSON.stringify({ slug: 'products', definition: PRODUCTS }), {
-    headers: Object.assign({ 'Idempotency-Key': `k6-type-${slug}` }, write),
+    headers: Object.assign({ 'Idempotency-Key': idempotencyKey(`k6-type-${slug}`, 'content-types') }, write),
   });
   if (type.status !== 201) fail(`content type: HTTP ${type.status} ${type.body}`);
   const base = `${env}/collections/products/entries`;
 
-  const holder = http.post(base, product('Holder', 0, 'taken'), { headers: Object.assign({ 'Idempotency-Key': `k6-holder-${slug}` }, write) });
+  const holder = http.post(base, product('Holder', 0, 'taken'), { headers: Object.assign({ 'Idempotency-Key': idempotencyKey(`k6-holder-${slug}`, 'content-types') }, write) });
   if (holder.status !== 201) fail(`holder: HTTP ${holder.status} ${holder.body}`);
   const entries = [];
   for (let i = 0; i < ENTRIES; i++) {
-    const created = http.post(base, product(`Product ${i}`, i, `setup-${i}`), { headers: Object.assign({ 'Idempotency-Key': `k6-setup-${slug}-${i}` }, write) });
+    const created = http.post(base, product(`Product ${i}`, i, `setup-${i}`), { headers: Object.assign({ 'Idempotency-Key': idempotencyKey(`k6-setup-${slug}-${i}`, 'content-types') }, write) });
     if (created.status !== 201) fail(`entry ${i}: HTTP ${created.status} ${created.body}`);
     entries.push({ id: created.json('data.id'), etag: created.headers['Etag'] });
   }

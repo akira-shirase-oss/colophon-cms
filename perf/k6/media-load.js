@@ -39,6 +39,7 @@ import http from 'k6/http';
 import { check, fail, sleep } from 'k6';
 import exec from 'k6/execution';
 import { Counter } from 'k6/metrics';
+import { idempotencyKey } from './lib/idempotency-key.js';
 
 const BASE_URL = __ENV.BASE_URL || 'http://127.0.0.1:58000';
 const PUBLIC_URL = __ENV.PUBLIC_URL || 'http://localhost:58000';
@@ -120,7 +121,7 @@ const article = (title, text) => JSON.stringify({
 });
 
 function key() {
-  return `k6-l14-${__VU}-${__ITER}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+  return idempotencyKey(`k6-l14-${__VU}-${__ITER}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`, 'media-load');
 }
 
 // Enough articles for every editorial VU id across both editorial arms' maxima.
@@ -145,7 +146,7 @@ export function setup() {
     const batch = [];
     for (let j = i; j < Math.min(i + 40, ARTICLES); j += 1) {
       batch.push(['POST', entries, article(`Article ${j}`, 'Start'), {
-        headers: Object.assign({ 'Idempotency-Key': `k6-l14-${slug}-${j}` }, write),
+        headers: Object.assign({ 'Idempotency-Key': idempotencyKey(`k6-l14-${slug}-${j}`, 'media-load') }, write),
         tags: { name: 'setup' },
       }]);
     }

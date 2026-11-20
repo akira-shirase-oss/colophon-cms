@@ -11,6 +11,7 @@
 import http from 'k6/http';
 import { check, fail } from 'k6';
 import exec from 'k6/execution';
+import { idempotencyKey } from './lib/idempotency-key.js';
 
 const BASE_URL = __ENV.BASE_URL || 'http://127.0.0.1:58000';
 const PUBLIC_URL = __ENV.PUBLIC_URL || 'http://localhost:58000';
@@ -52,7 +53,7 @@ const NOTES = {
 };
 
 function key() {
-  return `k6-${__VU}-${__ITER}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+  return idempotencyKey(`k6-${__VU}-${__ITER}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`, 'locales');
 }
 
 export function setup() {
@@ -67,7 +68,7 @@ export function setup() {
   if (project.status !== 201) fail(`project: HTTP ${project.status} ${project.body}`);
   const env = `${BASE_URL}/api/v1/projects/${project.json('data.id')}/environments/production`;
   const made = http.post(`${env}/content-types`, JSON.stringify({ slug: 'notes', definition: NOTES }), {
-    headers: Object.assign({ 'Idempotency-Key': `k6-type-${slug}` }, write),
+    headers: Object.assign({ 'Idempotency-Key': idempotencyKey(`k6-type-${slug}`, 'locales') }, write),
   });
   if (made.status !== 201) fail(`content type notes: HTTP ${made.status} ${made.body}`);
   const entries = `${env}/collections/notes/entries`;
@@ -75,11 +76,11 @@ export function setup() {
   const vus = [];
   for (let i = 0; i < VUS * 2; i++) {
     const source = http.post(`${entries}?locale=en`, JSON.stringify({ title: `Welcome ${i}` }), {
-      headers: Object.assign({ 'Idempotency-Key': `k6-setup-${slug}-${i}-en` }, write),
+      headers: Object.assign({ 'Idempotency-Key': idempotencyKey(`k6-setup-${slug}-${i}-en`, 'locales') }, write),
     });
     if (source.status !== 201) fail(`note: HTTP ${source.status} ${source.body}`);
     const sibling = http.post(`${entries}/${source.json('data.id')}/localizations?locale=fr`, null, {
-      headers: Object.assign({ 'Idempotency-Key': `k6-setup-${slug}-${i}-fr` }, write),
+      headers: Object.assign({ 'Idempotency-Key': idempotencyKey(`k6-setup-${slug}-${i}-fr`, 'locales') }, write),
     });
     if (sibling.status !== 201) fail(`localize: HTTP ${sibling.status} ${sibling.body}`);
     vus.push({ source: source.json('data.id'), sibling: sibling.json('data.id'), etag: sibling.headers['Etag'] });

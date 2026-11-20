@@ -12,6 +12,7 @@ import http from 'k6/http';
 import { check, fail, sleep } from 'k6';
 import { Counter, Rate, Trend } from 'k6/metrics';
 import exec from 'k6/execution';
+import { idempotencyKey } from './lib/idempotency-key.js';
 
 const BASE_URL = __ENV.BASE_URL || 'http://127.0.0.1:58000';
 const PUBLIC_URL = __ENV.PUBLIC_URL || 'http://localhost:58000';
@@ -84,7 +85,7 @@ const WIDE = new Uint8Array([
 ]);
 
 function key() {
-  return `k6-${__VU}-${__ITER}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+  return idempotencyKey(`k6-${__VU}-${__ITER}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`, 'assets');
 }
 
 export function setup() {
@@ -114,7 +115,7 @@ export function setup() {
   // One known-usable asset for the public origin to serve: upload, then wait for the
   // worker to verify it before the run starts.
   const made = http.post(assets, WIDE.buffer, {
-    headers: { Cookie: session.cookie, 'X-CSRF-Token': session.csrf, Origin: PUBLIC_URL, 'Content-Type': 'image/png', 'X-Colophon-File-Name': 'warm.png', 'Idempotency-Key': `k6-warm-${Date.now().toString(36)}` },
+    headers: { Cookie: session.cookie, 'X-CSRF-Token': session.csrf, Origin: PUBLIC_URL, 'Content-Type': 'image/png', 'X-Colophon-File-Name': 'warm.png', 'Idempotency-Key': idempotencyKey(`k6-warm-${Date.now().toString(36)}`, 'assets') },
     redirects: 0,
   });
   if (made.status !== 202) fail(`warm upload: HTTP ${made.status} ${made.body}`);

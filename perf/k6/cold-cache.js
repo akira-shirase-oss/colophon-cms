@@ -28,6 +28,7 @@ import http from 'k6/http';
 import { check, fail } from 'k6';
 import { Counter } from 'k6/metrics';
 import exec from 'k6/execution';
+import { idempotencyKey } from './lib/idempotency-key.js';
 
 const BASE_URL = __ENV.BASE_URL || 'http://127.0.0.1:58000';
 const PUBLIC_URL = __ENV.PUBLIC_URL || 'http://localhost:58000';
@@ -100,7 +101,7 @@ const POSTS = {
 };
 
 function key() {
-  return `k6-l03-${__VU}-${__ITER}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+  return idempotencyKey(`k6-l03-${__VU}-${__ITER}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`, 'cold-cache');
 }
 
 export function setup() {
@@ -117,7 +118,7 @@ export function setup() {
   const env = `${BASE_URL}/api/v1/projects/${id}/environments/production`;
 
   const made = http.post(`${env}/content-types`, JSON.stringify({ slug: 'posts', definition: POSTS }), {
-    headers: Object.assign({ 'Idempotency-Key': `k6-type-${slug}` }, write),
+    headers: Object.assign({ 'Idempotency-Key': idempotencyKey(`k6-type-${slug}`, 'cold-cache') }, write),
   });
   if (made.status !== 201) fail(`content type: HTTP ${made.status} ${made.body}`);
 
@@ -130,7 +131,7 @@ export function setup() {
       file += JSON.stringify({ headline: `Post ${n}`, dek: `dek ${n}`, section: n % 2 === 0 ? 'News' : 'Guides' }) + '\n';
     }
     const imported = http.post(`${env}/collections/posts/import`, file, {
-      headers: Object.assign({}, write, { 'Content-Type': 'application/jsonlines', 'Idempotency-Key': `k6-seed-${slug}-${c}` }),
+      headers: Object.assign({}, write, { 'Content-Type': 'application/jsonlines', 'Idempotency-Key': idempotencyKey(`k6-seed-${slug}-${c}`, 'cold-cache') }),
     });
     if (imported.status !== 201) fail(`seed import ${c}: HTTP ${imported.status} ${imported.body}`);
     for (const outcome of imported.json('data.outcomes')) ids.push(outcome.entry);
@@ -140,7 +141,7 @@ export function setup() {
   let generation = 0;
   for (let c = 0; c * 100 < ids.length; c += 1) {
     const set = http.post(`${env}/changesets`, JSON.stringify({ title: `release ${c}`, entries: ids.slice(c * 100, c * 100 + 100) }), {
-      headers: Object.assign({ 'Idempotency-Key': `k6-cs-${slug}-${c}` }, write),
+      headers: Object.assign({ 'Idempotency-Key': idempotencyKey(`k6-cs-${slug}-${c}`, 'cold-cache') }, write),
     });
     if (set.status !== 201) fail(`changeset ${c}: HTTP ${set.status} ${set.body}`);
     const path = `${env}/changesets/${set.json('data.id')}`;
@@ -148,7 +149,7 @@ export function setup() {
     http.post(`${path}/submit`, null, { headers: ifMatch });
     http.post(`${path}/reviews`, JSON.stringify({ decision: 'approve' }), { headers: ifMatch });
     const published = http.post(`${path}/publish`, JSON.stringify({ base_generation: generation }), {
-      headers: Object.assign({ 'Idempotency-Key': `k6-pub-${slug}-${c}` }, ifMatch),
+      headers: Object.assign({ 'Idempotency-Key': idempotencyKey(`k6-pub-${slug}-${c}`, 'cold-cache') }, ifMatch),
     });
     if (published.status !== 201) fail(`publish ${c}: HTTP ${published.status} ${published.body}`);
     generation = published.json('data.generation');

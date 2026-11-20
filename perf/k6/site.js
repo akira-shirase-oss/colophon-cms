@@ -12,6 +12,7 @@ import http from 'k6/http';
 import { check, fail, sleep } from 'k6';
 import { Counter } from 'k6/metrics';
 import exec from 'k6/execution';
+import { idempotencyKey } from './lib/idempotency-key.js';
 
 const releasesPublished = new Counter('releases_published');
 
@@ -85,7 +86,7 @@ export function setup() {
   if (hook.status !== 201) fail(`destination: HTTP ${hook.status} ${hook.body}`);
   const entries = [];
   for (let i = 0; i < 20; i += 1) {
-    const created = http.post(`${base}/collections/articles/entries`, JSON.stringify(body(`Article ${i}`, 'first')), { headers: Object.assign({ 'Idempotency-Key': `k6-site-${run}-e${i}` }, headers) });
+    const created = http.post(`${base}/collections/articles/entries`, JSON.stringify(body(`Article ${i}`, 'first')), { headers: Object.assign({ 'Idempotency-Key': idempotencyKey(`k6-site-${run}-e${i}`, 'site') }, headers) });
     if (created.status !== 201) fail(`entry: HTTP ${created.status}`);
     entries.push(created.json('data.id'));
   }
@@ -101,7 +102,7 @@ export function setup() {
 /** Publishes `ids` as the release after `generation`; the new generation. */
 function releaseOf(data, ids, generation, tag) {
   const params = (extra) => ({ headers: Object.assign({}, data.headers, extra || {}), tags: { page: 'publish' } });
-  const key = (step) => `k6-site-${data.run}-${tag}-${step}`;
+  const key = (step) => idempotencyKey(`k6-site-${data.run}-${tag}-${step}`, 'site');
   const set = http.post(`${data.base}/changesets`, JSON.stringify({ title: `release ${generation + 1}`, entries: ids }), params({ 'Idempotency-Key': key('c') }));
   const path = `${data.base}/changesets/${set.json('data.id')}`;
   const ifMatch = { 'If-Match': `"${set.json('data.hash')}"` };
@@ -124,7 +125,7 @@ function publish(data) {
   const path = `${data.base}/collections/articles/entries/${id}`;
   const current = http.get(path, { headers: data.headers, tags: { page: 'publish' } });
   const saved = http.put(path, JSON.stringify(body(current.json('data.content.title'), `edit ${generation}`)), {
-    headers: Object.assign({ 'If-Match': current.headers.Etag, 'Idempotency-Key': `k6-site-${data.run}-s${generation}` }, data.headers),
+    headers: Object.assign({ 'If-Match': current.headers.Etag, 'Idempotency-Key': idempotencyKey(`k6-site-${data.run}-s${generation}`, 'site') }, data.headers),
     tags: { page: 'publish' },
   });
   if (saved.status !== 200) fail(`save: HTTP ${saved.status}`);

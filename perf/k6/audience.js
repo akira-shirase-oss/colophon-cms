@@ -22,6 +22,7 @@ import http from 'k6/http';
 import { check, fail } from 'k6';
 import { Rate } from 'k6/metrics';
 import exec from 'k6/execution';
+import { idempotencyKey } from './lib/idempotency-key.js';
 
 const anonCacheHits = new Rate('anon_cache_hits');
 
@@ -87,7 +88,7 @@ export function setup() {
   };
   const run = Date.now().toString(36);
   let n = 0;
-  const key = () => `k6-audience-${run}-${(n += 1)}`;
+  const key = () => idempotencyKey(`k6-audience-${run}-${(n += 1)}`, 'audience');
   const project = http.post(`${BASE_URL}/api/v1/projects`, JSON.stringify({ slug: `k6-${run}`, name: 'k6 audience' }), { headers });
   if (project.status !== 201) fail(`project: HTTP ${project.status}`);
   const projectId = project.json('data.id');

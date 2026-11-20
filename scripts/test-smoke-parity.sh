@@ -19,6 +19,16 @@ if [[ -n "$mixed" ]]; then
   echo "$mixed" >&2
   exit 1
 fi
+# Every Idempotency-Key a scenario sends is built by perf/k6/lib/idempotency-key.js, which refuses one outside the
+# API's rule (16 to 128 letters, digits, '-' or '_') at the line that built it: hand-built ones fell under 16
+# characters at small VU and iteration numbers and were refused 400 mid-run (changesets, CI 44632793507). A header
+# value written as a literal, or a key helper returning a bare `k6-...` template, fails here.
+handbuilt=$(grep -nE "'Idempotency-Key'[[:space:]]*:[[:space:]]*[\`'\"]|(return|=>)[[:space:]]+\`k6-" perf/k6/*.js || true)
+if [[ -n "$handbuilt" ]]; then
+  echo "FAIL: $(wc -l <<<"$handbuilt" | tr -d ' ') Idempotency-Key(s) built by hand, not through perf/k6/lib/idempotency-key.js:" >&2
+  echo "$handbuilt" >&2
+  exit 1
+fi
 # The scenario-wide index can give one VU the same slot twice, so a scenario that keeps per-VU state
 # (a module-level `let`) must not depend on its slots coming in order: schedules did (schedule in
 # slot 8, cancel in 9) and got 767 409s in CI 44632793507. Each such variable is marked on the line

@@ -10,6 +10,7 @@
 import http from 'k6/http';
 import { check, fail } from 'k6';
 import exec from 'k6/execution';
+import { idempotencyKey } from './lib/idempotency-key.js';
 
 const BASE_URL = __ENV.BASE_URL || 'http://127.0.0.1:58000';
 const PUBLIC_URL = __ENV.PUBLIC_URL || 'http://localhost:58000';
@@ -62,7 +63,7 @@ const POSTS = {
 };
 
 function key() {
-  return `k6-${__VU}-${__ITER}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+  return idempotencyKey(`k6-${__VU}-${__ITER}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`, 'inverses');
 }
 
 export function setup() {
@@ -78,7 +79,7 @@ export function setup() {
   const env = `${BASE_URL}/api/v1/projects/${project.json('data.id')}/environments/production`;
   for (const [type, definition] of [['writers', WRITERS], ['posts', POSTS]]) {
     const made = http.post(`${env}/content-types`, JSON.stringify({ slug: type, definition }), {
-      headers: Object.assign({ 'Idempotency-Key': `k6-type-${slug}-${type}` }, write),
+      headers: Object.assign({ 'Idempotency-Key': idempotencyKey(`k6-type-${slug}-${type}`, 'inverses') }, write),
     });
     if (made.status !== 201) fail(`content type ${type}: HTTP ${made.status} ${made.body}`);
   }
@@ -90,13 +91,13 @@ export function setup() {
     const writers = [];
     for (const name of ['Ada', 'Grace']) {
       const made = http.post(writersBase, JSON.stringify({ name: `${name} ${i}` }), {
-        headers: Object.assign({ 'Idempotency-Key': `k6-setup-${slug}-${i}-${name}` }, write),
+        headers: Object.assign({ 'Idempotency-Key': idempotencyKey(`k6-setup-${slug}-${i}-${name}`, 'inverses') }, write),
       });
       if (made.status !== 201) fail(`writer: HTTP ${made.status} ${made.body}`);
       writers.push(made.json('data.id'));
     }
     const post = http.post(postsBase, JSON.stringify({ headline: `Compilers ${i}`, writer: writers[0] }), {
-      headers: Object.assign({ 'Idempotency-Key': `k6-setup-${slug}-${i}-post` }, write),
+      headers: Object.assign({ 'Idempotency-Key': idempotencyKey(`k6-setup-${slug}-${i}-post`, 'inverses') }, write),
     });
     if (post.status !== 201) fail(`post: HTTP ${post.status} ${post.body}`);
     vus.push({ post: post.json('data.id'), etag: post.headers['Etag'], writers });

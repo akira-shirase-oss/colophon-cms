@@ -17,6 +17,7 @@ import http from 'k6/http';
 import { check, fail, sleep } from 'k6';
 import { Counter } from 'k6/metrics';
 import exec from 'k6/execution';
+import { idempotencyKey } from './lib/idempotency-key.js';
 
 const BASE_URL = __ENV.BASE_URL || 'http://127.0.0.1:58000';
 const PUBLIC_URL = __ENV.PUBLIC_URL || 'http://localhost:58000';
@@ -64,7 +65,7 @@ function article(title, text) {
 }
 
 function key() {
-  return `k6-smoke-${__ITER}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+  return idempotencyKey(`k6-smoke-${__ITER}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`, 'smoke');
 }
 
 export function setup() {
@@ -84,7 +85,7 @@ export function setup() {
   const articles = [];
   for (let i = 0; i < ARTICLES; i += 1) {
     const created = http.post(entries, article(`Smoke ${i}`, 'first'), {
-      headers: Object.assign({ 'Idempotency-Key': `k6-smoke-${slug}-${i}` }, write),
+      headers: Object.assign({ 'Idempotency-Key': idempotencyKey(`k6-smoke-${slug}-${i}`, 'smoke') }, write),
     });
     if (created.status !== 201) fail(`article ${i}: HTTP ${created.status} ${created.body}`);
     articles.push({ id: created.json('data.id'), etag: created.headers['Etag'], text: 'first' });
@@ -93,7 +94,7 @@ export function setup() {
   // Release 1 is published here, before any save touches the pool, so a pinned read at
   // generation=1 deterministically serves the 'first' revision the walk proves later.
   const set = http.post(`${env}/changesets`, JSON.stringify({ title: 'smoke release 1', entries: articles.map((a) => a.id) }), {
-    headers: Object.assign({ 'Idempotency-Key': `k6-smoke-${slug}-r1` }, write),
+    headers: Object.assign({ 'Idempotency-Key': idempotencyKey(`k6-smoke-${slug}-r1`, 'smoke') }, write),
   });
   if (set.status !== 201) fail(`changeset: HTTP ${set.status} ${set.body}`);
   const path = `${env}/changesets/${set.json('data.id')}`;
@@ -103,7 +104,7 @@ export function setup() {
   const approved = http.post(`${path}/reviews`, JSON.stringify({ decision: 'approve' }), { headers: ifMatch });
   if (approved.status !== 200) fail(`review: HTTP ${approved.status} ${approved.body}`);
   const published = http.post(`${path}/publish`, JSON.stringify({ base_generation: 0 }), {
-    headers: Object.assign({ 'Idempotency-Key': `k6-smoke-${slug}-p1` }, ifMatch),
+    headers: Object.assign({ 'Idempotency-Key': idempotencyKey(`k6-smoke-${slug}-p1`, 'smoke') }, ifMatch),
   });
   if (published.status !== 201 || published.json('data.generation') !== 1) {
     fail(`release 1: HTTP ${published.status} ${published.body}`);

@@ -19,6 +19,7 @@
 import http from 'k6/http';
 import { check, fail, sleep } from 'k6';
 import exec from 'k6/execution';
+import { idempotencyKey } from './lib/idempotency-key.js';
 
 const BASE_URL = __ENV.BASE_URL || 'http://127.0.0.1:58000';
 const PUBLIC_URL = __ENV.PUBLIC_URL || 'http://localhost:58000';
@@ -76,7 +77,7 @@ const WIDE = new Uint8Array([
 let setupKeys = 0;
 function key() {
   const where = typeof exec.scenario.iterationInTest === 'undefined' ? `setup-${(setupKeys += 1)}` : `${__VU}-${__ITER}`;
-  return `k6-rtm-${where}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+  return idempotencyKey(`k6-rtm-${where}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`, 'rich-text-media');
 }
 
 const post = (title, images) => ({

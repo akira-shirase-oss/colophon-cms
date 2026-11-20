@@ -14,6 +14,7 @@
 import http from 'k6/http';
 import { check, fail } from 'k6';
 import exec from 'k6/execution';
+import { idempotencyKey } from './lib/idempotency-key.js';
 
 const BASE_URL = __ENV.BASE_URL || 'http://127.0.0.1:58000';
 const PUBLIC_URL = __ENV.PUBLIC_URL || 'http://localhost:58000';
@@ -107,7 +108,7 @@ function page(title, n, first, second) {
 }
 
 function key() {
-  return `k6-${__VU}-${__ITER}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+  return idempotencyKey(`k6-${__VU}-${__ITER}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`, 'modelling');
 }
 
 export function setup() {
@@ -122,19 +123,19 @@ export function setup() {
   if (project.status !== 201) fail(`project: HTTP ${project.status} ${project.body}`);
   const env = `${BASE_URL}/api/v1/projects/${project.json('data.id')}/environments/production`;
   const component = http.post(`${env}/components`, JSON.stringify({ slug: 'seo', definition: SEO_COMPONENT }), {
-    headers: Object.assign({ 'Idempotency-Key': `k6-component-${slug}-seo` }, write),
+    headers: Object.assign({ 'Idempotency-Key': idempotencyKey(`k6-component-${slug}-seo`, 'modelling') }, write),
   });
   if (component.status !== 201) fail(`component: HTTP ${component.status} ${component.body}`);
   for (const [type, definition] of [['people', PEOPLE_TYPE], ['pages', PAGES_TYPE]]) {
     const made = http.post(`${env}/content-types`, JSON.stringify({ slug: type, definition }), {
-      headers: Object.assign({ 'Idempotency-Key': `k6-type-${slug}-${type}` }, write),
+      headers: Object.assign({ 'Idempotency-Key': idempotencyKey(`k6-type-${slug}-${type}`, 'modelling') }, write),
     });
     if (made.status !== 201) fail(`content type ${type}: HTTP ${made.status} ${made.body}`);
   }
   const people = [];
   for (let i = 0; i < PEOPLE; i++) {
     const made = http.post(`${env}/collections/people/entries`, JSON.stringify({ name: `Person ${i}` }), {
-      headers: Object.assign({ 'Idempotency-Key': `k6-person-${slug}-${i}` }, write),
+      headers: Object.assign({ 'Idempotency-Key': idempotencyKey(`k6-person-${slug}-${i}`, 'modelling') }, write),
     });
     if (made.status !== 201) fail(`person ${i}: HTTP ${made.status} ${made.body}`);
     people.push(made.json('data.id'));
@@ -143,7 +144,7 @@ export function setup() {
   const pages = [];
   for (let i = 0; i < PAGES; i++) {
     const made = http.post(base, page(`Page ${i}`, i, people[i % PEOPLE], people[(i + 1) % PEOPLE]), {
-      headers: Object.assign({ 'Idempotency-Key': `k6-page-${slug}-${i}` }, write),
+      headers: Object.assign({ 'Idempotency-Key': idempotencyKey(`k6-page-${slug}-${i}`, 'modelling') }, write),
     });
     if (made.status !== 201) fail(`page ${i}: HTTP ${made.status} ${made.body}`);
     pages.push({ id: made.json('data.id'), etag: made.headers['Etag'] });

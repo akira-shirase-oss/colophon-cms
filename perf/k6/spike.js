@@ -24,6 +24,7 @@ import http from 'k6/http';
 import { check, fail } from 'k6';
 import exec from 'k6/execution';
 import { Counter, Trend } from 'k6/metrics';
+import { idempotencyKey } from './lib/idempotency-key.js';
 
 const BASE_URL = __ENV.BASE_URL || 'http://127.0.0.1:58000';
 const PUBLIC_URL = __ENV.PUBLIC_URL || 'http://localhost:58000';
@@ -116,12 +117,12 @@ export function setup() {
     file += article(`Article ${i}`, 'first') + '\n';
   }
   const imported = http.post(`${env}/collections/articles/import`, file, {
-    headers: Object.assign({}, write, { 'Content-Type': 'application/jsonlines', 'Idempotency-Key': `k6-seed-${slug}` }),
+    headers: Object.assign({}, write, { 'Content-Type': 'application/jsonlines', 'Idempotency-Key': idempotencyKey(`k6-seed-${slug}`, 'spike') }),
   });
   if (imported.status !== 201) fail(`seed import: HTTP ${imported.status} ${imported.body}`);
   for (const outcome of imported.json('data.outcomes')) ids.push(outcome.entry);
   const set = http.post(`${env}/changesets`, JSON.stringify({ title: 'release 1', entries: ids }), {
-    headers: Object.assign({ 'Idempotency-Key': `k6-cs-${slug}` }, write),
+    headers: Object.assign({ 'Idempotency-Key': idempotencyKey(`k6-cs-${slug}`, 'spike') }, write),
   });
   if (set.status !== 201) fail(`changeset: HTTP ${set.status} ${set.body}`);
   const path = `${env}/changesets/${set.json('data.id')}`;
@@ -129,7 +130,7 @@ export function setup() {
   http.post(`${path}/submit`, null, { headers: ifMatch });
   http.post(`${path}/reviews`, JSON.stringify({ decision: 'approve' }), { headers: ifMatch });
   const published = http.post(`${path}/publish`, JSON.stringify({ base_generation: 0 }), {
-    headers: Object.assign({ 'Idempotency-Key': `k6-pub-${slug}` }, ifMatch),
+    headers: Object.assign({ 'Idempotency-Key': idempotencyKey(`k6-pub-${slug}`, 'spike') }, ifMatch),
   });
   if (published.status !== 201) fail(`publish: HTTP ${published.status} ${published.body}`);
   return { delivery: `${BASE_URL}/content/v1/${id}/production/articles`, ids };
