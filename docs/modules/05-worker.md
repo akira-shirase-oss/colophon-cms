@@ -55,10 +55,12 @@ Step 2.3 (D-046): `crates/colophon-worker`, run by `colophon-server --role worke
 - **The project work bound** (P6, D-131, F09): `colophon_db::work` counts a project's open work —
   `jobs` pending/retrying/running/held, `asset_jobs` pending/running/retrying, `bulk_jobs`
   accepting/running, `migration_plans` proposed/approved/running — and every transaction that adds a
-  durable work row admits under the project's `pg_advisory_xact_lock` first. Over spec §33's 10,000 the
+  durable work row is checked at its end against a per-project running count (migration 0080, D-216 phase
+  2: its own rows counted, the project's `work_open` row locked to commit). Over spec §33's 10,000 the
   admission refuses with `DbError::WorkFull` → 503 `unavailable` + `work_full` + `Retry-After`, rolling
   the whole accepting transaction back; a due schedule that hits it stays `scheduled` and retries at the
-  next poll. Worker transactions never take the lock (they only finish admitted work).
+  next poll. Worker transactions never take a counter row: their triggers only log deltas, which the
+  `payload::Folder` tick folds beside the payload log, skipping a project an admission holds.
 - **The installation payload bound** (P6, D-135; D-216): beside the row count, the stored bytes of every
   project's open work — job keys, recorded asset sizes, bulk manifests and pending items, plan definitions
   and resolutions — kept as a running total by triggers (migration 0078), checked at the end of each
@@ -212,12 +214,14 @@ Each pool is a separate semaphore, so expensive work can never starve editorial 
   the reach did not widen).
 
 ### Admission (spec §33)
-- Capacity is reserved before work is accepted. **In place (D-131):** `colophon_db::work::admit` counts a
-  project's open rows across `jobs`, `asset_jobs`, `bulk_jobs` and `migration_plans` under a per-project
-  `pg_advisory_xact_lock`; at or over `job::MAX_PENDING` (10,000) it refuses `DbError::WorkFull` before any
-  new row is inserted, mapped to 503 `unavailable` + `details.reason` `work_full` + `Retry-After: 5`. The
-  lock is the first any admitting transaction takes, so it precedes content-type and token-limit locks and
-  no two admissions can deadlock; worker transactions never take it.
+- Capacity is reserved before work is accepted. **In place (D-131, D-216 phase 2):** a project's open rows
+  across `jobs`, `asset_jobs`, `bulk_jobs` and `migration_plans` are a running count (`work_open` plus
+  `open_deltas`, kept by triggers). `colophon_db::work::admit` refuses early on the unlocked count, and
+  `work::check`, after the site's writes, locks the project's row to commit, folds the logged changes it can
+  see (its own included) and refuses `DbError::WorkFull` past `job::MAX_PENDING` (10,000), mapped to 503
+  `unavailable` + `details.reason` `work_full` + `Retry-After: 5`. The counters are the last locks an
+  admitting transaction takes (the project's, then the installation's), followed only by the token's limits
+  row, so no two admissions can deadlock; worker transactions never take them.
 - The byte half is in place too (D-135, D-216): the stored bytes — idempotency keys, recorded
   `assets.size_bytes`, bulk operation documents and pending item inputs, plan definitions and resolutions —
   are a running total kept by triggers; `check_payload`, last in an admitting transaction, locks the counter

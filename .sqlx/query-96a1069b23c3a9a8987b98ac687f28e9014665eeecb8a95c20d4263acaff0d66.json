@@ -1,0 +1,21 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT colophon_work_tick() AS \"folded!\"",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "folded!",
+        "type_info": "Int8",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Left": []
+    },
+    "nullable": [
+      null
+    ]
+  },
+  "hash": "96a1069b23c3a9a8987b98ac687f28e9014665eeecb8a95c20d4263acaff0d66"
+}

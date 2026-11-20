@@ -19,16 +19,17 @@ pub const BACKOFF_CAP_MS: u64 = 60_000;
 /// The most unfinished jobs a project may retain (spec §33): delivery `jobs`, `asset_jobs`,
 /// `bulk_jobs` and `migration_plans` counted together — the same "open work" a restore's
 /// inventory counts (O3). `colophon_db::work` enforces it at admission: every transaction that
-/// inserts such a row admits first, and over the bound new work is refused before acceptance
+/// inserts such a row is checked with its own rows counted before it commits (a per-project
+/// counter row, D-216 phase 2), and over the bound new work is refused, never half-accepted
 /// (D-131, F09).
 pub const MAX_PENDING: i64 = 10_000;
 
 /// The most pending payload metadata an installation may retain, in bytes (spec §33's second
 /// bound, D-135): the stored variable-size bytes of every open unit of work — job idempotency
 /// keys, pending asset jobs' recorded object sizes, open bulk manifests' operation and pending
-/// item inputs, open plans' definitions and stored resolutions. `colophon_db::work` counts it
-/// through `colophon_pending_payload` under an install-wide admission lock; over the bound new
-/// expensive work is refused before acceptance.
+/// item inputs, open plans' definitions and stored resolutions. `colophon_db::work` keeps it as
+/// a running total checked at the end of each admission (D-216); over the bound new expensive
+/// work is refused before it commits.
 pub const MAX_PENDING_PAYLOAD: i64 = 1 << 30;
 
 /// Where a job stands.

@@ -308,9 +308,10 @@ pub async fn insert(
     .execute(&mut *tx.transaction)
     .await
     .map_err(DbError::from_write)?;
-    // The upload's recorded size and the job's key are payload metadata; the install-wide
-    // byte bound answers with them counted, not just the project's row count (D-135).
-    crate::work::check_payload(tx).await
+    // The decision, after the writes (D-216 phase 2): the project's open work with this verify
+    // job counted, and the install-wide byte bound with the upload's recorded size and the
+    // job's key counted (D-135).
+    crate::work::check(tx).await
 }
 
 /// The environment's newest assets: the first [`page`] without a filter.
@@ -463,9 +464,10 @@ pub async fn request_delete(
     .execute(&mut *tx.transaction)
     .await
     .map_err(DbError::from_write)?;
-    // The delete job's payload metadata counts too (D-135); like the admission above, the
-    // check sits after the verdicts so an asset that owes a different answer still gets it.
-    crate::work::check_payload(tx).await?;
+    // The decision, after the writes: the delete job counted in the project's open work and its
+    // payload metadata in the byte bound (D-135); like the early refusal above, it sits after
+    // the verdicts so an asset that owes a different answer still gets it.
+    crate::work::check(tx).await?;
     Ok(DeleteAsked::Queued {
         asset: Box::new(found),
     })
@@ -553,6 +555,9 @@ pub async fn request_replace(
     .execute(&mut *tx.transaction)
     .await
     .map_err(DbError::from_write)?;
+    // The decision, after the write (D-216 phase 2): the reverify job counted in the project's
+    // open work, and its key and declared size in the byte bound.
+    crate::work::check(tx).await?;
     Ok(ReplaceAsked::Queued {
         asset: Box::new(found),
     })
@@ -1033,8 +1038,8 @@ pub async fn expire(pool: &PgPool) -> Result<u64, DbError> {
 /// fails the job and never loses an object. An asset already mid-job of any kind is left to
 /// it: what is running decides what it becomes. Two passes racing the same asset can both
 /// enqueue; the second job finds `deleted` and finishes having removed nothing. A project at
-/// the work bound keeps its assets instead: one statement can't honestly hold one project's
-/// admission lock, so each row counts the same open work [`crate::work::admit`] does, under
+/// the work bound keeps its assets instead: one statement can't honestly hold every project's
+/// counter row, so each row counts the same open work `work_open` counts, under
 /// the statement's own snapshot — a pass may overshoot [`crate::work::MAX_OPEN`] by at most
 /// its own `limit`, and the next pass sees the truth and enqueues nothing (D-131). The byte
 /// bound is enforced the same way, from the caller's `room` — what

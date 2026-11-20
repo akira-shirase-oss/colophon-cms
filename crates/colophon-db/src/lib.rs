@@ -171,8 +171,9 @@ pub enum DbError {
         limit: i64,
     },
     /// The project already retains all the unfinished work its bound allows (spec §33,
-    /// D-131): [`work::admit`] refused the job row this transaction would have added, under
-    /// the admission lock. The transaction is aborted and the caller rolls it back.
+    /// D-131): [`work::admit`]'s early count or [`work::check`]'s decision, with this
+    /// transaction's own rows counted, refused it. The transaction is aborted and the caller
+    /// rolls it back.
     #[error("the project's pending work is at its bound ({open} of {limit} jobs open)")]
     WorkFull {
         /// Unfinished jobs the project retains across the job tables.

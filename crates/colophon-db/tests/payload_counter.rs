@@ -34,10 +34,17 @@ async fn enter(pool: &PgPool, identity: Uuid, project: Uuid) -> ProjectTransacti
         .expect("a member")
 }
 
-/// The running total equals the SUM it stands for.
+/// The running totals equal what they stand for: the payload against its SUM (D-216), and every
+/// project's open count against its rows (D-216 phase 2).
 async fn exact(db: &TestDb, step: &str) {
     let (counted, actual, drift) = work::reconcile_payload(&db.app).await.expect("reconcile");
     assert_eq!(drift, 0, "{step}: counted {counted}, actual {actual}");
+    let (projects, drift) = work::reconcile_open(&db.app).await.expect("reconcile open");
+    assert_eq!(
+        (projects, drift),
+        (0, 0),
+        "{step}: open counts drift in {projects} project(s) by {drift}"
+    );
 }
 
 /// A project of `alice`'s with `hooks` webhook destinations.
@@ -526,6 +533,47 @@ async fn the_tick_folds_the_log_away_and_never_waits_on_an_admission() {
     let (deltas, _) = work::payload_log(&db.app).await.expect("log");
     assert_eq!(deltas, 0);
     exact(&db, "after the tick").await;
+    db.drop().await;
+}
+
+/// The open-work tick (D-216 phase 2): workers' changes are logged, a project whose counter row
+/// an admission holds is skipped without waiting, and once nothing holds it the log folds away.
+#[tokio::test]
+#[ignore = "needs the local stack: scripts/stack.sh up"]
+async fn the_open_tick_folds_the_log_away_and_never_waits_on_an_admission() {
+    let db = TestDb::new().await;
+    let alice = db.administrator("alice").await;
+    let project = project(&db, alice, "alpha", 2).await;
+    release(&db, alice, project, 0).await;
+    release(&db, alice, project, 1).await;
+    for claimed in jobs::claim(&db.app, "worker-a", "local", HOUR, 10)
+        .await
+        .expect("claim")
+    {
+        jobs::finish(&db.app, &claimed, "worker-a", &succeeded())
+            .await
+            .expect("finish");
+    }
+    let (deltas, _) = work::open_log(&db.app).await.expect("log");
+    assert!(deltas > 0, "finishes logged their open-count deltas");
+
+    // An admission holds the project's row (it ran its check and hasn't committed): the tick
+    // goes past it, within the deadline, and folds nothing of that project's.
+    let worker_pool = db.app_pool(2).await;
+    let mut held = enter(&db.app, alice, project).await;
+    bulk_job(&mut held, 100).await.expect("bulk job");
+    tokio::time::timeout(Duration::from_secs(5), work::fold_open(&worker_pool))
+        .await
+        .expect("the tick never waits")
+        .expect("fold");
+    held.commit().await.expect("commit");
+
+    // Nothing held now: the tick folds the log back to nothing.
+    work::fold_open(&db.app).await.expect("fold");
+    let (deltas, _) = work::open_log(&db.app).await.expect("log");
+    assert_eq!(deltas, 0);
+    exact(&db, "after the open tick").await;
+    worker_pool.close().await;
     db.drop().await;
 }
 

@@ -10,8 +10,8 @@
 #                         (D-216), in both of its modes: across projects and within one
 #                         (each run's "mode"); the harness is taken from <after> when <before>
 #                         lacks it.
-#                         When <after> adds migration 0078, also times it on a seeded database:
-#                         its write lock on the work tables is held for that long at upgrade.
+#                         Each migration <after> adds is also timed on a seeded database: its
+#                         write lock on the work tables is held for that long at upgrade.
 #   l08-noisy-agent       scripts/load.sh noisy-agent steady (L08, D-120), each side on a
 #                         database of its own; the result files are kept.
 #   smoke                 the smokes job's undo, bulk and assets at its settings (SMOKES
@@ -101,23 +101,31 @@ if [[ $suite == admission-throughput ]]; then
     done
   done
 
-  migration="$work/after/crates/colophon-db/migrations/0078_payload_counter.sql"
-  if [[ -f $migration && ! -f "$work/before/crates/colophon-db/migrations/0078_payload_counter.sql" ]]; then
-    echo "timing migration 0078 on a seeded database"
+  # Each migration <after> adds that <before> lacks, timed on a seeded database: its write lock on
+  # the work tables is held for that long at upgrade.
+  migrations="$work/after/crates/colophon-db/migrations"
+  added=()
+  for file in "$migrations"/*.sql; do
+    [[ -f "$work/before/crates/colophon-db/migrations/$(basename "$file")" ]] || added+=("$file")
+  done
+  if ((${#added[@]} > 0)); then
+    first=$(basename "${added[0]}" | sed 's/_.*//')
+    echo "timing migrations from $first on a seeded database"
     psql_as_owner -d postgres -c "DROP DATABASE IF EXISTS perf_backfill" -c "CREATE DATABASE perf_backfill"
-    for file in "$work/after"/crates/colophon-db/migrations/*.sql; do
+    for file in "$migrations"/*.sql; do
       version=$(basename "$file" | sed 's/_.*//')
-      ((10#$version < 78)) || continue
+      ((10#$version < 10#$first)) || continue
       psql_as_owner -d perf_backfill -1 <"$file" >/dev/null
     done
-    # Realistic work tables: a million delivery jobs and 200,000 asset jobs, 1% open; 2,000 bulk jobs
-    # of 100 items each, 10% open. Seeded with foreign keys and triggers off (replica mode): the
-    # migration reads these rows, not the projects they'd belong to.
+    # Realistic work tables over 1,000 projects: a million delivery jobs and 200,000 asset jobs, 1%
+    # open; 2,000 bulk jobs of 100 items each, 10% open. Seeded with foreign keys and triggers off
+    # (replica mode): the migrations read these rows, not the environments they'd belong to.
     psql_as_owner -d perf_backfill <<'SQL'
 SET session_replication_role = replica;
+INSERT INTO projects (id, slug, name) SELECT gen_random_uuid(), 'perf-' || i, 'Perf' FROM generate_series(1, 1000) i;
 INSERT INTO jobs (project_id, environment_id, id, destination_id, generation, idempotency_key,
                   deadline_at, status, finished_at)
-SELECT gen_random_uuid(), gen_random_uuid(), gen_random_uuid(), gen_random_uuid(), i, 'job:' || i,
+SELECT (ARRAY(SELECT id FROM projects ORDER BY id))[1 + i % 1000], gen_random_uuid(), gen_random_uuid(), gen_random_uuid(), i, 'job:' || i,
        now() + interval '1 hour',
        CASE WHEN i % 100 = 0 THEN 'pending' ELSE 'succeeded' END,
        CASE WHEN i % 100 = 0 THEN NULL ELSE now() END
@@ -125,7 +133,8 @@ FROM generate_series(1, 1000000) i;
 INSERT INTO assets (project_id, environment_id, id, state, file_name, declared_type, size_bytes,
                     quarantine_key, created_by)
 SELECT p, e, a, 'usable', 'a', 'image/png', 1048576, 'quarantine/' || a, gen_random_uuid()
-FROM (SELECT gen_random_uuid() p, gen_random_uuid() e, gen_random_uuid() a FROM generate_series(1, 200000)) s;
+FROM (SELECT (ARRAY(SELECT id FROM projects ORDER BY id))[1 + g % 1000] p, gen_random_uuid() e, gen_random_uuid() a
+      FROM generate_series(1, 200000) g) s;
 INSERT INTO asset_jobs (project_id, environment_id, id, asset_id, kind, idempotency_key, deadline_at,
                         status, finished_at)
 SELECT project_id, environment_id, gen_random_uuid(), id, 'verify', 'verify:' || id,
@@ -135,7 +144,7 @@ SELECT project_id, environment_id, gen_random_uuid(), id, 'verify', 'verify:' ||
 FROM assets;
 INSERT INTO bulk_jobs (project_id, environment_id, id, kind, operation, manifest_hash, created_by,
                        principal, expected_items, state, started_at, finished_at)
-SELECT gen_random_uuid(), gen_random_uuid(), gen_random_uuid(), 'entries',
+SELECT (ARRAY(SELECT id FROM projects ORDER BY id))[1 + i % 1000], gen_random_uuid(), gen_random_uuid(), 'entries',
        jsonb_build_object('collection', 'articles', 'set', jsonb_build_object('title', repeat('x', 500))),
        decode(repeat('00', 32), 'hex'), gen_random_uuid(), 'member', 100,
        CASE WHEN i % 10 = 0 THEN 'running' ELSE 'done' END, now(),
@@ -151,17 +160,28 @@ FROM bulk_jobs b, generate_series(1, 100) k;
 ANALYZE;
 SQL
     rows=$(psql_as_owner -d perf_backfill -At -c \
-      "SELECT json_build_object('jobs', (SELECT count(*) FROM jobs), 'asset_jobs', (SELECT count(*) FROM asset_jobs),
-              'assets', (SELECT count(*) FROM assets), 'bulk_jobs', (SELECT count(*) FROM bulk_jobs),
-              'bulk_items', (SELECT count(*) FROM bulk_items))")
-    started=$(date +%s%N)
-    psql_as_owner -d perf_backfill -1 <"$migration" >/dev/null
-    finished=$(date +%s%N)
-    drift=$(psql_as_owner -d perf_backfill -At -c "SELECT drift FROM colophon_payload_reconcile()")
+      "SELECT json_build_object('projects', (SELECT count(*) FROM projects), 'jobs', (SELECT count(*) FROM jobs),
+              'asset_jobs', (SELECT count(*) FROM asset_jobs), 'assets', (SELECT count(*) FROM assets),
+              'bulk_jobs', (SELECT count(*) FROM bulk_jobs), 'bulk_items', (SELECT count(*) FROM bulk_items))")
+    timed='[]'
+    for file in "${added[@]}"; do
+      started=$(date +%s%N)
+      psql_as_owner -d perf_backfill -1 <"$file" >/dev/null
+      finished=$(date +%s%N)
+      name=$(basename "$file" .sql)
+      drift=null
+      case "$name" in
+        *_payload_counter) drift=$(psql_as_owner -d perf_backfill -At -c "SELECT drift FROM colophon_payload_reconcile()") ;;
+        *_open_counter) drift=$(psql_as_owner -d perf_backfill -At -c \
+          "SET ROLE colophon_worker; SELECT json_build_object('projects', projects, 'drift', drift) FROM colophon_work_reconcile()" | tail -n1) ;;
+      esac
+      timed=$(jq -c --arg name "$name" --argjson ms "$(((finished - started) / 1000000))" --argjson drift "$drift" \
+        '. + [{migration: $name, whole_migration_ms: $ms, drift_after: $drift}]' <<<"$timed")
+    done
     psql_as_owner -d postgres -c "DROP DATABASE perf_backfill"
-    extra=$(jq -cn --argjson rows "$rows" --argjson ms "$(((finished - started) / 1000000))" --argjson drift "$drift" \
-      '{migration_0078: {rows: $rows, whole_migration_ms: $ms, drift_after: $drift,
-        note: "the whole migration in one transaction: an upper bound on how long it holds writes to the work tables"}}')
+    extra=$(jq -cn --argjson rows "$rows" --argjson timed "$timed" \
+      '{migrations_added: {rows: $rows, timed: $timed,
+        note: "each migration whole, in one transaction: an upper bound on how long it holds writes to the work tables"}}')
   fi
 elif [[ $suite == smoke ]]; then
   # The smokes job's settings (ci.yml), at reference limits: k6's p99 gate is set out of reach so

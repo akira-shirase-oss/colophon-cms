@@ -486,8 +486,8 @@ pub(crate) async fn create(
     };
     // The job's `create` admits it against the project's work bound (D-131), and it comes
     // before the reservations for two reasons that point the same way: `create` is the
-    // INSERT `budget_reservations.bulk_job_id` references, and the admission lock must
-    // precede the token-limits row a reservation locks.
+    // INSERT `budget_reservations.bulk_job_id` references, and the counters its check locks
+    // must precede the token-limits row a reservation locks (`colophon_db::work`'s lock order).
     let job = bulk::create(
         &mut tx,
         &bulk::NewJob {

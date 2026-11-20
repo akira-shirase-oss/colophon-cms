@@ -159,10 +159,10 @@ pub async fn create_plan(
     tx: &mut ProjectTransaction,
     new: &NewPlan<'_>,
 ) -> Result<Planned, DbError> {
-    // Durable work, so it admits first — before the collection's change lock, the one lock
-    // another admission (a publish) also holds and could wait on this one for (D-131). The
-    // count is pre-`supersede_open`: at the bound a fresh plan can be refused although its
-    // own supersede would have freed a slot — a retryable refusal, never an over-admission.
+    // Durable work: the early refusal first, before any write (D-131). It takes no lock; the
+    // decision is `work::check` after the writes. Its count is pre-`supersede_open`, so at the
+    // bound a fresh plan can be refused early although its own supersede would have freed a
+    // slot — a retryable refusal, never an over-admission.
     crate::work::admit(tx, 1).await?;
     // Writes in the collection wait from here until this commits, and this waited for the ones
     // already under way — the same lock a type update takes (D-055).
@@ -238,10 +238,10 @@ pub async fn create_plan(
     .execute(&mut *tx.transaction)
     .await
     .map_err(DbError::from_write)?;
-    // The target definition, the operations and the items' problems are the plan's payload
-    // metadata; the install-wide byte bound answers with them counted, not just the
-    // project's row count (D-135).
-    crate::work::check_payload(tx).await?;
+    // The decision, after the writes (D-216 phase 2): the plan counted in the project's open
+    // work, after `supersede_open` closed the ones it replaces, and its definition, operations
+    // and items' problems in the install-wide byte bound (D-135).
+    crate::work::check(tx).await?;
     let plan = get(tx, new.id)
         .await?
         .ok_or(DbError::Corrupt("a migration plan vanished as it was made"))?;
@@ -336,7 +336,7 @@ pub async fn get(tx: &mut ProjectTransaction, id: Uuid) -> Result<Option<Plan>, 
 
 /// The plan, locked until the transaction ends: approvals, applies, cancellations and
 /// resolutions all queue on it, so each sees the state the one before committed. The
-/// project's admission lock comes first (D-135): a resolution's post-write
+/// project's lock (WA) comes first (D-135): a resolution's post-write
 /// [`crate::work::check_payload`] then locks the payload counter last, so the locks can never
 /// queue in a circle (D-216).
 pub async fn lock(tx: &mut ProjectTransaction, id: Uuid) -> Result<Option<Plan>, DbError> {

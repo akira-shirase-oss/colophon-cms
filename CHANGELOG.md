@@ -38,6 +38,13 @@ through `--version` and `GET /version`.
   through side by side. Upgrading runs migration 0078, which briefly holds writes to the work
   tables while it counts the existing total once.
 
+- **Submissions within one project no longer wait for each other's whole request** (D-216). A
+  project's 10,000-job bound on open work used to be counted under a lock held from the start of each
+  submit to its commit; it is now a running count checked at the end, so a project's bulk jobs,
+  uploads and migration plans go through side by side. Publishes in one project still run one at a
+  time. Upgrading runs migration 0080, which briefly holds writes to the work tables while it counts
+  each project's open work once.
+
 - **An API token over its request quota no longer costs the database anything** (D-214). After
   its first refusal, a token that keeps sending is refused from memory and the rate limiter alone
   until its `Retry-After` runs out, so an agent stuck in a retry loop can't slow other projects'

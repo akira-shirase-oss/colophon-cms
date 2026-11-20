@@ -210,10 +210,10 @@ fn item_of(row: ItemRow) -> Item {
     }
 }
 
-/// Inserts the job (state `accepting` or `running` when sealed at submit). Durable work, so
-/// it admits first (D-131): the caller runs this before its budget reservations, so the
-/// admission lock precedes the token-limits row they lock — the one ordering every admission
-/// needs.
+/// Inserts the job (state `accepting` or `running` when sealed at submit). Durable work: an
+/// early refusal before the insert and the decision, [`crate::work::check`], after it (D-131,
+/// D-216 phase 2). The caller runs this before its budget reservations, so the counters the
+/// check locks precede the token-limits row they lock (`work`'s lock order).
 pub async fn create(tx: &mut ProjectTransaction, new: &NewJob<'_>) -> Result<Job, DbError> {
     crate::work::admit(tx, 1).await?;
     let state = if new.seal { "running" } else { "accepting" };
@@ -240,10 +240,10 @@ pub async fn create(tx: &mut ProjectTransaction, new: &NewJob<'_>) -> Result<Job
     .fetch_one(&mut *tx.transaction)
     .await
     .map_err(DbError::from_write)?;
-    // The operation document is payload metadata; the install-wide byte bound answers with
-    // it counted, not just the project's row count (D-135). The first chunk's items land in
-    // `append`, which makes its own check after writing.
-    crate::work::check_payload(tx).await?;
+    // The decision, after the write (D-216 phase 2): the job counted in the project's open work,
+    // and its operation document in the install-wide byte bound (D-135). The first chunk's items
+    // land in `append`, which makes its own payload check after writing.
+    crate::work::check(tx).await?;
     Ok(job_of(row))
 }
 
@@ -311,7 +311,7 @@ pub async fn append(
     }
     // The items' inputs are the manifest's payload metadata: a chunk can carry a megabyte
     // where the job row carried almost nothing, so the install-wide byte bound answers with
-    // this append's own bytes counted (D-135). The project's admission lock is already held
+    // this append's own bytes counted (D-135). The project's lock (WA) is already held
     // (the caller's `lock` took it before this row's lock), and the check locks the payload
     // counter last, to commit, so the count can't stale against a concurrent admission (D-216).
     crate::work::check_payload(tx).await?;
@@ -337,7 +337,7 @@ pub async fn get(tx: &mut ProjectTransaction, id: Uuid) -> Result<Option<Job>, D
 }
 
 /// The job, locked for a state change (seal, cancel, or an append that adds payload). The
-/// project's admission lock comes first (D-135): an append's post-write
+/// project's lock (WA) comes first (D-135): an append's post-write
 /// [`crate::work::check_payload`] then locks the payload counter last, so the locks can never
 /// queue in a circle (D-216).
 pub async fn lock(tx: &mut ProjectTransaction, id: Uuid) -> Result<Option<Job>, DbError> {

@@ -4,6 +4,10 @@
 //! [`INTERVAL`], so the log stays short while nothing is being admitted, and reports the log's
 //! length and age, warning when nothing has folded it for a while. A fold never waits for an
 //! admission: when one holds the counter, this turn is skipped (the admission folds instead).
+//!
+//! The projects' open-work counts (D-216 phase 2, migration 0080) are folded the same way, in
+//! the same tick: each project's logged deltas into its `work_open` row, skipping a project
+//! whose row an admission holds.
 
 use std::time::Duration;
 
@@ -45,8 +49,40 @@ impl Folder {
         }
     }
 
-    /// One fold, then the log's length and age: logged, and a warning when it is long or old.
+    /// One fold of each log, then each log's length and age: logged, and a warning when it is
+    /// long or old.
     async fn tick(&self) {
+        self.payload().await;
+        self.open().await;
+    }
+
+    async fn open(&self) {
+        match tokio::time::timeout(DEADLINE, colophon_db::work::fold_open(&self.pool)).await {
+            Ok(Ok(_)) => {}
+            Ok(Err(error)) => {
+                tracing::warn!(error = %error, "the open-work fold failed; trying again next interval");
+            }
+            Err(_) => {
+                tracing::warn!("the open-work fold ran out of time; trying again next interval");
+            }
+        }
+        match tokio::time::timeout(DEADLINE, colophon_db::work::open_log(&self.pool)).await {
+            Ok(Ok((deltas, oldest_seconds))) if deltas > LONG || oldest_seconds > STALE => {
+                tracing::warn!(
+                    deltas,
+                    oldest_seconds,
+                    "the open-work log isn't being folded: admissions and the fold are behind"
+                );
+            }
+            Ok(Ok((deltas, oldest_seconds))) => {
+                tracing::debug!(deltas, oldest_seconds, "open-work log");
+            }
+            Ok(Err(error)) => tracing::warn!(error = %error, "could not read the open-work log"),
+            Err(_) => tracing::warn!("reading the open-work log ran out of time"),
+        }
+    }
+
+    async fn payload(&self) {
         match tokio::time::timeout(DEADLINE, colophon_db::work::fold_payload(&self.pool)).await {
             Ok(Ok(_)) => {}
             Ok(Err(error)) => {

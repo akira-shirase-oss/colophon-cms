@@ -29,15 +29,28 @@
 //! admitting (a worker recording an asset's size) aren't checked against the bound, exactly as
 //! they weren't under the old byte lock: their bytes count once they commit.
 //!
-//! Lock order keeps admission safe. [`admission`] takes the project's advisory lock (class
-//! "WA") before any other lock an admission takes, and every transaction that locks the
-//! counter row holds its project's WA first. The counter row is the one lock shared across
-//! projects, and an admission takes it last, at its post-write check: a project's admissions
-//! are already in line behind WA, and across projects nothing else is shared, so no wait can
-//! circle. Worker
-//! transactions (claims, finishes, the sweeps, supersedes) never take the counter row: their
-//! triggers only insert deltas, which nobody waits on. The worker's fold
-//! ([`fold_payload`]) skips its turn rather than wait for an admission.
+//! A project's open work is a running count the same way (D-216 phase 2, migration 0080):
+//! triggers on the four tables append each statement's change in open rows to `open_deltas`, and
+//! `work_open` holds one row per project, made with the project. [`admit`] refuses early on the
+//! unlocked count, the caller writes, and [`check`] decides at the END: `colophon_work_admit`
+//! locks the project's row until commit, folds the project's visible deltas (its own included)
+//! and returns the count. Exactness is the payload counter's argument, per project: the next
+//! admission of the project waits on that row and then sees this one's committed fold. A
+//! project's admissions no longer queue behind each other for their whole transaction, only
+//! for the check and the commit.
+//!
+//! Lock order keeps admission safe: the counters are taken last, the project's row and then the
+//! installation's counter, both in [`check`]'s one statement (a payload-only write, a bulk
+//! append or a plan's resolution, takes the installation's counter alone, through
+//! [`check_payload`]). After them a transaction takes at most its token's limits row
+//! (`budgets::reserve_jobs`, the bulk reservations), whose holders never go on to take a counter,
+//! so no wait can circle. Worker transactions (claims, finishes, the sweeps, supersedes) never
+//! take a counter: their triggers only insert deltas, which nobody waits on. The worker's folds
+//! ([`fold_payload`], [`fold_open`]) skip what an admission holds rather than wait for it.
+//!
+//! The project's advisory lock ([`lock`], class "WA") is no longer part of admission. A publish
+//! and an undo still take it at the top, which keeps a project's publishes one at a time as
+//! before; a bulk append and a plan's resolution take it through their own locks.
 
 use crate::{DbError, scope::ProjectTransaction};
 
@@ -53,11 +66,9 @@ pub const MAX_PENDING_PAYLOAD: i64 = colophon_domain::job::MAX_PENDING_PAYLOAD;
 /// admission.
 const LOCK_CLASS: i32 = 0x5741;
 
-/// Takes the project's admission lock until the transaction commits or rolls back.
-/// [`admission`] takes it itself; `publish` also takes it directly, at the top, so the lock
-/// precedes the changeset's row lock and the content-type locks the commit reaches later —
-/// the one ordering every admission needs, and enough: a transaction waiting here still
-/// holds nothing another admission can wait on.
+/// Takes the project's advisory lock ("WA") until the transaction commits or rolls back.
+/// `publish` takes it at the top, through [`admission`], so a project's publishes run one at a
+/// time; admission itself no longer takes it (D-216 phase 2: [`check`]'s counter row decides).
 pub async fn lock(tx: &mut ProjectTransaction) -> Result<(), DbError> {
     sqlx::query_scalar!(
         r#"SELECT 1 AS "held!" FROM pg_advisory_xact_lock($1, hashtext($2::text))"#,
@@ -70,41 +81,12 @@ pub async fn lock(tx: &mut ProjectTransaction) -> Result<(), DbError> {
     Ok(())
 }
 
-/// The project's admission lock, before any lock another admission may wait on. [`admit`]
-/// calls it; a transaction that will grow payload without adding a job row (a bulk append
-/// under [`crate::bulk::lock`], a plan's resolution under [`crate::migrations::lock`]) takes
-/// it by the same order. The installation-wide byte lock it once took after this one is gone
-/// (D-216): the counter row [`check_payload`] locks at the end replaces it.
+/// The project's advisory lock, as the paths that keep it take it: a publish and an undo at the
+/// top, a bulk append under [`crate::bulk::lock`] and a plan's resolution under
+/// [`crate::migrations::lock`]. Nothing waits on a counter while holding a lock taken after
+/// it, so taking WA first keeps the order counters-last.
 pub async fn admission(tx: &mut ProjectTransaction) -> Result<(), DbError> {
     lock(tx).await
-}
-
-/// The unfinished work `project` retains, as [`admit`] counts it: delivery `jobs` pending,
-/// retrying, running or held; `asset_jobs` pending, running or retrying; `bulk_jobs`
-/// accepting or running; `migration_plans` proposed, approved or running. Job rows are the
-/// bound's unit — a bulk manifest's items and a plan's entries ride inside their one row,
-/// each bounded by its own manifest limit. `assets::enqueue_expired` counts the same set
-/// per row: keep the two in step.
-async fn open(tx: &mut ProjectTransaction) -> Result<i64, DbError> {
-    sqlx::query_scalar!(
-        r#"SELECT count(*) AS "open!" FROM (
-               SELECT 1 FROM jobs
-               WHERE project_id = $1 AND status IN ('pending', 'retrying', 'running', 'held')
-               UNION ALL
-               SELECT 1 FROM asset_jobs
-               WHERE project_id = $1 AND status IN ('pending', 'running', 'retrying')
-               UNION ALL
-               SELECT 1 FROM bulk_jobs
-               WHERE project_id = $1 AND state IN ('accepting', 'running')
-               UNION ALL
-               SELECT 1 FROM migration_plans
-               WHERE project_id = $1 AND state IN ('proposed', 'approved', 'running')
-           ) retained"#,
-        tx.project
-    )
-    .fetch_one(&mut *tx.transaction)
-    .await
-    .map_err(DbError::from_query)
 }
 
 /// The installation's pending payload bytes without a lock: the folded count plus every
@@ -171,11 +153,95 @@ pub async fn payload_log(pool: &sqlx::PgPool) -> Result<(i64, f64), DbError> {
     Ok((row.deltas, row.oldest_seconds))
 }
 
+/// The worker's fold of open counts (D-216 phase 2): every project's logged deltas go into its
+/// `work_open` row, skipping a project whose row an admission holds (it folds them itself).
+/// Returns how many deltas it folded. It runs as `colophon_worker`.
+pub async fn fold_open(pool: &sqlx::PgPool) -> Result<i64, DbError> {
+    let mut transaction = crate::begin_tx(pool).await.map_err(DbError::from_query)?;
+    sqlx::query("SET LOCAL ROLE colophon_worker")
+        .execute(&mut *transaction)
+        .await
+        .map_err(DbError::from_query)?;
+    let folded = sqlx::query_scalar!(r#"SELECT colophon_work_tick() AS "folded!""#)
+        .fetch_one(&mut *transaction)
+        .await
+        .map_err(DbError::from_query)?;
+    transaction.commit().await.map_err(DbError::from_query)?;
+    Ok(folded)
+}
+
+/// Every project's running open count against the rows it stands for: `(projects, drift)`,
+/// how many projects drift and by how much in all. Reported, never repaired: a non-zero drift
+/// is a bug in a trigger. As `colophon_worker`.
+pub async fn reconcile_open(pool: &sqlx::PgPool) -> Result<(i64, i64), DbError> {
+    let mut transaction = crate::begin_tx(pool).await.map_err(DbError::from_query)?;
+    sqlx::query("SET LOCAL ROLE colophon_worker")
+        .execute(&mut *transaction)
+        .await
+        .map_err(DbError::from_query)?;
+    let row = sqlx::query!(
+        r#"SELECT projects AS "projects!", drift AS "drift!" FROM colophon_work_reconcile()"#
+    )
+    .fetch_one(&mut *transaction)
+    .await
+    .map_err(DbError::from_query)?;
+    transaction.commit().await.map_err(DbError::from_query)?;
+    Ok((row.projects, row.drift))
+}
+
+/// The open-delta log's length and the age of its oldest delta in seconds, for the metrics
+/// surface. As `colophon_worker`.
+pub async fn open_log(pool: &sqlx::PgPool) -> Result<(i64, f64), DbError> {
+    let mut transaction = crate::begin_tx(pool).await.map_err(DbError::from_query)?;
+    sqlx::query("SET LOCAL ROLE colophon_worker")
+        .execute(&mut *transaction)
+        .await
+        .map_err(DbError::from_query)?;
+    let row = sqlx::query!(
+        r#"SELECT deltas AS "deltas!", oldest_seconds AS "oldest_seconds!"
+           FROM colophon_work_log()"#
+    )
+    .fetch_one(&mut *transaction)
+    .await
+    .map_err(DbError::from_query)?;
+    transaction.commit().await.map_err(DbError::from_query)?;
+    Ok((row.deltas, row.oldest_seconds))
+}
+
+/// The admission's decision, at the END of a job-admitting transaction (D-216 phase 2), after
+/// every write: refuses with [`DbError::WorkFull`] when the project's open work, its own new
+/// rows counted, passes [`MAX_OPEN`], or with [`DbError::PayloadFull`] when the installation's
+/// pending payload passes [`MAX_PENDING_PAYLOAD`]. One statement takes the project's counter
+/// row and then the installation's, both held to commit (the module's lock order); every site
+/// that called [`admit`] calls this after its writes, last but for its token's limits row. The
+/// transaction rolls back on a refusal: refused work is never half-committed.
+pub async fn check(tx: &mut ProjectTransaction) -> Result<(), DbError> {
+    let row =
+        sqlx::query!(r#"SELECT open AS "open!", pending AS "pending!" FROM colophon_work_check()"#)
+            .fetch_one(&mut *tx.transaction)
+            .await
+            .map_err(DbError::from_query)?;
+    if row.open > MAX_OPEN {
+        return Err(DbError::WorkFull {
+            open: row.open,
+            limit: MAX_OPEN,
+        });
+    }
+    if row.pending > MAX_PENDING_PAYLOAD {
+        return Err(DbError::PayloadFull {
+            pending: row.pending,
+            limit: MAX_PENDING_PAYLOAD,
+        });
+    }
+    Ok(())
+}
+
 /// Refuses with [`DbError::PayloadFull`] when the installation's pending payload passes
 /// [`MAX_PENDING_PAYLOAD`], counted with this transaction's own uncommitted writes, so a write
 /// that tips it over is refused before commit. Every site that stores payload calls it after
 /// its write, last: it locks the counter row until commit (D-216), so the next admission
-/// counts this one's bytes. The transaction then rolls back on a refusal: refused work is
+/// counts this one's bytes. A site that also admitted job rows calls [`check`] instead, which
+/// makes this check too. The transaction then rolls back on a refusal: refused work is
 /// never half-committed.
 pub async fn check_payload(tx: &mut ProjectTransaction) -> Result<(), DbError> {
     let pending = sqlx::query_scalar!(r#"SELECT colophon_payload_admit() AS "pending!""#)
@@ -191,34 +257,28 @@ pub async fn check_payload(tx: &mut ProjectTransaction) -> Result<(), DbError> {
     Ok(())
 }
 
-/// Admits `adding` new job rows for the project, or refuses with [`DbError::WorkFull`] when
-/// `open` plus `adding` would pass [`MAX_OPEN`], or [`DbError::PayloadFull`] when the
-/// installation's pending payload is already over [`MAX_PENDING_PAYLOAD`]. The row count runs
-/// under [`admission`], held until the transaction commits — a second admission of the
-/// project can never slip between count and insert. The byte count here is the unlocked
-/// total, an early refusal only: the check that decides is [`check_payload`] after the
-/// caller's write, where a single bulk chunk or a fresh asset's recorded size, far larger than
-/// the rows it rides in, is counted.
-///
-/// Call order is the caller's discipline, spelled out at each site: wherever a transaction
-/// could take a lock another admission waits on (a content-type change lock, a token-limits
-/// row), the admission locks must come first.
+/// The early refusal of `adding` new job rows for the project, before the caller writes: with
+/// [`DbError::WorkFull`] when the project's open work plus `adding` would pass [`MAX_OPEN`], or
+/// [`DbError::PayloadFull`] when the installation's pending payload is already over
+/// [`MAX_PENDING_PAYLOAD`]. Both counts are the unlocked ones (one round trip, no lock), so a
+/// refusal here saves the writes; the decision is [`check`]'s, after them. Every caller calls
+/// [`check`] after its writes.
 pub async fn admit(tx: &mut ProjectTransaction, adding: i64) -> Result<(), DbError> {
-    // The early byte refusal reads the unlocked total, so it runs before the project's lock: a
-    // round trip fewer under WA (on a remote database every one held under a lock costs its RTT
-    // to every admission queued behind it).
-    let pending = pending_payload(tx).await?;
-    if pending > MAX_PENDING_PAYLOAD {
+    let row = sqlx::query!(
+        r#"SELECT colophon_payload_total() AS "pending!", colophon_work_open() AS "open!""#
+    )
+    .fetch_one(&mut *tx.transaction)
+    .await
+    .map_err(DbError::from_query)?;
+    if row.pending > MAX_PENDING_PAYLOAD {
         return Err(DbError::PayloadFull {
-            pending,
+            pending: row.pending,
             limit: MAX_PENDING_PAYLOAD,
         });
     }
-    admission(tx).await?;
-    let open = open(tx).await?;
-    if open.saturating_add(adding) > MAX_OPEN {
+    if row.open.saturating_add(adding) > MAX_OPEN {
         return Err(DbError::WorkFull {
-            open,
+            open: row.open,
             limit: MAX_OPEN,
         });
     }

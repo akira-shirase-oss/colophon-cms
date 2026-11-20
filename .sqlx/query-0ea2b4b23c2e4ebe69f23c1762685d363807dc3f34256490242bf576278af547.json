@@ -1,0 +1,28 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT projects AS \"projects!\", drift AS \"drift!\" FROM colophon_work_reconcile()",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "projects!",
+        "type_info": "Int8",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 1,
+        "name": "drift!",
+        "type_info": "Int8",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Left": []
+    },
+    "nullable": [
+      null,
+      null
+    ]
+  },
+  "hash": "0ea2b4b23c2e4ebe69f23c1762685d363807dc3f34256490242bf576278af547"
+}

@@ -1,0 +1,28 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT deltas AS \"deltas!\", oldest_seconds AS \"oldest_seconds!\"\n           FROM colophon_work_log()",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "deltas!",
+        "type_info": "Int8",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 1,
+        "name": "oldest_seconds!",
+        "type_info": "Float8",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Left": []
+    },
+    "nullable": [
+      null,
+      null
+    ]
+  },
+  "hash": "89d6eff5b2d04e9225e44f3f091881dc90f309898e83c3f056d34643b4408c72"
+}
