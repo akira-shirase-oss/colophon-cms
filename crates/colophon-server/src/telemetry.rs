@@ -13,7 +13,7 @@ use tracing::{
 use tracing_subscriber::{
     EnvFilter,
     filter::{FilterExt as _, ParseError},
-    fmt,
+    fmt::{self, MakeWriter},
     layer::{Context, Layer, SubscriberExt as _},
     util::{SubscriberInitExt as _, TryInitError},
 };
@@ -45,8 +45,22 @@ pub fn filter(directives: &str) -> Result<EnvFilter, TelemetryError> {
     })
 }
 
-/// Installs the global subscriber. Call once, before anything logs.
+/// Installs the global subscriber, writing to stdout. Call once, before anything logs.
 pub fn init(format: LogFormat, directives: &str) -> Result<(), TelemetryError> {
+    subscriber(format, directives, std::io::stdout)?.try_init()?;
+    Ok(())
+}
+
+/// The server's whole subscriber, writing to `writer`: what [`init`] installs, and what a test
+/// installs to read the lines the server would write.
+pub fn subscriber<W>(
+    format: LogFormat,
+    directives: &str,
+    writer: W,
+) -> Result<impl Subscriber + Send + Sync + 'static, TelemetryError>
+where
+    W: for<'w> MakeWriter<'w> + Send + Sync + 'static,
+{
     let filter = filter(directives)?;
     // `Option<Layer>` is a `Layer` and `None` is a no-op: one registry type for both formats.
     let (json, pretty) = match format {
@@ -56,15 +70,17 @@ pub fn init(format: LogFormat, directives: &str) -> Result<(), TelemetryError> {
                     .json()
                     .flatten_event(true)
                     .with_current_span(true)
-                    .with_span_list(false),
+                    .with_span_list(false)
+                    .with_writer(writer),
             ),
             None,
         ),
-        LogFormat::Pretty => (None, Some(fmt::layer().pretty())),
+        LogFormat::Pretty => (None, Some(fmt::layer().pretty().with_writer(writer))),
     };
-    tracing_subscriber::registry()
+    Ok(tracing_subscriber::registry()
         // Before the log layers and the tripwire: an INFO statement under the INFO tier is dropped
-        // for every layer (D-224). The tripwire reads backend notices, never `sqlx::query`.
+        // for every layer (D-224). The tripwire reads backend notices, never `sqlx::query`
+        // (tests/telemetry_tripwire.rs proves the two together).
         .with(SlowStatementTiers::default())
         // `Layer::and_then` named in full: `Option` has an `and_then` of its own.
         // The startup self-test's deliberate nested BEGIN logs no WARN (D-226): its notice is
@@ -73,9 +89,7 @@ pub fn init(format: LogFormat, directives: &str) -> Result<(), TelemetryError> {
             tracing_subscriber::Layer::and_then(json, pretty)
                 .with_filter(filter.and(colophon_db::transactions::hide_the_self_test_notice())),
         )
-        .with(colophon_db::transactions::begin_tripwire())
-        .try_init()?;
-    Ok(())
+        .with(colophon_db::transactions::begin_tripwire()))
 }
 
 /// The lower tier of D-224's slow statements. With the tiers set, sqlx offers every statement at INFO
@@ -132,8 +146,6 @@ mod tests {
         io,
         sync::{Arc, Mutex, PoisonError},
     };
-
-    use tracing_subscriber::fmt::MakeWriter;
 
     use super::*;
 
