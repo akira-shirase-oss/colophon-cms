@@ -1,5 +1,6 @@
 //! Outage logs (D-224). A fault that repeats for as long as an outage lasts (a request refused
-//! because no database connection came free, a dependency's failed probe) is said once when it
+//! because no database connection came free or a bound is full, a dependency's failed probe) is
+//! said once when it
 //! starts, then once per [`WINDOW`] with how often it happened, then once when a whole window
 //! passed without it. An outage of any size is a handful of lines, not one per request: 1,941
 //! refusals in one drill buried the line an operator needed.
@@ -30,6 +31,10 @@ pub const WINDOW: Duration = Duration::from_secs(10);
 pub enum Fault {
     /// A request refused: no database connection came free within the acquire timeout.
     NoConnection,
+    /// A request refused: its project's work bound is full (a stuck destination, a runaway import).
+    WorkFull,
+    /// A request refused: the installation's payload bound is full (D-135).
+    PayloadFull,
     /// A dependency's probe failed.
     Down(Dependency),
 }
@@ -58,6 +63,18 @@ enum Closed {
         total: u64,
         since: OffsetDateTime,
     },
+}
+
+impl Fault {
+    /// Why a refusal was refused, as its lines say it; `None` for a dependency.
+    const fn refusal(self) -> Option<&'static str> {
+        match self {
+            Self::NoConnection => Some("no database connection free"),
+            Self::WorkFull => Some("project work bound full"),
+            Self::PayloadFull => Some("installation payload bound full"),
+            Self::Down(_) => None,
+        }
+    }
 }
 
 /// The outages in progress, one per [`Fault`]. Bounded: one entry per fault.
@@ -134,15 +151,22 @@ impl Outages {
     }
 }
 
-/// A request refused because no database connection came free (503): its own DEBUG line (the
-/// per-second evidence), and the outage's first WARN if it starts one.
-pub(crate) fn refused(outages: &Outages, code: &str) {
+/// A refused request of `fault`'s kind: its own DEBUG line (the per-second evidence), and true when
+/// it starts an outage, which the caller then says at WARN with its own numbers.
+pub(crate) fn refusal(outages: &Outages, fault: Fault, code: &str) -> bool {
+    let why = fault.refusal().unwrap_or("dependency down");
     tracing::debug!(
         target: "colophon_api::refusals",
         code,
-        "request refused: no database connection free"
+        "request refused: {why}"
     );
-    if outages.begins(Fault::NoConnection) {
+    outages.begins(fault)
+}
+
+/// A request refused because no database connection came free (503): [`refusal`], and the
+/// outage's first WARN if it starts one.
+pub(crate) fn refused(outages: &Outages, code: &str) {
+    if refusal(outages, Fault::NoConnection, code) {
         // Operators need to see saturation. The target is the one this line always had.
         tracing::warn!(
             target: "colophon_api::error",
@@ -155,30 +179,6 @@ pub(crate) fn refused(outages: &Outages, code: &str) {
 fn say(closed: &Closed) {
     let window = WINDOW.as_secs();
     match *closed {
-        Closed::Continues {
-            fault: Fault::NoConnection,
-            count,
-            since,
-        } => {
-            let since = stamp(since);
-            tracing::warn!(
-                refused = count,
-                %since,
-                "refused {count} requests in the last {window} s: no database connection free, since {since}"
-            );
-        }
-        Closed::Over {
-            fault: Fault::NoConnection,
-            total,
-            since,
-        } => {
-            let since = stamp(since);
-            tracing::info!(
-                refused = total,
-                %since,
-                "requests are answered again: none refused for {window} s (refused {total}: no database connection free, since {since})"
-            );
-        }
         Closed::Continues {
             fault: Fault::Down(dependency),
             count,
@@ -203,6 +203,32 @@ fn say(closed: &Closed) {
                 failed = total,
                 %since,
                 "dependency is up: no failed probe for {window} s ({total} failed, since {since})"
+            );
+        }
+        Closed::Continues {
+            fault,
+            count,
+            since,
+        } => {
+            let why = fault.refusal().unwrap_or_default();
+            let since = stamp(since);
+            tracing::warn!(
+                refused = count,
+                %since,
+                "refused {count} requests in the last {window} s: {why}, since {since}"
+            );
+        }
+        Closed::Over {
+            fault,
+            total,
+            since,
+        } => {
+            let why = fault.refusal().unwrap_or_default();
+            let since = stamp(since);
+            tracing::info!(
+                refused = total,
+                %since,
+                "requests are answered again: none refused for {window} s (refused {total}: {why}, since {since})"
             );
         }
     }

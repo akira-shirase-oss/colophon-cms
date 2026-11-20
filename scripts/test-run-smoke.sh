@@ -105,6 +105,14 @@ signature() { # case, expected stall, log lines...
 signature "refusals said only as DEBUG evidence, with INFO COMMITs, are a stall" true "$info_commit" "$evidence"
 signature "a DEBUG refusal in a calm second blocks" false "$info_commit" "$evidence" "$calm_evidence"
 signature "an outage's summary line in a calm second is not a failed request" true "$commit" "$refusal" "$summary"
+# The signature's own floor: a statement under 100 ms isn't evidence, whatever reached the log (the server's layer
+# drops them, but a log without it would offer every statement). Twenty fast COMMITs beside one slow SELECT are no
+# COMMIT queue.
+fast_commits=()
+for i in $(seq -w 10 29); do
+  fast_commits+=("{\"timestamp\":\"2026-11-20T12:00:05.${i}Z\",\"level\":\"INFO\",\"target\":\"sqlx::query\",\"summary\":\"COMMIT\",\"elapsed_secs\":0.002}")
+done
+signature "fast COMMITs don't make a COMMIT queue" false "$select_slow" "$refusal" "${fast_commits[@]}"
 
 # The signature reads what the server logs, so every load run CI makes must log the evidence: refusals at DEBUG
 # on their target, and statements at INFO (a short stall's COMMITs are 100-220 ms, under the WARN tier).

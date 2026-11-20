@@ -21,6 +21,8 @@ use colophon_domain::{policy::Action, rich_text::Rejection, schema::Refusal};
 use serde::{Serialize, Serializer};
 use uuid::Uuid;
 
+use crate::outages::Fault;
+
 /// Stable, machine-readable error codes. Renaming one is a breaking API change.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
@@ -862,22 +864,27 @@ impl ApiError {
             crate::outages::refused(&crate::outages::OUTAGES, code);
         } else if let Self::WorkFull { open, limit } = self {
             // A project at its work bound is saturation too — the kind an operator can act on
-            // (a stuck destination, a runaway import). Bounded by the request rate.
-            tracing::warn!(
-                code,
-                open,
-                limit,
-                "request refused: project work bound full"
-            );
+            // (a stuck destination, a runaway import). A bulk flood is thousands a minute, so
+            // it is said once an outage too (D-224).
+            if crate::outages::refusal(&crate::outages::OUTAGES, Fault::WorkFull, code) {
+                tracing::warn!(
+                    code,
+                    open,
+                    limit,
+                    "request refused: project work bound full"
+                );
+            }
         } else if let Self::PayloadFull { pending, limit } = self {
             // The installation's payload bound — saturation an operator can act on the same
-            // way (D-135). Bounded by the request rate.
-            tracing::warn!(
-                code,
-                pending,
-                limit,
-                "request refused: installation payload bound full"
-            );
+            // way (D-135), said once an outage the same way (D-224).
+            if crate::outages::refusal(&crate::outages::OUTAGES, Fault::PayloadFull, code) {
+                tracing::warn!(
+                    code,
+                    pending,
+                    limit,
+                    "request refused: installation payload bound full"
+                );
+            }
         } else {
             // A client's mistake: worth a debug line, never a page.
             tracing::debug!(code, error = %self, "request rejected");
@@ -1051,11 +1058,9 @@ mod tests {
 
     use super::*;
 
-    /// D-224: an outage's refusals are one WARN, not one per request. Through the real response
-    /// path and the process's own outage state, which another test may already have opened, so
-    /// "at most one"; each refusal is still its own DEBUG line on `colophon_api::refusals`.
-    #[test]
-    fn two_thousand_busy_refusals_warn_at_most_once() {
+    /// The WARN and DEBUG `colophon_api::refusals` lines 2,000 responses of `error` log, through the
+    /// real response path.
+    fn two_thousand(error: impl Fn() -> ApiError, status: StatusCode) -> (usize, usize) {
         #[derive(Clone, Default)]
         struct Lines(std::sync::Arc<std::sync::Mutex<Vec<u8>>>);
         impl io::Write for Lines {
@@ -1085,8 +1090,7 @@ mod tests {
             .finish();
         tracing::subscriber::with_default(subscriber, || {
             for _ in 0..2_000 {
-                let response = ApiError::Busy.into_response();
-                assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+                assert_eq!(error().into_response().status(), status);
             }
         });
         let text = String::from_utf8_lossy(
@@ -1104,8 +1108,54 @@ mod tests {
             .lines()
             .filter(|line| line.contains(r#""target":"colophon_api::refusals""#))
             .count();
-        assert!(warnings <= 1, "{warnings} WARN lines for one outage");
-        assert_eq!(evidence, 2_000);
+        (warnings, evidence)
+    }
+
+    /// D-224: an outage's refusals are one WARN, not one per request, each kind its own outage. The
+    /// process's outage state may already be open from another test, so "at most one"; each refusal
+    /// is still its own DEBUG line on `colophon_api::refusals`.
+    #[test]
+    fn two_thousand_refusals_of_each_kind_warn_at_most_once() {
+        for (name, (warnings, evidence)) in [
+            (
+                "busy",
+                two_thousand(|| ApiError::Busy, StatusCode::SERVICE_UNAVAILABLE),
+            ),
+            (
+                "work bound",
+                two_thousand(
+                    || ApiError::WorkFull {
+                        open: 64,
+                        limit: 64,
+                    },
+                    ApiError::WorkFull {
+                        open: 64,
+                        limit: 64,
+                    }
+                    .status(),
+                ),
+            ),
+            (
+                "payload bound",
+                two_thousand(
+                    || ApiError::PayloadFull {
+                        pending: 9,
+                        limit: 8,
+                    },
+                    ApiError::PayloadFull {
+                        pending: 9,
+                        limit: 8,
+                    }
+                    .status(),
+                ),
+            ),
+        ] {
+            assert!(
+                warnings <= 1,
+                "{name}: {warnings} WARN lines for one outage"
+            );
+            assert_eq!(evidence, 2_000, "{name}");
+        }
     }
 
     #[test]

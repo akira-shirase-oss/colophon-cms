@@ -20,9 +20,11 @@ number, it is a log line or a SQL query away — the recipes say which.
 
 A WARN is something to act on, said once, not once per request:
 
-- **Refusals** (no database connection came free, a 503): the first is a WARN at once
+- **Refusals** (no database connection came free, a 503; a project's work bound or the
+  installation's payload bound full): the first of each kind is a WARN at once
   (`request refused: no database connection free`, with its `code`); while it lasts, one WARN
-  per 10 s, `refused N requests in the last 10 s: no database connection free, since T`
+  per 10 s, `refused N requests in the last 10 s: no database connection free, since T` (or
+  `project work bound full`, `installation payload bound full`)
   (fields `refused`, `since`); after 10 s without one, an INFO `requests are answered again`.
   Each refusal is also its own DEBUG line on `colophon_api::refusals`, off by default:
   `COLOPHON_LOG='info,colophon_api::refusals=debug'` shows every one.
