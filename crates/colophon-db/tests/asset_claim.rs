@@ -4,8 +4,12 @@
 //! leases, which no index serves in order: every claim read every open job and sorted them to
 //! take four (1,005 tuples here; in the assets smoke, with dead row versions piling up, a scan
 //! of the whole table at 1-3.5 s a claim).
-//! A lapsed lease, the oldest due job, is still claimed first. Measured with the table's own
-//! statistics, each backend's flushed before it is read. Needs the local stack.
+//! A lapsed lease, made waiting again by the sweep's `release_lapsed`, is claimed first, in its
+//! old place. And the claim never reads the lapsed-lease index: when it searched it too, every
+//! claim walked the dead entry each finished job leaves there, for as long as an open snapshot
+//! kept them from being marked dead (train-3's assets smoke, claim tails climbing with the
+//! run). Measured with the tables' own statistics, each backend's flushed before it is read.
+//! Needs the local stack.
 #![expect(
     clippy::expect_used,
     reason = "database tests: a failed connection or setup step is a test failure"
@@ -60,10 +64,19 @@ async fn flush_app(db: &TestDb) {
     flush(&mut connection).await;
 }
 
-#[tokio::test]
-#[ignore = "needs the local stack: scripts/stack.sh up"]
-async fn a_claim_reads_its_limit_not_the_table() {
-    let db = TestDb::new().await;
+/// Reads of `index` (an index on `asset_jobs`) by scans, as the stats now say.
+async fn index_reads(pool: &PgPool, index: &str) -> i64 {
+    sqlx::query_scalar(
+        "SELECT coalesce(idx_tup_read, 0) FROM pg_stat_user_indexes WHERE indexrelname = $1",
+    )
+    .bind(index)
+    .fetch_one(pool)
+    .await
+    .expect("pg_stat_user_indexes")
+}
+
+/// A project with one upload, its verify job `verify:a`: the asset every seeded job names.
+async fn one_upload(db: &TestDb) {
     let alice = db.administrator("alice").await;
     let project = projects::create(&db.app, alice, "alpha", "Alpha")
         .await
@@ -88,6 +101,13 @@ async fn a_claim_reads_its_limit_not_the_table() {
     .await
     .expect("uploaded");
     tx.commit().await.expect("commit");
+}
+
+#[tokio::test]
+#[ignore = "needs the local stack: scripts/stack.sh up"]
+async fn a_claim_reads_its_limit_not_the_table() {
+    let db = TestDb::new().await;
+    one_upload(&db).await;
 
     // The history and the backlog, all on the one asset, on one owner connection.
     let owner = db.owner().await;
@@ -130,6 +150,12 @@ async fn a_claim_reads_its_limit_not_the_table() {
     .execute(&mut *seed)
     .await
     .expect("a lapsed lease");
+    // The sweep makes it waiting again, keeping its place.
+    assert_eq!(
+        assets::release_lapsed(&db.app).await.expect("released"),
+        1,
+        "the lapsed lease, and only it"
+    );
     sqlx::query("ANALYZE asset_jobs")
         .execute(&mut *seed)
         .await
@@ -164,6 +190,71 @@ async fn a_claim_reads_its_limit_not_the_table() {
         tuples <= MAX_TUPLES,
         "a claim read {tuples} tuples of asset_jobs for four jobs"
     );
+    owner.close().await;
+    db.drop().await;
+}
+
+#[tokio::test]
+#[ignore = "needs the local stack: scripts/stack.sh up"]
+async fn a_claim_never_walks_finished_jobs_leases() {
+    let db = TestDb::new().await;
+    one_upload(&db).await;
+    let owner = db.owner().await;
+    let mut seed = owner.acquire().await.expect("an owner connection");
+    // History: jobs that ran, under leases long run out, and finished. Each left a dead entry in
+    // the lapsed-lease index, inside `lease_expires_at < now()`; never one in `asset_jobs_due`.
+    sqlx::query(
+        "INSERT INTO asset_jobs (project_id, environment_id, id, asset_id, kind, idempotency_key,
+                                 status, lease_owner, lease_expires_at, next_attempt_at, deadline_at)
+         SELECT project_id, environment_id, gen_random_uuid(), asset_id, kind, 'ran:' || n,
+                'running', 'gone', now() - interval '1 hour', now() - interval '2 hours',
+                now() + interval '1 hour'
+         FROM asset_jobs, generate_series(1, $1) n WHERE idempotency_key = 'verify:a'",
+    )
+    .bind(HISTORY)
+    .execute(&mut *seed)
+    .await
+    .expect("history ran");
+    // A snapshot older than their finishing, as a long admission holds one: no scan may mark
+    // the entries dead while it is open.
+    let mut snapshot = owner.begin().await.expect("begin");
+    sqlx::query("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ")
+        .execute(&mut *snapshot)
+        .await
+        .expect("repeatable read");
+    sqlx::query("SELECT count(*) FROM asset_jobs")
+        .execute(&mut *snapshot)
+        .await
+        .expect("the snapshot is taken");
+    sqlx::query(
+        "UPDATE asset_jobs SET status = 'succeeded', finished_at = now()
+         WHERE idempotency_key LIKE 'ran:%'",
+    )
+    .execute(&mut *seed)
+    .await
+    .expect("history finished");
+    sqlx::query("ANALYZE asset_jobs")
+        .execute(&mut *seed)
+        .await
+        .expect("analyze");
+    flush(&mut seed).await;
+    drop(seed);
+    flush_app(&db).await;
+
+    let before = index_reads(&owner, "asset_jobs_leased").await;
+    let claimed = assets::claim(&db.app, "worker-a", HOUR, 4)
+        .await
+        .expect("claim");
+    flush_app(&db).await;
+    let walked = index_reads(&owner, "asset_jobs_leased").await - before;
+
+    assert_eq!(claimed.len(), 1, "the upload's own job, waiting");
+    eprintln!("one claim walked {walked} lapsed-lease index entries");
+    assert_eq!(
+        walked, 0,
+        "a claim walked {walked} entries of finished jobs' leases"
+    );
+    snapshot.rollback().await.expect("release the snapshot");
     owner.close().await;
     db.drop().await;
 }

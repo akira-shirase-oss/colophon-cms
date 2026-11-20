@@ -332,6 +332,17 @@ impl Worker {
                         Ok(0) | Err(_) => {}
                         Ok(expired) => tracing::info!(expired, "asset jobs ran out of time"),
                     }
+                    // Asset jobs whose worker stopped answering wait again, for the next
+                    // claim (the claim itself looks only at waiting jobs).
+                    match colophon_db::assets::release_lapsed(&self.pool).await {
+                        Ok(0) => {}
+                        Ok(released) => {
+                            tracing::info!(released, "asset jobs whose lease ran out wait again");
+                        }
+                        Err(error) => {
+                            tracing::warn!(error = %error, "releasing lapsed asset jobs failed; trying again later");
+                        }
+                    }
                     // The budget reconciler (D-113): free reservations of jobs that ended,
                     // flag held rows that outlived their work as `uncertain` and audit the
                     // discrepancy.
