@@ -114,6 +114,7 @@ fn start_background(
     config: &Config,
     pool: &colophon_db::PgPool,
     bus: &Arc<colophon_api::events::EventBus>,
+    admission: &Arc<colophon_api::admission::Admission>,
     cancel: &CancellationToken,
 ) -> anyhow::Result<Background> {
     let worker_cancel = cancel.child_token();
@@ -121,7 +122,7 @@ fn start_background(
     let setup_cancel = cancel.child_token();
     let setup = start_setup_code(config, pool, &setup_cancel);
     let events_cancel = cancel.child_token();
-    let hints = start_events(config, pool, bus, &events_cancel);
+    let hints = start_events(config, pool, bus, admission, &events_cancel);
     Ok(Background {
         worker_cancel,
         worker,
@@ -196,18 +197,21 @@ async fn stop_setup_code(
 /// Starts the change hints' two tasks: the pump in every role (D-180) — writers queue their
 /// hints in `change_hints` and some running Colophon process must send them, whichever pump
 /// gets there first — and, for the api and all roles, the listener (D-108): one `LISTEN`
-/// connection feeding the bus the `{P}/events` streams subscribe to. The worker role alone has
+/// connection feeding the bus the `{P}/events` streams subscribe to and ending the quota
+/// refusals the admission remembers when a token changes (D-214). The worker role alone has
 /// no streams to serve and gets no listener.
 fn start_events(
     config: &Config,
     pool: &colophon_db::PgPool,
     bus: &Arc<colophon_api::events::EventBus>,
+    admission: &Arc<colophon_api::admission::Admission>,
     cancel: &CancellationToken,
 ) -> Vec<tokio::task::JoinHandle<()>> {
     let mut tasks = vec![tokio::spawn(events::pump(pool.clone(), cancel.clone()))];
     if matches!(config.role, Role::Api | Role::All) {
         tasks.push(tokio::spawn(events::run(
             bus.clone(),
+            admission.clone(),
             config.database_url.expose().to_owned(),
             cancel.clone(),
         )));
@@ -379,11 +383,12 @@ pub async fn run(
     )
     .map_err(|error| anyhow::anyhow!(error))
     .context("configuring rate limits")?;
+    let admission = std::sync::Arc::new(admission);
     let state = colophon_api::AppState {
         readiness: readiness.clone(),
         services: Some(std::sync::Arc::new(services)),
         build,
-        admission: Some(std::sync::Arc::new(admission)),
+        admission: Some(admission.clone()),
     };
     let mut routes = colophon_api::routes(state);
     if let Some(dir) = &config.studio_dir {
@@ -408,7 +413,7 @@ pub async fn run(
         tracing::info!(signal = name, "shutdown signal received");
     };
 
-    let background = start_background(&config, &pool, &event_bus, &cancel)?;
+    let background = start_background(&config, &pool, &event_bus, &admission, &cancel)?;
 
     let outcome = tokio::select! {
         outcome = shutdown::serve(listener, app, readiness, timing, trigger) => outcome.context("serving")?,

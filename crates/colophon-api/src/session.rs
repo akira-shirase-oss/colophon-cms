@@ -100,9 +100,11 @@ pub struct SignedIn {
     pub credential: Credential,
     /// For an API token, the one project it belongs to; `None` for people.
     pub project: Option<Uuid>,
-    /// For an API token, the SHA-256 of its secret: what a quota refusal is remembered under,
-    /// so the token's next requests can be refused before Postgres is asked (D-214).
-    pub secret_hash: Option<[u8; 32]>,
+    /// For an API token, what its request was judged on — the SHA-256 of its secret, when its
+    /// row was read, when it expires: what a quota refusal is remembered under, so the token's
+    /// next requests can be refused before Postgres is asked, until its project's tokens change
+    /// (D-214).
+    pub judged: Option<crate::admission::Judged>,
 }
 
 /// The caller behind `Authorization: Bearer <token>`.
@@ -137,7 +139,7 @@ async fn bearer(
         session: found.id,
         credential: Credential::Token,
         project: None,
-        secret_hash: None,
+        judged: None,
     })
 }
 
@@ -164,6 +166,9 @@ async fn api_token(
             retry_after: throttle.retry_after(),
         });
     }
+    // Before the row is read: a change to the project's tokens after this instant means a
+    // refusal judged on this row is not remembered (D-214's addendum).
+    let read_at = std::time::Instant::now();
     let found = api_tokens::find(&services.pool, &hash)
         .await
         .map_err(ApiError::from_db)?
@@ -204,7 +209,13 @@ async fn api_token(
         session: found.id,
         credential: Credential::ApiToken,
         project: Some(found.project_id),
-        secret_hash: Some(hash),
+        judged: Some(crate::admission::Judged {
+            hash,
+            read_at,
+            // Not yet expired (checked above), so the difference is positive.
+            expires: std::time::Instant::now()
+                + std::time::Duration::try_from(found.expires_at - now).unwrap_or_default(),
+        }),
     })
 }
 
@@ -285,7 +296,7 @@ impl FromRequestParts<AppState> for SignedIn {
             identity: session.identity_id,
             session: session.id,
             credential: Credential::Session,
-            secret_hash: None,
+            judged: None,
             project: None,
         })
     }

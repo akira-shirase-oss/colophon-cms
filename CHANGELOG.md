@@ -15,6 +15,14 @@ through `--version` and `GET /version`.
   until its `Retry-After` runs out, so an agent stuck in a retry loop can't slow other projects'
   requests by queuing for database connections. The answer is the same `429` with `Retry-After`.
 
+### Fixed
+
+- **Revoking a throttled token, or changing its limits, takes effect on its next request**
+  (D-214). A token refused for its quota and then revoked was still told `429` with a
+  `Retry-After` instead of `401`, and removing or replacing its request ceiling kept refusing it
+  until the old window ran out. The remembered refusal now ends as the change commits, on every
+  server.
+
 ## [0.1.0-alpha.1] — 2026-11-19
 
 The first versioned state of the engine: pre-release until the P6 proof gate closes
