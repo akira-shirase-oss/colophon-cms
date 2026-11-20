@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Builds and serves the five Astro demo sites (apps/sites/README.md; D-133), each on its own
-# port bound to localhost:
+# Builds and serves the demo sites (apps/sites/README.md): five Astro sites (D-133) and one
+# SvelteKit site (D-220), each on its own port bound to localhost:
 #
 #   blog      http://127.0.0.1:58110   (collection posts; node standalone — its /members
 #                                       pages and audience sign-in render per request, D-137)
@@ -8,8 +8,9 @@
 #   recipes   http://127.0.0.1:58112   (collection recipes)
 #   news      http://127.0.0.1:58113   (collection stories)
 #   portfolio http://127.0.0.1:58114   (collection photos)
+#   sveltekit http://127.0.0.1:58115   (collection recipes; SvelteKit, prerendered — D-220)
 #
-#   scripts/serve-demo-sites.sh           build all five, then serve them (Ctrl-C stops them)
+#   scripts/serve-demo-sites.sh           build all six, then serve them (Ctrl-C stops them)
 #   scripts/serve-demo-sites.sh build     build only
 #   scripts/serve-demo-sites.sh serve     serve what's already built
 #   scripts/serve-demo-sites.sh stop      stop sites this script started
@@ -21,7 +22,7 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-SITES=(blog:58110 docs:58111 recipes:58112 news:58113 portfolio:58114)
+SITES=(blog:58110 docs:58111 recipes:58112 news:58113 portfolio:58114 sveltekit:58115)
 STATE=target/demo-sites
 mkdir -p "$STATE"
 
@@ -55,7 +56,10 @@ build_one() {
   # Build beside the live directory, never over it: a rebuild must not blank a site that is
   # still serving (astro build empties its outDir, which used to 404 every page mid-build).
   rm -rf "apps/sites/$site/dist.next"
-  npm run build --silent -w "@colophon/site-$site" -- --outDir dist.next >"$STATE/$site-build.log" 2>&1 || {
+  # The Astro sites take --outDir; the SvelteKit site's adapter reads SITE_OUT_DIR.
+  local build=(npm run build --silent -w "@colophon/site-$site" -- --outDir dist.next)
+  [[ "$site" == "sveltekit" ]] && build=(env SITE_OUT_DIR=dist.next npm run build --silent -w "@colophon/site-$site")
+  "${build[@]}" >"$STATE/$site-build.log" 2>&1 || {
     echo "error: the $site build failed; see $STATE/$site-build.log" >&2
     exit 1
   }
@@ -96,6 +100,9 @@ serve_one() {
     # The node adapter's standalone entry: static assets and the SSR members routes.
     (cd "apps/sites/$site" && exec env HOST=127.0.0.1 PORT="$port" node ./dist/server/entry.mjs) \
       >"$STATE/$site.log" 2>&1 &
+  elif [[ "$site" == "sveltekit" ]]; then
+    # Prerendered files, served from dist/ by the site's own small static server.
+    (cd "apps/sites/$site" && exec env PORT="$port" node ./serve.mjs) >"$STATE/$site.log" 2>&1 &
   else
     (cd "apps/sites/$site" && exec npx astro preview --port "$port" --host 127.0.0.1) \
       >"$STATE/$site.log" 2>&1 &
@@ -169,6 +176,9 @@ case "$command" in
       cd "apps/sites/$command"
       if [[ "$command" == "blog" ]]; then
         exec env HOST=127.0.0.1 PORT="$port" node ./dist/server/entry.mjs
+      fi
+      if [[ "$command" == "sveltekit" ]]; then
+        exec env PORT="$port" node ./serve.mjs
       fi
       exec npx astro preview --port "$port" --host 127.0.0.1
     else

@@ -8,6 +8,12 @@ through `--version` and `GET /version`.
 
 ## [Unreleased]
 
+### Added
+
+- A SvelteKit demo site (D-220): Butter & Thyme's recipes prerendered with SvelteKit 3 at one release per
+  build (`?generation=N` on every read, a build that refuses an answer from another release), the release
+  marker on every page, and a rebuild on publish with the other demo sites (`apps/sites/sveltekit`).
+
 ### Changed — read before upgrading
 
 - **A release's receipt no longer embeds what it changed** (D-185). `GET …/releases/{n}` drops
