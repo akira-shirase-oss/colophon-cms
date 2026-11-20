@@ -1,8 +1,11 @@
 <!--
   A project's publish requests (changesets, D-044; the words are D-059's): what each is waiting
   for, and a dialog to gather several entries into a new one. A request holds the exact versions
-  it was made from; reviews approve exactly those. An entry can be picked to publish its current
-  version or to take its published one down (D-049). One entry is published from its editor.
+  it was made from; reviews approve exactly those. Each picked entry publishes its current
+  version; a live one can instead be taken down (D-049), with one Publish | Unpublish control on
+  its row. The dialog stays inside the screen however long a title is (the audit's P1-3, F5): its
+  body scrolls, its footer stays put, and its table is laid out fixed, with long titles cut to
+  one line and said in full on hover. One entry is published from its editor.
 -->
 <script lang="ts">
 	import LayersIcon from '@lucide/svelte/icons/layers';
@@ -10,14 +13,15 @@
 	import { goto } from '$app/navigation';
 	import { resolve } from '$app/paths';
 	import { page } from '$app/state';
-	import { createQuery } from '@tanstack/svelte-query';
+	import { createQuery, useQueryClient } from '@tanstack/svelte-query';
 	import { Button } from '@colophon/ui/ui/button';
 	import * as Dialog from '@colophon/ui/ui/dialog';
 	import { Input } from '@colophon/ui/ui/input';
 	import { Label } from '@colophon/ui/ui/label';
 	import { Skeleton } from '@colophon/ui/ui/skeleton';
 	import * as Table from '@colophon/ui/ui/table';
-	import { ApiError, createChangeset, entryState, listContentTypes, listEntries, may, newKey } from '#lib/api.ts';
+	import * as ToggleGroup from '@colophon/ui/ui/toggle-group';
+	import { ApiError, createChangeset, entryState, listEntries, may, newKey } from '#lib/api.ts';
 	import { ago, changesetsQuery, projectQuery, typesQuery } from '#lib/queries.ts';
 	import ChangesetBadge from '#lib/shell/ChangesetBadge.svelte';
 	import EmptyState from '#lib/shell/EmptyState.svelte';
@@ -34,12 +38,14 @@
 	const makes = $derived(mine.data === undefined || may(mine.data, 'content.update'));
 	const firstType = $derived(types.data?.find((type) => type.slug !== 'articles') ?? types.data?.[0]);
 	let creating = $state(false);
+	const queryClient = useQueryClient();
 	// Every entry, by content type, to pick from: loaded when the dialog opens.
 	const choices = createQuery(() => ({
 		queryKey: ['changeset-choices', project],
 		queryFn: async () => {
 			// Only collections the role may read; the server refuses the others' lists.
-			const types = (await listContentTypes(project)).filter((type) => may(mine.data, 'content.read', type.slug));
+			// The layout's content types, not a read of their own (P3-12).
+			const types = (await queryClient.fetchQuery(typesQuery(project))).filter((type) => may(mine.data, 'content.read', type.slug));
 			return Promise.all(types.map(async (type) => ({ type, entries: await listEntries(project, type.slug) })));
 		},
 		enabled: creating && mine.data !== undefined
@@ -47,8 +53,18 @@
 
 	let title = $state('');
 	let filter = $state('');
+	/** The entries in it, and what it does with each live one: publish its current version
+	 *  (the default) or take it down. A draft can only be published. */
 	let picked = $state<string[]>([]);
-	let takenDown = $state<string[]>([]);
+	let unpublishing = $state<string[]>([]);
+	const live = $derived(new Set((choices.data ?? []).flatMap((group) => group.entries.filter((entry) => entry.published !== null).map((entry) => entry.id))));
+	const takenDown = $derived(picked.filter((entry) => unpublishing.includes(entry) && live.has(entry)));
+	const publishing = $derived(picked.filter((entry) => !takenDown.includes(entry)));
+	function choose(entry: string, kind: string) {
+		if (kind === 'unpublish') unpublishing = [...new Set([...unpublishing, entry])];
+		else if (kind === 'publish') unpublishing = unpublishing.filter((one) => one !== entry);
+		if (!picked.includes(entry)) picked = [...picked, entry];
+	}
 	let error = $state('');
 	let busy = $state(false);
 	// One key per changeset being made: pressing Create again after a lost answer is safe.
@@ -59,7 +75,7 @@
 		busy = true;
 		error = '';
 		try {
-			const made = await createChangeset(project, title, picked, takenDown, key);
+			const made = await createChangeset(project, title, publishing, takenDown, key);
 			key = newKey();
 			creating = false;
 			await goto(resolve('/projects/[project]/changesets/[changeset]', { project, changeset: made.id }));
@@ -74,10 +90,7 @@
 <svelte:head><title>Publish requests · Colophon Studio</title></svelte:head>
 
 <PageHeader title="Publish requests">
-	{#snippet description()}
-		A publish request holds exact versions of entries. Someone approves exactly those versions, and publishing makes them the next release. To publish
-		one entry, press Publish in its editor; here you can gather several into one request.
-	{/snippet}
+	{#snippet description()}Group entries, get them approved, and publish them together as one release.{/snippet}
 	{#snippet actions()}
 		{#if makes}<Button onclick={() => (creating = true)}><PlusIcon data-icon="inline-start" />New publish request</Button>{/if}
 	{/snippet}
@@ -133,15 +146,12 @@
 </TechnicalDetails>
 
 <Dialog.Root bind:open={creating}>
-	<Dialog.Content class="max-h-[90svh] overflow-y-auto sm:max-w-2xl">
+	<Dialog.Content class="sm:max-w-[45rem]" data-testid="new-request">
 		<Dialog.Header>
 			<Dialog.Title>New publish request</Dialog.Title>
-			<Dialog.Description>
-				It holds the current version of each entry you pick to publish, and the live version of each entry you pick to unpublish. Later edits
-				don't change it until you update it.
-			</Dialog.Description>
+			<Dialog.Description>It holds the version of each entry you pick as it is now; later edits wait until you update it.</Dialog.Description>
 		</Dialog.Header>
-		<form class="grid gap-5" onsubmit={create} aria-label="New changeset">
+		<form class="grid min-w-0 gap-5" onsubmit={create} aria-label="New publish request">
 			<div class="grid gap-1.5">
 				<Label for="request-title">Title</Label>
 				<Input id="request-title" bind:value={title} required maxlength={200} placeholder="Spring launch" />
@@ -151,39 +161,64 @@
 			{:else if choices.isError}
 				<Problem error={choices.error} />
 			{:else}
-				<div class="grid gap-2">
-					<div class="flex items-center justify-between gap-3">
-						<p class="text-sm font-medium">Entries <span class="font-normal text-muted-foreground">{picked.length + takenDown.length} picked</span></p>
-						<Input class="h-8 max-w-56" type="search" placeholder="Filter" aria-label="Filter entries" bind:value={filter} />
+				<div class="grid min-w-0 gap-2">
+					<div class="flex flex-wrap items-center justify-between gap-3">
+						<p class="text-sm font-medium">
+							Entries <span class="font-normal text-muted-foreground tabular" data-testid="picked-count"
+								>{picked.length} picked{#if takenDown.length > 0}, {takenDown.length} to take down{/if}</span
+							>
+						</p>
+						<Input class="h-9 w-full sm:w-56" type="search" placeholder="Filter" aria-label="Filter entries" bind:value={filter} />
 					</div>
 					{#each choices.data as group (group.type.slug)}
 						{@const shown = group.entries.filter((entry) => entry.revision.title.toLowerCase().includes(filter.trim().toLowerCase()))}
 						{#if shown.length > 0}
-							<fieldset class="overflow-hidden rounded-lg border border-border">
-								<legend class="sr-only">{group.type.definition.name}</legend>
-								<p class="border-b border-border bg-muted/50 px-3 py-1.5 text-xs font-medium text-muted-foreground" aria-hidden="true">{group.type.definition.name}</p>
-								{#each shown as entry (entry.id)}
-									{@const standing = entryState(entry)}
-									<!-- Picking an entry publishes its current version; Unpublish takes its published one down. -->
-									<div class="rule-dotted flex items-center gap-3 px-3 py-2 last:border-b-0">
-										<label class="flex min-w-0 flex-1 items-center gap-2.5 text-sm">
-											<input type="checkbox" class="size-4 accent-primary" value={entry.id} bind:group={picked} disabled={takenDown.includes(entry.id)} />
-											<span class="truncate">{entry.revision.title}</span>
-										</label>
-										<StatusBadge state={standing} generation={entry.published?.generation ?? null} />
-										<label class="flex items-center gap-1.5 text-xs text-muted-foreground" class:invisible={standing === 'draft'}>
-											<input
-												type="checkbox"
-												class="size-3.5 accent-destructive"
-												value={entry.id}
-												bind:group={takenDown}
-												disabled={picked.includes(entry.id) || standing === 'draft'}
-												aria-label={`Unpublish ${entry.revision.title}`}
-											/> Unpublish
-										</label>
-									</div>
-								{/each}
-							</fieldset>
+							<div class="min-w-0 overflow-hidden rounded-lg border border-border">
+								<table class="w-full table-fixed text-sm" data-testid="request-entries">
+									<caption class="border-b border-border bg-muted/50 px-3 py-1.5 text-left text-xs font-medium text-muted-foreground">{group.type.definition.name}</caption>
+									<colgroup>
+										<col class="w-10" />
+										<col />
+										<!-- The state column fits the longest badge, "Live with changes" with its icon (request-dialog-layout.spec). -->
+										<col class="w-44 max-sm:w-0" />
+										<col class="w-[11.5rem] max-sm:w-0" />
+									</colgroup>
+									<thead class="sr-only">
+										<tr><th scope="col">Pick</th><th scope="col">Entry</th><th scope="col">Now</th><th scope="col">In this request</th></tr>
+									</thead>
+									<tbody>
+										{#each shown as entry (entry.id)}
+											{@const standing = entryState(entry)}
+											{@const isLive = entry.published !== null}
+											{@const kind = unpublishing.includes(entry.id) && isLive ? 'unpublish' : 'publish'}
+											<tr class="rule-dotted last:border-b-0" data-testid="request-entry" data-entry={entry.id}>
+												<td class="py-2.5 pl-3 align-top">
+													<input
+														type="checkbox"
+														class="mt-0.5 size-4"
+														value={entry.id}
+														bind:group={picked}
+														aria-label={entry.revision.title}
+														data-testid="request-entry-pick"
+													/>
+												</td>
+												<td class="py-2.5 pr-3 align-top">
+													<span class="block truncate" title={entry.revision.title} data-testid="request-entry-title" data-user-content>{entry.revision.title}</span>
+													<!-- On a phone the state and the choice sit under the title. -->
+													<span class="mt-2 flex flex-wrap items-center gap-2 sm:hidden">
+														<StatusBadge state={standing} generation={entry.published?.generation ?? null} />
+														{#if isLive}{@render segmented(entry.id, entry.revision.title, kind)}{/if}
+													</span>
+												</td>
+												<td class="py-2 pr-3 align-top max-sm:hidden"><StatusBadge state={standing} generation={entry.published?.generation ?? null} /></td>
+												<td class="py-1.5 pr-3 align-top max-sm:hidden">
+													{#if isLive}{@render segmented(entry.id, entry.revision.title, kind)}{/if}
+												</td>
+											</tr>
+										{/each}
+									</tbody>
+								</table>
+							</div>
 						{/if}
 					{:else}
 						<p class="text-sm text-muted-foreground">Nothing is written yet: write an entry first, then come back to publish it.</p>
@@ -191,10 +226,29 @@
 				</div>
 			{/if}
 			{#if error}<p role="alert" class="text-sm text-destructive">{error}</p>{/if}
-			<Dialog.Footer>
+			<Dialog.Footer class="sm:items-center">
+				<!-- A disabled button says why (the audit's P3-6 pattern). -->
+				{#if picked.length === 0}<p id="pick-hint" class="text-sm text-muted-foreground sm:mr-auto" data-testid="pick-hint">Pick at least one entry.</p>{/if}
 				<Button variant="outline" type="button" onclick={() => (creating = false)}>Cancel</Button>
-				<Button type="submit" disabled={busy || picked.length + takenDown.length === 0}>Create publish request</Button>
+				<Button type="submit" disabled={busy || picked.length === 0} aria-describedby={picked.length === 0 ? 'pick-hint' : undefined} data-testid="create-request">Create publish request</Button>
 			</Dialog.Footer>
 		</form>
 	</Dialog.Content>
 </Dialog.Root>
+
+<!-- A live entry's one choice: publish its current version, or take it down. Choosing either picks it. -->
+{#snippet segmented(entry: string, name: string, kind: string)}
+	<ToggleGroup.Root
+		type="single"
+		variant="outline"
+		size="sm"
+		class="w-[10.5rem]"
+		value={kind}
+		onValueChange={(value: string) => value !== '' && choose(entry, value)}
+		aria-label="What this request does with {name}"
+		data-testid="request-entry-kind"
+	>
+		<ToggleGroup.Item value="publish" class="flex-1" aria-label="Publish {name}">Publish</ToggleGroup.Item>
+		<ToggleGroup.Item value="unpublish" class="flex-1" aria-label="Unpublish {name}">Unpublish</ToggleGroup.Item>
+	</ToggleGroup.Root>
+{/snippet}

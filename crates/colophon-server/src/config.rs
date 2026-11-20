@@ -134,8 +134,14 @@ pub struct Config {
     /// `COLOPHON_MAX_BODY_BYTES`, default 21 MiB: JSON requests stay small, but the upload
     /// endpoint legitimately carries a 20 MiB image (its own intent check bounds it tighter).
     pub max_body_bytes: usize,
+    /// `COLOPHON_UPLOAD_MEMORY_MB`, default 256: the memory uploads in flight may hold between them
+    /// (D-215); at the 21 MiB body limit that is 12 at once, and never less than one.
+    pub upload_memory_mb: usize,
     /// `COLOPHON_DB_MAX_CONNECTIONS`, default 16.
     pub db_max_connections: u32,
+    /// Statements slower than this are logged at WARN (D-221). `COLOPHON_DB_SLOW_STATEMENT_MS`,
+    /// default 1000 (sqlx's own); CI's smokes lower it to name a stall's statements.
+    pub db_slow_statement: Duration,
     /// Time between readiness probes. `COLOPHON_PROBE_INTERVAL_MS`, default 2 s.
     pub probe_interval: Duration,
     /// Deadline for one probe; shorter than the interval. `COLOPHON_PROBE_TIMEOUT_MS`, default 1 s.
@@ -731,7 +737,9 @@ impl Config {
         let log_filter = env.raw("COLOPHON_LOG").unwrap_or_else(|| "info".to_owned());
         let request_timeout = env.millis("COLOPHON_REQUEST_TIMEOUT_MS", 10_000, 100..=120_000);
         let max_body_bytes = env.ranged("COLOPHON_MAX_BODY_BYTES", 21 * MIB, KIB..=64 * MIB);
+        let upload_memory_mb = env.ranged("COLOPHON_UPLOAD_MEMORY_MB", 256, 1..=16 * 1024);
         let db_max_connections = env.ranged("COLOPHON_DB_MAX_CONNECTIONS", 16, 1..=1_000);
+        let db_slow_statement = env.millis("COLOPHON_DB_SLOW_STATEMENT_MS", 1_000, 1..=600_000);
         let (probe_interval, probe_timeout) = env.probe();
         let (drain_delay, shutdown_grace) = env.drain();
         let (public_origin, extra_trusted_origins, oidc) = env.sign_in(listen_addr);
@@ -837,7 +845,9 @@ impl Config {
                 log_filter,
                 request_timeout,
                 max_body_bytes,
+                upload_memory_mb,
                 db_max_connections,
+                db_slow_statement,
                 probe_interval,
                 probe_timeout,
                 drain_delay,

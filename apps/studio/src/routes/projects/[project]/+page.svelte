@@ -1,6 +1,9 @@
 <!--
   A project at a glance: what readers have now, what's waiting for a reviewer, where the content
-  stands, and what changed last. Every number links to the page that explains it.
+  stands, and what changed last. Every number links to the page that explains it, and a number
+  still loading shows as a placeholder, never as a zero or "Never" it doesn't know yet. Entries
+  are counted by lib/entryState.ts, as the lists and the sidebar count them: live includes live
+  with unpublished changes.
 -->
 <script lang="ts">
 	import ArrowRightIcon from '@lucide/svelte/icons/arrow-right';
@@ -12,7 +15,8 @@
 	import { Badge } from '@colophon/ui/ui/badge';
 	import { Button } from '@colophon/ui/ui/button';
 	import { Skeleton } from '@colophon/ui/ui/skeleton';
-	import { entryState, may, type Summary } from '#lib/api.ts';
+	import { may, type Summary } from '#lib/api.ts';
+	import { entryState, tally as tallyOf, tallyText } from '#lib/entryState.ts';
 	import { mainCollection, oneOf } from '#lib/firstRun.ts';
 	import FirstRun from '#lib/FirstRun.svelte';
 	import { ago, changesetsQuery, count as countOf, entriesQuery, meQuery, projectQuery, releasesQuery, typesQuery } from '#lib/queries.ts';
@@ -44,15 +48,7 @@
 	);
 	// Each list holds the newest 100; when any has more, the totals say "at least".
 	const more = $derived(lists.some((list) => list.data?.next_cursor != null));
-	const tally = $derived(
-		all.reduce(
-			(counts, { entry }) => {
-				counts[entryState(entry)] += 1;
-				return counts;
-			},
-			{ draft: 0, live: 0, changed: 0 }
-		)
-	);
+	const tally = $derived(tallyOf(all.map(({ entry }) => entry)));
 	const newest = $derived([...all].sort((a, b) => b.entry.updated_at.localeCompare(a.entry.updated_at)));
 	const recent = $derived(newest.slice(0, 8));
 	// Each query's data and error are read before any is tested: svelte-query only updates what has
@@ -66,6 +62,8 @@
 	const entriesSettled = $derived(
 		[mine.data !== undefined || mine.isError, types.data !== undefined || types.isError, ...settled].every(Boolean)
 	);
+	// The tile counts every readable list, so it waits for all of them, as the checklist does.
+	const counted = $derived(entriesSettled && failed.length === 0);
 	const answers = $derived([mine.data, who.data, sets.data, releases.data, types.data]);
 	const loaded = $derived(answers.every((answer) => answer !== undefined) && entriesSettled);
 	// Where a first entry goes: the first collection the project made (Pages), else Articles.
@@ -74,7 +72,7 @@
 
 <svelte:head><title>{mine.data?.name ?? 'Overview'} · Colophon Studio</title></svelte:head>
 
-<PageHeader title={mine.data?.name ?? 'Overview'}>
+<PageHeader title={mine.data?.name ?? 'Overview'} display>
 	{#snippet meta()}
 		{#if mine.data}
 			<span>{mine.data.slug}</span>
@@ -100,45 +98,56 @@
 			/>
 		{/key}
 	{/if}
-	<section class="stagger grid gap-3 sm:grid-cols-2 xl:grid-cols-4" aria-label="At a glance">
-		<a class="stat lift" style="--i: 0" href={live ? resolve('/projects/[project]/releases/[generation]', { project, generation: String(live.generation) }) : resolve('/projects/[project]/releases', { project })}>
-			<span class="stat-label">Live release</span>
+	<section class="stagger grid gap-3 sm:grid-cols-2 xl:grid-cols-3" aria-label="At a glance" data-testid="at-a-glance">
+		<a class="stat lift" style="--i: 0" href={live ? resolve('/projects/[project]/releases/[generation]', { project, generation: String(live.generation) }) : resolve('/projects/[project]/releases', { project })} data-testid="live-tile">
+			<span class="stat-label">Live on your site</span>
 			{#if releases.isPending}
-				<Skeleton class="h-8 w-24" />
+				<span class="stat-value" aria-busy="true"><Skeleton class="h-7 w-10" data-testid="loading-figure" /><span class="sr-only">Loading</span></span>
+				<Skeleton class="h-4 w-40" />
 			{:else if releases.isError}
 				<span class="stat-value">Unknown</span>
 				<span class="text-xs text-destructive" data-testid="releases-problem">Couldn't check what's live</span>
 			{:else if live}
-				<span class="stat-value">{releaseName(live.generation)}</span>
-				<ReleaseLabel release={live} testid="overview-label" />
+				<span class="stat-value tabular">{releaseName(live.generation)}</span>
+				<span class="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground">
+					<ReleaseLabel release={live} testid="overview-label" />
+					<span title={new Date(live.published_at).toLocaleString()}>{ago(live.published_at)}, by {live.published_by_name ?? live.published_by}</span>
+				</span>
 			{:else}
-				<span class="stat-value">None yet</span>
+				<span class="stat-value">Nothing yet</span>
 				<span class="text-xs text-muted-foreground">Nothing is published</span>
 			{/if}
 		</a>
-		<a class="stat lift" style="--i: 1" href={resolve('/projects/[project]/changesets', { project })}>
+		<a class="stat lift" style="--i: 1" href={resolve('/projects/[project]/changesets', { project })} data-testid="waiting-tile">
 			<span class="stat-label">Waiting for review</span>
 			{#if sets.isError}
 				<span class="stat-value">Unknown</span>
 				<span class="text-xs text-destructive">Couldn't load {PUBLISH_REQUESTS}</span>
+			{:else if sets.isPending}
+				<span class="stat-value" aria-busy="true"><Skeleton class="h-7 w-10" data-testid="loading-figure" /><span class="sr-only">Loading</span></span>
+				<Skeleton class="h-4 w-36" />
 			{:else}
-				<span class="stat-value tabular" data-testid="awaiting-count">{(sets.data ?? []).filter((set) => set.status.state === 'awaiting_review').length}</span>
+				<span class="stat-value tabular" data-testid="awaiting-count">{sets.data.filter((set) => set.status.state === 'awaiting_review').length}</span>
 				<span class="text-xs text-muted-foreground">{count(waiting.length, PUBLISH_REQUEST, PUBLISH_REQUESTS)} in progress</span>
 			{/if}
 		</a>
-		<div class="stat" style="--i: 2">
+		<div class="stat" style="--i: 2" data-testid="entries-tile">
 			<span class="stat-label">Entries</span>
-			<span class="stat-value tabular" data-testid="entry-count">{all.length}{more ? '+' : ''}</span>
-			<span class="flex flex-wrap gap-x-3 gap-y-1 text-xs text-muted-foreground">
-				<span><span class="tally-dot bg-live ring-live-ring" aria-hidden="true"></span>{tally.live} live</span>
-				<span><span class="tally-dot bg-changed ring-changed-ring" aria-hidden="true"></span>{tally.changed} changed</span>
-				<span><span class="tally-dot bg-draft ring-draft-ring" aria-hidden="true"></span>{tally.draft} draft</span>
-			</span>
-		</div>
-		<div class="stat" style="--i: 3">
-			<span class="stat-label">Last published</span>
-			<span class="stat-value">{live ? ago(live.published_at) : 'Never'}</span>
-			<span class="truncate text-xs text-muted-foreground">{live ? `by ${live.published_by_name ?? live.published_by}` : 'No releases yet'}</span>
+			{#if failed.length > 0}
+				<span class="stat-value">Unknown</span>
+				<span class="text-xs text-destructive">Couldn't count {failed.map((type) => type.definition.name).join(', ')}</span>
+			{:else if !counted}
+				<span class="stat-value" aria-busy="true"><Skeleton class="h-7 w-10" data-testid="loading-figure" /><span class="sr-only">Loading</span></span>
+				<Skeleton class="h-4 w-44" />
+			{:else}
+				<span class="stat-value tabular" data-testid="entry-count">{tally.total.toLocaleString()}{more ? '+' : ''}</span>
+				<span class="flex flex-wrap gap-x-3 gap-y-1 text-xs text-muted-foreground" data-testid="entry-tally" title={tallyText(tally, more)}>
+					<span
+						><span class="tally-dot bg-live ring-live-ring" aria-hidden="true"></span>{tally.live.toLocaleString()}{more ? '+' : ''} live{#if tally.withChanges > 0}&nbsp;({tally.withChanges.toLocaleString()}{more ? '+' : ''} with unpublished changes){/if}</span
+					>
+					<span><span class="tally-dot bg-draft ring-draft-ring" aria-hidden="true"></span>{tally.drafts.toLocaleString()}{more ? '+' : ''} {tally.drafts === 1 && !more ? 'draft' : 'drafts'}</span>
+				</span>
+			{/if}
 		</div>
 	</section>
 
@@ -152,10 +161,10 @@
 					<Problem error={firstError ?? new Error('')} what={failed.map((type) => type.definition.name).join(', ')} retry={() => lists.forEach((list) => list.isError && list.refetch())} />
 				</div>
 			{/if}
-			<div class="stagger overflow-hidden rounded-xl border border-border bg-card" class:hidden={recent.length === 0}>
+			<div class="stagger section-ground overflow-hidden rounded-xl border border-border" class:hidden={recent.length === 0}>
 				{#each recent as { type, entry }, index (entry.id)}
 					<a
-						class="rule-dotted flex items-center gap-3 px-4 py-3 transition-colors last:border-b-0 hover:bg-muted/50"
+						class="rule-dotted flex items-center gap-3 px-4 py-3 transition-colors last:border-b-0 hover:bg-[var(--surface-section-hover)]"
 						style="--i: {index}"
 						href={resolve('/projects/[project]/[collection]/[entry]', { project, collection: type.slug, entry: entry.id })}
 					>
@@ -170,13 +179,23 @@
 			</div>
 			{#if recent.length === 0 && failed.length === 0}
 				{#if !entriesSettled}
-					<p class="px-4 py-8 text-center text-sm text-muted-foreground">Loading…</p>
+					<!-- The shape of the list it will be, not a word: rows of a title and a line. -->
+					<div class="overflow-hidden rounded-xl border border-border bg-card" aria-busy="true" data-testid="recent-loading">
+						<span class="sr-only">Loading the recent edits</span>
+						{#each [0, 1, 2, 3] as row (row)}
+							<div class="rule-dotted flex items-center gap-3 px-4 py-3 last:border-b-0">
+								<Skeleton class="size-4 shrink-0" />
+								<span class="grid flex-1 gap-1.5"><Skeleton class="h-4 w-2/3" /><Skeleton class="h-3 w-1/4" /></span>
+								<Skeleton class="h-6 w-16 rounded-full" />
+							</div>
+						{/each}
+					</div>
 				{:else}
 					<EmptyState icon={PenLineIcon} title="Nothing written yet" testid="overview-empty">
 						Everything written here appears in this list, newest first.
 						{#snippet action()}
 							{#if main && may(mine.data, 'content.create', main.slug)}
-								<Button href={resolve('/projects/[project]/[collection]', { project, collection: main.slug }) + '?new=1'}>Write the first {oneOf(main.definition.name)}</Button>
+								<Button variant="outline" href={resolve('/projects/[project]/[collection]', { project, collection: main.slug }) + '?new=1'}>Write the first {oneOf(main.definition.name)}</Button>
 							{/if}
 						{/snippet}
 					</EmptyState>
@@ -195,7 +214,7 @@
 				<ul class="space-y-2">
 					{#each waiting.slice(0, 5) as set (set.id)}
 						<li>
-							<a class="lift block rounded-lg border border-border bg-card p-3 hover:border-foreground/20" href={resolve('/projects/[project]/changesets/[changeset]', { project, changeset: set.id })}>
+							<a class="lift section-ground block rounded-lg border border-border p-3 hover:border-foreground/20" href={resolve('/projects/[project]/changesets/[changeset]', { project, changeset: set.id })}>
 								<span class="block truncate text-sm font-medium">{set.title}</span>
 								<span class="mt-1.5 flex items-center justify-between gap-2">
 									<ChangesetBadge state={set.status.state} />
@@ -239,16 +258,20 @@
 {/if}
 
 <style>
-	/* The design system's card (D-182): its padding and radius tokens, a hairline, flat. */
+	/* The design system's card (D-182): its padding and radius tokens, a hairline, flat; on the website's
+	   section ground (D-210 addendum, Studio v2). */
 	.stat {
 		display: flex;
 		flex-direction: column;
-		gap: 0.375rem;
-		padding: var(--card-padding-sm) var(--card-padding);
+		gap: 0.5rem;
+		padding: var(--card-padding);
 		border: 1px solid var(--border);
 		border-radius: var(--radius-card);
-		background: var(--card);
+		background: var(--surface-section);
 		align-items: flex-start;
+	}
+	.section-ground {
+		background: var(--surface-section);
 	}
 	a.stat:hover {
 		border-color: color-mix(in oklch, var(--foreground) 20%, transparent);
@@ -268,12 +291,13 @@
 		font-size: 0.875rem;
 		color: var(--muted-foreground);
 	}
+	/* The figures in Geist Pixel, the website's display face: "None yet", "0", "Never" read as display type. */
 	.stat-value {
-		font-family: var(--font-display);
-		font-size: 1.75rem;
-		line-height: 2.25rem;
-		font-weight: 560;
-		letter-spacing: -0.015em;
-		font-variant-numeric: tabular-nums;
+		font-family: var(--font-title);
+		font-size: 3rem;
+		line-height: 1;
+		font-weight: 400;
+		font-synthesis: none;
+		letter-spacing: 0;
 	}
 </style>

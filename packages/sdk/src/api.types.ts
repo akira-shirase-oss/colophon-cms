@@ -1135,7 +1135,42 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/projects/{project}/environments/{environment}/releases/{generation}/changes": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** What a release changed for readers, as far as your role reads it */
+        get: operations["listReleaseChanges"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/projects/{project}/environments/{environment}/releases/{generation}/rollback": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** What a rollback to that release would restore and take down, without making it */
+        get: operations["previewRollback"];
+        put?: never;
+        /** Open a changeset restoring what that release published */
+        post: operations["rollbackRelease"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/projects/{project}/environments/{environment}/releases/{generation}/undo": {
         parameters: {
             query?: never;
             header?: never;
@@ -1144,8 +1179,8 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Open a changeset restoring what that release published */
-        post: operations["rollbackRelease"];
+        /** Put back what the newest release took down, as the next release (D-184) */
+        post: operations["undoRelease"];
         delete?: never;
         options?: never;
         head?: never;
@@ -2160,6 +2195,29 @@ export interface components {
             /** Format: date-time */
             updated_at?: string;
         };
+        ChangeView: {
+            collection: string;
+            /** @description the entry was deleted since (D-080) */
+            entry_deleted: boolean;
+            /** Format: uuid */
+            entry_id: string;
+            /** @enum {string} */
+            kind: "publish" | "unpublish";
+            /**
+             * Format: uuid
+             * @description what readers had just before: the version it replaced or took down; null when the entry was new to them
+             */
+            previous_revision_id: string | null;
+            /**
+             * Format: uuid
+             * @description the version it published, or took down
+             */
+            revision_id: string;
+            /** @description the title of the version it published, or took down */
+            title: string;
+            /** @description your role doesn't read the entry's title field, so `title` is blank */
+            title_hidden: boolean;
+        };
         ChangesetItemView: {
             collection?: string;
             content_hash?: string;
@@ -2179,6 +2237,8 @@ export interface components {
             revision_id?: string;
             schema_version?: number;
             title?: string;
+            /** @description your role doesn't read the entry's title field, so `title` is blank */
+            title_hidden?: boolean;
         };
         ChangesetSummaryView: {
             /** Format: uuid */
@@ -2207,8 +2267,11 @@ export interface components {
             created_by?: string;
             /** @description `sha256:<hex>` — its `ETag`, and what reviews bind */
             hash?: string;
+            /** @description items left out because your role can't read their entries */
+            hidden_items?: number;
             /** Format: uuid */
             id?: string;
+            /** @description the items your role reads (D-185); the hash covers every item */
             items?: components["schemas"]["ChangesetItemView"][];
             reviews?: components["schemas"]["ReviewView"][];
             rollback_generation?: number | null;
@@ -2548,6 +2611,21 @@ export interface components {
         };
         /** @description one JSON object per line, each an entry's content document */
         JsonLines: string;
+        KeptDownView: {
+            collection: string;
+            /** @description deleted since (D-080), so it can't be published again */
+            entry_deleted: boolean;
+            /** Format: uuid */
+            entry_id: string;
+            /** Format: uuid */
+            revision_id: string;
+            /** @description the release that took it down */
+            taken_down_in: number;
+            /** @description the title readers had at that release */
+            title: string;
+            /** @description your role doesn't read the title field, so `title` is blank */
+            title_hidden: boolean;
+        };
         LiveView: {
             generation?: number;
             /** Format: uuid */
@@ -3081,7 +3159,7 @@ export interface components {
             /** @enum {string} */
             status: "starting" | "ready" | "degraded" | "not_ready" | "draining";
         };
-        /** @description a release — every `ReleaseView` field, at the top level — plus its deliveries and observations: the publish receipt */
+        /** @description a release — every `ReleaseView` field, at the top level — plus its deliveries and observations: the publish receipt. What it changed for readers pages at `…/releases/{generation}/changes` */
         ReceiptView: {
             /** @description the approved hash it published */
             changeset_hash: string;
@@ -3230,6 +3308,49 @@ export interface components {
             /** Format: date-time */
             updated_at: string;
             version: number;
+        };
+        RollbackLineView: {
+            collection: string;
+            /** Format: uuid */
+            entry_id: string;
+            /**
+             * @description `publish` puts back the version readers had then; `unpublish` takes down what they didn't have
+             * @enum {string}
+             */
+            kind: "publish" | "unpublish";
+            /**
+             * Format: uuid
+             * @description what readers get of the entry now, if anything
+             */
+            live_revision_id: string | null;
+            /** Format: uuid */
+            revision_id: string;
+            /** @description the title of the version it pins */
+            title: string;
+            /** @description your role doesn't read the title field, so `title` is blank */
+            title_hidden: boolean;
+        };
+        /** @description what `POST` would build now (the same pins), and what it would leave down */
+        RollbackPreviewView: {
+            /** @description the release it restores */
+            generation: number;
+            /** @description `sha256:<hex>` of the pins a rollback made now would carry — the `ETag`; send it as `If-Match` on `POST`. Null when `too_large` */
+            hash: string | null;
+            /** @description up to 100 entries readers had at that release that it won't bring back, because they were taken down since (D-049), by title, less those your role can't read */
+            kept_down: components["schemas"]["KeptDownView"][];
+            kept_down_total: number;
+            /** @description the environment's current generation */
+            latest: number;
+            /** @description the most entries one rollback may change */
+            max_items: number;
+            /** @description entries it would put back */
+            publish_total: number;
+            /** @description the first 100 of the pins a rollback made now would carry, publishes first, each by entry id, less those your role can't read; empty when it would be refused `already_at`, and when `too_large` */
+            restore: components["schemas"]["RollbackLineView"][];
+            /** @description it would change more than `max_items`, so `POST` refuses it `rollback_too_large`; roll back to a nearer release first */
+            too_large: boolean;
+            /** @description entries it would take down */
+            unpublish_total: number;
         };
         ScheduleView: {
             changeset_hash?: string;
@@ -3455,6 +3576,18 @@ export interface components {
             definition_hash?: string;
             slug?: string;
             version?: number;
+        };
+        UndoneView: {
+            changeset_hash: string;
+            /** Format: uuid */
+            changeset_id: string;
+            /** @description how many entries readers get again */
+            entries_restored: number;
+            epoch: number;
+            /** @description the release that put things back */
+            generation: number;
+            /** @description the release it undid */
+            undo_of: number;
         };
         /**
          * Format: binary
@@ -5017,6 +5150,15 @@ export interface operations {
                     "application/json": components["schemas"]["Error"];
                 };
             };
+            /** @description `body_stalled` — the body stopped arriving for 15 s, or took longer than its bound */
+            408: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
             /** @description `idempotency_key_reused` — this `Idempotency-Key` was used before for a different request */
             409: {
                 headers: {
@@ -5044,7 +5186,7 @@ export interface operations {
                     "application/json": components["schemas"]["Error"];
                 };
             };
-            /** @description `rate_limited` — over the per-credential or per-address limit; `Retry-After` */
+            /** @description `too_many_uploads` — this session or token has four uploads in progress (Retry-After); over the per-credential or per-address limit; `Retry-After` */
             429: {
                 headers: {
                     [name: string]: unknown;
@@ -5053,7 +5195,7 @@ export interface operations {
                     "application/json": components["schemas"]["Error"];
                 };
             };
-            /** @description `unavailable` — uploads are not configured on this server */
+            /** @description `unavailable, uploads_busy` — uploads are not configured on this server, or the uploads in progress hold its upload memory (Retry-After) */
             503: {
                 headers: {
                     [name: string]: unknown;
@@ -5474,6 +5616,15 @@ export interface operations {
                     "application/json": components["schemas"]["Error"];
                 };
             };
+            /** @description `body_stalled` — the body stopped arriving for 15 s, or took longer than its bound */
+            408: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
             /** @description `asset_quarantined, asset_rejected, already_deleted` — its first verdict is still out, it has no version to replace, or it is gone; `idempotency_key_reused` — this `Idempotency-Key` was used before for a different request */
             409: {
                 headers: {
@@ -5501,7 +5652,7 @@ export interface operations {
                     "application/json": components["schemas"]["Error"];
                 };
             };
-            /** @description `rate_limited` — over the per-credential or per-address limit; `Retry-After` */
+            /** @description `too_many_uploads` — this session or token has four uploads in progress (Retry-After); over the per-credential or per-address limit; `Retry-After` */
             429: {
                 headers: {
                     [name: string]: unknown;
@@ -5510,7 +5661,7 @@ export interface operations {
                     "application/json": components["schemas"]["Error"];
                 };
             };
-            /** @description `unavailable` — uploads are not configured on this server */
+            /** @description `unavailable, uploads_busy` — uploads are not configured on this server, or the uploads in progress hold its upload memory (Retry-After) */
             503: {
                 headers: {
                     [name: string]: unknown;
@@ -6551,7 +6702,7 @@ export interface operations {
                     "application/json": components["schemas"]["Error"];
                 };
             };
-            /** @description `missing_permission, agent_self_review` — the role can't review it, or a token tried to approve a token's changeset */
+            /** @description `missing_permission, agent_self_review, cannot_review_hidden` — the role can't review it, a token tried to approve a token's changeset, or an approval names a version the role can't read in full */
             403: {
                 headers: {
                     [name: string]: unknown;
@@ -11209,12 +11360,179 @@ export interface operations {
             };
         };
     };
+    listReleaseChanges: {
+        parameters: {
+            query?: {
+                /** @description page size: 1–100, default 100 */
+                limit?: number;
+                /** @description the `next_cursor` a previous page answered */
+                cursor?: string;
+            };
+            header?: never;
+            path: {
+                /** @description the project's id */
+                project: string;
+                /** @description the environment's slug, such as `production` */
+                environment: string;
+                /** @description the release's generation */
+                generation: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description a page of the entries it published (first) and took down, each by entry id; an entry your role can't read is left out, so a page may hold fewer than `limit` — follow `next_cursor` until it is `null` */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        data: components["schemas"]["ChangeView"][];
+                        /** @description pass back in the operation's cursor parameter for the next page; `null` on the last page */
+                        next_cursor: string | null;
+                    };
+                };
+            };
+            /** @description `bad_request` — `limit` out of range, or a cursor that isn't this list's */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description `unauthorized` — not signed in, the credential is invalid, or the token was revoked */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description `not_found` — no such resource — or one the caller may not see, which looks the same */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description `rate_limited` — over the per-credential or per-address limit; `Retry-After` */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description any other failure, in the one error envelope */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    previewRollback: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description the project's id */
+                project: string;
+                /** @description the environment's slug, such as `production` */
+                environment: string;
+                /** @description the release's generation */
+                generation: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description ok */
+            200: {
+                headers: {
+                    ETag?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        data: components["schemas"]["RollbackPreviewView"];
+                    };
+                };
+            };
+            /** @description `unauthorized` — not signed in, the credential is invalid, or the token was revoked */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description `missing_permission and friends` — signed in, but the role does not allow this */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description `not_found` — no such resource — or one the caller may not see, which looks the same */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description `invalid_generation` — only an earlier release than the live one */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description `rate_limited` — over the per-credential or per-address limit; `Retry-After` */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description any other failure, in the one error envelope */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
     rollbackRelease: {
         parameters: {
             query?: never;
             header: {
                 /** @description 16–128 of `A-Z a-z 0-9 - _`, scoped to the actor, operation and environment */
                 "idempotency-key": string;
+                /** @description the rollback preview's `ETag`: refused `stale_changeset` if the pins moved since */
+                "if-match"?: string;
             };
             path: {
                 /** @description the project's id */
@@ -11262,6 +11580,15 @@ export interface operations {
                     "application/json": components["schemas"]["Error"];
                 };
             };
+            /** @description `missing_permission and friends` — signed in, but the role does not allow this */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
             /** @description `not_found` — no such resource — or one the caller may not see, which looks the same */
             404: {
                 headers: {
@@ -11271,7 +11598,7 @@ export interface operations {
                     "application/json": components["schemas"]["Error"];
                 };
             };
-            /** @description `idempotency_key_reused` — this `Idempotency-Key` was used before for a different request */
+            /** @description `stale_changeset` — the pins moved since the preview named in `If-Match`; `idempotency_key_reused` — this `Idempotency-Key` was used before for a different request */
             409: {
                 headers: {
                     [name: string]: unknown;
@@ -11280,7 +11607,111 @@ export interface operations {
                     "application/json": components["schemas"]["Error"];
                 };
             };
-            /** @description `invalid_field` — a rollback takes no `entries` or `unpublish` */
+            /** @description `invalid_field` — a rollback takes no `entries` or `unpublish`; `invalid_generation, already_at, rollback_too_large` — not an earlier release, nothing to restore, or more than 190 entries */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description `precondition_required` — a required `If-Match` or `Idempotency-Key` is missing */
+            428: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description `rate_limited` — over the per-credential or per-address limit; `Retry-After` */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description any other failure, in the one error envelope */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    undoRelease: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description 16–128 of `A-Z a-z 0-9 - _`, scoped to the actor, operation and environment */
+                "idempotency-key": string;
+            };
+            path: {
+                /** @description the project's id */
+                project: string;
+                /** @description the environment's slug, such as `production` */
+                environment: string;
+                /** @description the release's generation */
+                generation: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description created */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        data: components["schemas"]["UndoneView"];
+                    };
+                };
+            };
+            /** @description `unauthorized` — not signed in, the credential is invalid, or the token was revoked */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description `not_your_release, agent_self_review, missing_permission` — only the person who published the release may undo it, and never an API token */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description `not_found` — no such resource — or one the caller may not see, which looks the same */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description `changed_since` — another release went out after it, before or during this request; `not_undoable, undo_expired, needs_review` — it published something, its 60 seconds passed, or publishing here goes through review; `entry_deleted, revision_outdated, references_unpublished, asset_not_usable` — what it took down can't be put back as it was; `idempotency_key_reused` — this `Idempotency-Key` was used before for a different request */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description `invalid_generation` — there is no such release */
             422: {
                 headers: {
                     [name: string]: unknown;

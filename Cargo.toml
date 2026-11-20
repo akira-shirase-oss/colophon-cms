@@ -30,6 +30,8 @@ colophon-mcp = { path = "crates/colophon-mcp" }
 # one async runtime (Tokio); one TLS stack (rustls on aws-lc-rs) for every client that needs one.
 anyhow = "1.0.104"
 argon2 = "0.5.3"
+# sqlx takes its slow-statement level as a `log` filter (D-221).
+log = "0.4.34"
 # The GraphQL executor for the per-collection endpoint (DX.10, D-115): the schema is built
 # per request from the project's content types (`dynamic-schema`), resolvers compile each
 # read to the same bounded query document `POST …/entries/query` runs. No `graphiql`,

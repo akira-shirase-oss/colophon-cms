@@ -75,7 +75,13 @@ Step 2.3 (D-046): `crates/colophon-worker`, run by `colophon-server --role worke
   session and flow tables through `colophon_retention`'s definer functions, which the worker may
   execute but never read. What it never removes — `deletion_ledger`, content history, `uncertain`
   reservations — is spelled out in [module 02](02-db.md) "Retention".
-- **Not yet:** per-project limits, signed announcements, wake-ups instead of polling,
+- **Asset verifies are woken, not only polled** (D-218): the asset worker holds one listener per process (its own
+  connection, `application_name` `colophon-asset-wake`) on the change-hint channel and wakes on any `k=assets` hint,
+  which an `asset_jobs` insert produces and the pump sends within 100 ms; the claim stays the `SKIP LOCKED` one, so
+  workers woken together take each job once, and a burst of hints is one wake. `COLOPHON_WORKER_POLL_MS` remains the
+  fallback: a lost connection wakes the worker and reconnects; a failure is logged once and retried with a backoff
+  doubling to 5 s. Measured before: a verify's work was p50 8 ms but its wait p50 520 ms, the poll.
+- **Not yet:** per-project limits, signed announcements, wake-ups instead of polling for delivery jobs,
   reconciliation beyond repeating with the same key.
 
 ## Why it exists

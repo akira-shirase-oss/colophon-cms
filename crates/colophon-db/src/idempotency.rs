@@ -73,6 +73,12 @@ pub async fn claim(
     }
 }
 
+/// The most bytes a recorded answer may hold: `idempotency_records.response`'s CHECK (migration
+/// 0002). An answer that could be longer can't be recorded, and the write it answers would fail
+/// with it (the same transaction) — so every idempotent write keeps its answer under this
+/// (D-185; the rollback cap is sized from it).
+pub const MAX_RESPONSE_BYTES: usize = 300_000;
+
 /// Records the answer for a key claimed in this transaction.
 pub async fn complete(
     tx: &mut ProjectTransaction,

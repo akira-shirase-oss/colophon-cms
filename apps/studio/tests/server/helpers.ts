@@ -140,6 +140,22 @@ export async function member(owner: Page, browser: Browser, project: string, rol
 	return page;
 }
 
+/** Opens an entry's Details in the editor's side panel (closed until asked, D-184). */
+export async function openDetails(page: Page) {
+	const details = page.getByTestId('details');
+	if ((await details.getAttribute('open')) === null) await details.locator('> summary').click();
+}
+
+/** Opens an entry's Details and, inside it, Technical details: the public address, the ids. */
+export async function openTechnicalDetails(page: Page) {
+	await openDetails(page);
+	const technical = page.getByTestId('entry-details').getByTestId('technical-details');
+	if ((await technical.getAttribute('open')) === null) await technical.locator('summary').click();
+}
+
+/** A toast that says `text`. */
+export const toast = (page: Page, text: string | RegExp) => page.locator('[data-sonner-toast]').filter({ hasText: text });
+
 /** With STUDIO_SHOTS_DIR set, saves a full-page photograph of `page` there as `<name>.png`. */
 export async function shot(page: Page, name: string) {
 	const directory = process.env['STUDIO_SHOTS_DIR'];
@@ -281,4 +297,15 @@ export function nextAmbiguous(now: number, days: number): {
 		}
 	}
 	return null;
+}
+
+/**
+ * The two reads that decide what a person may do on a page: the project (their role) and who is
+ * signed in. Start it before the navigation and await it before judging anything the role decides,
+ * above all an absence: before these arrive the Studio offers nothing to anyone, so "no Cancel"
+ * would pass on that first frame whatever the role.
+ */
+export function roleReads(page: Page, project: string): Promise<unknown> {
+	const get = (path: string) => page.waitForResponse((response) => response.request().method() === 'GET' && new URL(response.url()).pathname === path && response.ok());
+	return Promise.all([get(`/api/v1/projects/${project}`), get('/me')]);
 }
