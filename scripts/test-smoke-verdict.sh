@@ -104,10 +104,22 @@ label='integration: a green run (its scope ignores the smokes job entries)'
 iverdict "$list" "$iran" "" "$tmp/irun.tsv" || { echo "FAIL: $label:"; cat "$tmp/out"; exit 1; }
 # D-221 is closed: runner speed is normalised (rates and limits scaled to the runner), so a steady smoke that still
 # fails its limit fails the job; nothing tolerates it.
-sed 's/^integration\/publishing-steady\t9.5/integration\/publishing-steady\t900/' "$tmp/irun.tsv" >"$tmp/islow.tsv"
-label='integration: publishing failing its (scaled) limit fails, no tolerance listed'
-if iverdict "$list" "$iran" "integration/publishing-steady" "$tmp/islow.tsv"; then echo "FAIL: $label accepted"; cat "$tmp/out"; exit 1; fi
-grep -q 'smoke integration/publishing-steady failed and is not on' "$tmp/out" || { echo "FAIL: $label:"; cat "$tmp/out"; exit 1; }
+sed 's/^integration\/entries-steady\t9.5/integration\/entries-steady\t900/' "$tmp/irun.tsv" >"$tmp/islow.tsv"
+label='integration: entries failing its (scaled) limit fails, no tolerance listed'
+if iverdict "$list" "$iran" "integration/entries-steady" "$tmp/islow.tsv"; then echo "FAIL: $label accepted"; cat "$tmp/out"; exit 1; fi
+grep -q 'smoke integration/entries-steady failed and is not on' "$tmp/out" || { echo "FAIL: $label:"; cat "$tmp/out"; exit 1; }
+# tokens, schedules and publishing steady are listed flapping under D-223 until its phase 2 (write smokes run under
+# their path's capacity): the 9V74's measured p99s (CI 44694257974) are tolerated, past each ceiling still fails.
+for case in "tokens 529.14 750" "schedules 505.53 750" "publishing 781.17 1100"; do
+  read -r name measured past <<<"$case"
+  sed "s/^integration\/$name-steady\t9.5/integration\/$name-steady\t$measured/" "$tmp/irun.tsv" >"$tmp/iwrite.tsv"
+  label="integration: $name flapping at its measured $measured ms, under its D-223 ceiling"
+  iverdict "$list" "$iran" "integration/$name-steady" "$tmp/iwrite.tsv" || { echo "FAIL: $label:"; cat "$tmp/out"; exit 1; }
+  grep -q "flap: integration/$name-steady failed its limit" "$tmp/out" || { echo "FAIL: $label:"; cat "$tmp/out"; exit 1; }
+  sed "s/^integration\/$name-steady\t9.5/integration\/$name-steady\t$past/" "$tmp/irun.tsv" >"$tmp/iwrite.tsv"
+  label="integration: $name past its D-223 ceiling ($past ms) fails"
+  if iverdict "$list" "$iran" "integration/$name-steady" "$tmp/iwrite.tsv"; then echo "FAIL: $label accepted"; cat "$tmp/out"; exit 1; fi
+done
 # members-steady is listed flapping under D-223 (the member-change queue behind slow COMMITs), with a 1,500 ms ceiling
 # that expires with D-223: CI 44673105548's 1314 ms is tolerated, anything past the ceiling still fails.
 sed 's/^integration\/members-steady\t9.5/integration\/members-steady\t1313.778/' "$tmp/irun.tsv" >"$tmp/imembers.tsv"
