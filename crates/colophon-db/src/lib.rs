@@ -42,6 +42,7 @@ pub mod setup;
 pub mod throttle;
 pub mod tokens;
 pub mod transactions;
+pub mod undo;
 pub mod work;
 
 use std::{str::FromStr, time::Duration};
@@ -480,6 +481,23 @@ pub async fn listener(url: &str) -> Result<PgListener, DbError> {
     PgListener::connect_with(&pool)
         .await
         .map_err(DbError::Query)
+}
+
+/// A change-hint listener for a process that holds only a pool (the worker's asset wake-up, D-218): its own
+/// connection, as [`listener`]'s is, built from the pool's own options — the same URL and TLS rule — and named
+/// `application`, so an operator (or a test) can tell it apart in `pg_stat_activity`.
+pub async fn listener_from(pool: &PgPool, application: &str) -> Result<PgListener, DbError> {
+    let options = (*pool.connect_options())
+        .clone()
+        .application_name(application);
+    let own = PgPoolOptions::new()
+        .max_connections(1)
+        .max_lifetime(None)
+        .idle_timeout(None)
+        .connect_with(options)
+        .await
+        .map_err(DbError::Query)?;
+    PgListener::connect_with(&own).await.map_err(DbError::Query)
 }
 
 /// sqlx's URL errors describe the problem, but keep only the first line and drop anything

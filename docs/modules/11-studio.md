@@ -28,6 +28,16 @@ screen-reader journeys pass, and no screen ever shows a success the server has n
 - First-run setup.
 - The content list, the editor and the review screen.
 - Publishing status and delivery receipts.
+- The publishing flow (D-185, the 2026-11-17 UI audit's workstream 3): one entry-state helper
+  (`lib/entryState.ts`: live = has a live revision, unpublished changes a separate flag) for the
+  Overview, list filters and sidebar; one next step and one primary per request state
+  (`lib/requestState.ts`); a receipt pages "What went live" from `…/changes` and says how many
+  entries the role can't open; a rollback asks first (`lib/RollbackDialog.svelte`): totals,
+  what it puts back and takes down, what stays down and why (D-049, D-097), "too large" with
+  the way out, and a confirm that sends the preview's hash, so a publish behind its back shows
+  what changed instead of making a different request; a request's origin reads "Undo of
+  Release N" before "Rollback to Release N" (`lib/releaseOrigin.ts`); a reviewer whose role
+  can't read every item is offered Request changes, not Approve.
 - History and time travel.
 - The media picker and preview.
 - The developer area.
@@ -94,10 +104,12 @@ screen-reader journeys pass, and no screen ever shows a success the server has n
   never content — into the query invalidations a fresh visit would run: entries, drafts, history, changesets, stages,
   releases and their jobs and receipts, schedules, tasks, comments, migrations and their items, assets, members and
   invitations, roles, tokens, destinations and the audit trail all move as PostgreSQL commits, without a reload or a
-  poll. A `resync` event and every reconnect invalidates every key in the project, and so does the first open (all
-  but the builders' version-keyed `type`/`component` reads): a commit landing between a page's own loads and the
-  stream's open sent its hint to nobody, and a delivery that settled then read "pending" until a reload
-  (`tests/server/deliveries.spec.ts`, "settles before the live stream opens"). Every invalidation cancels a read
+  poll. A `resync` event and every reconnect invalidates every key in the project (all but the builders'
+  version-keyed `type`/`component` reads). The first open needn't (D-203, amending D-108): a project's reads wait
+  for its stream to open, at most 400 ms (`lib/streamGate.ts`), and the server subscribes before it answers, so
+  nothing loaded before the stream listened. Only when a read had to go ahead (a slow or refused stream) does the
+  first open re-read too, since a commit in between sent its hint to nobody
+  (`tests/server/deliveries.spec.ts`, "settles before the live stream opens"; `tests/server/one-read.spec.ts`). Every invalidation cancels a read
   already in flight first: while a query has no data yet, TanStack joins the read in flight rather than send a new
   one, and that read may predate the commit the hint announces, so its stale answer stood ("settles while the page is
   still loading its lists"). An entry's editor stays on screen when a refresh of it fails — a read turned away
@@ -367,6 +379,40 @@ screen-reader journeys pass, and no screen ever shows a success the server has n
   site check's URL is one page, and a site's paths are its own), so it waits on a route that says where each content
   type's entries live. Tests: `tests/server/entry-page.spec.ts`; `address.spec.ts` and `readers.spec.ts` open the
   drawer first.
+- **The entry editor's panel, rebuilt** (D-184, 2026-11-18, superseding the panel above; UI audit workstream 2). The
+  title is the page's H1, edited where it is read (`EntryTitle.svelte`; Enter moves to the body, a count appears from
+  80% of the limit); the eyebrow and page header are gone, the trail stays. Beside the fields, three blocks:
+  1. **Status card** — the `StatusBadge` and the save state on one row, then one sentence with the state's tone as a
+     rule: *Live in Release 3*, *Live in Release 3 · edited since*, *In review in “…”*, *Taken down in Release 5*,
+     *Not published yet*. Taken down is told from a new draft by the public read (410 against 404, `readerAbsence`,
+     one read per entry, refreshed with the entry list). In review comes from the shared changesets read; only the
+     newest ten waiting requests are read in full, so an editor never fans out over every request. A draft whose
+     content hash equals the live revision's is Live with nothing to publish (F3), so restoring the live version from
+     History says *Back to the live version — nothing to publish.*
+  2. **One next step** (`PublishEntry.svelte`): Publish, Publish changes, Publish again, Ask for review (a role that
+     can't approve) or Review the request (while it waits in one); none when readers have this version. Beside it
+     `⋯ More`: Copy public link (only while published), Duplicate, Technical details and, apart and in red,
+     Unpublish…, which asks *Take “…” off your site?* (Keep it live focused). Afterwards a toast offers **Undo** for
+     ten seconds: one request to `POST …/releases/{N}/undo` with one key per toast, sent again with the same key
+     (twice, then it says so) when no answer came back. The server decides (D-184): only the newest release, only a
+     takedown, only by its author, within 60 s, never by a token, never where publishing goes through review —
+     `needs_review` turns the toast into *Ask for review*. The draft is never touched, so newer changes, saved or
+     still being typed, stay and the entry reads *changed*.
+  3. **Language and Details** — the Language row (`EntryLanguage.svelte`, `lib/languages.ts`): the entry's language
+     by name and **Translate…**, a dialog listing languages by name with their tags ("French — fr"), leaving out
+     those taken, checking a typed tag as the server does; it sets the source language first when it is empty
+     (that was F4's 409), is disabled with the reason when a unique field would clash, and is hidden for single
+     types. Details, closed until asked: created and saved by whom, the public link, Technical details.
+  History is sittings (`EntryHistory.svelte`, `lib/history.ts`): one person's saves within five minutes are one row
+  with their avatar, the time and what changed in words (*Title edited · Body: +2 paragraphs*); the live version
+  ends its sitting and carries a rule; Compare and Restore show on hover or focus. Comments are a non-modal drawer
+  beside the content (Escape closes it and gives focus back). The rich-text toolbar groups headings and callouts in
+  two menus; an image keeps its own shape with its alt text as a caption and its actions floating; *From Title*
+  says why it has nothing to do. When the server can't be reached, one amber line across the form says *Colophon isn't
+  answering — your changes are saved on this device and will sync.* (*Offline — …* when the browser has no network;
+  *…aren't kept on this device, so keep this tab open.* when the local copy failed) with **Retry now**. Tests: `tests/server/editor-panel.spec.ts`,
+  `editor-states.spec.ts` (each state × 1440/390 × light/dark, axe, one primary), `undo.spec.ts`, `locales.spec.ts`,
+  `tests/history.spec.ts`; screenshots `docs/screens/editor-*`.
 - **Where Strapi was easier, fixed** (D-147, 2026-10-28; [research/strapi-vs-colophon-hands-on.md](../research/strapi-vs-colophon-hands-on.md)).
   Both products were used for the same seven first-day tasks; each change removes a place where Strapi was easier.
   - **First run in a container** (D-175): when `GET /api/v1/installation` says `install_kind: container`, both

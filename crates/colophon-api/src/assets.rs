@@ -9,13 +9,14 @@
 //! for clients polling `quarantined` → `usable`/`rejected`.
 
 use axum::{
-    Json,
-    body::Bytes,
+    Extension, Json,
+    body::{Body, Bytes},
     extract::{Path, Query, State, rejection::JsonRejection},
     http::{HeaderMap, StatusCode, header},
     response::Response,
 };
 use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
+use http_body_util::BodyExt as _;
 use object_store::ObjectStoreExt;
 use serde::Deserialize;
 use serde_json::{Value, json};
@@ -29,8 +30,10 @@ use crate::{
     ApiError,
     entries::{idempotency_key, json, open, request_hash},
     error::StillNeeded,
+    middleware::UploadDeadline,
     session::{SignedIn, services},
     state::AppState,
+    uploads,
 };
 
 /// Uploads are claimed under this operation.
@@ -82,8 +85,9 @@ pub(crate) async fn upload(
     State(state): State<AppState>,
     caller: SignedIn,
     Path(path): Path<ListPath>,
+    deadline: Option<Extension<UploadDeadline>>,
     headers: HeaderMap,
-    body: Bytes,
+    body: Body,
 ) -> Result<Response, ApiError> {
     let store = services(&state)?
         .assets
@@ -92,7 +96,6 @@ pub(crate) async fn upload(
             "uploads are not configured on this server",
         ))?;
     let key = idempotency_key(&headers)?;
-    let intent = read_intent(&headers, body.len() as u64)?;
     // Who may upload and what the object's key is are reads: done and closed before the store
     // sees a byte, so a refused call never leaves an object (and no transaction spans the
     // write). Keys name the environment by id, as the public key does.
@@ -106,71 +109,150 @@ pub(crate) async fn upload(
     )?;
     let environment = seen.environment;
     seen.commit().await.map_err(ApiError::from_db)?;
-    let asset = Uuid::now_v7();
-    let storage_name = format!("{asset}-{}", &Uuid::now_v7().simple().to_string()[..8]);
-    let quarantine_key = quarantine_key(&path.project, &environment.to_string(), &storage_name);
-    store
-        .put(
-            &object_store::path::Path::from(quarantine_key.clone()),
-            body.into(),
+    // Only now, signed in and allowed, are the bytes read (D-215): within the upload bounds, paced
+    // by the body's own arrival; then the request deadline covers the server's work on them.
+    let (_permit, body) = receive(&state, caller, &headers, body).await?;
+    let intent = read_intent(&headers, body.len() as u64)?;
+    within(deadline, async move {
+        let asset = Uuid::now_v7();
+        let storage_name = format!("{asset}-{}", &Uuid::now_v7().simple().to_string()[..8]);
+        let quarantine_key = quarantine_key(&path.project, &environment.to_string(), &storage_name);
+        store
+            .put(
+                &object_store::path::Path::from(quarantine_key.clone()),
+                body.into(),
+            )
+            .await
+            .map_err(|error| {
+                tracing::warn!(error = %error, "quarantine write failed");
+                ApiError::Unavailable("the object store refused the upload")
+            })?;
+        let hash = request_hash(&[
+            UPLOAD,
+            intent.file_name.as_str(),
+            intent.declared_type.as_str(),
+            &intent.size.to_string(),
+        ]);
+        let mut tx = open(&state, caller, &path.project, &path.environment).await?;
+        match idempotency::claim(&mut tx, UPLOAD, key, &hash)
+            .await
+            .map_err(ApiError::from_db)?
+        {
+            idempotency::Claim::Fresh => {}
+            idempotency::Claim::Mismatch => return Err(ApiError::IdempotencyKeyReused),
+            idempotency::Claim::Replay { status, response } => {
+                return Ok(json(
+                    StatusCode::from_u16(status).map_err(ApiError::internal)?,
+                    response,
+                    None,
+                    true,
+                ));
+            }
+        }
+        let job = Uuid::now_v7();
+        let deadline = time::OffsetDateTime::now_utc()
+            + time::Duration::seconds(colophon_domain::job::LIFETIME_SECS);
+        assets::insert(
+            &mut tx,
+            asset,
+            &intent.file_name,
+            &intent.declared_type,
+            i64::try_from(intent.size).unwrap_or(i64::MAX),
+            &quarantine_key,
+            caller.identity,
+            job,
+            key,
+            deadline,
         )
         .await
-        .map_err(|error| {
-            tracing::warn!(error = %error, "quarantine write failed");
-            ApiError::Unavailable("the object store refused the upload")
-        })?;
-    let hash = request_hash(&[
-        UPLOAD,
-        intent.file_name.as_str(),
-        intent.declared_type.as_str(),
-        &intent.size.to_string(),
-    ]);
-    let mut tx = open(&state, caller, &path.project, &path.environment).await?;
-    match idempotency::claim(&mut tx, UPLOAD, key, &hash)
-        .await
-        .map_err(ApiError::from_db)?
-    {
-        idempotency::Claim::Fresh => {}
-        idempotency::Claim::Mismatch => return Err(ApiError::IdempotencyKeyReused),
-        idempotency::Claim::Replay { status, response } => {
-            return Ok(json(
-                StatusCode::from_u16(status).map_err(ApiError::internal)?,
-                response,
-                None,
-                true,
-            ));
-        }
-    }
-    let job = Uuid::now_v7();
-    let deadline = time::OffsetDateTime::now_utc()
-        + time::Duration::seconds(colophon_domain::job::LIFETIME_SECS);
-    assets::insert(
-        &mut tx,
-        asset,
-        &intent.file_name,
-        &intent.declared_type,
-        i64::try_from(intent.size).unwrap_or(i64::MAX),
-        &quarantine_key,
-        caller.identity,
-        job,
-        key,
-        deadline,
-    )
-    .await
-    .map_err(ApiError::from_db)?;
-    let response = serde_json::to_string(&json!({"data": {
-        "id": asset,
-        "state": "quarantined",
-        "file_name": intent.file_name,
-        "declared_type": intent.declared_type,
-        "size_bytes": intent.size,
-    }}))
-    .map_err(ApiError::internal)?;
-    idempotency::complete(&mut tx, UPLOAD, key, 202, &response)
-        .await
         .map_err(ApiError::from_db)?;
-    tx.commit().await.map_err(ApiError::from_db)?;
-    Ok(json(StatusCode::ACCEPTED, response, None, false))
+        let response = serde_json::to_string(&json!({"data": {
+            "id": asset,
+            "state": "quarantined",
+            "file_name": intent.file_name,
+            "declared_type": intent.declared_type,
+            "size_bytes": intent.size,
+        }}))
+        .map_err(ApiError::internal)?;
+        idempotency::complete(&mut tx, UPLOAD, key, 202, &response)
+            .await
+            .map_err(ApiError::from_db)?;
+        tx.commit().await.map_err(ApiError::from_db)?;
+        Ok(json(StatusCode::ACCEPTED, response, None, false))
+    })
+    .await
+}
+
+/// Admits an upload into the bounds (D-215) and reads its body: never idle for longer than
+/// [`uploads::IDLE`], the whole of it within the gate's overall bound, at most the body limit.
+/// The permit holds the upload's share of the memory budget until the caller drops it.
+async fn receive(
+    state: &AppState,
+    caller: SignedIn,
+    headers: &HeaderMap,
+    body: Body,
+) -> Result<(uploads::UploadPermit, Bytes), ApiError> {
+    let gate = &services(state)?.uploads;
+    let declared = headers
+        .get(header::CONTENT_LENGTH)
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| value.parse::<u64>().ok());
+    if declared.is_some_and(|length| length > gate.body_limit() as u64) {
+        return Err(ApiError::PayloadTooLarge);
+    }
+    let permit = gate
+        .admit(caller.session, declared)
+        .await
+        .map_err(|refused| match refused {
+            uploads::Refused::Busy => ApiError::UploadsBusy,
+            uploads::Refused::TooMany => ApiError::TooManyUploads,
+        })?;
+    let limit = gate.body_limit();
+    let read = async move {
+        let mut body = body;
+        let mut bytes: Vec<u8> = Vec::with_capacity(
+            declared
+                .map_or(0, |length| usize::try_from(length).unwrap_or(limit))
+                .min(limit),
+        );
+        loop {
+            let frame = match tokio::time::timeout(uploads::IDLE, body.frame()).await {
+                Err(_) => return Err(ApiError::BodyStalled),
+                Ok(None) => break,
+                Ok(Some(Err(_))) => return Err(ApiError::BadRequest),
+                Ok(Some(Ok(frame))) => frame,
+            };
+            if let Ok(data) = frame.into_data() {
+                if bytes.len() + data.len() > limit {
+                    return Err(ApiError::PayloadTooLarge);
+                }
+                bytes.extend_from_slice(&data);
+            }
+        }
+        Ok(Bytes::from(bytes))
+    };
+    let body = tokio::time::timeout(gate.overall(), read)
+        .await
+        .map_err(|_| ApiError::BodyStalled)??;
+    Ok((permit, body))
+}
+
+/// The request deadline (handed over by the deadline layer, or the default without it) around the
+/// server's own work on an upload whose body has arrived.
+async fn within<F>(
+    deadline: Option<Extension<UploadDeadline>>,
+    work: F,
+) -> Result<Response, ApiError>
+where
+    F: std::future::Future<Output = Result<Response, ApiError>>,
+{
+    let limit = deadline.map_or_else(
+        || crate::middleware::HttpLimits::default().request_timeout,
+        |Extension(UploadDeadline(limit))| limit,
+    );
+    tokio::time::timeout(limit, work)
+        .await
+        .map_err(|_| ApiError::UploadDeadline)?
 }
 
 /// The upload contract's two headers — the file's name and its claimed type — checked into an
@@ -201,8 +283,9 @@ pub(crate) async fn replace(
     State(state): State<AppState>,
     caller: SignedIn,
     Path(path): Path<OnePath>,
+    deadline: Option<Extension<UploadDeadline>>,
     headers: HeaderMap,
-    body: Bytes,
+    body: Body,
 ) -> Result<Response, ApiError> {
     let store = services(&state)?
         .assets
@@ -211,7 +294,6 @@ pub(crate) async fn replace(
             "uploads are not configured on this server",
         ))?;
     let key = idempotency_key(&headers)?;
-    let intent = read_intent(&headers, body.len() as u64)?;
     let asset = Uuid::try_parse(&path.asset).map_err(|_| ApiError::NotFound)?;
     // Same ordering as upload: permission and environment resolved and committed before the
     // store sees a byte.
@@ -224,45 +306,50 @@ pub(crate) async fn replace(
     )?;
     let environment = seen.environment;
     seen.commit().await.map_err(ApiError::from_db)?;
-    // The replacement's quarantine key names the asset it replaces: the object's prefix lists
-    // what to remove if the asset goes first, and the job's row — not the asset's — holds the
-    // key so the first upload's quarantine record stays put.
-    let storage_name = format!("{asset}-{}", &Uuid::now_v7().simple().to_string()[..8]);
-    let quarantine_key = quarantine_key(&path.project, &environment.to_string(), &storage_name);
-    store
-        .put(
-            &object_store::path::Path::from(quarantine_key.clone()),
-            body.into(),
-        )
-        .await
-        .map_err(|error| {
-            tracing::warn!(error = %error, "quarantine write failed");
-            ApiError::Unavailable("the object store refused the upload")
-        })?;
-    let hash = request_hash(&[
-        REPLACE,
-        &asset.to_string(),
-        intent.file_name.as_str(),
-        intent.declared_type.as_str(),
-        &intent.size.to_string(),
-    ]);
-    let mut tx = open(&state, caller, &path.project, &path.environment).await?;
-    match idempotency::claim(&mut tx, REPLACE, key, &hash)
-        .await
-        .map_err(ApiError::from_db)?
-    {
-        idempotency::Claim::Fresh => {}
-        idempotency::Claim::Mismatch => return Err(ApiError::IdempotencyKeyReused),
-        idempotency::Claim::Replay { status, response } => {
-            return Ok(json(
-                StatusCode::from_u16(status).map_err(ApiError::internal)?,
-                response,
-                None,
-                true,
-            ));
+    let (_permit, body) = receive(&state, caller, &headers, body).await?;
+    let intent = read_intent(&headers, body.len() as u64)?;
+    within(deadline, async move {
+        // The replacement's quarantine key names the asset it replaces: the object's prefix lists
+        // what to remove if the asset goes first, and the job's row — not the asset's — holds the
+        // key so the first upload's quarantine record stays put.
+        let storage_name = format!("{asset}-{}", &Uuid::now_v7().simple().to_string()[..8]);
+        let quarantine_key = quarantine_key(&path.project, &environment.to_string(), &storage_name);
+        store
+            .put(
+                &object_store::path::Path::from(quarantine_key.clone()),
+                body.into(),
+            )
+            .await
+            .map_err(|error| {
+                tracing::warn!(error = %error, "quarantine write failed");
+                ApiError::Unavailable("the object store refused the upload")
+            })?;
+        let hash = request_hash(&[
+            REPLACE,
+            &asset.to_string(),
+            intent.file_name.as_str(),
+            intent.declared_type.as_str(),
+            &intent.size.to_string(),
+        ]);
+        let mut tx = open(&state, caller, &path.project, &path.environment).await?;
+        match idempotency::claim(&mut tx, REPLACE, key, &hash)
+            .await
+            .map_err(ApiError::from_db)?
+        {
+            idempotency::Claim::Fresh => {}
+            idempotency::Claim::Mismatch => return Err(ApiError::IdempotencyKeyReused),
+            idempotency::Claim::Replay { status, response } => {
+                return Ok(json(
+                    StatusCode::from_u16(status).map_err(ApiError::internal)?,
+                    response,
+                    None,
+                    true,
+                ));
+            }
         }
-    }
-    queue_replace(tx, key, asset, &intent, &quarantine_key).await
+        queue_replace(tx, key, asset, &intent, &quarantine_key).await
+    })
+    .await
 }
 
 /// `replace`'s committed half (D-136): the reverify job inside the idempotency claim, the

@@ -90,6 +90,8 @@ export class Saver {
 	#sent: Sent | null = null;
 	/** After reopening: the newest edits, applied once the resent request is answered. */
 	#newest: Content | null = null;
+	/** Callers of `flush`, answered once nothing is waiting to be saved. */
+	#waiters: ((status: SaveStatus) => void)[] = [];
 
 	constructor(
 		readonly project: string,
@@ -162,6 +164,7 @@ export class Saver {
 		this.status = 'held';
 		this.message = reason;
 		this.keptOnDevice = false;
+		this.#settle();
 	}
 
 	/** Records the editor's current content. */
@@ -186,6 +189,7 @@ export class Saver {
 			clearTimeout(this.#timer);
 			forget(this.project, this.entry);
 			this.status = 'saved';
+			this.#settle();
 			return;
 		}
 		this.#keep(this.etag, content);
@@ -200,6 +204,25 @@ export class Saver {
 		const wait = this.#notBefore - Date.now();
 		if (wait > 0) this.#schedule(wait);
 		else void this.#save();
+	}
+
+	/** Saves what is waiting at once and answers when nothing is: `'saved'`, or the status that
+	 *  stopped it (a conflict, a refusal, no answer, a hold). For steps that must build on a saved
+	 *  version: translating an entry, putting an unpublished version back. */
+	flush(): Promise<SaveStatus> {
+		if (this.status === 'saved' && !this.#inFlight) return Promise.resolve('saved');
+		if (this.status !== 'unsaved' && this.status !== 'saving') return Promise.resolve(this.status);
+		const answer = new Promise<SaveStatus>((resolve) => this.#waiters.push(resolve));
+		this.saveNow();
+		return answer;
+	}
+
+	/** Answers `flush` once a save has settled one way or the other. */
+	#settle(): void {
+		if (this.#inFlight || this.status === 'unsaved' || this.status === 'saving' || this.#waiters.length === 0) return;
+		const waiting = this.#waiters;
+		this.#waiters = [];
+		for (const resolve of waiting) resolve(this.status);
 	}
 
 	/** Conflict choice: save my version on top of theirs. Theirs stays in the history. */
@@ -252,6 +275,7 @@ export class Saver {
 		if (this.#same(content, this.#saved) && this.locale === this.#savedLocale) {
 			this.status = 'saved';
 			forget(this.project, this.entry);
+			this.#settle();
 			return;
 		}
 		// The same request (same base, same content, same locale) keeps its key, so a retry can
@@ -305,6 +329,7 @@ export class Saver {
 				this.#again = false;
 				if (this.status === 'unsaved' || this.status === 'saving') this.#schedule(0);
 			}
+			this.#settle();
 		}
 	}
 

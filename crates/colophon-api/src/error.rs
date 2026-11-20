@@ -495,6 +495,22 @@ pub enum ApiError {
         /// The bound.
         limit: i64,
     },
+    /// The uploads in flight already hold the memory budget, and none finished within the wait
+    /// (D-215). 503 with `Retry-After`; `details.reason` is `uploads_busy`.
+    #[error("too many uploads are in progress on this server; try again shortly")]
+    UploadsBusy,
+    /// This session or token already has its most uploads in flight (D-215). 429 with
+    /// `Retry-After`; `details.reason` is `too_many_uploads`.
+    #[error("you have several uploads in progress already; wait for one to finish")]
+    TooManyUploads,
+    /// An upload's body stopped arriving: no bytes for the idle timeout, or the whole read ran past
+    /// its bound (D-215). 408; `details.reason` is `body_stalled`.
+    #[error("the upload stopped arriving; send it again")]
+    BodyStalled,
+    /// The server's own work on an upload, after its body arrived, ran past the request deadline
+    /// (D-215). 504, as the deadline answers every other request.
+    #[error("the server took too long to answer")]
+    UploadDeadline,
     /// Sign-in failed. Details are logged, never shown: they can help an attacker.
     #[error("sign-in failed or expired; start again")]
     SignInFailed,
@@ -702,13 +718,16 @@ impl ApiError {
             | Self::AlreadySetUp
             | Self::Taken(_)
             | Self::StillNeeded(_) => StatusCode::CONFLICT,
-            Self::RateLimited { .. } | Self::TooManyRequests { .. } => {
+            Self::RateLimited { .. } | Self::TooManyRequests { .. } | Self::TooManyUploads => {
                 StatusCode::TOO_MANY_REQUESTS
             }
             Self::Unavailable(_)
             | Self::Busy
+            | Self::UploadsBusy
             | Self::WorkFull { .. }
             | Self::PayloadFull { .. } => StatusCode::SERVICE_UNAVAILABLE,
+            Self::BodyStalled => StatusCode::REQUEST_TIMEOUT,
+            Self::UploadDeadline => StatusCode::GATEWAY_TIMEOUT,
             Self::Internal(_) => StatusCode::INTERNAL_SERVER_ERROR,
             Self::Preview { status, .. } => *status,
         }
@@ -745,11 +764,15 @@ impl ApiError {
             | Self::AlreadySetUp
             | Self::Taken(_)
             | Self::StillNeeded(_) => ErrorCode::Conflict,
-            Self::RateLimited { .. } | Self::TooManyRequests { .. } => ErrorCode::RateLimited,
+            Self::RateLimited { .. } | Self::TooManyRequests { .. } | Self::TooManyUploads => {
+                ErrorCode::RateLimited
+            }
             Self::Unavailable(_)
             | Self::Busy
+            | Self::UploadsBusy
             | Self::WorkFull { .. }
             | Self::PayloadFull { .. } => ErrorCode::Unavailable,
+            Self::BodyStalled | Self::UploadDeadline => ErrorCode::DeadlineExceeded,
             Self::SignInFailed => ErrorCode::SignInFailed,
             Self::Internal(_) => ErrorCode::Internal,
             Self::Preview { status, .. } => match *status {
@@ -795,6 +818,9 @@ impl ApiError {
             Self::WorkFull { .. } => Some(ErrorDetails::new("work_full", "")),
             Self::PayloadFull { .. } => Some(ErrorDetails::new("payload_full", "")),
             Self::TooManyRequests { .. } => Some(ErrorDetails::new("rate_limited", "")),
+            Self::UploadsBusy => Some(ErrorDetails::new("uploads_busy", "")),
+            Self::TooManyUploads => Some(ErrorDetails::new("too_many_uploads", "")),
+            Self::BodyStalled => Some(ErrorDetails::new("body_stalled", "")),
             Self::InvalidField {
                 reason, pointer, ..
             } => Some(ErrorDetails::new(reason, *pointer)),
@@ -894,6 +920,12 @@ impl IntoResponse for ApiError {
                 response.headers_mut().insert(
                     header::RETRY_AFTER,
                     HeaderValue::from(WORK_FULL_RETRY_AFTER_SECONDS),
+                );
+            }
+            Self::UploadsBusy | Self::TooManyUploads => {
+                response.headers_mut().insert(
+                    header::RETRY_AFTER,
+                    HeaderValue::from(crate::uploads::RETRY_AFTER_SECONDS),
                 );
             }
             // Nothing keeps a removal: if the entry is published again, no cache must still say

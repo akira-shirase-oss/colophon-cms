@@ -87,10 +87,11 @@ test('keyboard undo and redo', async ({ page }) => {
 	expect(await stored(page)).toContain('"text":"first second"');
 });
 
-test('the callout buttons wrap and unwrap a paragraph', async ({ page }) => {
+test('the callout menu wraps and unwraps a paragraph, and gives the cursor back to the text', async ({ page }) => {
 	await freshEditor(page);
 	await page.keyboard.type('Back up first');
-	await page.getByRole('button', { name: 'Warning' }).click();
+	await page.getByRole('button', { name: 'Callout' }).click();
+	await page.getByRole('menuitem', { name: 'Warning' }).click();
 	expect(await storedDoc(page)).toEqual({
 		type: 'doc',
 		content: [
@@ -101,8 +102,27 @@ test('the callout buttons wrap and unwrap a paragraph', async ({ page }) => {
 			}
 		]
 	});
-	await page.getByRole('button', { name: 'Warning' }).click();
+	// The text has the cursor again, so typing goes on where it was.
+	await expect(page.locator('.tiptap')).toBeFocused();
+	await page.getByRole('button', { name: 'Callout' }).click();
+	await page.getByRole('menuitem', { name: 'Warning' }).click();
 	expect(await stored(page)).not.toContain('callout');
+});
+
+test('the heading menu sets a level and goes back to normal text, from the keyboard too', async ({ page }) => {
+	await freshEditor(page);
+	await page.keyboard.type('A small heading');
+	await page.getByRole('button', { name: 'Heading' }).click();
+	await page.getByRole('menuitem', { name: 'Heading 3' }).click();
+	expect(await stored(page)).toContain('"type":"heading","attrs":{"level":3}');
+	await expect(page.getByRole('button', { name: 'Heading' })).toHaveAttribute('aria-pressed', 'true');
+	// From the keyboard: Enter opens the menu on its first item, and Enter chooses it.
+	await page.getByRole('button', { name: 'Heading' }).focus();
+	await page.keyboard.press('Enter');
+	await expect(page.getByRole('menuitem', { name: 'Normal text' })).toBeFocused();
+	await page.keyboard.press('Enter');
+	expect(await stored(page)).not.toContain('"heading"');
+	await expect(page.getByRole('button', { name: 'Heading' })).toHaveAttribute('aria-pressed', 'false');
 });
 
 test('without a media library (the playground) there is no image button, and stored images still open as their alt text', async ({ page }) => {

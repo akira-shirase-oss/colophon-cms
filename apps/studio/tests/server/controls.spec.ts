@@ -4,7 +4,7 @@
 // nothing to change in Settings (an Editor) doesn't see Settings, in the sidebar or in search.
 
 import { expect, type Page, test } from '@playwright/test';
-import { api, env, internalTerms, key, member, newEntry, newProject, signIn, violations } from './helpers.ts';
+import { api, env, internalTerms, key, member, newEntry, newProject, roleReads, signIn, violations } from './helpers.ts';
 
 /** A publish request of `entries`, through the API; submitted unless `open`. Its id and hash. */
 async function request(page: Page, project: string, title: string, entries: string[], open = false): Promise<{ id: string; hash: string }> {
@@ -52,7 +52,7 @@ test('controls follow the role: a reader canâ€™t send or update, an editor canâ€
 
 	// The owner has every control.
 	await page.goto(`${base}/changesets/${later.id}`);
-	await expect(page.getByTestId('schedule-pending').getByRole('button', { name: 'Cancel the schedule' })).toBeVisible();
+	await expect(page.getByTestId('cancel-schedule')).toBeVisible();
 	await expect(page.getByTestId('settings-link')).toBeVisible();
 
 	// A role that may only read.
@@ -76,9 +76,11 @@ test('controls follow the role: a reader canâ€™t send or update, an editor canâ€
 	expect((await api(page, 'PUT', `/api/v1/projects/${project}/members/${them?.identity_id}`, { role: 'editor' })).status).toBe(204);
 	await other.goto(`${base}/changesets/${open.id}`);
 	await expect(other.getByRole('button', { name: 'Ask for review' })).toBeVisible();
+	const role = roleReads(other, project);
 	await other.goto(`${base}/changesets/${later.id}`);
-	await expect(other.getByTestId('schedule-pending')).toContainText('Publishes');
-	await expect(other.getByRole('button', { name: 'Cancel the schedule' })).toHaveCount(0);
+	await expect(other.getByTestId('publishes-at')).toContainText('Publishes');
+	await role;
+	await expect(other.getByTestId('cancel-schedule')).toHaveCount(0);
 	await expect(other.getByTestId('cannot-cancel')).toBeVisible();
 	await expect(other.getByTestId('settings-link')).toHaveCount(0);
 	await expect(other.getByTestId('members-link')).toBeVisible();
@@ -117,7 +119,7 @@ test('a role that may edit only its own entries is offered Ask for review only o
 	await expect(writer.getByRole('button', { name: 'Ask for review' })).toBeVisible();
 
 	await writer.goto(`/studio/projects/${project}/articles/${theirs}`);
-	await expect(writer.getByTestId('publish-entry')).toContainText("Your role can't publish or ask for review here.");
+	await expect(writer.getByTestId('publish-entry')).toContainText('Your role canâ€™t publish or ask for review here.');
 	await expect(writer.getByTestId('publish-button')).toHaveCount(0);
 	await writer.goto(`/studio/projects/${project}/articles/${mine}`);
 	await expect(writer.getByTestId('publish-button')).toHaveText('Ask for review');

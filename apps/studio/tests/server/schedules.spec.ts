@@ -38,6 +38,8 @@ test('a time the clocks show twice is chosen, scheduled and cancelled', async ({
 	const project = await newProject(page);
 	const set = await approved(page, project, 'Opening hours');
 	await page.goto(`/studio/projects/${project}/changesets/${set.id}`);
+	// Approved: Schedule… opens the form inline (P1-5).
+	await page.getByTestId('schedule-open').click();
 	const panel = page.getByTestId('schedule-panel');
 	await expect(panel).toBeVisible();
 
@@ -65,12 +67,14 @@ test('a time the clocks show twice is chosen, scheduled and cancelled', async ({
 		await panel.getByRole('button', { name: 'Schedule', exact: true }).click();
 	}
 	const pending = page.getByTestId('schedule-pending');
-	if (found) await expect(pending).toContainText(found.abbreviations[1]);
-	await expect(pending).toContainText(found ? found.zone : 'UTC');
+	// When it publishes leads the page, in the zone it was set in (P1-5).
+	const when = page.getByTestId('publishes-at');
+	if (found) await expect(when).toContainText(found.abbreviations[1]);
+	else await expect(when).toContainText('UTC');
 
-	await pending.getByRole('button', { name: 'Cancel the schedule' }).click();
+	await page.getByTestId('cancel-schedule').click();
 	await expect(page.getByTestId('schedule-history')).toContainText('Cancelled');
-	await expect(panel.getByRole('button', { name: 'Schedule', exact: true })).toBeVisible();
+	await expect(page.getByTestId('schedule-open')).toBeVisible();
 	expect(await violations(page)).toEqual([]);
 });
 

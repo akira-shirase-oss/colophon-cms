@@ -53,10 +53,13 @@ test('the website starter installs, seeds and reruns harmlessly', async ({ page 
 	await page.getByTestId('site-open-home').click();
 	await expect(page).toHaveURL(new RegExp(`/pages/${home?.id}$`));
 
-	// The editor lays each field out in a column — label and hints above the control.
-	const titleBox = (await page.getByLabel('Title', { exact: true }).boundingBox()) ?? { y: 0 };
-	const labelBox = (await page.locator('label[for$="-title"]').boundingBox()) ?? { y: 1 };
-	expect(labelBox.y).toBeLessThan(titleBox.y);
+	// The editor lays each field out in a column — label and hints above the control. (The title is the
+	// page's heading, edited in place, D-184; the fields below it keep their labels.)
+	const label = page.locator('#panel-content label[for]').first();
+	const control = page.locator(`[id="${await label.getAttribute('for')}"]`);
+	const labelBox = (await label.boundingBox()) ?? { y: 1 };
+	const controlBox = (await control.boundingBox()) ?? { y: 0 };
+	expect(labelBox.y).toBeLessThan(controlBox.y);
 
 	await page.goto(`/studio/projects/${project}/settings/types`);
 	await page.getByTestId('site-template').click();

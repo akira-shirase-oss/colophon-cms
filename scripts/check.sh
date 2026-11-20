@@ -59,7 +59,7 @@ fi
 #
 # On a stack this run didn't make (scripts/stack-guard.sh, D-187), the steps that stop, pause or
 # reconfigure its services are left to CI, by name: `scripts/stack.sh check` (role DDL, a forced
-# WAL switch), the four ignored tests that stop Postgres or Valkey, and the two smokes that pause
+# WAL switch), the ignored tests that stop Postgres or Valkey or terminate a backend, and the two smokes that pause
 # them. Everything else runs, in a database of the run's own (COLOPHON_TEST_DATABASE, required
 # there); colophon_check is never dropped on a shared stack.
 # shellcheck source=scripts/stack-guard.sh
@@ -70,6 +70,8 @@ STOPS_SERVICES=(
   quotas::without_valkey_a_token_is_still_limited_never_unlimited
   cache::answers_survive_valkey_going_away_and_caching_resumes_when_it_is_back
   lifecycle::readiness_follows_real_outages_and_recoveries
+  # Terminates a Postgres backend (D-218's listener), and the local Postgres is shared.
+  assets::the_asset_worker_listens_again_after_losing_its_listener
 )
 PAUSES_SERVICES=(cache-down postgres-trouble)
 # The load smokes, as `VAR=VALUE... endpoint`, all at the throughput scenario.
@@ -98,6 +100,8 @@ SMOKES=(
   # USERS bounds the audience the smoke signs up, not the traffic share it drives.
   "TOTAL=10000 USERS=64 P99_MS=700 audience"
   "TOTAL=20000 P99_MS=500 publishing"
+  # D-184: takedowns, racing undos (exactly one commits), replays and reads back.
+  "TOTAL=8000 P99_MS=700 undo"
   # The dependency-failure evidence runs (L11-L13, D-127): each pauses or kills a real
   # stack dependency mid-run, so they run here one at a time like everywhere else.
   "DURATION=10s P99_MS=500 cache-down"

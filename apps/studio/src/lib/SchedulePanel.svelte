@@ -1,9 +1,11 @@
 <!--
-  Scheduling a changeset (D-060): pick a date, a time and a time zone, and it publishes then, as
-  you, with every check a publish makes. A time the clocks show twice (they go back) or skip
-  (they go forward) is never guessed: the panel shows both moments it could mean and asks. A
-  pending schedule can be cancelled; past ones say how they went, including when one started
-  late, or was blocked and why.
+  A publish request's schedule (D-060), as the request page's Schedule card. Pick a date, a time
+  and a time zone, and it publishes then, as you, with every check a publish makes. A time the
+  clocks show twice (they go back) or skip (they go forward) is never guessed: the form shows both
+  moments it could mean and asks. The form opens from the request's "Schedule…"; once a schedule
+  is pending, the page's header says when it publishes and offers Publish now and Cancel schedule,
+  and this card says who set it and what it waits on. Past schedules say how they went, including
+  when one started late, or was blocked and why.
 -->
 <script lang="ts">
 	import CalendarClockIcon from '@lucide/svelte/icons/calendar-clock';
@@ -12,23 +14,22 @@
 	import { Button } from '@colophon/ui/ui/button';
 	import { Input } from '@colophon/ui/ui/input';
 	import { Label } from '@colophon/ui/ui/label';
-	import { ApiError, cancelSchedule, type Changeset, listSchedules, type Schedule, scheduleChangeset } from '#lib/api.ts';
+	import { ApiError, type Changeset, type Schedule, scheduleChangeset } from '#lib/api.ts';
 	import { plainError } from '#lib/errors.ts';
 	import { ago, meQuery } from '#lib/queries.ts';
 
-	let { project, changeset, canSchedule }: { project: string; changeset: Changeset; canSchedule: boolean } = $props();
+	let {
+		project,
+		changeset,
+		canSchedule,
+		form = $bindable(false)
+	}: { project: string; changeset: Changeset; canSchedule: boolean; form?: boolean } = $props();
 
 	const queryClient = useQueryClient();
-	const key = $derived(['schedules', project, changeset.id]);
-	const mine = createQuery(() => ({
-		queryKey: key,
-		queryFn: () => listSchedules(project, changeset.id)
-		// A due schedule runs on the worker: its commit arrives as a `schedules` hint and the
-		// live stream refreshes this (D-108) — nothing to poll for.
-	}));
+	const mine = createQuery(() => schedulesQuery(project, changeset.id));
 	const pending = $derived(mine.data?.find((item) => item.state === 'scheduled'));
 	// A schedule is cancelled by whoever set it or by someone who may publish what it publishes
-	// (the server's rule); everyone else sees it, without the button.
+	// (the server's rule); everyone else is told who can.
 	const who = createQuery(meQuery);
 	const cancels = $derived(canSchedule || (pending !== undefined && who.data != null && pending.scheduled_by === who.data.id));
 	// When the pending one runs, the changeset's status changes too: read it again.
@@ -39,6 +40,7 @@
 		ran = finished;
 	});
 	const past = $derived((mine.data ?? []).filter((item) => item.state !== 'scheduled'));
+	const showsForm = $derived(form && canSchedule && changeset.status.state === 'approved' && pending === undefined);
 
 	const here = Intl.DateTimeFormat().resolvedOptions().timeZone;
 	const ZONES: string[] = (() => {
@@ -61,11 +63,14 @@
 	/** When the time needs a choice: which kind, and the two moments it could mean. */
 	let ask = $state<{ reason: 'ambiguous_local_time' | 'skipped_local_time'; candidates: string[] } | null>(null);
 	let choice = $state<'earlier' | 'later'>('earlier');
-
-	/** A moment as it reads in `timeZone`, with the zone's abbreviation. */
-	function reads(instant: string, timeZone: string): string {
-		return new Intl.DateTimeFormat(undefined, { dateStyle: 'full', timeStyle: 'long', timeZone }).format(new Date(instant));
-	}
+	let dateInput = $state<HTMLInputElement | null>(null);
+	// Opening the form puts the cursor in it, so Schedule… leads somewhere on any screen.
+	$effect(() => {
+		if (showsForm && dateInput !== null) {
+			dateInput.scrollIntoView({ block: 'nearest' });
+			dateInput.focus();
+		}
+	});
 
 	async function refresh() {
 		await Promise.all([
@@ -86,6 +91,7 @@
 				...(ask === null ? {} : { choice })
 			});
 			ask = null;
+			form = false;
 			await refresh();
 		} catch (failure) {
 			const reason = failure instanceof ApiError ? failure.reason : null;
@@ -101,23 +107,10 @@
 		}
 	}
 
-	async function cancel(item: Schedule) {
-		busy = true;
-		error = '';
-		try {
-			await cancelSchedule(project, item.id);
-		} catch (failure) {
-			error = plainError(failure, 'cancel this schedule');
-		} finally {
-			busy = false;
-			await refresh();
-		}
-	}
-
 	function outcome(item: Schedule): string {
 		switch (item.state) {
 			case 'published':
-				return item.delayed ? `Published late, as release ${item.generation}` : `Published on time, as release ${item.generation}`;
+				return item.delayed ? `Published late, as Release ${item.generation}` : `Published on time, as Release ${item.generation}`;
 			case 'blocked':
 				return `Not published: ${item.reason ?? 'refused'}`;
 			case 'cancelled':
@@ -128,97 +121,117 @@
 	}
 </script>
 
-<section class="rounded-xl border border-border bg-card p-4" aria-labelledby="schedule-heading" data-testid="schedule-panel">
-	<h2 id="schedule-heading" class="flex items-center gap-2 text-base font-semibold"><CalendarClockIcon class="size-4" aria-hidden="true" />Schedule</h2>
+<script lang="ts" module>
+	import { listSchedules as list } from '#lib/api.ts';
 
-	{#if pending}
-		<div class="mt-3 space-y-2 text-sm" data-testid="schedule-pending">
-			<p>
-				Publishes <strong class="font-medium">{reads(pending.run_at, pending.time_zone)}</strong>
-				<span class="text-muted-foreground">({pending.time_zone})</span>
-			</p>
-			{#if pending.time_zone !== here}
-				<p class="text-xs text-muted-foreground">That's {reads(pending.run_at, here)} where you are.</p>
-			{/if}
-			<p class="text-xs text-muted-foreground">
-				Scheduled by {pending.scheduled_by_name ?? 'someone'}, {ago(pending.created_at)}. It publishes as them, if their role still allows it and nothing
-				in it has changed.
-			</p>
-			{#if cancels}
-				<Button variant="outline" size="sm" disabled={busy} onclick={() => cancel(pending)}>Cancel the schedule</Button>
-			{:else}
-				<p class="text-xs text-muted-foreground" data-testid="cannot-cancel">Its author or someone who can publish it can cancel it.</p>
-			{/if}
-		</div>
-	{:else if canSchedule && changeset.status.state === 'approved'}
-		<form class="mt-3 grid gap-3" onsubmit={schedule} aria-label="Schedule publishing">
-			<p class="text-sm text-muted-foreground">Publish this exact version later, at a time you choose.</p>
-			<div class="grid grid-cols-2 gap-2">
-				<div class="grid gap-1.5">
-					<Label for="schedule-date">Date</Label>
-					<Input id="schedule-date" type="date" bind:value={date} required />
+	/** One request's schedules: the page's header and this card read the same answer. A due
+	 *  schedule runs on the worker; its commit arrives as a `schedules` hint and the live stream
+	 *  refreshes this (D-108) — nothing to poll for. */
+	export const schedulesQuery = (project: string, changeset: string) => ({
+		queryKey: ['schedules', project, changeset],
+		queryFn: () => list(project, changeset)
+	});
+
+	/** A moment as it reads in `timeZone`, with the zone's abbreviation: "Thursday, 19 November
+	 *  2026 at 14:00:00 UTC". */
+	export function reads(instant: string, timeZone: string): string {
+		return new Intl.DateTimeFormat(undefined, { dateStyle: 'full', timeStyle: 'long', timeZone }).format(new Date(instant));
+	}
+
+	/** The same moment, short: "Thu 19 Nov, 14:00 UTC". */
+	export function readsShort(instant: string, timeZone: string): string {
+		return new Intl.DateTimeFormat(undefined, {
+			weekday: 'short',
+			day: 'numeric',
+			month: 'short',
+			hour: '2-digit',
+			minute: '2-digit',
+			timeZoneName: 'short',
+			timeZone
+		}).format(new Date(instant));
+	}
+</script>
+
+{#if showsForm || pending || past.length > 0}
+	<section class="rounded-xl border border-border bg-card p-4" aria-labelledby="schedule-heading" data-testid="schedule-panel">
+		<h2 id="schedule-heading" class="flex items-center gap-2 text-base font-semibold"><CalendarClockIcon class="size-4" aria-hidden="true" />Schedule</h2>
+
+		{#if pending}
+			<div class="mt-2 space-y-2 text-sm text-muted-foreground" data-testid="schedule-pending">
+				{#if pending.time_zone !== here}
+					<p>That's {readsShort(pending.run_at, here)} where you are.</p>
+				{/if}
+				<p>
+					Set by {pending.scheduled_by_name ?? 'someone'}, {ago(pending.created_at)}. It publishes as them, if their role still allows it and nothing in it
+					has changed.
+				</p>
+				{#if !cancels}
+					<p data-testid="cannot-cancel">Its author or someone who can publish it can cancel it.</p>
+				{/if}
+			</div>
+		{:else if showsForm}
+			<form class="mt-3 grid gap-3" onsubmit={schedule} aria-label="Schedule publishing">
+				<p class="text-sm text-muted-foreground">Publish this exact version later, at a time you choose.</p>
+				<div class="grid grid-cols-2 gap-2">
+					<div class="grid gap-1.5">
+						<Label for="schedule-date">Date</Label>
+						<Input id="schedule-date" type="date" bind:value={date} bind:ref={dateInput} required />
+					</div>
+					<div class="grid gap-1.5">
+						<Label for="schedule-time">Time</Label>
+						<Input id="schedule-time" type="time" bind:value={time} required />
+					</div>
 				</div>
 				<div class="grid gap-1.5">
-					<Label for="schedule-time">Time</Label>
-					<Input id="schedule-time" type="time" bind:value={time} required />
+					<Label for="schedule-zone">Time zone</Label>
+					<select
+						id="schedule-zone"
+						class="h-9 w-full rounded-control border border-input bg-popover px-3 text-sm outline-none focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/40"
+						bind:value={zone}
+						onchange={() => (ask = null)}
+					>
+						{#each ZONES as name (name)}<option value={name}>{name}{name === here ? ' (yours)' : ''}</option>{/each}
+					</select>
 				</div>
-			</div>
-			<div class="grid gap-1.5">
-				<Label for="schedule-zone">Time zone</Label>
-				<select
-					id="schedule-zone"
-					class="h-9 w-full rounded-md border border-input bg-popover px-3 text-sm outline-none focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/40"
-					bind:value={zone}
-					onchange={() => (ask = null)}
-				>
-					{#each ZONES as name (name)}<option value={name}>{name}{name === here ? ' (yours)' : ''}</option>{/each}
-				</select>
-			</div>
-			{#if ask}
-				<fieldset class="grid gap-2 rounded-lg bg-pending-soft p-3 text-sm text-pending-ink" data-testid="schedule-choice">
-					<legend class="sr-only">Which moment</legend>
-					<p>
-						{#if ask.reason === 'ambiguous_local_time'}
-							The clocks go back that night in {zone}, so {time} happens twice. Which one?
-						{:else}
-							The clocks go forward that night in {zone}, so {time} doesn't happen. Publish at:
-						{/if}
-					</p>
-					{#each ['earlier', 'later'] as const as option, index (option)}
-						<label class="flex items-center gap-2">
-							<input type="radio" name="schedule-choice" value={option} bind:group={choice} class="accent-primary" />
-							{reads(ask.candidates[index] ?? '', zone)}
-						</label>
-					{/each}
-				</fieldset>
-			{/if}
-			{#if error}<p role="alert" class="text-sm text-destructive">{error}</p>{/if}
-			<!-- Secondary: on an approved request, Publish is the page's one primary. -->
-			<Button type="submit" variant="outline" disabled={busy}>{ask ? 'Schedule at this moment' : 'Schedule'}</Button>
-		</form>
-	{:else}
-		<p class="mt-2 text-sm text-muted-foreground">
-			{#if changeset.status.state === 'approved'}
-				Your role can't publish this, so it can't schedule it either.
-			{:else if changeset.status.state === 'published'}
-				It's published.
-			{:else}
-				Once it's approved, it can be scheduled to publish at a time you choose.
-			{/if}
-		</p>
-	{/if}
+				{#if ask}
+					<fieldset class="grid gap-2 rounded-lg bg-pending-soft p-3 text-sm text-pending-ink" data-testid="schedule-choice">
+						<legend class="sr-only">Which moment</legend>
+						<p>
+							{#if ask.reason === 'ambiguous_local_time'}
+								The clocks go back that night in {zone}, so {time} happens twice. Which one?
+							{:else}
+								The clocks go forward that night in {zone}, so {time} doesn't happen. Publish at:
+							{/if}
+						</p>
+						{#each ['earlier', 'later'] as const as option, index (option)}
+							<label class="flex items-center gap-2">
+								<input type="radio" name="schedule-choice" value={option} bind:group={choice} />
+								{reads(ask.candidates[index] ?? '', zone)}
+							</label>
+						{/each}
+					</fieldset>
+				{/if}
+				{#if error}<p role="alert" class="text-sm text-destructive">{error}</p>{/if}
+				<!-- Secondary: on an approved request, Publish now is the page's one primary. -->
+				<div class="flex flex-wrap gap-2">
+					<Button type="submit" variant="outline" disabled={busy} data-testid="schedule-submit">{ask ? 'Schedule at this moment' : 'Schedule'}</Button>
+					<Button type="button" variant="ghost" disabled={busy} onclick={() => ((form = false), (ask = null), (error = ''))}>Not now</Button>
+				</div>
+			</form>
+		{/if}
 
-	{#if past.length > 0}
-		<ul class="mt-4 space-y-2 border-t border-dotted border-border pt-3 text-sm" data-testid="schedule-history">
-			{#each past as item (item.id)}
-				<li>
-					<span class="flex flex-wrap items-center gap-2">
-						{outcome(item)}
-						{#if item.state === 'published' && item.delayed}<Badge variant="attention">delayed</Badge>{/if}
-					</span>
-					<span class="block text-xs text-muted-foreground">Was for {reads(item.run_at, item.time_zone)}</span>
-				</li>
-			{/each}
-		</ul>
-	{/if}
-</section>
+		{#if past.length > 0}
+			<ul class="mt-4 space-y-2 border-t border-dotted border-border pt-3 text-sm" class:mt-2={!pending && !showsForm} class:border-t-0={!pending && !showsForm} class:pt-0={!pending && !showsForm} data-testid="schedule-history">
+				{#each past as item (item.id)}
+					<li>
+						<span class="flex flex-wrap items-center gap-2">
+							{outcome(item)}
+							{#if item.state === 'published' && item.delayed}<Badge variant="attention">delayed</Badge>{/if}
+						</span>
+						<span class="block text-xs text-muted-foreground">Was for {reads(item.run_at, item.time_zone)}</span>
+					</li>
+				{/each}
+			</ul>
+		{/if}
+	</section>
+{/if}
