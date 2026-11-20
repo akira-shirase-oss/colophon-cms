@@ -12,13 +12,30 @@
 //!   caller can't cut it short: the task finishes, and a transaction nobody is waiting for any
 //!   more drops at depth one, which rolls it back before the connection is pooled again. They are
 //!   the only way this workspace begins a transaction on a pool (`tests/one_begin.rs` checks).
+//! - The begin tripwire (D-226): a connection that is somehow inside a transaction already is
+//!   harmful only at its next `BEGIN`, and Postgres says so for free: that `BEGIN` draws the warning
+//!   "there is already a transaction in progress". sqlx 0.9.0 hands a notice to nobody, it only
+//!   emits it as a tracing event (sqlx-postgres `connection/stream.rs`), so [`begin_tripwire`] is a
+//!   tracing layer that marks the begin it happened in, and [`begin_tx`] rolls that transaction back
+//!   and fails loudly instead of handing it out ([`begin_trips`]). No extra round trip.
 //! - [`release_check`], the pool's `after_release` hook, closes any connection handed back while
-//!   still inside a transaction, whatever left it there, and counts it ([`dirty_releases`]). It
-//!   runs in sqlx's own release task, after the caller has its answer.
+//!   still inside a transaction and counts it ([`dirty_releases`]). It costs a round trip per
+//!   release (D-226 measured it doubling a read's statements), so once [`arm_begin_tripwire`] has
+//!   proved the tripwire works in this process it runs on one release in [`CANARY_EVERY`]; until
+//!   then, and whenever that proof fails, it runs on every release.
+//!
+//! Every other way a transaction can end leaves its connection clean without either guard, and
+//! `tests/release_paths.rs` proves each one with the check off: a `Transaction` dropped while open
+//! (a handler dropped mid-transaction, a cancelled COMMIT, an aborted transaction, a panic) queues
+//! a `ROLLBACK`, which sqlx's own release `ping` flushes before the connection is pooled again
+//! (sqlx-core `pool/connection.rs` `return_to_pool`; sqlx-postgres `start_rollback`,
+//! `wait_until_ready`).
 
+use std::cell::Cell;
 use std::future::Future;
 use std::pin::Pin;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::time::Duration;
 
 use sqlx::Transaction;
 use sqlx::pool::PoolConnectionMetadata;
@@ -49,12 +66,223 @@ where
     F: Future<Output = Result<Transaction<'static, Postgres>, sqlx::Error>> + Send + 'static,
 {
     let started = std::time::Instant::now();
-    let transaction = tokio::spawn(begin)
-        .await
-        .map_err(|_| sqlx::Error::WorkerCrashed)?;
+    let (transaction, _seen) = watched(begin, true).await?;
     // D-221's evidence: a request's time spent getting a connection and beginning, for its slow-request line.
     let _ = PHASES.try_with(|phases| phases.begun(started.elapsed()));
     transaction
+}
+
+/// What the begin tripwire saw while one `BEGIN` ran.
+#[derive(Debug, Default)]
+struct Watch {
+    /// A backend notice reached the tripwire inside this begin's task.
+    notice: Cell<bool>,
+    /// That notice said the connection was already inside a transaction.
+    tripped: Cell<bool>,
+}
+
+tokio::task_local! {
+    static BEGINNING: Watch;
+}
+
+/// Runs `begin` in its own task with the tripwire watching it. A tripped begin is rolled back in
+/// that task (so a caller that stops waiting can't cut the rollback short) and becomes an error;
+/// `report` counts and logs it (the startup self-test trips on purpose and doesn't). Returns the
+/// outcome and whether any notice reached the tripwire.
+async fn watched<F>(
+    begin: F,
+    report: bool,
+) -> Result<(Result<Transaction<'static, Postgres>, sqlx::Error>, bool), sqlx::Error>
+where
+    F: Future<Output = Result<Transaction<'static, Postgres>, sqlx::Error>> + Send + 'static,
+{
+    tokio::spawn(BEGINNING.scope(Watch::default(), async move {
+        let outcome = begin.await;
+        let (noticed, tripped) = BEGINNING.with(|watch| (watch.notice.get(), watch.tripped.get()));
+        let Ok(transaction) = outcome else {
+            return (outcome, noticed);
+        };
+        if !tripped {
+            return (Ok(transaction), noticed);
+        }
+        // The connection was inside a transaction before this BEGIN: whatever that one held, it
+        // must not commit as this caller's. Rolling back ends it on the server too.
+        let rolled_back = transaction.rollback().await.is_ok();
+        if report {
+            let trips = TRIPS.fetch_add(1, Ordering::Relaxed) + 1;
+            tracing::error!(
+                trips,
+                rolled_back,
+                "BEGIN found its connection already inside a transaction; rolled it back and refused it (D-226)"
+            );
+        }
+        (
+            Err(sqlx::Error::Protocol(
+                "the pooled connection was already inside a transaction".to_owned(),
+            )),
+            noticed,
+        )
+    }))
+    .await
+    .map_err(|_| sqlx::Error::WorkerCrashed)
+}
+
+/// Begins that found their connection already inside a transaction (D-226). Anything above zero is
+/// a bug: some path left a transaction open on a pooled connection.
+static TRIPS: AtomicU64 = AtomicU64::new(0);
+
+/// How many begins the tripwire has refused since the process started.
+pub fn begin_trips() -> u64 {
+    TRIPS.load(Ordering::Relaxed)
+}
+
+/// What Postgres says, in its C locale, when a `BEGIN` arrives inside a transaction (SQLSTATE
+/// 25001). sqlx passes on the text only, so the startup self-test proves this server speaks it.
+const ALREADY_IN_TRANSACTION: &str = "there is already a transaction in progress";
+
+/// sqlx's target for backend notices (sqlx-postgres `connection/stream.rs`).
+const NOTICE_TARGET: &str = "sqlx::postgres::notice";
+
+/// Notices that reached the tripwire anywhere, inside a begin or not (the self-test's diagnosis).
+static NOTICES: AtomicU64 = AtomicU64::new(0);
+
+/// The begin tripwire as a tracing layer, with its own filter: it sees sqlx's notices whatever the
+/// rest of the subscriber's filter says. Install it beside the log layers, which must then filter
+/// per layer rather than globally (a global filter would hide the notices from it too).
+pub fn begin_tripwire<S>() -> impl tracing_subscriber::Layer<S>
+where
+    S: tracing::Subscriber + for<'span> tracing_subscriber::registry::LookupSpan<'span>,
+{
+    use tracing_subscriber::Layer as _;
+    BeginTripwire.with_filter(
+        tracing_subscriber::filter::Targets::new().with_target(NOTICE_TARGET, tracing::Level::WARN),
+    )
+}
+
+struct BeginTripwire;
+
+impl<S: tracing::Subscriber> tracing_subscriber::Layer<S> for BeginTripwire {
+    fn on_event(&self, event: &tracing::Event<'_>, _: tracing_subscriber::layer::Context<'_, S>) {
+        if event.metadata().target() != NOTICE_TARGET {
+            return;
+        }
+        NOTICES.fetch_add(1, Ordering::Relaxed);
+        let mut message = AlreadyInTransaction(false);
+        event.record(&mut message);
+        // Outside a begin's task there's nothing to mark; sqlx logs the notice as usual.
+        let _ = BEGINNING.try_with(|watch| {
+            watch.notice.set(true);
+            if message.0 {
+                watch.tripped.set(true);
+            }
+        });
+    }
+}
+
+/// Whether an event's `message` field is the already-in-a-transaction warning.
+struct AlreadyInTransaction(bool);
+
+impl tracing::field::Visit for AlreadyInTransaction {
+    fn record_str(&mut self, field: &tracing::field::Field, value: &str) {
+        if field.name() == "message" && value.contains(ALREADY_IN_TRANSACTION) {
+            self.0 = true;
+        }
+    }
+
+    fn record_debug(&mut self, field: &tracing::field::Field, value: &dyn std::fmt::Debug) {
+        if field.name() == "message" && format!("{value:?}").contains(ALREADY_IN_TRANSACTION) {
+            self.0 = true;
+        }
+    }
+}
+
+/// Releases between two release checks once the tripwire is armed: a backstop for a desync the
+/// tripwire can't see (sqlx changing how it reports notices), at one round trip in this many.
+pub const CANARY_EVERY: u64 = 256;
+
+/// Whether every release is checked. True until [`arm_begin_tripwire`] proves the tripwire works,
+/// and again whenever that proof fails: safety never degrades silently.
+static CHECK_EVERY_RELEASE: AtomicBool = AtomicBool::new(true);
+
+/// Releases seen while the tripwire is armed, to pick the one in [`CANARY_EVERY`] that is checked.
+static RELEASES: AtomicU64 = AtomicU64::new(0);
+
+/// Why the begin tripwire isn't armed.
+#[derive(Debug, thiserror::Error)]
+pub enum TripwireOff {
+    /// No notice reached the tripwire: it isn't installed, or a filter hides sqlx's notices.
+    #[error(
+        "no backend notice reached the begin tripwire: is `begin_tripwire()` installed, and is the `sqlx::postgres::notice` target filtered out?"
+    )]
+    NoNotice,
+    /// A notice arrived, but not with Postgres's C-locale text.
+    #[error(
+        "a notice reached the begin tripwire, but not in Postgres's C-locale wording: is the server's lc_messages localised?"
+    )]
+    OtherText,
+    /// Notices reach the tripwire, but not inside the begin's task.
+    #[error("backend notices reach the begin tripwire outside the begin's task")]
+    OutsideTheBegin,
+    /// A desynced begin was handed out: the proof's own failure.
+    #[error("a BEGIN on a connection already inside a transaction was handed out")]
+    NotRefused,
+    /// The proof couldn't run (the database unreachable, a timeout).
+    #[error("the begin tripwire self-test could not run: {0}")]
+    CouldNotRun(String),
+}
+
+/// Proves the begin tripwire works in this process, on one throwaway connection to `pool`'s
+/// database, and arms it: a `BEGIN` sent by hand leaves the connection inside a transaction, then a
+/// begin through the guarded path must trip. Armed, the release check runs on one release in
+/// [`CANARY_EVERY`]; otherwise every release is checked, and the error says which dependency failed
+/// (the server logs it at ERROR). Call once at startup, after the subscriber is installed.
+pub async fn arm_begin_tripwire(
+    options: sqlx::postgres::PgConnectOptions,
+) -> Result<(), TripwireOff> {
+    let outcome = tokio::time::timeout(Duration::from_secs(10), prove_the_tripwire(options))
+        .await
+        .unwrap_or_else(|_| Err(TripwireOff::CouldNotRun("timed out after 10 s".to_owned())));
+    CHECK_EVERY_RELEASE.store(outcome.is_err(), Ordering::Relaxed);
+    outcome
+}
+
+async fn prove_the_tripwire(options: sqlx::postgres::PgConnectOptions) -> Result<(), TripwireOff> {
+    let could_not = |error: sqlx::Error| TripwireOff::CouldNotRun(error.to_string());
+    // One connection and no release hook: the hand-made transaction must survive the release.
+    let pool = sqlx::postgres::PgPoolOptions::new()
+        .max_connections(1)
+        .acquire_timeout(Duration::from_secs(5))
+        .connect_lazy_with(options);
+    let outcome = async {
+        let mut conn = pool.acquire().await.map_err(could_not)?;
+        sqlx::raw_sql("BEGIN")
+            .execute(&mut *conn)
+            .await
+            .map_err(could_not)?;
+        drop(conn);
+        let seen_before = NOTICES.load(Ordering::Relaxed);
+        let one = pool.clone();
+        let (begun, noticed) = watched(async move { one.begin().await }, false)
+            .await
+            .map_err(could_not)?;
+        match begun {
+            Ok(transaction) => {
+                let _ = transaction.rollback().await;
+                Err(if noticed {
+                    TripwireOff::OtherText
+                } else if NOTICES.load(Ordering::Relaxed) > seen_before {
+                    TripwireOff::OutsideTheBegin
+                } else {
+                    TripwireOff::NoNotice
+                })
+            }
+            Err(sqlx::Error::Protocol(_)) => Ok(()),
+            Err(error) => Err(could_not(error)),
+        }
+    }
+    .await;
+    pool.close().await;
+    outcome
 }
 
 /// What one request spent beginning transactions (D-221): the pool's wait for a connection and the `BEGIN`
@@ -95,6 +323,15 @@ pub async fn with_phases<F: Future>(phases: std::sync::Arc<Phases>, work: F) -> 
 /// Connections the pool closed because they came back inside a transaction.
 static DIRTY: AtomicU64 = AtomicU64::new(0);
 
+/// Statements the release check has sent: each is a round trip on the connection before the pool
+/// can hand it out again (D-226).
+static CHECKS: AtomicU64 = AtomicU64::new(0);
+
+/// How many statements [`release_check`] has sent since the process started.
+pub fn release_checks() -> u64 {
+    CHECKS.load(Ordering::Relaxed)
+}
+
 /// How many connections [`release_check`] has closed since the process started. Anything above
 /// zero is a bug: a transaction began outside [`begin_tx`] and was left open.
 pub fn dirty_releases() -> u64 {
@@ -116,7 +353,15 @@ pub fn release_check(
     conn: &mut PgConnection,
     _meta: PoolConnectionMetadata,
 ) -> Pin<Box<dyn Future<Output = Result<bool, sqlx::Error>> + Send + '_>> {
+    let checked = CHECK_EVERY_RELEASE.load(Ordering::Relaxed)
+        || RELEASES
+            .fetch_add(1, Ordering::Relaxed)
+            .is_multiple_of(CANARY_EVERY);
     Box::pin(async move {
+        if !checked {
+            return Ok(true);
+        }
+        CHECKS.fetch_add(1, Ordering::Relaxed);
         let idle = sqlx::raw_sql(IDLE)
             .fetch_one(&mut *conn)
             .await

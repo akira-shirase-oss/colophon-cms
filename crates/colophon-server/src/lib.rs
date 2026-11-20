@@ -107,6 +107,8 @@ struct Background {
     setup: Option<tokio::task::JoinHandle<()>>,
     events_cancel: CancellationToken,
     hints: Vec<tokio::task::JoinHandle<()>>,
+    /// The begin tripwire's startup self-test (D-226): until it succeeds every release is checked.
+    guard: tokio::task::JoinHandle<()>,
 }
 
 /// Starts the worker, the setup code and the change hints, each under a child of `cancel`.
@@ -123,6 +125,7 @@ fn start_background(
     let setup = start_setup_code(config, pool, &setup_cancel);
     let events_cancel = cancel.child_token();
     let hints = start_events(config, pool, bus, admission, &events_cancel);
+    let guard = start_release_guard(config);
     Ok(Background {
         worker_cancel,
         worker,
@@ -130,6 +133,27 @@ fn start_background(
         setup,
         events_cancel,
         hints,
+        guard,
+    })
+}
+
+/// Proves the begin tripwire on one throwaway connection and arms it, beside the listener so a
+/// database that is down at startup delays nothing (D-226). Armed, the pool's release check runs on
+/// one release in `CANARY_EVERY`; if the proof fails, every release stays checked, as before, and
+/// the reason (the missing dependency) is logged at ERROR, once.
+fn start_release_guard(config: &Config) -> tokio::task::JoinHandle<()> {
+    let url = config.database_url.expose().to_owned();
+    tokio::spawn(async move {
+        match colophon_db::arm_release_guard(&url).await {
+            Ok(()) => tracing::info!(
+                canary_every = colophon_db::transactions::CANARY_EVERY,
+                "the begin tripwire is armed: a pooled connection is checked once in canary_every releases (D-226)"
+            ),
+            Err(off) => tracing::error!(
+                reason = %off,
+                "the begin tripwire is off: every pooled connection is checked as it is released (D-226)"
+            ),
+        }
     })
 }
 
@@ -146,6 +170,9 @@ async fn stop_background(tasks: Background) -> tokio::time::Instant {
     stop_worker(&tasks.worker_cancel, tasks.worker, deadline).await;
     stop_setup_code(&tasks.setup_cancel, tasks.setup, deadline).await;
     stop_events(&tasks.events_cancel, tasks.hints, deadline).await;
+    // Unfinished, the self-test just leaves every release checked: nothing to wait for.
+    tasks.guard.abort();
+    let _ = tasks.guard.await;
     deadline
 }
 
@@ -490,6 +517,7 @@ mod stop_tests {
             setup: Some(stuck()),
             events_cancel: CancellationToken::new(),
             hints: vec![stuck(), stuck()],
+            guard: stuck(),
         })
         .await;
         let took = started.elapsed();
