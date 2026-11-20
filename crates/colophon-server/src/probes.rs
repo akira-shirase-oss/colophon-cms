@@ -8,7 +8,10 @@
 
 use std::{convert::Infallible, error::Error as StdError, future::Future, time::Duration};
 
-use colophon_api::{CheckState, Dependency, Readiness};
+use colophon_api::{
+    CheckState, Dependency, Readiness,
+    outages::{Fault, OUTAGES},
+};
 use colophon_db::PgPool;
 use redis::aio::MultiplexedConnection;
 use tokio::{
@@ -148,11 +151,17 @@ pub async fn run(
         };
         let previous = readiness.record(dependency, result.is_ok());
         match (previous, result) {
-            (CheckState::Up | CheckState::Unknown, Err(error)) => {
-                let cause = error_chain(error.as_ref());
-                tracing::warn!(dependency = name, %cause, "dependency is down");
+            // D-224: said in full when the outage starts; every further failed probe is counted
+            // for the window's summary, and a window without one says it is up again. So a
+            // flapping dependency is a few lines a window, not two a flap.
+            (_, Err(error)) => {
+                if OUTAGES.begins(Fault::Down(dependency)) {
+                    let cause = error_chain(error.as_ref());
+                    tracing::warn!(dependency = name, %cause, "dependency is down");
+                }
             }
-            (CheckState::Down | CheckState::Unknown | CheckState::NotConfigured, Ok(())) => {
+            // First contact at startup. Coming back after an outage is the window's line.
+            (CheckState::Unknown | CheckState::NotConfigured, Ok(())) => {
                 tracing::info!(dependency = name, "dependency is up");
             }
             _ => {}

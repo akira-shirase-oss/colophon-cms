@@ -857,9 +857,9 @@ impl ApiError {
             let cause = error_chain(cause.as_ref());
             tracing::error!(code, %cause, "request failed");
         } else if matches!(self, Self::Busy) {
-            // Operators need to see saturation. Each of these waited out the acquire timeout,
-            // so their rate is bounded by in-flight requests over that timeout.
-            tracing::warn!(code, "request refused: no database connection free");
+            // Operators need to see saturation, once per outage rather than once per request
+            // (D-224): the first refusal at once, then a summary a window while it lasts.
+            crate::outages::refused(&crate::outages::OUTAGES, code);
         } else if let Self::WorkFull { open, limit } = self {
             // A project at its work bound is saturation too — the kind an operator can act on
             // (a stuck destination, a runaway import). Bounded by the request rate.
@@ -1050,6 +1050,63 @@ mod tests {
     use std::io;
 
     use super::*;
+
+    /// D-224: an outage's refusals are one WARN, not one per request. Through the real response
+    /// path and the process's own outage state, which another test may already have opened, so
+    /// "at most one"; each refusal is still its own DEBUG line on `colophon_api::refusals`.
+    #[test]
+    fn two_thousand_busy_refusals_warn_at_most_once() {
+        #[derive(Clone, Default)]
+        struct Lines(std::sync::Arc<std::sync::Mutex<Vec<u8>>>);
+        impl io::Write for Lines {
+            fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
+                self.0
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                    .extend_from_slice(bytes);
+                Ok(bytes.len())
+            }
+            fn flush(&mut self) -> io::Result<()> {
+                Ok(())
+            }
+        }
+        impl<'a> tracing_subscriber::fmt::MakeWriter<'a> for Lines {
+            type Writer = Self;
+            fn make_writer(&'a self) -> Self::Writer {
+                self.clone()
+            }
+        }
+        let lines = Lines::default();
+        let subscriber = tracing_subscriber::fmt()
+            .json()
+            .flatten_event(true)
+            .with_env_filter("info,colophon_api::refusals=debug")
+            .with_writer(lines.clone())
+            .finish();
+        tracing::subscriber::with_default(subscriber, || {
+            for _ in 0..2_000 {
+                let response = ApiError::Busy.into_response();
+                assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+            }
+        });
+        let text = String::from_utf8_lossy(
+            &lines
+                .0
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner),
+        )
+        .into_owned();
+        let warnings = text
+            .lines()
+            .filter(|line| line.contains(r#""level":"WARN""#))
+            .count();
+        let evidence = text
+            .lines()
+            .filter(|line| line.contains(r#""target":"colophon_api::refusals""#))
+            .count();
+        assert!(warnings <= 1, "{warnings} WARN lines for one outage");
+        assert_eq!(evidence, 2_000);
+    }
 
     #[test]
     fn internal_errors_never_show_their_cause() {

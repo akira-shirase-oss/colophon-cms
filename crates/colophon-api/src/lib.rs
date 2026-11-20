@@ -31,6 +31,7 @@ mod members;
 pub mod middleware;
 mod migrations;
 mod openapi;
+pub mod outages;
 mod populate;
 mod preview;
 mod projects;

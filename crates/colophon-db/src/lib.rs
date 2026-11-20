@@ -426,13 +426,39 @@ fn ssl_mode_weakness(mode: PgSslMode) -> &'static str {
     }
 }
 
-/// Statements slower than this are logged (WARN, `sqlx::query`): sqlx's own default, 1 s, unless the process sets
-/// another before building its pools (D-221; `COLOPHON_DB_SLOW_STATEMENT_MS`).
-static SLOW_STATEMENT: std::sync::OnceLock<Duration> = std::sync::OnceLock::new();
+/// When a statement is slow enough to log, in two tiers (D-224): evidence from `info`, an alert from `warn`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SlowStatements {
+    /// From here a statement is logged, at INFO (target `sqlx::query`): evidence. The server's log layer
+    /// drops the faster ones (sqlx offers every statement at INFO once the tiers are set).
+    pub info: Duration,
+    /// From here it is an alert, at WARN.
+    pub warn: Duration,
+}
 
-/// Sets the slow-statement threshold for every pool built afterwards (D-221). The first call wins.
-pub fn set_slow_statement_threshold(threshold: Duration) {
-    let _ = SLOW_STATEMENT.set(threshold);
+impl Default for SlowStatements {
+    /// sqlx's own single threshold, 1 s, at WARN: what a process gets that doesn't set the tiers (and so
+    /// doesn't install the layer that drops the statements under the INFO tier).
+    fn default() -> Self {
+        Self {
+            info: Duration::from_secs(1),
+            warn: Duration::from_secs(1),
+        }
+    }
+}
+
+/// The tiers every pool is built with (D-221, D-224; `COLOPHON_DB_SLOW_STATEMENT_INFO_MS`,
+/// `COLOPHON_DB_SLOW_STATEMENT_MS`).
+static SLOW_STATEMENTS: std::sync::OnceLock<SlowStatements> = std::sync::OnceLock::new();
+
+/// Sets the slow-statement tiers for every pool built afterwards. The first call wins.
+pub fn set_slow_statements(tiers: SlowStatements) {
+    let _ = SLOW_STATEMENTS.set(tiers);
+}
+
+/// The tiers in force: what [`set_slow_statements`] set, else the default.
+pub fn slow_statements() -> SlowStatements {
+    SLOW_STATEMENTS.get().copied().unwrap_or_default()
 }
 
 /// Builds the pool without connecting. Connections open on first use, so the server starts
@@ -444,14 +470,16 @@ pub fn connect_lazy(url: &str, settings: PoolSettings) -> Result<PgPool, DbError
         .options([(
             "statement_timeout",
             settings.statement_timeout.as_millis().to_string(),
-        )])
-        .log_slow_statements(
-            log::LevelFilter::Warn,
-            SLOW_STATEMENT
-                .get()
-                .copied()
-                .unwrap_or(Duration::from_secs(1)),
-        );
+        )]);
+    // D-224: with the tiers set (the server, which installs the layer that drops every statement
+    // under the INFO tier), sqlx offers each statement at INFO and says those past the WARN tier at
+    // WARN, "slow statement". Otherwise sqlx's own: WARN from 1 s, the rest at DEBUG.
+    let options = match SLOW_STATEMENTS.get() {
+        Some(tiers) => options
+            .log_statements(log::LevelFilter::Info)
+            .log_slow_statements(log::LevelFilter::Warn, tiers.warn),
+        None => options.log_slow_statements(log::LevelFilter::Warn, SlowStatements::default().warn),
+    };
     // No ping on checkout: it is a round trip on every query. sqlx still pings each connection
     // as it returns to the pool and drops broken ones, so only a connection that breaks while
     // idle (a database restart) reaches a caller, and fails that one request (D-033).

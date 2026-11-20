@@ -7,6 +7,7 @@ pub mod config;
 pub mod events;
 mod lag;
 mod mail;
+mod outage_logs;
 pub mod probes;
 pub mod setup_code;
 pub mod shutdown;
@@ -332,7 +333,7 @@ pub async fn run(
         .with_context(|| format!("binding {}", config.listen_addr))?;
 
     // Before any pool exists, so every pool logs statements past the configured threshold (D-221).
-    colophon_db::set_slow_statement_threshold(config.db_slow_statement);
+    colophon_db::set_slow_statements(config.db_slow_statements);
     let pool = colophon_db::connect_lazy(
         config.database_url.expose(),
         PoolSettings {
@@ -345,6 +346,8 @@ pub async fn run(
     let cancel = CancellationToken::new();
     // D-221's evidence: when this process stops running on time (off unless its DEBUG target is on).
     lag::start(&cancel);
+    // D-224: an outage in progress is summarised once a window, not logged once per request.
+    outage_logs::start(&cancel);
     let mut supervisor = Supervisor::new(readiness.clone(), cancel.child_token());
     let database_probe = DatabaseProbe::new(config.database_url.expose(), config.probe_timeout)
         .map_err(|error| anyhow::anyhow!(error))

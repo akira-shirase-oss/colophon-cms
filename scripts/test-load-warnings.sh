@@ -13,6 +13,7 @@ log=$(cat <<'LINES'
 {"level":"WARN","target":"sqlx::query","message":"slow statement: execution time exceeded alert threshold","summary":"SELECT","elapsed_secs":0.999}
 {"level":"WARN","target":"sqlx::query","message":"slow statement: execution time exceeded alert threshold","summary":"COMMIT","elapsed_secs":1.4}
 {"level":"WARN","target":"sqlx::query","message":"slow statement: execution time exceeded alert threshold","summary":"COMMIT"}
+{"level":"INFO","target":"sqlx::query","summary":"COMMIT","rows_affected":0,"elapsed_secs":0.15}
 {"level":"WARN","target":"colophon_api::error","message":"request refused: no database connection free","code":"unavailable"}
 {"level":"ERROR","target":"colophon_api::error","message":"request failed","code":"internal"}
 {"level":"WARN","target":"sqlx::pool","message":"slow statement acquire"}
@@ -27,9 +28,11 @@ counted=$(jq -Rn "[inputs | fromjson? | $lib select(counted)] | length" <<<"$log
 spliced=$(jq -Rsc "[split(\"\\n\")[] | fromjson? | $lib select(counted)] | length" <<<"$log")
 slow=$(jq -Rn "[inputs | fromjson? | $lib select(slow_statement)] | length" <<<"$log")
 # Counted: the 1.4 s statement, the one with no duration (never excused unmeasured), the refusal,
-# the internal error and the pool warning (not a statement). Excused: 0.217 s and 0.999 s.
+# the internal error and the pool warning (not a statement). Excused: 0.217 s and 0.999 s. D-224's
+# lower tier is INFO, as sqlx offers a statement under the WARN tier: no "slow statement" message,
+# only its elapsed_secs. It is evidence, and never counted.
 expect "warnings that fail the run" "$counted" 5
 expect "the same, spliced mid-pipeline" "$spliced" 5
-expect "slow statements recorded as evidence" "$slow" 4
+expect "slow statements recorded as evidence (D-224's INFO tier too)" "$slow" 5
 (( fail == 0 )) && echo "load warnings: slow statements under 1 s are evidence; everything else fails the run"
 exit "$fail"

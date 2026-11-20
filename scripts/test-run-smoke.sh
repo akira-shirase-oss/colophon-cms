@@ -89,5 +89,31 @@ sig=$(scripts/stall-signature.sh "$work/stall.log" "$work/pressure.txt")
 [[ $(jq -r '.io_full_min' <<<"$sig") == 90 && $(jq -r '.commit_share_min' <<<"$sig") == 1 ]] \
   || { echo "FAIL the signature's numbers: $sig" >&2; fail=1; }
 
+# D-224's logs: an outage is one WARN, then a summary a window (no code: not a failed request), and each refusal
+# is a DEBUG line on colophon_api::refusals with its code; slow statements under a second are INFO without the
+# "slow statement" message, only their elapsed_secs.
+evidence='{"timestamp":"2026-11-20T12:00:05.60Z","level":"DEBUG","target":"colophon_api::refusals","message":"request refused: no database connection free","code":"unavailable"}'
+calm_evidence='{"timestamp":"2026-11-20T12:00:02.60Z","level":"DEBUG","target":"colophon_api::refusals","message":"request refused: no database connection free","code":"unavailable"}'
+info_commit='{"timestamp":"2026-11-20T12:00:05.30Z","level":"INFO","target":"sqlx::query","summary":"COMMIT","elapsed_secs":0.18}'
+summary='{"timestamp":"2026-11-20T12:00:02.00Z","level":"WARN","target":"colophon_api::outages","message":"refused 40 requests in the last 10 s: no database connection free, since 2026-11-20T11:59:52Z","refused":40,"since":"2026-11-20T11:59:52Z"}'
+signature() { # case, expected stall, log lines...
+  local name=$1 want=$2; shift 2
+  printf '%s\n' "$@" >"$work/d224.log"
+  local got; got=$(scripts/stall-signature.sh "$work/d224.log" "$work/pressure.txt")
+  [[ $(jq -r '.stall' <<<"$got") == "$want" ]] || { echo "FAIL $name: $got" >&2; fail=1; }
+}
+signature "refusals said only as DEBUG evidence, with INFO COMMITs, are a stall" true "$info_commit" "$evidence"
+signature "a DEBUG refusal in a calm second blocks" false "$info_commit" "$evidence" "$calm_evidence"
+signature "an outage's summary line in a calm second is not a failed request" true "$commit" "$refusal" "$summary"
+
+# The signature reads what the server logs, so every load run CI makes must log the evidence: refusals at DEBUG
+# on their target, and statements at INFO (a short stall's COMMITs are 100-220 ms, under the WARN tier).
+while IFS= read -r line; do
+  for wanted in 'sqlx::query=info' 'colophon_api::refusals=debug'; do
+    [[ $line == *"$wanted"* ]] || { echo "FAIL a CI load run's LOAD_LOG lacks $wanted: $line" >&2; fail=1; }
+  done
+done < <(grep -oE 'LOAD_LOG=[^ ]+' .github/workflows/ci.yml)
+[[ $(grep -cE 'LOAD_LOG=' .github/workflows/ci.yml) -ge 2 ]] || { echo "FAIL: no LOAD_LOG found in CI" >&2; fail=1; }
+
 (( fail == 0 )) && echo "run-smoke: only a runner IO stall is re-run, once, and the re-run decides; correctness blocks"
 exit "$fail"
