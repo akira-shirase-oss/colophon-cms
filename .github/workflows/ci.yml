@@ -158,6 +158,8 @@ jobs:
         run: scripts/test-smoke-parity.sh
       - name: The smokes job's strict verdict on its expected failures (scripts/test-smoke-verdict.sh, D-209)
         run: scripts/test-smoke-verdict.sh
+      - name: perf-compare reads every admission level, N=1 behind libtest's prefix too (scripts/test-admission-lines.sh)
+        run: scripts/test-admission-lines.sh
       - name: The load runs' warnings gate (scripts/test-load-warnings.sh, D-221 evidence under 1 s excused)
         run: scripts/test-load-warnings.sh
       - name: A smoke is re-run only for a runner IO stall, once, and the re-run decides (scripts/test-run-smoke.sh)

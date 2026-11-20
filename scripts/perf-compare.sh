@@ -7,11 +7,22 @@
 #
 # Suites:
 #   admission-throughput  crates/colophon-db/tests/admission_throughput.rs at N = 1, 8, 32, 64
-#                         (D-216); the harness is taken from <after> when <before> lacks it.
+#                         (D-216), in both of its modes: across projects and within one
+#                         (each run's "mode"); the harness is taken from <after> when <before>
+#                         lacks it.
 #                         When <after> adds migration 0078, also times it on a seeded database:
 #                         its write lock on the work tables is held for that long at upgrade.
 #   l08-noisy-agent       scripts/load.sh noisy-agent steady (L08, D-120), each side on a
 #                         database of its own; the result files are kept.
+#   smoke                 the smokes job's undo, bulk and assets at its settings (SMOKES
+#                         overrides the list), each side on a database of its own, with no
+#                         latency gate (the numbers are the point). When pg_stat_statements is
+#                         loaded (the workflow turns it on: a restart, so only on a runner's own
+#                         stack), each run also keeps its database's top statements by total
+#                         time and its work-admission locks by their exact statements as total
+#                         ms, calls and mean: WB (installation-wide, gone with D-216) and WA (the
+#                         project's), where an acquire's execution time is its wait, and D-216's
+#                         counter, colophon_payload_admit() (its row lock's wait plus its fold).
 #
 # Needs the local stack (scripts/stack.sh up), the pinned toolchain, and k6 for L08. Each side is a
 # detached worktree under <work directory>, with a target directory of its own.
@@ -31,7 +42,7 @@ rounds=$4
 work=$5
 [[ $rounds =~ ^[1-5]$ ]] || die "rounds is 1 to 5, got '$rounds'"
 case "$suite" in
-  admission-throughput | l08-noisy-agent) ;;
+  admission-throughput | l08-noisy-agent | smoke) ;;
   *) die "unknown suite '$suite'" ;;
 esac
 
@@ -79,15 +90,14 @@ if [[ $suite == admission-throughput ]]; then
   done
   for ((round = 1; round <= rounds; round++)); do
     for side in before after; do
-      echo "round $round: $side"
-      (cd "$work/$side" && "${binary[$side]}" --ignored --exact admissions_a_second_by_concurrent_submitters \
-        --nocapture --test-threads=1) | tee "$out/admission-$side-r$round.txt" |
-        awk -v round="$round" -v side="$side" '/^N=/ {
-          gsub(/= +/, "=")
-          line = "{\"round\":" round ",\"side\":\"" side "\""
-          for (i = 1; i <= NF; i++) { split($i, kv, "="); line = line ",\"" kv[1] "\":" kv[2] }
-          print line "}"; fflush()
-        }' >>"$runs"
+      for mode in across-projects one-project; do
+        echo "round $round: $side, $mode"
+        test=admissions_a_second_by_concurrent_submitters
+        [[ $mode == one-project ]] && test+=_in_one_project
+        (cd "$work/$side" && "${binary[$side]}" --ignored --exact "$test" --nocapture --test-threads=1) |
+          tee "$out/admission-$side-$mode-r$round.txt" |
+          awk -v round="$round" -v side="$side" -v mode="$mode" -f scripts/admission-lines.awk >>"$runs"
+      done
     done
   done
 
@@ -153,6 +163,74 @@ SQL
       '{migration_0078: {rows: $rows, whole_migration_ms: $ms, drift_after: $drift,
         note: "the whole migration in one transaction: an upper bound on how long it holds writes to the work tables"}}')
   fi
+elif [[ $suite == smoke ]]; then
+  # The smokes job's settings (ci.yml), at reference limits: k6's p99 gate is set out of reach so
+  # every run completes and is recorded; hard failures still show in each record.
+  smokes=${SMOKES:-undo bulk assets}
+  settings_of() {
+    case "$1" in
+      undo) settings=(TOTAL=8000) ;;
+      bulk) settings=(TOTAL=10000) ;;
+      assets) settings=("LOAD_LOG=info,colophon_worker=debug" TOTAL=10000) ;;
+      *) die "the smoke suite runs undo, bulk or assets, not '$1'" ;;
+    esac
+  }
+  for smoke in $smokes; do settings_of "$smoke"; done
+  for side in before after; do
+    psql_as_owner -d postgres -c "DROP DATABASE IF EXISTS perf_$side" -c "CREATE DATABASE perf_$side"
+  done
+  statements=no
+  if [[ $(psql_as_owner -d postgres -At -c "SELECT count(*) FROM pg_extension WHERE extname = 'pg_stat_statements'") == 1 ]] &&
+    psql_as_owner -d postgres -c "SELECT pg_stat_statements_reset()" >/dev/null 2>&1; then
+    statements=yes
+  else
+    echo "perf-compare: pg_stat_statements isn't loaded: no lock-wait totals (the workflow turns it on)" >&2
+  fi
+  # pg_stat_statements is the cluster's: a run's rows are its own database's, by oid.
+  stats_of() {
+    psql_as_owner -d postgres -At -c "
+      WITH mine AS (SELECT * FROM pg_stat_statements WHERE dbid = (SELECT oid FROM pg_database WHERE datname = '$1'))
+      SELECT json_build_object(
+        'top', (SELECT coalesce(json_agg(t), '[]') FROM (
+          SELECT round(total_exec_time::numeric, 1) AS total_ms, calls, round(mean_exec_time::numeric, 3) AS mean_ms, rows,
+                 left(regexp_replace(query, '\s+', ' ', 'g'), 160) AS query
+          FROM mine ORDER BY total_exec_time DESC LIMIT 10) t),
+        'locks', (SELECT coalesce(json_agg(l), '[]') FROM (
+          SELECT lock, round(sum(total_exec_time)::numeric, 1) AS total_ms, sum(calls) AS calls,
+                 round((sum(total_exec_time) / nullif(sum(calls), 0))::numeric, 3) AS mean_ms
+          FROM (SELECT *, CASE
+                  WHEN query LIKE '%\"held!\" FROM pg_advisory_xact_lock(\$1, \$2)%' THEN 'WB'
+                  WHEN query LIKE '%\"held!\" FROM pg_advisory_xact_lock(\$1, hashtext(\$2::text))%' THEN 'WA'
+                  WHEN query LIKE '%colophon_payload_admit()%' THEN 'counter'
+                END AS lock FROM mine) m
+          WHERE lock IS NOT NULL GROUP BY 1 ORDER BY 1) l))"
+  }
+  for ((round = 1; round <= rounds; round++)); do
+    for smoke in $smokes; do
+      settings_of "$smoke"
+      for side in before after; do
+        echo "round $round: $smoke, $side"
+        name="$smoke-$side-r$round"
+        [[ $statements == yes ]] && psql_as_owner -d postgres -c "SELECT pg_stat_statements_reset()" >/dev/null
+        status=0
+        (cd "$work/$side" && env "${settings[@]}" KEEP=0 P99_MS=600000 COLOPHON_TEST_DATABASE="perf_$side" \
+          RECORD_OUT="$out/$name.record.json" SERVER_LOG="$out/$name.server.log" \
+          scripts/load.sh "$smoke" throughput) >"$out/$name.log" 2>&1 || status=$?
+        stats=null
+        if [[ $statements == yes ]]; then
+          stats=$(stats_of "perf_$side") || stats=null
+          jq -r '.top[]? | [.total_ms, .calls, .mean_ms, .rows, .query] | @tsv' <<<"$stats" >"$out/$name.statements.txt"
+        fi
+        record=null
+        [[ -s "$out/$name.record.json" ]] && record=$(cat "$out/$name.record.json")
+        jq -cn --argjson round "$round" --arg side "$side" --arg smoke "$smoke" --argjson status "$status" \
+          --argjson record "$record" --argjson stats "$stats" \
+          '{round: $round, side: $side, smoke: $smoke, exit: $status,
+            p99_ms: $record.latency_ms.p99, hard_failures_total: $record.hard_failures_total,
+            locks: $stats.locks, record: $record}' >>"$runs"
+      done
+    done
+  done
 else
   for side in before after; do
     psql_as_owner -d postgres -c "DROP DATABASE IF EXISTS perf_$side" -c "CREATE DATABASE perf_$side"

@@ -19,6 +19,11 @@ if [[ "${1:-}" == "--dev" ]]; then
   exec npm run dev -w @colophon/testbed
 fi
 
+# Fixed ports (CI gives every job its own runner): a taken one is refused, never tested.
+# shellcheck source=scripts/port-guard.sh
+. scripts/port-guard.sh
+refuse_squatter "${COLOPHON_TESTBED_SERVER_PORT:-58091}" "colophon-server"
+refuse_squatter "${COLOPHON_TESTBED_PORT:-58101}" "testbed preview"
 scripts/check-toolchain.sh >/dev/null
 scripts/migrate.sh
 cargo build --quiet --release --locked -p colophon-server
