@@ -933,10 +933,16 @@ record=$(jq -c '.hard_failures_total = ([.hard_failures | to_entries[] | select(
 # systematic gap between the two would bias the scale, and every record shows it.
 if [[ -n "${RUNNER_SCALE:-}" ]]; then
   record=$(jq -c --arg health "${RUNNER_HEALTH_RPS:-}" --arg long "${RUNNER_LONG_HEALTH_RPS:-}" --arg reference "${RUNNER_REFERENCE_RPS:-}" --arg scale "$RUNNER_SCALE" --arg p99 "${P99_MS:-}" --arg judged "${RUNNER_JUDGED:-yes}" \
+    --arg wrps "${RUNNER_WRITE_RPS:-}" --arg wsource "${RUNNER_WRITE_SOURCE:-}" --arg wkept "${RUNNER_WRITE_KEPT:-}" --arg wdiscarded "${RUNNER_WRITE_DISCARDED:-}" \
     '($health | tonumber? // null) as $h | ($long | tonumber? // null) as $l
      | .runner = {cpu: .machine.cpu, judged: ($judged == "yes"), health_rps: $h, long_health_rps: $l,
                   probe_to_long: (if $h and $l and $l > 0 then ($h / $l * 1000 | round / 1000) else null end),
-                  reference_rps: ($reference | tonumber? // null), scale: ($scale | tonumber? // null), p99_limit_ms: ($p99 | tonumber? // null)}' <<<"$record")
+                  reference_rps: ($reference | tonumber? // null), scale: ($scale | tonumber? // null), p99_limit_ms: ($p99 | tonumber? // null)}
+     # The D-223 write probe, recorded (phase 1: not applied). Its runs are in projects of their own.
+     | if $wsource != "" then .runner += {write_rps: ($wrps | tonumber? // null), write_scale_source: $wsource,
+                                         write_probe: {kept: ($wkept | tonumber? // 0), discarded: ($wdiscarded | tonumber? // 0),
+                                                       isolated: "a project per run (entries setup)", applied: false}}
+       else . end' <<<"$record")
 fi
 echo "$record" | jq .
 # RECORD_OUT: the record as a file too, for a caller that judges it (CI's smoke verdict, D-209).

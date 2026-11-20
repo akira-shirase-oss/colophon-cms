@@ -160,6 +160,8 @@ jobs:
         run: scripts/test-load-warnings.sh
       - name: A smoke is re-run only for a runner IO stall, once, and the re-run decides (scripts/test-run-smoke.sh)
         run: scripts/test-run-smoke.sh
+      - name: The write probe discards runs inside a disk stall and falls back loudly (scripts/test-runner-speed.sh, D-223)
+        run: scripts/test-runner-speed.sh
 
   # The testing rule (D-018) from a clean clone: the real stack, the real binary, real outages,
   # the testbed in a browser, and a load smoke run.
@@ -330,6 +332,17 @@ jobs:
           echo "| runner | ${runner_cpu:-unknown}: health $health_rps req/s (median of 3; long run ${long_rps:-not measured}), scale $scale of $REFERENCE_RPS |" >>"$GITHUB_STEP_SUMMARY"
           # Steady smokes are judged at their scaled rates even below the floor: the scaling keeps their relative load.
           export RUNNER_HEALTH_RPS=$health_rps RUNNER_LONG_HEALTH_RPS=${long_rps:-} RUNNER_REFERENCE_RPS=$REFERENCE_RPS RUNNER_SCALE=$scale RUNNER_JUDGED=yes
+          # D-223's write probe, RECORD-ONLY for now (phase 1): entries saves back to back, in projects of their own,
+          # runs inside a disk stall discarded. Calibrated from clean-class runs, phase 2 will scale the write smokes
+          # by it; until then every smoke keeps health's scale. A probe with no run left says so, loudly.
+          IFS=$'\t' read -r write_rps write_source write_kept write_discarded \
+            < <(PRESSURE_FILE="$logs/pressure.txt" scripts/runner-speed.sh write 2>"$logs/write-probe.log")
+          if [[ $write_source != probe ]]; then
+            echo "::warning::the write probe counted no run (kept ${write_kept:-0}, discarded ${write_discarded:-0}): write_scale_source is fallback, health's scale stands"
+            write_source=fallback
+          fi
+          echo "| write probe | ${write_rps:-none} req/s, $write_source (kept ${write_kept:-0}, discarded ${write_discarded:-0}; record-only, D-223) |" >>"$GITHUB_STEP_SUMMARY"
+          export RUNNER_WRITE_RPS=${write_rps:-} RUNNER_WRITE_SOURCE=$write_source RUNNER_WRITE_KEPT=${write_kept:-0} RUNNER_WRITE_DISCARDED=${write_discarded:-0}
           rate() { awk -v r="$1" -v s="$scale" 'BEGIN {v = int(r * s + 0.5); if (v < 1) v = 1; print v}'; }
           run_load TOTAL=100000 P99_MS=50 scripts/load.sh rich-text throughput
           run_load RATE=$(rate 400) P99_MS=200 scripts/load.sh session steady
@@ -510,6 +523,17 @@ jobs:
           fi
           echo "| runner | ${runner_cpu:-unknown}: health $health_rps req/s (median of 3), scale $scale of $REFERENCE_RPS, latency judged: $judged |" >>"$GITHUB_STEP_SUMMARY"
           export RUNNER_HEALTH_RPS=$health_rps RUNNER_REFERENCE_RPS=$REFERENCE_RPS RUNNER_SCALE=$scale RUNNER_JUDGED=$judged SMOKE_LATENCY_JUDGED=$judged
+          # D-223's write probe, RECORD-ONLY for now (phase 1): entries saves back to back, in projects of their own,
+          # runs inside a disk stall discarded. Calibrated from clean-class runs, phase 2 will scale the write smokes
+          # by it; until then every smoke keeps health's scale. A probe with no run left says so, loudly.
+          IFS=$'\t' read -r write_rps write_source write_kept write_discarded \
+            < <(PRESSURE_FILE="$logs/pressure.txt" scripts/runner-speed.sh write 2>"$logs/write-probe.log")
+          if [[ $write_source != probe ]]; then
+            echo "::warning::the write probe counted no run (kept ${write_kept:-0}, discarded ${write_discarded:-0}): write_scale_source is fallback, health's scale stands"
+            write_source=fallback
+          fi
+          echo "| write probe | ${write_rps:-none} req/s, $write_source (kept ${write_kept:-0}, discarded ${write_discarded:-0}; record-only, D-223) |" >>"$GITHUB_STEP_SUMMARY"
+          export RUNNER_WRITE_RPS=${write_rps:-} RUNNER_WRITE_SOURCE=$write_source RUNNER_WRITE_KEPT=${write_kept:-0} RUNNER_WRITE_DISCARDED=${write_discarded:-0}
           # The verdict scales a flapper's p99 ceiling by the same factor as its limit (limit() below: P99 / scale).
           export SMOKE_LIMIT_SCALE=$scale
           rate() { awk -v r="$1" -v s="$scale" 'BEGIN {v = int(r * s + 0.5); if (v < 1) v = 1; print v}'; }

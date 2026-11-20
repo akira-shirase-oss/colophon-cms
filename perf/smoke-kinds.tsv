@@ -1,0 +1,47 @@
+# Every load smoke check.sh runs, by what its iterations do (D-223): a write smoke's latency scales with the
+# runner's write speed (the write probe, scripts/runner-speed.sh write), a read smoke's with its health speed.
+# Phase 1 records the write probe and applies nothing; phase 2 scales the write smokes by it.
+# scripts/test-smoke-parity.sh checks every check.sh smoke has exactly one row, and that limiters match
+# perf/limiter-smokes.tsv. Columns, tab-separated: smoke, kind (read|write|drill|limiter), why.
+assets	write	uploads, replaces, deletes
+audience	write	site-user sign-ups and sessions
+bulk	write	bulk manifests
+changesets	write	changesets, reviews, rollbacks
+collaboration	write	comments and tasks
+content-types	write	saves of typed entries
+entries	write	If-Match saves
+import-scale	write	imports
+live	write	saves beside live streams
+media-load	write	uploads beside editorial saves
+members	write	invitations and role changes
+migrations	write	schema migration plans and runs
+mixed	write	saves, write-backs and publishes
+modelling	write	saves of modelled entries
+noisy-agent	write	editorial saves beside an agent
+projects	write	project creation
+preview	write	preview grants issued and revoked
+publishing	write	publishes
+rich-text-media	write	saves with media references
+roles	write	custom role edits
+schedules	write	schedules made and cancelled
+site-starter	write	saves while publishing
+smoke	write	a user walk with saves and publishes
+stages	write	stage-gated publishes
+tokens	write	token creation and limit edits
+undo	write	takedowns and undos
+cdn-warm	read	cached delivery reads across regions
+cold-cache	read	uncached delivery reads
+delivery	read	delivery reads
+health	read	health probes
+quotas	read	token quota reads
+rich-text	read	validation, no database write
+session	read	session lookups
+stampede	read	hot-key reads
+studio	read	Studio page loads
+warm-baseline	read	warm delivery reads
+cli	read	CLI reads
+cache-down	drill	Valkey outage drill
+postgres-trouble	drill	Postgres outage drill
+purge-trouble	drill	CDN purge outage drill
+spike	limiter	delivery limiter (perf/limiter-smokes.tsv)
+password-flood	limiter	password limiter (perf/limiter-smokes.tsv)
