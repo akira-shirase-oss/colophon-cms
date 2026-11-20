@@ -1,0 +1,113 @@
+name: "load curve (D-223, write paths on the production shape)"
+
+# On demand: saturation curves for the write paths with the server on two CPUs (a 2-vCPU droplet running only the
+# server) and Postgres unconstrained (Neon's machine in production), at each server-Postgres delay asked for, added on
+# port 5432 alone (perf/saturation/netem.sh). For each delay, scenario and repeat: a warm-up then a measured run at
+# each rate (perf/saturation/curve.sh). The runner's CPU, the delay asked for and the round trip measured are in
+# every row; every run is kept, and the table is the job summary and the artifact. A CI runner is shared hardware:
+# these are evidence of how latency and contention scale, not the droplet's capacity (that is the real run against
+# Neon). Pushing to a load-curve/** branch runs it with the defaults (a dispatch needs it on the default branch).
+on:
+  push:
+    branches: ["load-curve/**"]
+  workflow_dispatch:
+    inputs:
+      delays:
+        description: "server-Postgres delay each way, ms, space-separated"
+        default: "0 2"
+      scenarios:
+        description: "perf/k6 scenarios, space-separated"
+        default: "members schedules tokens"
+      rates:
+        description: "requests a second per step, space-separated"
+        default: "100 200 400 800 1200"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: load-curve-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  curve:
+    name: write-path curves, server on 2 CPUs, latency to Postgres injected
+    runs-on: ubuntu-latest
+    timeout-minutes: 150
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Build the image from source (deploy/image/Dockerfile)
+        run: |
+          set -euo pipefail
+          docker build -f deploy/image/Dockerfile \
+            --build-arg COLOPHON_COMMIT="$GITHUB_SHA" \
+            --build-arg SOURCE_DATE_EPOCH="$(git log -1 --format=%ct)" \
+            -t colophon:local .
+      - name: Install k6 (pinned)
+        run: |
+          scripts/install-k6.sh "$RUNNER_TEMP/bin"
+          echo "$RUNNER_TEMP/bin" >>"$GITHUB_PATH"
+      - name: The quick start, server on two CPUs, the dev accounts
+        env:
+          COLOPHON_IMAGE: colophon:local
+          COLOPHON_PORT: "8080"
+        run: |
+          set -euo pipefail
+          dc() { docker compose -p colophon-curve -f deploy/quickstart/compose.yaml -f perf/saturation/compose.2cpu.yaml "$@"; }
+          dc up -d --wait
+          for who in "dev-owner@colophon.test Dev Owner --admin" "dev-editor@colophon.test Dev Editor"; do
+            read -r email first last admin <<<"$who"
+            dc run --rm --no-deps migrate admin account --email "$email" --password colophon-dev --display-name "$first $last" ${admin:+"$admin"}
+          done
+          docker inspect colophon-curve-colophon-1 --format 'server CPUs: {{.HostConfig.NanoCpus}}'
+      - name: The curves
+        env:
+          DELAYS: ${{ inputs.delays || '0 2' }}
+          SCENARIOS: ${{ inputs.scenarios || 'members schedules tokens' }}
+          RATES: ${{ inputs.rates || '100 200 400 800 1200' }}
+        run: |
+          set -euo pipefail
+          out="$RUNNER_TEMP/curve"; mkdir -p "$out"
+          cpu=$(sed -n 's/^model name[[:space:]]*: //p' /proc/cpuinfo | head -1)
+          cores=$(nproc)
+          export CURVE_CPU="$cpu ($cores CPUs)" CURVE_OUT="$out/summaries"
+          first=1
+          for delay in $DELAYS; do
+            rtt=$(perf/saturation/netem.sh colophon-curve-pod-1 "$delay")
+            echo "$rtt" | tee -a "$out/rtt.jsonl"
+            export CURVE_DELAY_MS=$delay CURVE_RTT_US
+            CURVE_RTT_US=$(jq -r '.connect_us_5432' <<<"$rtt")
+            for scenario in $SCENARIOS; do
+              for repeat in 1 2; do
+                export CURVE_REPEAT=$repeat
+                echo "::group::$scenario, delay $delay ms, repeat $repeat"
+                if (( first )); then
+                  perf/saturation/curve.sh "$scenario" http://localhost:8080 "$RATES" 40 10 | tee "$out/curves.tsv"
+                  first=0
+                else
+                  perf/saturation/curve.sh "$scenario" http://localhost:8080 "$RATES" 40 10 | tail -n +2 | tee -a "$out/curves.tsv"
+                fi
+                echo "::endgroup::"
+              done
+            done
+          done
+          perf/saturation/netem.sh colophon-curve-pod-1 0 >/dev/null
+          {
+            echo "### D-223 curves: $CURVE_CPU, server on 2 CPUs"
+            echo
+            head -1 "$out/curves.tsv" | sed 's/\t/ | /g; s/^/| /; s/$/ |/'
+            head -1 "$out/curves.tsv" | awk -F'\t' '{s = "|"; for (i = 1; i <= NF; i++) s = s "---|"; print s}'
+            tail -n +2 "$out/curves.tsv" | sed 's/\t/ | /g; s/^/| /; s/$/ |/'
+          } >>"$GITHUB_STEP_SUMMARY"
+      - name: Keep the curves
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: d223-curves
+          path: ${{ runner.temp }}/curve
+          retention-days: 90
+      - name: The server's log, if anything failed
+        if: failure()
+        run: docker compose -p colophon-curve -f deploy/quickstart/compose.yaml logs --no-color --tail 200 colophon || true

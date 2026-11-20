@@ -1,0 +1,21 @@
+# D-223: the quick start shaped like production for saturation curves of the write paths: the server on two CPUs,
+# as on a 2-vCPU droplet that runs only the server, and Postgres unconstrained, since in production it is Neon's
+# machine, not the droplet's. Layered on deploy/quickstart/compose.yaml under a project of its own, never a
+# shared stack:
+#
+#   COLOPHON_IMAGE=colophon:local COLOPHON_PORT=58157 docker compose -p colophon-curve \
+#     -f deploy/quickstart/compose.yaml -f perf/saturation/compose.2cpu.yaml up -d --wait
+#
+# Network latency between the server and Postgres is added separately, on port 5432 alone (perf/saturation/netem.sh).
+# The k6 client runs outside the limit. One machine sends every request, so the rate limits are lifted exactly as
+# scripts/load.sh lifts them for its server (D-076, D-213): each request still pays for its check, and the curve
+# measures the write path, not the limiter.
+services:
+  colophon:
+    cpus: 2
+    environment:
+      COLOPHON_RATE_LIMIT_PER_ADDRESS: "1000000/1000000"
+      COLOPHON_RATE_LIMIT_PER_CREDENTIAL: "1000000/1000000"
+      COLOPHON_RATE_LIMIT_DELIVERY: "1000000/1000000"
+      COLOPHON_RATE_LIMIT_PASSWORD: "1000000/1000000"
+      COLOPHON_TRUSTED_ORIGINS: http://localhost:${COLOPHON_PORT:-8080}
