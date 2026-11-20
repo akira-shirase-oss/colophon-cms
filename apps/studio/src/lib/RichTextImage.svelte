@@ -83,7 +83,7 @@
 				draggable="false"
 			/>
 		{:else if status === 'loading'}
-			<div class="h-40 w-full max-w-md animate-pulse rounded-lg bg-muted motion-reduce:animate-none" aria-hidden="true"></div>
+			<div class="h-40 w-full max-w-md rounded-lg bg-muted" aria-hidden="true"></div>
 		{:else}
 			<div class="flex h-40 w-full max-w-md flex-col items-center justify-center gap-1.5 rounded-lg border border-dashed border-border bg-card px-4 text-center text-sm text-muted-foreground">
 				{#if status === 'missing' || status === 'rejected' || status === 'deleted' || status === 'deleting'}

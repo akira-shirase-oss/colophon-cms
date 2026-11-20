@@ -19,6 +19,8 @@ npm run check --workspaces --if-present
 npm test --workspaces --if-present
 # The load scenarios' shared helpers (perf/k6/lib): the Idempotency-Key builder against the API's rule.
 node --test perf/k6/lib/*.test.mjs
+# Light animations only: nothing moves forever but the listed work-in-progress indicators.
+node --test scripts/test-motion.mjs
 # The e2e server's port is picked free, never fixed (two checks on one machine can't meet).
 node --test scripts/test-free-ports.mjs
 # The integration half's fixed-port starters refuse a port someone else holds.
