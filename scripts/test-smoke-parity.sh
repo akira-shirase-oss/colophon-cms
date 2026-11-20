@@ -61,6 +61,21 @@ if [[ -n "$missing" ]]; then
   echo "FAIL: check.sh runs $(wc -l <<<"$missing" | tr -d ' ') load smoke(s) no CI job runs: $(paste -sd' ' - <<<"$missing")" >&2
   exit 1
 fi
+# Every smoke has exactly one kind in perf/smoke-kinds.tsv (D-223: write smokes will scale by the write probe, read
+# smokes by health), so none can silently take the wrong scale; and its limiters are perf/limiter-smokes.tsv's.
+kinds=perf/smoke-kinds.tsv
+kinded=$(grep -vE '^(#|$)' "$kinds" | cut -f1 | sort)
+dupes=$(uniq -d <<<"$kinded")
+[[ -z "$dupes" ]] || { echo "FAIL: $kinds lists a smoke twice: $(paste -sd' ' - <<<"$dupes")" >&2; exit 1; }
+unkinded=$(comm -23 <(echo "$local_list") <(echo "$kinded"))
+[[ -z "$unkinded" ]] || { echo "FAIL: check.sh runs smoke(s) with no kind in $kinds: $(paste -sd' ' - <<<"$unkinded")" >&2; exit 1; }
+stray=$(comm -13 <(echo "$local_list") <(echo "$kinded"))
+[[ -z "$stray" ]] || { echo "FAIL: $kinds lists smoke(s) check.sh doesn't run: $(paste -sd' ' - <<<"$stray")" >&2; exit 1; }
+badkind=$(grep -vE '^(#|$)' "$kinds" | awk -F'\t' '$2 !~ /^(read|write|drill|limiter)$/ {print $1}')
+[[ -z "$badkind" ]] || { echo "FAIL: $kinds: a kind is read, write, drill or limiter: $(paste -sd' ' - <<<"$badkind")" >&2; exit 1; }
+klimiters=$(grep -vE '^(#|$)' "$kinds" | awk -F'\t' '$2 == "limiter" {print $1}' | sort)
+[[ "$klimiters" == "$(grep -vE '^(#|$)' perf/limiter-smokes.tsv | cut -f1 | sort)" ]] \
+  || { echo "FAIL: $kinds's limiters aren't perf/limiter-smokes.tsv's" >&2; exit 1; }
 # A limiter smoke (perf/limiter-smokes.tsv) exists to exceed a fixed limit, so CI may never scale its rate to the
 # runner: spike at a scaled 173/s spiked to 865/s, under the 1000/s delivery limit, and measured no refusal (CI
 # 44620651187). Each listed smoke must be a real one that CI runs, and no CI line of it may use rate().
