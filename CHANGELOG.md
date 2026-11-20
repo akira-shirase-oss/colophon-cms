@@ -50,6 +50,14 @@ through `--version` and `GET /version`.
   rollback to a recent release read 50k buffers (60 ms) before; at 48k live entries a fitting
   rollback's pins took 1.2 s and now take under 100 ms (D-185).
 
+### Fixed
+
+- **Revoking a throttled token, or changing its limits, takes effect on its next request**
+  (D-214). A token refused for its quota and then revoked was still told `429` with a
+  `Retry-After` instead of `401`, and removing or replacing its request ceiling kept refusing it
+  until the old window ran out. The remembered refusal now ends as the change commits, on every
+  server.
+
 ## [0.1.0-alpha.1] — 2026-11-19
 
 The first versioned state of the engine: pre-release until the P6 proof gate closes
