@@ -63,6 +63,13 @@ through `--version` and `GET /version`.
 
 ### Performance
 
+- **The media worker picks up its next upload without reading every upload before it**. Each
+  time it asked for work it read every job the table had ever held, finished ones included, and
+  sorted the queue to take one to four; under a steady stream of uploads that grew to seconds a
+  claim and the queue backed up. It now finds waiting jobs and jobs whose worker stopped
+  answering by two indexed lookups that stop at what it asked for. Upgrading runs migration 0080,
+  which adds one index to the media job table.
+
 - **Submitting work no longer waits on every other project's submissions** (D-216). The
   installation's 1 GiB bound on pending work metadata used to be counted from scratch on every
   submit, under one lock held for the whole request; it is now a running total checked at the end
