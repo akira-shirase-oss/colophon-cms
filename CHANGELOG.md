@@ -29,6 +29,14 @@ through `--version` and `GET /version`.
 - A `{generation}` that isn't a positive whole number answers `404` on release reads and `422
   invalid_generation` on rollbacks, in the usual error envelope.
 
+### Fixed
+
+- **A delivery or media job's deadline sweep can no longer deadlock with a publish** (D-216). The
+  sweep that fails jobs past their deadline now leaves a job another transaction holds for its next
+  pass, and every update that must take several jobs takes them in one order. Under concurrent
+  publishes the two could abort each other with a database deadlock, which reached a client as a
+  500; a transaction the database aborts that way now answers 503 with `Retry-After`.
+
 ### Performance
 
 - **Submitting work no longer waits on every other project's submissions** (D-216). The
