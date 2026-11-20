@@ -84,10 +84,19 @@ label='integration: a green run (its scope ignores the smokes job entries)'
 iverdict "$list" "$iran" "" "$tmp/irun.tsv" || { echo "FAIL: $label:"; cat "$tmp/out"; exit 1; }
 # D-221 is closed: runner speed is normalised (rates and limits scaled to the runner), so a steady smoke that still
 # fails its limit fails the job; nothing tolerates it.
-sed 's/^integration\/members-steady\t9.5/integration\/members-steady\t260/' "$tmp/irun.tsv" >"$tmp/islow.tsv"
-label='integration: members failing its (scaled) limit fails, no tolerance listed'
-if iverdict "$list" "$iran" "integration/members-steady" "$tmp/islow.tsv"; then echo "FAIL: $label accepted"; cat "$tmp/out"; exit 1; fi
-grep -q 'smoke integration/members-steady failed and is not on' "$tmp/out" || { echo "FAIL: $label:"; cat "$tmp/out"; exit 1; }
+sed 's/^integration\/publishing-steady\t9.5/integration\/publishing-steady\t900/' "$tmp/irun.tsv" >"$tmp/islow.tsv"
+label='integration: publishing failing its (scaled) limit fails, no tolerance listed'
+if iverdict "$list" "$iran" "integration/publishing-steady" "$tmp/islow.tsv"; then echo "FAIL: $label accepted"; cat "$tmp/out"; exit 1; fi
+grep -q 'smoke integration/publishing-steady failed and is not on' "$tmp/out" || { echo "FAIL: $label:"; cat "$tmp/out"; exit 1; }
+# members-steady is listed flapping under D-223 (the member-change queue behind slow COMMITs), with a 1,500 ms ceiling
+# that expires with D-223: CI 44673105548's 1314 ms is tolerated, anything past the ceiling still fails.
+sed 's/^integration\/members-steady\t9.5/integration\/members-steady\t1313.778/' "$tmp/irun.tsv" >"$tmp/imembers.tsv"
+label='integration: members flapping at its measured 1314 ms, under its D-223 ceiling'
+iverdict "$list" "$iran" "integration/members-steady" "$tmp/imembers.tsv" || { echo "FAIL: $label:"; cat "$tmp/out"; exit 1; }
+grep -q 'flap: integration/members-steady failed its limit' "$tmp/out" || { echo "FAIL: $label:"; cat "$tmp/out"; exit 1; }
+sed 's/^integration\/members-steady\t9.5/integration\/members-steady\t1600/' "$tmp/irun.tsv" >"$tmp/iceiling.tsv"
+label='integration: members past its D-223 ceiling fails'
+if iverdict "$list" "$iran" "integration/members-steady" "$tmp/iceiling.tsv"; then echo "FAIL: $label accepted"; cat "$tmp/out"; exit 1; fi
 label='integration mutant: an unlisted (strict) integration smoke fails'
 if iverdict "$list" "$iran" "integration/health-throughput" "$tmp/irun.tsv"; then echo "FAIL: $label accepted"; cat "$tmp/out"; exit 1; fi
 grep -q 'smoke integration/health-throughput failed and is not on' "$tmp/out" || { echo "FAIL: $label:"; cat "$tmp/out"; exit 1; }
@@ -96,7 +105,7 @@ label='integration hard: members flapping under its ceiling but with failed chec
 if iverdict "$list" "$iran" "integration/members-steady" "$tmp/ihard.tsv"; then echo "FAIL: $label accepted"; cat "$tmp/out"; exit 1; fi
 grep -q 'smoke integration/members-steady has hard failures (4: checks_failed=4)' "$tmp/out" || { echo "FAIL: $label:"; cat "$tmp/out"; exit 1; }
 # D-221's temporary ceilings are gone with it: one planted back is refused, its row no longer being Open.
-with $'integration/members-steady\tflapping\tD-221\tlearning-95\tp99<=400 EXPIRES-WITH D-221\tplanted → back\tnothing'
+with $'integration/publishing-steady\tflapping\tD-221\tlearning-95\tp99<=400 EXPIRES-WITH D-221\tplanted → back\tnothing'
 label='integration mutant: a D-221 tolerance planted back after D-221 closed'
 if SMOKE_SCOPE=integration scripts/smoke-verdict.sh "$tmp/list.tsv" "$iran" "" "$tmp/irun.tsv" >"$tmp/out" 2>&1; then echo "FAIL: $label accepted"; cat "$tmp/out"; exit 1; fi
 grep -q 'temporary ceiling expired with D-221' "$tmp/out" || { echo "FAIL: $label:"; cat "$tmp/out"; exit 1; }
