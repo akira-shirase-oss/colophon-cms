@@ -172,65 +172,95 @@ pub async fn begin_as_member_isolated(
     project: Uuid,
     isolation: Isolation,
 ) -> Result<Option<MemberTransaction>, DbError> {
-    let mut transaction = begin_isolated(
-        pool,
-        Scope {
-            identity: Some(identity),
-            project: None,
-        },
-        isolation,
+    Ok(enter_as_member(pool, identity, project, None, isolation)
+        .await?
+        .map(|(member, _)| member))
+}
+
+/// Begins a transaction and enters `project` as `identity` in one round trip after BEGIN (D-227):
+/// `colophon_enter_project` (migration 0079) sets the identity alone, reads the membership and its
+/// role's permissions, and only for a member sets the project and resolves `environment`. The same
+/// statements in the same order as when they were separate round trips, so the project is set only
+/// once the membership is proven. `None` if `identity` isn't a member: returning drops the
+/// transaction, which rolls it back.
+async fn enter_as_member(
+    pool: &PgPool,
+    identity: Uuid,
+    project: Uuid,
+    environment: Option<&str>,
+    isolation: Isolation,
+) -> Result<Option<(MemberTransaction, Option<Uuid>)>, DbError> {
+    let mut transaction = begin_bare(pool, isolation).await?;
+    let row = sqlx::query(
+        "SELECT role, actions, subjects, fields, conditions, environment_id
+         FROM colophon_enter_project($1, $2, $3)",
     )
-    .await?;
-    // The role and its permissions in one statement and one pass over them, as parallel arrays
-    // in one order (D-058).
-    let member = sqlx::query!(
-        r#"SELECT m.role,
-                  coalesce(p.actions, '{}') AS "actions!",
-                  coalesce(p.subjects, '{}') AS "subjects!",
-                  coalesce(p.fields, '{}') AS "fields!: Vec<Option<String>>",
-                  coalesce(p.conditions, '{}') AS "conditions!: Vec<Option<String>>"
-           FROM memberships m
-           LEFT JOIN LATERAL (
-               SELECT array_agg(action ORDER BY action, subject) AS actions,
-                      array_agg(subject ORDER BY action, subject) AS subjects,
-                      array_agg(array_to_string(fields, ',') ORDER BY action, subject) AS fields,
-                      array_agg(condition ORDER BY action, subject) AS conditions
-               FROM role_permissions
-               WHERE project_id = m.project_id AND role_key = m.role
-           ) p ON true
-           WHERE m.project_id = $1 AND m.identity_id = $2"#,
-        project,
-        identity
-    )
+    .bind(identity)
+    .bind(project)
+    .bind(environment)
     .fetch_optional(&mut *transaction)
     .await
     .map_err(DbError::from_query)?;
-    // Returning drops the transaction, which rolls it back.
-    let Some(member) = member else {
+    let Some(row) = row else {
         return Ok(None);
     };
+    let decoded = decode_context(&row, true)?;
+    Ok(Some((
+        MemberTransaction {
+            transaction,
+            identity,
+            project,
+            role: decoded.role.unwrap_or_default(),
+            policy: decoded.policy,
+            token: None,
+        },
+        decoded.environment,
+    )))
+}
+
+/// BEGIN at `isolation`, with no context set yet: the context functions set it.
+async fn begin_bare(
+    pool: &PgPool,
+    isolation: Isolation,
+) -> Result<Transaction<'static, Postgres>, DbError> {
+    match isolation {
+        Isolation::PerStatement => crate::begin_tx(pool).await,
+        Isolation::Snapshot => crate::begin_tx_snapshot(pool).await,
+    }
+    .map_err(DbError::from_query)
+}
+
+/// One context function's row, decoded.
+struct Context {
+    role: Option<String>,
+    policy: Policy,
+    environment: Option<Uuid>,
+}
+
+fn decode_context(row: &sqlx::postgres::PgRow, with_role: bool) -> Result<Context, DbError> {
+    use sqlx::Row as _;
+    let get = |error: sqlx::Error| DbError::from_query(error);
+    let role = if with_role {
+        Some(row.try_get::<String, _>("role").map_err(get)?)
+    } else {
+        None
+    };
     let policy = policy(
-        member.actions,
-        member.subjects,
-        member.fields,
-        member.conditions,
+        row.try_get::<Vec<String>, _>("actions").map_err(get)?,
+        row.try_get::<Vec<String>, _>("subjects").map_err(get)?,
+        row.try_get::<Vec<Option<String>>, _>("fields")
+            .map_err(get)?,
+        row.try_get::<Vec<Option<String>>, _>("conditions")
+            .map_err(get)?,
     )?;
-    let role = member.role;
-    sqlx::query!(
-        "SELECT set_config('app.project_id', $1, true) AS project_scope",
-        project.to_string()
-    )
-    .fetch_one(&mut *transaction)
-    .await
-    .map_err(DbError::from_query)?;
-    Ok(Some(MemberTransaction {
-        transaction,
-        identity,
-        project,
+    let environment = row
+        .try_get::<Option<Uuid>, _>("environment_id")
+        .map_err(get)?;
+    Ok(Context {
         role,
         policy,
-        token: None,
-    }))
+        environment,
+    })
 }
 
 /// Begins a transaction as the API token that acts as `identity`, in `project` (step R.4,
@@ -255,66 +285,56 @@ pub async fn begin_as_token_isolated(
     project: Uuid,
     isolation: Isolation,
 ) -> Result<Option<MemberTransaction>, DbError> {
-    let mut transaction = begin_isolated(
-        pool,
-        Scope {
-            identity: Some(identity),
-            project: Some(project),
-        },
-        isolation,
+    Ok(enter_as_token(pool, identity, project, None, isolation)
+        .await?
+        .map(|(token, _)| token))
+}
+
+/// Begins a transaction and enters `project` as the API token that acts as `identity`, in one round
+/// trip after BEGIN (D-227): `colophon_enter_project_as_token` (migration 0079) sets both settings,
+/// checks the token with the share lock that makes its revocation wait for this request (D-063),
+/// reads its permissions and resolves `environment`: today's statements, in today's order. `None` if
+/// there is no live token for `identity` in `project`.
+async fn enter_as_token(
+    pool: &PgPool,
+    identity: Uuid,
+    project: Uuid,
+    environment: Option<&str>,
+    isolation: Isolation,
+) -> Result<Option<(MemberTransaction, Option<Uuid>)>, DbError> {
+    use sqlx::Row as _;
+    let mut transaction = begin_bare(pool, isolation).await?;
+    let row = sqlx::query(
+        "SELECT token_id, requests_per_minute, actions, subjects, fields, conditions, environment_id
+         FROM colophon_enter_project_as_token($1, $2, $3)",
     )
-    .await?;
-    let token = sqlx::query!(
-        "SELECT t.id, l.requests_per_minute
-         FROM api_tokens t
-         LEFT JOIN api_token_limits l
-                ON l.project_id = t.project_id AND l.token_id = t.id
-         WHERE t.project_id = $1 AND t.identity_id = $2
-           AND t.revoked_at IS NULL AND t.expires_at > now()
-         FOR SHARE OF t",
-        project,
-        identity
-    )
+    .bind(identity)
+    .bind(project)
+    .bind(environment)
     .fetch_optional(&mut *transaction)
     .await
     .map_err(DbError::from_query)?;
-    // Returning drops the transaction, which rolls it back.
-    let Some(token) = token else {
+    let Some(row) = row else {
         return Ok(None);
     };
+    let decoded = decode_context(&row, false)?;
     let scope = TokenScope {
-        id: token.id,
-        requests_per_minute: token.requests_per_minute,
+        id: row.try_get("token_id").map_err(DbError::from_query)?,
+        requests_per_minute: row
+            .try_get("requests_per_minute")
+            .map_err(DbError::from_query)?,
     };
-    let permissions = sqlx::query!(
-        r#"SELECT coalesce(array_agg(action ORDER BY action, subject), '{}') AS "actions!",
-                  coalesce(array_agg(subject ORDER BY action, subject), '{}') AS "subjects!",
-                  coalesce(array_agg(array_to_string(fields, ',') ORDER BY action, subject), '{}')
-                      AS "fields!: Vec<Option<String>>",
-                  coalesce(array_agg(condition ORDER BY action, subject), '{}')
-                      AS "conditions!: Vec<Option<String>>"
-           FROM api_token_permissions
-           WHERE project_id = $1 AND token_id = $2"#,
-        project,
-        token.id
-    )
-    .fetch_one(&mut *transaction)
-    .await
-    .map_err(DbError::from_query)?;
-    let policy = policy(
-        permissions.actions,
-        permissions.subjects,
-        permissions.fields,
-        permissions.conditions,
-    )?;
-    Ok(Some(MemberTransaction {
-        transaction,
-        identity,
-        project,
-        role: TOKEN_ROLE.to_owned(),
-        policy,
-        token: Some(scope),
-    }))
+    Ok(Some((
+        MemberTransaction {
+            transaction,
+            identity,
+            project,
+            role: TOKEN_ROLE.to_owned(),
+            policy: decoded.policy,
+            token: Some(scope),
+        },
+        decoded.environment,
+    )))
 }
 
 /// What a token's transaction reports as its role: no role has this key (role keys are
@@ -346,27 +366,18 @@ pub async fn begin_in_project_as_token_isolated(
     environment: &str,
     isolation: Isolation,
 ) -> Result<Option<ProjectTransaction>, DbError> {
-    let Some(token) = begin_as_token_isolated(pool, identity, project, isolation).await? else {
+    let Some((token, found)) =
+        enter_as_token(pool, identity, project, Some(environment), isolation).await?
+    else {
         return Ok(None);
     };
-    in_environment(token, environment).await
+    Ok(found.map(|environment| narrowed(token, environment)))
 }
 
-/// A member's (or a token's) transaction, narrowed to the environment with this slug. `None` if
-/// the project has none.
-async fn in_environment(
-    mut member: MemberTransaction,
-    environment: &str,
-) -> Result<Option<ProjectTransaction>, DbError> {
-    let environment = sqlx::query_scalar!(
-        "SELECT id FROM environments WHERE project_id = $1 AND slug = $2",
-        member.project,
-        environment
-    )
-    .fetch_optional(&mut *member.transaction)
-    .await
-    .map_err(DbError::from_query)?;
-    Ok(environment.map(|environment| ProjectTransaction {
+/// A member's (or a token's) transaction, narrowed to `environment`, which the context function
+/// resolved in the same round trip (D-227). `None` upstream if the project has no such environment.
+fn narrowed(member: MemberTransaction, environment: Uuid) -> ProjectTransaction {
+    ProjectTransaction {
         transaction: member.transaction,
         identity: member.identity,
         project: member.project,
@@ -374,7 +385,7 @@ async fn in_environment(
         role: member.role,
         policy: member.policy,
         token: member.token,
-    }))
+    }
 }
 
 /// A role's permissions from the arrays `begin_as_member` reads. A stored action or condition the
@@ -432,10 +443,12 @@ pub async fn begin_in_project_isolated(
     environment: &str,
     isolation: Isolation,
 ) -> Result<Option<ProjectTransaction>, DbError> {
-    let Some(member) = begin_as_member_isolated(pool, identity, project, isolation).await? else {
+    let Some((member, found)) =
+        enter_as_member(pool, identity, project, Some(environment), isolation).await?
+    else {
         return Ok(None);
     };
-    in_environment(member, environment).await
+    Ok(found.map(|environment| narrowed(member, environment)))
 }
 
 /// [`begin_as_member`], in an environment named by id (a schedule falling due knows its
