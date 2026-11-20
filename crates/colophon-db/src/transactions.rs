@@ -79,6 +79,9 @@ struct Watch {
     notice: Cell<bool>,
     /// That notice said the connection was already inside a transaction.
     tripped: Cell<bool>,
+    /// This begin is the startup self-test's, which trips on purpose: its notice is expected, and
+    /// [`hide_the_self_test_notice`] keeps it out of the logs.
+    self_test: bool,
 }
 
 tokio::task_local! {
@@ -96,7 +99,11 @@ async fn watched<F>(
 where
     F: Future<Output = Result<Transaction<'static, Postgres>, sqlx::Error>> + Send + 'static,
 {
-    tokio::spawn(BEGINNING.scope(Watch::default(), async move {
+    let watch = Watch {
+        self_test: !report,
+        ..Watch::default()
+    };
+    tokio::spawn(BEGINNING.scope(watch, async move {
         let outcome = begin.await;
         let (noticed, tripped) = BEGINNING.with(|watch| (watch.notice.get(), watch.tripped.get()));
         let Ok(transaction) = outcome else {
@@ -160,6 +167,22 @@ where
 }
 
 struct BeginTripwire;
+
+/// A per-layer filter for the log layers: it drops sqlx's backend notices raised inside the startup
+/// self-test's own begin, the one place a nested `BEGIN` is made on purpose, so the self-test logs
+/// no WARN. It goes by where the notice was raised (the self-test's begin task, marked in its
+/// task-local watch), never by the notice's text: a real nested `BEGIN` anywhere else still logs
+/// its WARN, beside the tripwire's own ERROR. The tripwire layer keeps its own filter and still
+/// sees the notice, which is how the self-test proves it works.
+pub fn hide_the_self_test_notice()
+-> tracing_subscriber::filter::FilterFn<fn(&tracing::Metadata<'_>) -> bool> {
+    tracing_subscriber::filter::filter_fn(not_the_self_test_notice)
+}
+
+fn not_the_self_test_notice(metadata: &tracing::Metadata<'_>) -> bool {
+    metadata.target() != NOTICE_TARGET
+        || !BEGINNING.try_with(|watch| watch.self_test).unwrap_or(false)
+}
 
 impl<S: tracing::Subscriber> tracing_subscriber::Layer<S> for BeginTripwire {
     fn on_event(&self, event: &tracing::Event<'_>, _: tracing_subscriber::layer::Context<'_, S>) {
