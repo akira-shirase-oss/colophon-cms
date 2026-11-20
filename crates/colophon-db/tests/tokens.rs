@@ -157,6 +157,58 @@ async fn revoking_a_token_waits_for_its_request_and_none_starts_after() {
     db.drop().await;
 }
 
+/// The same promise for a read (D-225): a GET runs on the read pool, read-only, where a row lock
+/// isn't allowed, so the request holds the token's advisory lock shared instead, and revoking
+/// still waits for it. It failed first with the row lock: the read could not begin at all
+/// ("cannot execute SELECT FOR SHARE in a read-only transaction").
+#[tokio::test]
+#[ignore = "needs the local stack: scripts/stack.sh up"]
+async fn revoking_a_token_waits_for_its_read_too() {
+    let db = TestDb::new().await;
+    let alice = db.administrator("alice").await;
+    let project = projects::create(&db.app, alice, "alpha", "Alpha")
+        .await
+        .expect("created")
+        .id;
+    let (token, identity) = read_only(&db.app, alice, project, [4; 32]).await;
+    let reads = db.read_pool(2);
+    let request = scope::begin_as_token(&reads, identity, project)
+        .await
+        .expect("a read begins under the token")
+        .expect("an active token");
+    let others = db.app_pool(2).await;
+    let revoking = tokio::spawn({
+        let others = others.clone();
+        async move {
+            let mut tx = as_member(&others, alice, project).await;
+            let revoked = tokens::revoke(&mut tx, token).await.expect("revoke");
+            tx.commit().await.expect("commit");
+            revoked
+        }
+    });
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    assert!(
+        !revoking.is_finished(),
+        "revocation committed while a read ran under the token"
+    );
+    request.commit().await.expect("the read finishes");
+    let revoked = tokio::time::timeout(Duration::from_secs(5), revoking)
+        .await
+        .expect("revocation goes on once the read is done")
+        .expect("joined");
+    assert!(matches!(revoked, Revoked::Done(_)), "{revoked:?}");
+    assert!(
+        scope::begin_as_token(&reads, identity, project)
+            .await
+            .expect("begin")
+            .is_none(),
+        "a revoked token opened a read"
+    );
+    reads.close().await;
+    others.close().await;
+    db.drop().await;
+}
+
 #[tokio::test]
 #[ignore = "needs the local stack: scripts/stack.sh up"]
 async fn a_token_is_invisible_outside_its_project() {

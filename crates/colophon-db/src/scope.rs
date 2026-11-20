@@ -33,6 +33,11 @@ pub enum Isolation {
     Snapshot,
 }
 
+/// The first key of the advisory lock a token's requests hold shared and its revocation takes
+/// exclusive (D-225): "TK", keyed by the token's identity. A row lock (`FOR SHARE`) did this
+/// before, but a read-only transaction may not lock rows, and an advisory lock it may take.
+pub const TOKEN_LOCK_CLASS: i32 = 0x544B;
+
 /// Begins a transaction with `scope` as its row-level-security context.
 pub async fn begin(pool: &PgPool, scope: Scope) -> Result<Transaction<'static, Postgres>, DbError> {
     begin_isolated(pool, scope, Isolation::PerStatement).await
@@ -83,7 +88,7 @@ pub struct ProjectTransaction {
 
 /// The API token a transaction runs as (D-118): what the request-time quota needs — the
 /// token's id, for the audit log to name, and its `requests_per_minute` ceiling, read with the
-/// same `FOR SHARE` row the token check already took, so the limit costs nothing extra.
+/// same statement as the token check, so the limit costs nothing extra.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct TokenScope {
     /// The token's id.
@@ -236,10 +241,12 @@ pub async fn begin_as_member_isolated(
 /// Begins a transaction as the API token that acts as `identity`, in `project` (step R.4,
 /// D-063): checks, inside the project's context, that the token belongs to the project and is
 /// neither revoked nor expired, and reads its permissions — and, with the same row, its
-/// `requests_per_minute` ceiling for the request-time quota (D-118). The check holds a share
-/// lock on the token's row until the transaction ends, so revoking the token waits for this
-/// request, and no request runs under a token once its revocation has committed. `None` if any
-/// check fails.
+/// `requests_per_minute` ceiling for the request-time quota (D-118). The transaction holds the
+/// token's lock ([`TOKEN_LOCK_CLASS`]) shared until it ends, so revoking the token waits for
+/// this request, and no request runs under a token once its revocation has committed. The lock
+/// is taken in the scope's first statement and the check runs in the next, so after waiting
+/// for a revocation the check sees it. A read-only transaction (the read pool's, D-225) takes it
+/// as well as any. `None` if any check fails.
 pub async fn begin_as_token(
     pool: &PgPool,
     identity: Uuid,
@@ -255,23 +262,29 @@ pub async fn begin_as_token_isolated(
     project: Uuid,
     isolation: Isolation,
 ) -> Result<Option<MemberTransaction>, DbError> {
-    let mut transaction = begin_isolated(
-        pool,
-        Scope {
-            identity: Some(identity),
-            project: Some(project),
-        },
-        isolation,
+    let mut transaction = match isolation {
+        Isolation::PerStatement => crate::begin_tx(pool).await,
+        Isolation::Snapshot => crate::begin_tx_snapshot(pool).await,
+    }
+    .map_err(DbError::from_query)?;
+    sqlx::query!(
+        r#"SELECT set_config('app.identity_id', $1::uuid::text, true) AS "identity_scope!",
+                  set_config('app.project_id', $2::uuid::text, true) AS "project_scope!",
+                  pg_advisory_xact_lock_shared($3, hashtext($1::uuid::text)) IS NULL AS "locked!""#,
+        identity,
+        project,
+        TOKEN_LOCK_CLASS
     )
-    .await?;
+    .fetch_one(&mut *transaction)
+    .await
+    .map_err(DbError::from_query)?;
     let token = sqlx::query!(
         "SELECT t.id, l.requests_per_minute
          FROM api_tokens t
          LEFT JOIN api_token_limits l
                 ON l.project_id = t.project_id AND l.token_id = t.id
          WHERE t.project_id = $1 AND t.identity_id = $2
-           AND t.revoked_at IS NULL AND t.expires_at > now()
-         FOR SHARE OF t",
+           AND t.revoked_at IS NULL AND t.expires_at > now()",
         project,
         identity
     )
@@ -470,7 +483,7 @@ pub async fn begin_in_environment(
 
 /// [`begin_as_token`], in an environment named by id: the transaction a bulk job's worker
 /// opens for each item when its submitter was a project API token (D-116). The same
-/// `FOR SHARE` token row check stands, so a token revoked since the job was accepted gets
+/// token check and lock stand, so a token revoked since the job was accepted gets
 /// `None` — the item it couldn't open is recorded, and the run stops.
 pub async fn begin_in_environment_as_token(
     pool: &PgPool,

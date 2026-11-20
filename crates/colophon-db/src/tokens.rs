@@ -369,8 +369,20 @@ pub async fn create(tx: &mut MemberTransaction, token: &NewToken<'_>) -> Result<
     })))
 }
 
-/// Revokes a token, by the transaction's identity. Waits for requests it is serving.
+/// Revokes a token, by the transaction's identity. Waits for requests it is serving: they hold
+/// the token's lock shared ([`crate::scope::TOKEN_LOCK_CLASS`]) and this takes it exclusive
+/// first, so once the revocation commits no request runs under the token (D-225).
 pub async fn revoke(tx: &mut MemberTransaction, id: Uuid) -> Result<Revoked, DbError> {
+    sqlx::query!(
+        r#"SELECT pg_advisory_xact_lock($3, hashtext(identity_id::text)) IS NULL AS "locked!"
+           FROM api_tokens WHERE project_id = $1 AND id = $2"#,
+        tx.project,
+        id,
+        crate::scope::TOKEN_LOCK_CLASS
+    )
+    .fetch_optional(&mut *tx.transaction)
+    .await
+    .map_err(DbError::from_query)?;
     let changed = sqlx::query!(
         "UPDATE api_tokens SET revoked_at = now(), revoked_by = $3
          WHERE project_id = $1 AND id = $2 AND revoked_at IS NULL",

@@ -185,6 +185,21 @@ impl TestDb {
         .expect("connect as owner")
     }
 
+    /// A pool for the application login built as the server's read pool is (D-225): every
+    /// transaction on it read-only.
+    #[allow(dead_code, reason = "used by some test binaries only")]
+    pub(crate) fn read_pool(&self, connections: u32) -> PgPool {
+        colophon_db::connect_lazy(
+            &format!(
+                "postgres://colophon_app:colophon-dev@{}/{}",
+                host(),
+                self.name
+            ),
+            colophon_db::PoolSettings::reads(connections),
+        )
+        .expect("the read pool")
+    }
+
     /// Another pool for the application login, for tests that need concurrent transactions.
     pub(crate) async fn app_pool(&self, connections: u32) -> PgPool {
         PgPoolOptions::new()
