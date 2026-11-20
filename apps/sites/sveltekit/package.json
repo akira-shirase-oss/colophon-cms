@@ -1,0 +1,29 @@
+{
+  "name": "@colophon/site-sveltekit",
+  "private": true,
+  "version": "0.0.0",
+  "description": "The SvelteKit demo site (apps/sites/README.md, D-220): Butter & Thyme's recipes, prerendered from the published `demo-sites` project's delivery API at one release, rebuilt on publish.",
+  "type": "module",
+  "scripts": {
+    "build": "vite build",
+    "prepare": "svelte-kit sync || echo ''",
+    "check": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json --fail-on-warnings",
+    "serve": "node ./serve.mjs",
+    "test": "node --test src/lib/server/colophon.test.ts"
+  },
+  "dependencies": {
+    "@colophon/site-kit": "0.0.0"
+  },
+  "devDependencies": {
+    "@sveltejs/adapter-static": "4.0.0",
+    "@sveltejs/kit": "3.1.1",
+    "@sveltejs/vite-plugin-svelte": "7.3.1",
+    "svelte": "5.57.2",
+    "svelte-check": "4.7.7",
+    "typescript": "6.0.3",
+    "vite": "8.3.5"
+  },
+  "imports": {
+    "#lib/*": "./src/lib/*"
+  }
+}

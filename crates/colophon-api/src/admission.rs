@@ -348,21 +348,65 @@ pub struct Admission {
     /// Tokens refused for their quota, by the hash of their secret, until the refusal's wait
     /// runs out (D-214): while one stands, the token's next request is answered from here and
     /// the limiter alone, before Postgres is asked anything. Refusal-only: an entry can refuse,
-    /// never admit. At most [`MAX_REFUSED`] entries.
-    refused: Mutex<HashMap<[u8; 32], Refused>>,
+    /// never admit. At most [`MAX_REFUSED`] entries. An entry ends the moment the token's
+    /// project's tokens, members or roles change ([`Self::tokens_changed`]).
+    refused: Mutex<Memo>,
     /// Questions put to a limit's store (Valkey, or this process's own copy): the count a test
     /// reads to prove a remembered refusal costs one (D-214).
     queries: AtomicU64,
 }
 
 /// A token's quota refusal, remembered (D-214): what the token is, the ceiling Postgres gave it
-/// when it was refused, and until when the refusal can stand.
+/// when it was refused, until when the refusal can stand, and when the token expires (a
+/// refusal never outlives the token, whose next request then hears 401).
 #[derive(Debug, Clone, Copy)]
 struct Refused {
     project: Uuid,
     token: Uuid,
     rpm: i64,
     until: Instant,
+    expires: Instant,
+}
+
+/// The remembered refusals, and what ends them (D-214's addendum): a refusal is a judgement of
+/// the token's row as it was read, so it stands only while nothing it was judged on has changed.
+#[derive(Debug, Default)]
+struct Memo {
+    /// The refusals, by the hash of the token's secret.
+    entries: HashMap<[u8; 32], Refused>,
+    /// When this process last heard each project's tokens, members or roles change: a refusal
+    /// judged on a row read before that is stale and is never remembered. Bounded like
+    /// `entries`, and only changes newer than [`CHANGE_HORIZON`] are kept when it fills.
+    changed: HashMap<Uuid, Instant>,
+    /// Every judgement read before this is stale: set when changes may have been missed (the
+    /// change-hint listener reconnected) or when `changed` overflowed.
+    floor: Option<Instant>,
+}
+
+impl Memo {
+    /// Whether a judgement of `project`'s token read at `read_at` may still be remembered.
+    fn current(&self, project: Uuid, read_at: Instant) -> bool {
+        self.floor.is_none_or(|floor| read_at > floor)
+            && self.changed.get(&project).is_none_or(|at| read_at > *at)
+    }
+}
+
+/// How long a change is kept to judge reads against once [`Memo`]'s change list is full: far
+/// longer than any request is in flight (its timeout ends it sooner), so a read that old is
+/// treated as stale by the floor instead.
+const CHANGE_HORIZON: Duration = Duration::from_secs(600);
+
+/// What a token's request was judged on, for remembering its refusal (D-214): the hash of its
+/// secret, when its row was read, and when it expires. A refusal judged on a read older than
+/// the project's last token change is not remembered.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Judged {
+    /// The SHA-256 of the token's secret: what the refusal is remembered under.
+    pub hash: [u8; 32],
+    /// When the token's row was read (before Postgres was asked).
+    pub read_at: Instant,
+    /// When the token expires.
+    pub expires: Instant,
 }
 
 /// How many refused tokens the memo holds (D-214). Each is a real token over a quota a project
@@ -404,7 +448,7 @@ impl Admission {
             }),
             quota_window_ms,
             throttled: Mutex::new(HashMap::new()),
-            refused: Mutex::new(HashMap::new()),
+            refused: Mutex::new(Memo::default()),
             queries: AtomicU64::new(0),
         })
     }
@@ -562,35 +606,80 @@ impl Admission {
         local.ahead(now, key)
     }
 
-    /// Remembers that the token whose secret hashes to `hash` was refused for its quota
-    /// (D-214), for `wait_us`: until then [`Self::refused_again`] can answer its requests. Past
-    /// [`MAX_REFUSED`] live entries, expired ones go first; if every one is still live, this
-    /// refusal isn't remembered (the next request takes the full path and is refused there).
+    /// Remembers that the token `judged` describes was refused for its quota (D-214), for
+    /// `wait_us` or until it expires, whichever is sooner: until then [`Self::refused_again`]
+    /// can answer its requests. Not remembered when the project's tokens changed after the
+    /// token's row was read — the refusal judged a row that is no longer the token's — nor past
+    /// [`MAX_REFUSED`] live entries (expired ones go first); either way the next request takes
+    /// the full path, which judges the token as it is.
     pub(crate) fn remember_refusal(
         &self,
-        hash: [u8; 32],
+        judged: Judged,
         project: Uuid,
         token: Uuid,
         rpm: i64,
         wait_us: u64,
     ) {
-        let mut refused = self.refused.lock().unwrap_or_else(PoisonError::into_inner);
+        let mut memo = self.refused.lock().unwrap_or_else(PoisonError::into_inner);
+        if !memo.current(project, judged.read_at) {
+            return;
+        }
         let now = Instant::now();
-        if refused.len() >= MAX_REFUSED && !refused.contains_key(&hash) {
+        let until = (now + Duration::from_micros(wait_us)).min(judged.expires);
+        if until <= now {
+            return;
+        }
+        let refused = &mut memo.entries;
+        if refused.len() >= MAX_REFUSED && !refused.contains_key(&judged.hash) {
             refused.retain(|_, entry| entry.until > now);
             if refused.len() >= MAX_REFUSED {
                 return;
             }
         }
         refused.insert(
-            hash,
+            judged.hash,
             Refused {
                 project,
                 token,
                 rpm,
-                until: now + Duration::from_micros(wait_us),
+                until,
+                expires: judged.expires,
             },
         );
+    }
+
+    /// The tokens, members or roles of `project` changed (D-214's addendum): every refusal
+    /// remembered for its tokens ends now, and a refusal judged on a row read before now is
+    /// never remembered, so each token's next request is judged on its current state — a
+    /// revoked token hears 401, a token whose ceiling was removed is admitted, one whose limits
+    /// changed meets the new ones. The server that made the change calls this as it commits;
+    /// every other server calls it when the change's hint arrives on `colophon_events`.
+    pub fn tokens_changed(&self, project: Uuid) {
+        let mut memo = self.refused.lock().unwrap_or_else(PoisonError::into_inner);
+        memo.entries.retain(|_, entry| entry.project != project);
+        let now = Instant::now();
+        if memo.changed.len() >= MAX_REFUSED && !memo.changed.contains_key(&project) {
+            // Older changes can only matter to reads older still, which the floor now covers.
+            memo.changed
+                .retain(|_, at| now.saturating_duration_since(*at) < CHANGE_HORIZON);
+            let horizon = now.checked_sub(CHANGE_HORIZON).unwrap_or(now);
+            memo.floor = Some(memo.floor.map_or(horizon, |floor| floor.max(horizon)));
+            if memo.changed.len() >= MAX_REFUSED {
+                memo.changed.clear();
+                memo.floor = Some(now);
+            }
+        }
+        memo.changed.insert(project, now);
+    }
+
+    /// Changes may have been missed (the change-hint listener reconnected, and Postgres delivers
+    /// nothing retroactively): every remembered refusal ends, and none judged before now is
+    /// remembered (D-214's addendum).
+    pub fn forget_every_refusal(&self) {
+        let mut memo = self.refused.lock().unwrap_or_else(PoisonError::into_inner);
+        memo.entries.clear();
+        memo.changed.clear();
+        memo.floor = Some(Instant::now());
     }
 
     /// A remembered refusal that still stands for this request (D-214): `Some` when the token
@@ -604,10 +693,10 @@ impl Admission {
     /// it), or a limiter that can't be asked (the full path has the same fallback as ever).
     pub(crate) async fn refused_again(&self, hash: &[u8; 32], path: &str) -> Option<Throttle> {
         let entry = {
-            let mut refused = self.refused.lock().unwrap_or_else(PoisonError::into_inner);
-            let entry = *refused.get(hash)?;
+            let mut memo = self.refused.lock().unwrap_or_else(PoisonError::into_inner);
+            let entry = *memo.entries.get(hash)?;
             if entry.until <= Instant::now() {
-                refused.remove(hash);
+                memo.entries.remove(hash);
                 return None;
             }
             entry
@@ -624,15 +713,17 @@ impl Admission {
             .await
             .and_then(|ahead| ahead.checked_sub(cell.tolerance_us))
             .filter(|wait| *wait > 0);
-        let mut refused = self.refused.lock().unwrap_or_else(PoisonError::into_inner);
+        let mut memo = self.refused.lock().unwrap_or_else(PoisonError::into_inner);
         let Some(wait_us) = over else {
-            refused.remove(hash);
+            memo.entries.remove(hash);
             return None;
         };
-        if let Some(stored) = refused.get_mut(hash) {
-            stored.until = Instant::now() + Duration::from_micros(wait_us);
+        // Only the entry this answer was judged on is refreshed: one a change ended meanwhile
+        // stays ended (its token's next request takes the full path).
+        if let Some(stored) = memo.entries.get_mut(hash) {
+            stored.until = (Instant::now() + Duration::from_micros(wait_us)).min(stored.expires);
         }
-        drop(refused);
+        drop(memo);
         // The episode goes on: keep its marker with it, so the audit log still hears it once.
         self.mark_throttled(entry.token, wait_us);
         Some(Throttle {
@@ -647,6 +738,7 @@ impl Admission {
         self.refused
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
+            .entries
             .len()
     }
 
@@ -667,9 +759,15 @@ impl Admission {
         token: Uuid,
         rpm: i64,
     ) -> u32 {
+        let read_at = Instant::now();
         loop {
             if let Some(throttle) = self.quota(project, token, rpm).await {
-                self.remember_refusal(hash, project, token, rpm, throttle.wait_us);
+                let judged = Judged {
+                    hash,
+                    read_at,
+                    expires: Instant::now() + Duration::from_hours(24),
+                };
+                self.remember_refusal(judged, project, token, rpm, throttle.wait_us);
                 return throttle.retry_after();
             }
         }
@@ -1107,6 +1205,142 @@ mod tests {
         format!("/api/v1/projects/{project}/environments/production/collections/a/entries")
     }
 
+    /// A token judged now that expires in a day.
+    fn judged(hash: [u8; 32]) -> Judged {
+        let now = Instant::now();
+        Judged {
+            hash,
+            read_at: now,
+            expires: now + Duration::from_hours(24),
+        }
+    }
+
+    #[tokio::test]
+    async fn a_change_to_a_projects_tokens_ends_its_remembered_refusals_and_no_others() {
+        let admission = Admission::new(AdmissionSettings::default(), None).expect("no URL");
+        let (project, elsewhere) = (Uuid::now_v7(), Uuid::now_v7());
+        let (here, there) = ([1_u8; 32], [2_u8; 32]);
+        admission
+            .throttle_for_tests(here, project, Uuid::now_v7(), 2)
+            .await;
+        admission
+            .throttle_for_tests(there, elsewhere, Uuid::now_v7(), 2)
+            .await;
+        assert!(
+            admission
+                .refused_again(&here, &counted(project))
+                .await
+                .is_some()
+        );
+
+        admission.tokens_changed(project);
+        assert!(
+            admission
+                .refused_again(&here, &counted(project))
+                .await
+                .is_none(),
+            "the changed project's token takes the full path, judged as it is now"
+        );
+        assert!(
+            admission
+                .refused_again(&there, &counted(elsewhere))
+                .await
+                .is_some(),
+            "another project's refusal still stands"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_refusal_judged_on_a_row_read_before_a_change_is_never_remembered() {
+        let admission = Admission::new(AdmissionSettings::default(), None).expect("no URL");
+        let (project, token) = (Uuid::now_v7(), Uuid::now_v7());
+        let hash = [4_u8; 32];
+        // The row was read, then the token changed, then the (stale) refusal came back.
+        let stale = judged(hash);
+        admission.tokens_changed(project);
+        admission.remember_refusal(stale, project, token, 2, 60_000_000);
+        assert_eq!(
+            admission.refused_len(),
+            0,
+            "a stale judgement isn't remembered"
+        );
+        tokio::time::sleep(Duration::from_millis(2)).await;
+        // A row read after the change is current, and its refusal is remembered.
+        admission.remember_refusal(judged(hash), project, token, 2, 60_000_000);
+        assert_eq!(admission.refused_len(), 1);
+        // Another project's change says nothing about this one's reads.
+        let read = judged([5_u8; 32]);
+        admission.tokens_changed(Uuid::now_v7());
+        admission.remember_refusal(read, project, Uuid::now_v7(), 2, 60_000_000);
+        assert_eq!(admission.refused_len(), 2);
+    }
+
+    #[tokio::test]
+    async fn a_listener_gap_ends_every_refusal_and_every_judgement_before_it() {
+        let admission = Admission::new(AdmissionSettings::default(), None).expect("no URL");
+        let (project, token) = (Uuid::now_v7(), Uuid::now_v7());
+        let held = [6_u8; 32];
+        admission.throttle_for_tests(held, project, token, 2).await;
+        let in_flight = judged([8_u8; 32]);
+        admission.forget_every_refusal();
+        assert!(
+            admission
+                .refused_again(&held, &counted(project))
+                .await
+                .is_none()
+        );
+        admission.remember_refusal(in_flight, project, Uuid::now_v7(), 2, 60_000_000);
+        assert_eq!(admission.refused_len(), 0, "read before the gap: stale");
+    }
+
+    #[tokio::test]
+    async fn a_remembered_refusal_never_outlives_its_token() {
+        let admission = Admission::new(AdmissionSettings::default(), None).expect("no URL");
+        let project = Uuid::now_v7();
+        let now = Instant::now();
+        // Expiring in 50 ms, refused for a minute: remembered for the 50 ms only.
+        let expiring = Judged {
+            hash: [10_u8; 32],
+            read_at: now,
+            expires: now + Duration::from_millis(50),
+        };
+        admission.remember_refusal(expiring, project, Uuid::now_v7(), 2, 60_000_000);
+        assert_eq!(admission.refused_len(), 1);
+        tokio::time::sleep(Duration::from_millis(80)).await;
+        assert!(
+            admission
+                .refused_again(&expiring.hash, &counted(project))
+                .await
+                .is_none(),
+            "expired: the full path answers 401"
+        );
+        // Already expired: never remembered at all.
+        let expired = Judged {
+            hash: [11_u8; 32],
+            read_at: Instant::now(),
+            expires: Instant::now(),
+        };
+        admission.remember_refusal(expired, project, Uuid::now_v7(), 2, 60_000_000);
+        assert_eq!(admission.refused_len(), 0);
+    }
+
+    #[test]
+    fn the_change_list_stays_bounded_and_turns_old_reads_stale_when_full() {
+        let admission = Admission::new(AdmissionSettings::default(), None).expect("no URL");
+        let read = judged([12_u8; 32]);
+        for _ in 0..MAX_REFUSED + 10 {
+            admission.tokens_changed(Uuid::now_v7());
+        }
+        let memo = admission
+            .refused
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        assert!(memo.changed.len() <= MAX_REFUSED, "{}", memo.changed.len());
+        // Every change is newer than the horizon, so the list was cleared and the floor moved
+        // to now: a read from before then is stale for every project.
+        assert!(!memo.current(Uuid::now_v7(), read.read_at));
+    }
+
     #[tokio::test]
     async fn the_refusal_memo_stays_bounded_and_keeps_refusing_what_it_holds() {
         let admission = Admission::new(AdmissionSettings::default(), None).expect("no URL");
@@ -1120,7 +1354,7 @@ mod tests {
             let mut hash = [0_u8; 32];
             hash[..8].copy_from_slice(&(n as u64).to_le_bytes());
             hash[31] = 1;
-            admission.remember_refusal(hash, project, Uuid::now_v7(), 2, 60_000_000);
+            admission.remember_refusal(judged(hash), project, Uuid::now_v7(), 2, 60_000_000);
         }
         assert_eq!(
             admission.refused_len(),
@@ -1154,7 +1388,7 @@ mod tests {
             let mut hash = [0_u8; 32];
             hash[..8].copy_from_slice(&(n as u64).to_le_bytes());
             // A wait already behind us.
-            admission.remember_refusal(hash, project, Uuid::now_v7(), 2, 0);
+            admission.remember_refusal(judged(hash), project, Uuid::now_v7(), 2, 0);
         }
         assert!(
             admission
@@ -1185,7 +1419,7 @@ mod tests {
             .expect("a valid URL");
         let (project, token) = (Uuid::now_v7(), Uuid::now_v7());
         let hash = [3_u8; 32];
-        admission.remember_refusal(hash, project, token, 2, 60_000_000);
+        admission.remember_refusal(judged(hash), project, token, 2, 60_000_000);
         assert!(
             admission
                 .refused_again(&hash, &counted(project))

@@ -12,7 +12,8 @@
 #   --browser  also run the Studio's Playwright journey (apps/studio, playwright.quickstart.config.ts)
 #   --load     also run the k6 smoke (perf/k6/quickstart.js: 200 requests a second for 30 s)
 #   --record   write the timings and sizes to perf/results/<stamp>-quickstart-<machine>.json
-#   --keep     leave the containers and volumes running afterwards
+#   --keep     leave the containers, volumes and the project's folder (its compose.yaml) afterwards, and
+#              print where they are and how to remove them
 #
 # Times reported: `up --wait` from nothing to ready (the Colophon image present; it includes
 # pulling any dependency image that isn't), the same after
@@ -50,16 +51,9 @@ work=$(mktemp -d "${TMPDIR:-/tmp}/colophon-quickstart.XXXXXX")
 cp deploy/quickstart/compose.yaml "$work/compose.yaml"
 compose() { (cd "$work" && docker compose "$@"); }
 
-cleanup() {
-  local rc=$?
-  if [[ $rc != 0 ]]; then
-    echo "--- the services' logs, for the failure above"
-    compose logs --no-color --tail 60 2>/dev/null || true
-  fi
-  if [[ $keep == false ]]; then compose down --volumes --timeout 10 >/dev/null 2>&1 || true; fi
-  rm -rf "$work"
-}
-trap cleanup EXIT
+# On exit: remove the project and its folder, or, with --keep, leave both (scripts/quickstart-cleanup.sh).
+source scripts/quickstart-cleanup.sh
+trap 'quickstart_cleanup $?' EXIT
 
 failures=0
 pass() { printf '  ok    %s\n' "$1"; }

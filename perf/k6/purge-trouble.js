@@ -41,6 +41,7 @@ import http from 'k6/http';
 import { check, fail, sleep } from 'k6';
 import exec from 'k6/execution';
 import { Counter, Gauge } from 'k6/metrics';
+import { idempotencyKey } from './lib/idempotency-key.js';
 
 const BASE_URL = __ENV.BASE_URL || 'http://127.0.0.1:58000';
 const PUBLIC_URL = __ENV.PUBLIC_URL || 'http://localhost:58000';
@@ -198,7 +199,7 @@ function ensureProject(data, headers, tags) {
   if (mineBase) return true;
   const run = `${data.run}-p${exec.vu.idInTest}`;
   const params = (extra) => ({ headers: Object.assign({}, headers, extra || {}), redirects: 0, tags: Object.assign({ name: 'setup' }, tags) });
-  const project = http.post(`${BASE_URL}/api/v1/projects`, JSON.stringify({ slug: `k6-${run}`, name: `k6 L13 ${exec.vu.idInTest}` }), params({ 'Idempotency-Key': `k6-l13-${run}` }));
+  const project = http.post(`${BASE_URL}/api/v1/projects`, JSON.stringify({ slug: `k6-${run}`, name: `k6 L13 ${exec.vu.idInTest}` }), params({ 'Idempotency-Key': idempotencyKey(`k6-l13-${run}`, 'purge-trouble') }));
   if (project.status !== 201) return false;
   const pid = project.json('data.id');
   const base = `${BASE_URL}/api/v1/projects/${pid}/environments/production`;
@@ -207,7 +208,7 @@ function ensureProject(data, headers, tags) {
     [{ kind: 'cdn', name: 'cdn', url: `${RECEIVER_URL}/purge` }, 'c'],
     [{ kind: 'probe', name: 'site', url: `${RECEIVER_URL}/site/${pid}` }, 's'],
   ]) {
-    const made = http.post(`${base}/destinations`, JSON.stringify(body), params({ 'Idempotency-Key': `k6-l13-${run}-${step}` }));
+    const made = http.post(`${base}/destinations`, JSON.stringify(body), params({ 'Idempotency-Key': idempotencyKey(`k6-l13-${run}-${step}`, 'purge-trouble') }));
     if (made.status !== 201) return false;
   }
   mineBase = base;
@@ -218,7 +219,7 @@ function publishInto(base, generation, headers, tags, run) {
   const params = (endpoint, extra) => ({
     headers: Object.assign({}, headers, extra || {}), redirects: 0, tags: Object.assign({ name: endpoint, endpoint }, tags),
   });
-  const idem = (s) => `k6-l13-${run}-${s}`;
+  const idem = (s) => idempotencyKey(`k6-l13-${run}-${s}`, 'purge-trouble');
   const entry = http.post(`${base}/collections/articles/entries`, JSON.stringify(article(`Publish ${__ITER}`)), params('entry', { 'Idempotency-Key': idem('e') }));
   if (entry.status !== 201) return { published: false };
   const set = http.post(`${base}/changesets`, JSON.stringify({ title: `k6 ${__ITER}`, entries: [entry.json('data.id')] }), params('changeset', { 'Idempotency-Key': idem('c') }));

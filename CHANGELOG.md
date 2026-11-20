@@ -8,6 +8,14 @@ through `--version` and `GET /version`.
 
 ## [Unreleased]
 
+### Added
+
+- A SvelteKit demo site (D-220): Butter & Thyme's recipes prerendered with SvelteKit 3 at one release per
+  build (`?generation=N` on every read, a build that refuses an answer from another release), the release
+  marker on every page, and a rebuild on publish with the other demo sites (`apps/sites/sveltekit`).
+- A Next.js demo site (D-220a): the same recipes as a Next.js 16 static export, with one release pinned for all
+  of Next's build workers before the build, and its own npm install, separate from the CMS's (`apps/sites/nextjs`).
+
 ### Changed — read before upgrading
 
 - **A release's receipt no longer embeds what it changed** (D-185). `GET …/releases/{n}` drops
@@ -36,6 +44,12 @@ through `--version` and `GET /version`.
   pass, and every update that must take several jobs takes them in one order. Under concurrent
   publishes the two could abort each other with a database deadlock, which reached a client as a
   500; a transaction the database aborts that way now answers 503 with `Retry-After`.
+
+- **Revoking a throttled token, or changing its limits, takes effect on its next request**
+  (D-214). A token refused for its quota and then revoked was still told `429` with a
+  `Retry-After` instead of `401`, and removing or replacing its request ceiling kept refusing it
+  until the old window ran out. The remembered refusal now ends as the change commits, on every
+  server.
 
 ### Performance
 

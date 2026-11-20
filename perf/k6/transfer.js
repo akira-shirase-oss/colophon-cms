@@ -11,6 +11,8 @@
 
 import http from 'k6/http';
 import { check, fail } from 'k6';
+import exec from 'k6/execution';
+import { idempotencyKey } from './lib/idempotency-key.js';
 
 const BASE_URL = __ENV.BASE_URL || 'http://127.0.0.1:58000';
 const PUBLIC_URL = __ENV.PUBLIC_URL || 'http://localhost:58000';
@@ -55,7 +57,7 @@ const NOTES = {
 };
 
 function key() {
-  return `k6-${__VU}-${__ITER}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+  return idempotencyKey(`k6-${__VU}-${__ITER}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`, 'transfer');
 }
 
 export function setup() {
@@ -74,12 +76,12 @@ export function setup() {
   for (let i = 0; i < VUS; i++) {
     const collection = `notes${i}`;
     const made = http.post(`${env}/content-types`, JSON.stringify({ slug: collection, definition: NOTES }), {
-      headers: Object.assign({ 'Idempotency-Key': `k6-type-${slug}-${i}` }, write),
+      headers: Object.assign({ 'Idempotency-Key': idempotencyKey(`k6-type-${slug}-${i}`, 'transfer') }, write),
     });
     if (made.status !== 201) fail(`content type ${collection}: HTTP ${made.status} ${made.body}`);
     const seed = `{"title":"Seed ${i}","note":"first"}\n{"title":"Also ${i}"}\n`;
     const imported = http.post(`${env}/collections/${collection}/import`, seed, {
-      headers: Object.assign({}, write, { 'Content-Type': 'application/jsonlines', 'Idempotency-Key': `k6-seed-${slug}-${i}` }),
+      headers: Object.assign({}, write, { 'Content-Type': 'application/jsonlines', 'Idempotency-Key': idempotencyKey(`k6-seed-${slug}-${i}`, 'transfer') }),
     });
     if (imported.status !== 201) fail(`seed import: HTTP ${imported.status} ${imported.body}`);
     vus.push(`${env}/collections/${collection}`);
@@ -87,11 +89,12 @@ export function setup() {
   return { session, vus };
 }
 
+// per-VU state: counts successful imports, gating at 10; any slot order is valid.
 let imports = 0; // how many of this VU's ten imports have run
 
 export default function (data) {
   const collection = data.vus[(__VU - 1) % data.vus.length];
-  if (imports < 10 && __ITER % 20 === 0) {
+  if (imports < 10 && exec.scenario.iterationInTest % 20 === 0) {
     const file = `{"title":"Batch ${imports}","note":"k6"}\n{"type":"api::note.note","data":{"title":"Strapi ${imports}"}}\n{"title":"Array ${imports}","note":"three"}\n`;
     const res = http.post(`${collection}/import`, file, {
       headers: { Cookie: data.session.cookie, 'X-CSRF-Token': data.session.csrf, Origin: PUBLIC_URL, 'Content-Type': 'application/jsonlines', 'Idempotency-Key': key() },
@@ -99,7 +102,7 @@ export default function (data) {
       tags: { endpoint: 'import', name: 'import' },
     });
     if (check(res, { 'import 201': (r) => r.status === 201, 'imports the file': (r) => r.json('data.imported') === 3 })) imports++;
-  } else if (__ITER % 20 === 1) {
+  } else if (exec.scenario.iterationInTest % 20 === 1) {
     // D-114: the same file planned with `?dry_run=true` — the real pipeline rolled back,
     // answering each item's verdict; no Idempotency-Key, nothing written.
     const slug = collection.split('/').pop(); // `_type` must name this collection or the item is refused

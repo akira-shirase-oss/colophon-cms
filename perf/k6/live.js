@@ -15,6 +15,7 @@
 import http from 'k6/http';
 import { check, fail } from 'k6';
 import exec from 'k6/execution';
+import { idempotencyKey } from './lib/idempotency-key.js';
 
 const BASE_URL = __ENV.BASE_URL || 'http://127.0.0.1:58000';
 const PUBLIC_URL = __ENV.PUBLIC_URL || 'http://localhost:58000';
@@ -78,7 +79,7 @@ function article(title, text) {
 }
 
 function key() {
-  return `k6-${__VU}-${__ITER}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+  return idempotencyKey(`k6-${__VU}-${__ITER}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`, 'live');
 }
 
 export function setup() {
@@ -99,7 +100,7 @@ export function setup() {
   const entries = [];
   for (let i = 0; i < count; i += 1) {
     const created = http.post(`${env}/collections/articles/entries`, article(`Article ${i}`, 'Start'), {
-      headers: Object.assign({ 'Idempotency-Key': `k6-setup-${slug}-${i}` }, write),
+      headers: Object.assign({ 'Idempotency-Key': idempotencyKey(`k6-setup-${slug}-${i}`, 'live') }, write),
     });
     if (created.status !== 201) fail(`article ${i}: HTTP ${created.status} ${created.body}`);
     entries.push({ id: created.json('data.id'), etag: created.headers['Etag'] });
