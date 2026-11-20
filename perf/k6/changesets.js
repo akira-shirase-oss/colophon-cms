@@ -6,8 +6,11 @@
 // project's changesets, 15 review a changeset's current hash (under a lock on its row), 10
 // create a new changeset pinning two of the articles (an idempotent create), 3 list the
 // environment's releases, 2 walk them a page at a time (`?limit=1`, then the page its
-// `next_cursor` names: two requests), 3 read release 2's receipt, and 2 build the rollback changeset that
-// would restore release 1 — an open changeset of two unpublish pins (P4, D-097). Reviews of one
+// `next_cursor` names: two requests), 1 reads release 2's receipt, 1 walks release 1's changes two
+// a page (`…/releases/1/changes?limit=2`, then its cursor: three entries, two requests; D-185),
+// 1 previews the rollback to release 1 (its pins counted, named and hashed, read in one snapshot;
+// D-185), and 2 build the rollback changeset that would restore release 1 — an open changeset of
+// two unpublish pins (P4, D-097). Reviews of one
 // changeset queue on its row by design; this scenario measures the path, not that queue
 // (docs/modules/03-auth.md measures the same kind of queue for members).
 // Same settings as health.js; scripts/load.sh gives this endpoint RATE 1000 and P99_MS 100.
@@ -38,7 +41,7 @@ if (!(SCENARIO in scenarios)) throw new Error(`SCENARIO must be one of ${Object.
 
 const thresholds = { http_req_failed: ['rate==0'], checks: ['rate==1'], http_req_duration: [`p(99)<${P99_MS}`] };
 // Reported per kind of request, so a tail can be traced to its cause; only the overall p99 fails a run.
-for (const endpoint of ['get', 'list', 'review', 'create', 'releases', 'releases-page', 'receipt', 'rollback']) {
+for (const endpoint of ['get', 'list', 'review', 'create', 'releases', 'releases-page', 'receipt', 'changes', 'rollback-preview', 'rollback']) {
   thresholds[`http_req_duration{endpoint:${endpoint}}`] = ['p(99)<60000'];
 }
 if (SCENARIO === 'steady') {
@@ -129,9 +132,23 @@ export default function (data) {
       const second = http.get(`${data.base}/releases?limit=1&cursor=${cursor}`, params('releases-page'));
       check(second, { 'releases page 2: release 1, the last': (r) => r.status === 200 && r.json('data.0.generation') === 1 && r.json('next_cursor') === null });
     }
-  } else if (slot < 98) {
+  } else if (slot < 96) {
     const res = http.get(`${data.base}/releases/2`, params('receipt'));
     check(res, { 'receipt 200': (r) => r.status === 200 && r.json('data.generation') === 2 });
+  } else if (slot < 97) {
+    const first = http.get(`${data.base}/releases/1/changes?limit=2`, params('changes'));
+    const cursor = first.status === 200 ? first.json('next_cursor') : null;
+    check(first, { 'changes page 1: two publishes and a cursor': (r) => r.status === 200 && r.json('data').length === 2 && typeof cursor === 'string' });
+    if (typeof cursor === 'string') {
+      const second = http.get(`${data.base}/releases/1/changes?limit=2&cursor=${cursor}`, params('changes'));
+      check(second, { 'changes page 2: the third, the last': (r) => r.status === 200 && r.json('data').length === 1 && r.json('next_cursor') === null });
+    }
+  } else if (slot < 98) {
+    const res = http.get(`${data.base}/releases/1/rollback`, params('rollback-preview'));
+    check(res, {
+      'rollback preview 200: two to take down, hashed': (r) =>
+        r.status === 200 && r.json('data.unpublish_total') === 2 && r.json('data.too_large') === false && typeof r.headers['Etag'] === 'string',
+    });
   } else {
     // Restoring release 1 is always the same work here — the live set never moves — and every
     // build must answer the same changeset: two unpublish pins, for articles 3 and 4.

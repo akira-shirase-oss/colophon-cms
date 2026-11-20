@@ -183,7 +183,9 @@ These are policies to test, not a global 30-second consistency guarantee.
 - Built in step 3.2, part 1 (D-049): unpublishing is a changeset item of kind `unpublish` that pins the published
   revision and is reviewed like any change. Its release closes the publication, records a tombstone, and marks every
   earlier publication of the entry `revoked_in`; delivery never serves a revoked publication, and a read of the entry
-  is 410 `gone` (`no-store`) at every generation until it is published again. Cache keys name the environment's
+  is 410 `gone` (`no-store`) at every generation it was published in and at every one from the takedown on, until it
+  is published again. At a generation from before the entry was first published it is 404 `not_found`, as for any
+  entry that didn't exist then: there was nothing to take down. Cache keys name the environment's
   `last_unpublish`, so answers cached before a takedown are never served again (F07 at the origin,
   `crates/colophon-server/tests/cache.rs`). Part 2 (D-050) purges it from CDNs: the release reports its purge as
   pending, accepted or failed, and the Studio shows *removal pending at the CDN* until it is accepted

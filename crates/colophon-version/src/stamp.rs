@@ -4,7 +4,9 @@
 //!
 //! The commit is the first of these that answers:
 //!
-//! 1. `COLOPHON_COMMIT` in the environment: a packager building from a source tarball sets it;
+//! 1. `COLOPHON_COMMIT` in the environment: a packager building from a source tarball sets it to
+//!    the full commit id; `unknown` says the build doesn't know it (the container image's default,
+//!    since a plain `docker build` has no git), and is reported as just that, never as an id;
 //! 2. `.cargo_vcs_info.json` beside the manifest: `cargo package` records the commit there, so a
 //!    crate built from a registry knows it;
 //! 3. `git rev-parse HEAD`, but only when that repository tracks this package's `Cargo.toml` (a
@@ -46,18 +48,8 @@ pub fn emit() {
 }
 
 fn commit(manifest_dir: &Path) -> Result<String, String> {
-    if let Some(given) = std::env::var("COLOPHON_COMMIT")
-        .ok()
-        .filter(|value| !value.is_empty())
-    {
-        let given = given.to_ascii_lowercase();
-        return if is_commit_id(&given) {
-            Ok(given)
-        } else {
-            Err(format!(
-                "COLOPHON_COMMIT={given:?} is not a full git commit id (40 or 64 hex digits)"
-            ))
-        };
+    if let Some(given) = given_commit(&std::env::var("COLOPHON_COMMIT").unwrap_or_default())? {
+        return Ok(given);
     }
     let vcs_info = manifest_dir.join(".cargo_vcs_info.json");
     if let Ok(text) = std::fs::read_to_string(&vcs_info) {
@@ -137,6 +129,26 @@ fn git(dir: &Path, args: &[&str]) -> Option<String> {
     String::from_utf8(output.stdout)
         .ok()
         .map(|text| text.trim().to_owned())
+}
+
+/// What `COLOPHON_COMMIT` says: nothing to go on when it is empty (`None`: look further), the
+/// full commit id when it is one, [`UNKNOWN`] when it says `unknown` (a local build without git,
+/// which reports exactly that), and an error for anything else, so a short or mistyped id never
+/// stamps a build.
+fn given_commit(value: &str) -> Result<Option<String>, String> {
+    if value.is_empty() {
+        return Ok(None);
+    }
+    let value = value.to_ascii_lowercase();
+    if value == UNKNOWN {
+        return Ok(Some(UNKNOWN.to_owned()));
+    }
+    if is_commit_id(&value) {
+        return Ok(Some(value));
+    }
+    Err(format!(
+        "COLOPHON_COMMIT={value:?} is not a full git commit id (40 or 64 hex digits) or `unknown`"
+    ))
 }
 
 /// A full commit id: 40 hex digits (SHA-1) or 64 (SHA-256 repositories), lower case.
@@ -222,6 +234,23 @@ mod tests {
         // The last second of a day is still that day; the next is the next.
         assert_eq!(date(1_793_231_999), "2026-10-28");
         assert_eq!(date(1_793_232_000), "2026-10-29");
+    }
+
+    #[test]
+    fn a_given_commit_is_an_id_or_unknown_and_nothing_else() {
+        let id = "50558a7c0ffee50558a7c0ffee50558a7c0ffee5";
+        assert_eq!(given_commit(""), Ok(None), "empty: look further");
+        assert_eq!(given_commit(id), Ok(Some(id.to_owned())));
+        assert_eq!(
+            given_commit(&id.to_ascii_uppercase()),
+            Ok(Some(id.to_owned()))
+        );
+        // The image's default for a build without git: reported as unknown, never as an id.
+        assert_eq!(given_commit("unknown"), Ok(Some(UNKNOWN.to_owned())));
+        assert_eq!(given_commit("Unknown"), Ok(Some(UNKNOWN.to_owned())));
+        for wrong in ["abc", "50558a7", "unknown ", "none", &"g".repeat(40)] {
+            assert!(given_commit(wrong).is_err(), "{wrong:?} is refused");
+        }
     }
 
     #[test]

@@ -98,6 +98,7 @@ async fn world(window_ms: u64) -> World {
             ),
             mcp: colophon_api::mcp::Shared::new(colophon_api::mcp::Limits::default()),
             passwords: colophon_db::passwords::PasswordGate::new(1),
+            uploads: colophon_api::uploads::UploadGate::new(256, 21 * 1024 * 1024),
             magic_links: colophon_db::audience::MagicLinkLimits::DEFAULT,
             media_origin: "http://localhost:58000".to_owned(),
             install_kind: None,

@@ -25,13 +25,14 @@
 	import * as Table from '@colophon/ui/ui/table';
 	import * as Tabs from '@colophon/ui/ui/tabs';
 	import { Toggle } from '@colophon/ui/ui/toggle';
-	import { ApiError, type Content, createEntry, type EntryState, entryState, exportUrl, getContentType, getEntry, importEntries, may, mayOn, newKey, searchEntries } from '#lib/api.ts';
+	import { ApiError, type Content, createEntry, entryState, exportUrl, getContentType, getEntry, importEntries, may, mayOn, newKey, searchEntries } from '#lib/api.ts';
+	import { type EntryFilter, shows, tally as tallyOf } from '#lib/entryState.ts';
 	import { applies, blockingProblem, type FormValue, formValue, slugify, starter, storedValue, titleLabel } from '#lib/content.ts';
 	import { plainError } from '#lib/errors.ts';
 	import FieldInputs from '#lib/FieldInputs.svelte';
 	import { oneOf } from '#lib/firstRun.ts';
 	import { newKeys, type Outcome, publishesInOneClick, publishInOneClick } from '#lib/publishing.ts';
-	import { ago, meQuery, projectQuery, releasesQuery } from '#lib/queries.ts';
+	import { ago, entriesQuery, meQuery, projectQuery, releasesQuery } from '#lib/queries.ts';
 	import EmptyState from '#lib/shell/EmptyState.svelte';
 	import PageHeader from '#lib/shell/PageHeader.svelte';
 	import Problem from '#lib/shell/Problem.svelte';
@@ -86,11 +87,17 @@
 			input.value = '';
 		}
 	}
+	const queryClient = useQueryClient();
 	// Pages of 100, newest first, followed with the server's cursor when someone asks for more. Keyed
 	// under the collection's entries, so saving and publishing refresh it.
 	const entries = createInfiniteQuery(() => ({
 		queryKey: ['entries', project, collection, q, creator ?? 'anyone', 'pages'],
-		queryFn: ({ pageParam }: { pageParam: string | null }) => searchEntries(project, collection, q, pageParam, creator),
+		// The first page of the whole list is the sidebar count's own read (`entriesQuery`): one request serves
+		// both (P3-12). A search, "Only mine" or a later page reads on its own.
+		queryFn: ({ pageParam }: { pageParam: string | null }) =>
+			pageParam === null && creator === null
+				? queryClient.fetchQuery({ ...entriesQuery(project, collection, q), staleTime: 5_000 })
+				: searchEntries(project, collection, q, pageParam, creator),
 		initialPageParam: null as string | null,
 		getNextPageParam: (last: { next_cursor: string | null }) => last.next_cursor,
 		placeholderData: keepPreviousData
@@ -104,22 +111,15 @@
 			void goto(resolve('/projects/[project]/[collection]/[entry]', { project, collection, entry: only.id }), { replaceState: true });
 		}
 	});
-	let filter = $state<'all' | EntryState>('all');
-	const rows = $derived(loaded.filter((entry) => filter === 'all' || entryState(entry) === filter));
-	const tally = $derived(
-		loaded.reduce<Record<EntryState, number>>(
-			(counts, entry) => {
-				counts[entryState(entry)] += 1;
-				return counts;
-			},
-			{ draft: 0, live: 0, changed: 0 }
-		)
-	);
+	// Counted as the overview and the sidebar count (lib/entryState.ts): Live includes the entries
+	// live with unpublished changes, which "Changed" narrows to.
+	let filter = $state<EntryFilter>('all');
+	const rows = $derived(loaded.filter((entry) => shows(filter, entry)));
+	const tally = $derived(tallyOf(loaded));
 
 	// Bulk publishing (bounded: a publish request holds at most 100 entries). Picking rows publishes
 	// their current versions together, in one click when the role may approve and publish its own
 	// requests here, else as one request sent for review. Live entries with nothing new are left out.
-	const queryClient = useQueryClient();
 	const releases = createQuery(() => releasesQuery(project));
 	const oneClick = $derived(publishesInOneClick(mine.data, [collection]));
 	const asks = $derived(may(mine.data, 'content.update', collection));
@@ -357,9 +357,9 @@
 			<Tabs.Root bind:value={filter as string}>
 				<Tabs.List aria-label="Show">
 					<Tabs.Trigger value="all">All</Tabs.Trigger>
-					<Tabs.Trigger value="draft">Drafts <span class="tabular text-muted-foreground">{tally.draft}</span></Tabs.Trigger>
-					<Tabs.Trigger value="changed">Changed <span class="tabular text-muted-foreground">{tally.changed}</span></Tabs.Trigger>
 					<Tabs.Trigger value="live">Live <span class="tabular text-muted-foreground">{tally.live}</span></Tabs.Trigger>
+					<Tabs.Trigger value="changes" title="Live, with changes not yet published">Changed <span class="tabular text-muted-foreground">{tally.withChanges}</span></Tabs.Trigger>
+					<Tabs.Trigger value="draft">Drafts <span class="tabular text-muted-foreground">{tally.drafts}</span></Tabs.Trigger>
 				</Tabs.List>
 			</Tabs.Root>
 			{#if readsOthers && !single && who.data}

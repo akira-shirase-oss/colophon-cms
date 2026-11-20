@@ -17,6 +17,8 @@ node scripts/design-contrast.mjs --check docs/design/contrast.md >/dev/null
 node scripts/design-contrast.mjs --check-copy packages/ui/src/lib/tokens.css
 npm run check --workspaces --if-present
 npm test --workspaces --if-present
+# The load scenarios' shared helpers (perf/k6/lib): the Idempotency-Key builder against the API's rule.
+node --test perf/k6/lib/*.test.mjs
 # What npm would ship of @colophon-cms/sdk and @colophon-cms/rich-text, installed and used from
 # the tarballs (D-170): allowlist, budgets, publint, attw, Node, TypeScript, a browser bundle.
 node packages/sdk/scripts/pack-check.mjs

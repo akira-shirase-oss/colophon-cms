@@ -246,7 +246,9 @@ test('an image file pasted into the editor is uploaded, described, and shows Che
 
 	// Uploaded at once, then described before it goes in.
 	const describe = page.getByRole('dialog', { name: 'Describe the image' });
+	// The upload has landed (not only begun: "Uploading pasted.png…" names the file too).
 	await expect(describe.getByTestId('image-chosen')).toContainText('pasted.png');
+	await expect(describe.getByTestId('image-chosen')).not.toContainText('Uploading');
 	await describe.getByLabel('Alt text').fill('A green field under an evening sky');
 	await describe.getByRole('button', { name: 'Insert image' }).click();
 
@@ -258,4 +260,44 @@ test('an image file pasted into the editor is uploaded, described, and shows Che
 	await expect
 		.poll(async () => (await storedImages(page, project, entry)).map((image) => image.alt), { timeout: 10_000 })
 		.toEqual(['A green field under an evening sky']);
+});
+
+test('a pasted image whose upload answer is lost is sent again with the same key: one upload, and it goes in (D-215)', async ({ page }) => {
+	await signIn(page);
+	const project = await newProject(page);
+	const entry = await newEntry(page, project, 'Lost answer');
+	// The first upload reaches the server and is stored, but its answer is a 504 (the deadline ran out while
+	// the commit was finishing, as on a slow runner); the second goes through as it is.
+	const keys: string[] = [];
+	await page.route('**/environments/production/assets', async (route) => {
+		if (route.request().method() !== 'POST') return route.continue();
+		keys.push(route.request().headers()['idempotency-key'] ?? '');
+		if (keys.length === 1) {
+			await route.fetch();
+			return route.fulfill({ status: 504, json: { error: { code: 'deadline_exceeded', message: 'the server took too long to answer' } } });
+		}
+		return route.continue();
+	});
+	await page.goto(`/studio/projects/${project}/articles/${entry}`);
+	await expect(status(page)).toHaveAttribute('data-status', 'saved');
+	const editor = body(page).locator('.tiptap');
+	await editor.click();
+	await editor.evaluate((element, data) => {
+		const bytes = Uint8Array.from(atob(data), (letter) => letter.charCodeAt(0));
+		const transfer = new DataTransfer();
+		transfer.items.add(new File([bytes], 'lost.png', { type: 'image/png' }));
+		element.dispatchEvent(new ClipboardEvent('paste', { clipboardData: transfer, bubbles: true, cancelable: true }));
+	}, png(800, 450, [200, 90, 120]).toString('base64'));
+	const describe = page.getByRole('dialog', { name: 'Describe the image' });
+	await expect(describe.getByTestId('image-chosen')).toContainText('lost.png');
+	await expect(describe.getByTestId('image-chosen')).not.toContainText('Uploading');
+	await describe.getByLabel('Alt text').fill('A harbour wall at low tide');
+	await describe.getByRole('button', { name: 'Insert image' }).click();
+	await expect(describe).toBeHidden();
+	await expect(body(page).getByTestId('rich-image')).toHaveCount(1);
+	// Sent twice, with one key; stored once.
+	expect(keys).toHaveLength(2);
+	expect(keys[1]).toBe(keys[0]);
+	const listed = await api(page, 'GET', `${env(project)}/assets`);
+	expect(listed.body?.['data'], JSON.stringify(listed.body)).toHaveLength(1);
 });
