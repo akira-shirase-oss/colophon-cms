@@ -284,6 +284,9 @@
 		*::before,
 		*::after {
 			animation-duration: 0.01ms !important;
+			/* An endless animation at 0.01ms still loops, sampled at a random point each frame (a
+			   spinner jitters instead of stopping): one pass, then it stops. */
+			animation-iteration-count: 1 !important;
 			transition-duration: 0.01ms !important;
 		}
 	}

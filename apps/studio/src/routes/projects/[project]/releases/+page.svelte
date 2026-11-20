@@ -190,7 +190,7 @@
 								{/if}
 								{#each jobs as job (job.id)}
 									<li class="flex items-center gap-2" data-testid="delivery" data-status={job.status} class:text-destructive={job.status === 'failed'}>
-										<span class="size-1.5 rounded-full {DOT[job.status]}" class:breathe={['pending', 'running', 'retrying'].includes(job.status)} aria-hidden="true"></span>
+										<span class="size-1.5 rounded-full {DOT[job.status]}" aria-hidden="true"></span>
 										{job.destination_name}: {STATUS[job.status]}{job.attempts > 1 ? ` after ${job.attempts} attempts` : ''}{job.last_error && job.status !== 'succeeded'
 											? ` (${failureText(job.last_error)})`
 											: ''}

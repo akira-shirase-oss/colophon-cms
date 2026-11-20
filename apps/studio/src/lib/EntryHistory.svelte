@@ -163,7 +163,7 @@
 						{#if live && published}<StatusBadge state="live" text="Live in {releaseName(published.generation)}" testid="history-live" class="tabular" />{/if}
 					</p>
 					<p class="mt-0.5 text-sm text-pretty text-muted-foreground" data-testid="history-summary">
-						{#if said === null}<span class="inline-block h-4 w-40 animate-pulse rounded bg-muted align-middle motion-reduce:animate-none" aria-label="Working out what changed"></span>{:else}{said}{/if}
+						{#if said === null}<span class="inline-block h-4 w-40 rounded bg-muted align-middle" aria-label="Working out what changed"></span>{:else}{said}{/if}
 					</p>
 					{#if sitting.revisions.length > 1}
 						<button
