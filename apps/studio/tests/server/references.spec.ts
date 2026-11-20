@@ -183,7 +183,7 @@ test('a story whose author isn’t published is refused by name, and published w
 	// The request it made, approved: publishing it says the same, and offers one with the author.
 	await page.getByTestId('publish-outcome').getByRole('link', { name: 'Open the publish request' }).click();
 	await expect(page.getByTestId('changeset-status')).toHaveAttribute('data-state', 'approved');
-	await page.getByRole('button', { name: 'Publish', exact: true }).click();
+	await page.getByRole('button', { name: 'Publish now', exact: true }).click();
 	await expect(page.getByTestId('changeset-error')).toContainText(words);
 	expect(await violations(page)).toEqual([]);
 	expect(await internalTerms(page)).toEqual([]);
@@ -191,10 +191,11 @@ test('a story whose author isn’t published is refused by name, and published w
 	await expect(page.getByTestId('changeset-status')).toHaveAttribute('data-state', 'open');
 	await expect(page.getByTestId('changeset-items')).toContainText('Notes on the engine');
 	await expect(page.getByTestId('changeset-items')).toContainText('Ada Lovelace');
-	await page.getByRole('button', { name: 'Ask for review' }).click();
-	await page.getByRole('button', { name: 'Approve this version' }).click();
+	await page.getByTestId('ask-review').click();
+	await page.getByRole('button', { name: 'Send for review' }).click();
+	await page.getByRole('button', { name: 'Approve', exact: true }).click();
 	await expect(page.getByTestId('changeset-status')).toHaveAttribute('data-state', 'approved');
-	await page.getByRole('button', { name: 'Publish', exact: true }).click();
+	await page.getByRole('button', { name: 'Publish now', exact: true }).click();
 	await expect(page.getByTestId('changeset-status')).toHaveAttribute('data-state', 'published');
 	expect(await readers(page, project, 'stories')).toContain('Notes on the engine');
 	expect(await readers(page, project, 'people')).toContain('Ada Lovelace');
@@ -206,6 +207,7 @@ test('taking down an author a published story names is refused by name', async (
 	await publishThroughApi(page, project, 'Story and author', [story, ada]);
 
 	await page.goto(`/studio/projects/${project}/people/${ada}`);
+	await page.getByTestId('more-menu').click();
 	await page.getByTestId('unpublish-button').click();
 	// It warns first (the story links here and readers have it); trying anyway is refused, by name.
 	await expect(page.getByRole('alertdialog')).toContainText('“Notes on the engine” links to it, and readers have it.');
@@ -230,8 +232,6 @@ test('an entry lists what links to it, and warns before a take-down that would b
 	// It belongs with the content, so the other tabs don't repeat it above their own panels.
 	await page.getByRole('tab', { name: /History/ }).click();
 	await expect(page.getByTestId('linked-from')).toBeHidden();
-	await page.getByRole('tab', { name: /Comments/ }).click();
-	await expect(page.getByTestId('linked-from')).toBeHidden();
 	await page.getByRole('tab', { name: /Content/ }).click();
 	await expect(linked).toBeVisible();
 
@@ -239,13 +239,13 @@ test('an entry lists what links to it, and warns before a take-down that would b
 	await publishThroughApi(page, project, 'Story and author', [story, ada]);
 	await page.reload();
 	await expect(linked).toContainText('Readers see this link');
-	await expect(page.getByTestId('unpublish-warning')).toContainText("can't be taken down until that changes");
 	expect(await violations(page)).toEqual([]);
 	expect(await internalTerms(page)).toEqual([]);
+	await page.getByTestId('more-menu').click();
 	await page.getByTestId('unpublish-button').click();
-	await expect(page.getByRole('alertdialog')).toContainText('Colophon won\'t take this down until that changes');
+	await expect(page.getByTestId('unpublish-warning')).toContainText('Colophon won’t take this down until that changes');
 	expect(await violations(page)).toEqual([]);
-	await page.getByRole('button', { name: 'Keep it' }).click();
+	await page.getByRole('button', { name: 'Keep it live' }).click();
 	await expect(page.getByTestId('publish-outcome')).toHaveCount(0);
 	await linked.getByRole('link', { name: 'Notes on the engine' }).click();
 	await expect(page.getByLabel('Title', { exact: true })).toHaveValue('Notes on the engine');

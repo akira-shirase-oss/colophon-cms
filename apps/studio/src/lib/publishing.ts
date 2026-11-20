@@ -16,6 +16,16 @@ export type Outcome =
 	| { kind: 'requested'; request: string; unpublish: boolean }
 	| { kind: 'stopped'; message: string; request: string | null };
 
+/** A publish request an entry waits in for review, as the editor names it (D-184). */
+export interface InReview {
+	id: string;
+	title: string;
+	/** It takes the entry down rather than publishing it. */
+	unpublish: boolean;
+	/** When it is approved and scheduled: when it publishes by itself (D-060). */
+	runAt?: string | null;
+}
+
 /** Whether one click publishes in `collections`, rather than asking for review. */
 export function publishesInOneClick(mine: Project | undefined, collections: string[]): boolean {
 	return (

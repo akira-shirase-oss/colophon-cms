@@ -31,6 +31,10 @@ export type SiteMode =
 
 export interface World {
 	role: 'owner' | 'editor';
+	/** What built the request (D-097, D-184): a rollback restores `rollback_generation`; an undo of
+	 *  release N sets `undo_of` N and `rollback_generation` N - 1. */
+	rollbackGeneration: number | null;
+	undoOf: number | null;
 	template: string | null;
 	/** What issuing a grant answers: a grant, or a refusal. */
 	issue: 'grant' | 'not-configured' | 'unavailable' | 'limit' | 'invalid' | 'already-live' | 'offline';
@@ -63,6 +67,8 @@ export interface World {
 export function world(overrides: Partial<World> = {}): World {
 	return {
 		role: 'owner',
+		rollbackGeneration: null,
+		undoOf: null,
 		template: TEMPLATE,
 		issue: 'grant',
 		request: 'awaiting_review',
@@ -143,13 +149,15 @@ function changeset(w: World) {
 		id: CHANGESET,
 		title: 'Spring issue',
 		hash: 'sha256:request-hash-1',
+		hidden_items: 0,
 		status: { state: w.request, generation: published ? 3 : null, by: null, self_review: false, edited_items: 0 },
 		created_by: 'person-1',
 		created_at: AT,
 		submitted_by: 'person-1',
 		submitted_at: AT,
 		updated_at: AT,
-		rollback_generation: null,
+		rollback_generation: w.rollbackGeneration,
+		undo_of: w.undoOf,
 		items: [
 			{
 				kind: 'publish',
@@ -291,6 +299,8 @@ async function answer(w: World, request: Request): Promise<{ status: number; bod
 	if (rest === '/changesets') return ok({ data: [] });
 	if (rest === `/changesets/${CHANGESET}`) return ok({ data: changeset(w) });
 	if (rest === '/schedules') return ok({ data: [] });
+	// The request page reads its review tasks to say who it waits for (P2-12).
+	if (rest === '/tasks') return ok({ data: [], next_cursor: null });
 	if (rest.startsWith(`/collections/articles/entries/${ENTRY}/revisions/`)) {
 		return ok({ data: { revision: revision(w), content: w.content } });
 	}

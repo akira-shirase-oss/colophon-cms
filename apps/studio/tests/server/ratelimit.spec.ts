@@ -130,13 +130,17 @@ test('an edit saved while the session is over its limit waits as asked, is kept 
 
 	// The wait is a second or two: what the editor shows and keeps is read the moment it starts.
 	const during = await page.waitForFunction((key) => {
+		// The status says why in a few words beside "Waiting"; the banner above the fields says it in full.
 		const shown = document.querySelector('[data-testid="save-status"]');
-		return shown?.getAttribute('data-status') === 'retrying' ? { words: shown.textContent?.trim() ?? '', kept: localStorage.getItem(key) } : null;
+		const reason = shown?.querySelector('[data-testid="save-reason"]')?.textContent?.replace(/^:\s*/, '') ?? '';
+		const banner = document.querySelector('[data-testid="save-problem"] p')?.textContent?.trim() ?? '';
+		return shown?.getAttribute('data-status') === 'retrying' && reason !== '' ? { words: banner, reason, kept: localStorage.getItem(key) } : null;
 	}, `colophon:unsaved:${project}:${entry}`);
 	await page.evaluate(() => {
 		(window as unknown as { flooding: boolean }).flooding = false;
 	});
-	const { words, kept } = (await during.jsonValue()) as { words: string; kept: string | null };
+	const { words, reason, kept } = (await during.jsonValue()) as { words: string; reason: string; kept: string | null };
+	expect(reason).toMatch(/^Colophon is busy for a moment; trying again in \d+ seconds?\.$/);
 	expect(words).toMatch(/^Colophon is busy for a moment; trying again in \d+ seconds?\. Your changes are kept on this device\.$/);
 	expect(INTERNAL_TERMS.test(words)).toBe(false);
 	expect(JSON.parse(kept ?? '{}').content).toMatchObject({ title: 'Saved after the limit' });

@@ -28,7 +28,8 @@
 		locked = [],
 		refused = null,
 		project = '',
-		base = ''
+		base = '',
+		labels = {}
 	}: {
 		fields: FieldDefinition[];
 		form: Record<string, FormValue>;
@@ -50,6 +51,8 @@
 		/** These fields' place in the content, as a JSON Pointer ('' for the entry's own fields;
 		 *  `/sections/1` inside a page section), so refusals land under the right control. */
 		base?: string;
+		/** Labels of fields drawn elsewhere (the title, as the page's heading), for "From Title". */
+		labels?: Record<string, string>;
 	} = $props();
 
 	const at = (field: FieldDefinition) => `${base}/${field.id}`;
@@ -82,13 +85,8 @@
 	function hint(field: FieldDefinition): string {
 		const parts: string[] = [];
 		if (!field.required) parts.push('Optional.');
-		if (field.type === 'text') {
-			parts.push(
-				field.min_chars === undefined
-					? `Up to ${field.max_chars.toLocaleString()} characters.`
-					: `From ${field.min_chars.toLocaleString()} to ${field.max_chars.toLocaleString()} characters.`
-			);
-		}
+		// The limit itself is said by a count that shows once the text nears it (D-184).
+		if (field.type === 'text' && field.min_chars !== undefined) parts.push(`At least ${field.min_chars.toLocaleString()} characters.`);
 		if (field.type === 'email') parts.push('An email address.');
 		if (field.type === 'url') parts.push('A web address starting with https://.');
 		if (field.type === 'time') parts.push('24-hour, like 14:30.');
@@ -114,6 +112,19 @@
 		form[field.id] = suggestion(field);
 		onchange();
 	}
+	/** The label of the field a URL name is made from, wherever it is drawn. */
+	const sourceLabel = (field: FieldDefinition) =>
+		field.type === 'slug' && field.source !== undefined ? (fields.find((other) => other.id === field.source)?.label ?? labels[field.source] ?? field.source) : '';
+	/** Why "From Title" has nothing to do now, said on the button instead of a silent grey. */
+	function nothingToSuggest(field: FieldDefinition): string {
+		const from = sourceLabel(field).toLowerCase();
+		if (suggestion(field) === '') return `Write the ${from} first`;
+		if (suggestion(field) === form[field.id]) return `Already matches the ${from}`;
+		return '';
+	}
+	/** A text field's count, shown from 80% of its limit (D-184). */
+	const nearLimit = (field: FieldDefinition) =>
+		field.type === 'text' && characters(String(form[field.id] ?? '')) >= Math.floor(field.max_chars * 0.8);
 	const select =
 		'h-9 w-full rounded-md border border-input bg-popover px-3 text-sm outline-none focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/40';
 </script>
@@ -165,13 +176,22 @@
 				</div>
 				<div class="grid min-w-0 gap-1.5">
 				{#if field.type === 'text' && field.multiline}
-					<Textarea id={input} disabled={locked.includes(field.id)} rows={4} maxlength={field.max_chars} bind:value={form[field.id] as string} oninput={onchange} />
+					<Textarea
+						id={input}
+						disabled={locked.includes(field.id)}
+						rows={4}
+						maxlength={field.max_chars}
+						aria-describedby={nearLimit(field) ? `${input}-count` : undefined}
+						bind:value={form[field.id] as string}
+						oninput={onchange}
+					/>
 				{:else if field.type === 'text'}
 					<Input
 						id={input}
 						disabled={locked.includes(field.id)}
 						maxlength={field.max_chars}
 						class={field.id === titleField ? 'h-10 text-base! font-medium' : ''}
+						aria-describedby={nearLimit(field) ? `${input}-count` : undefined}
 						bind:value={form[field.id] as string}
 						oninput={onchange}
 					/>
@@ -209,15 +229,22 @@
 							oninput={onchange}
 						/>
 						{#if field.source !== undefined}
+							<!-- Not `disabled`: a disabled button takes no pointer or focus, so it couldn't say
+							     why it has nothing to do. -->
+							{@const idle = locked.includes(field.id) ? 'Your role can’t change it' : nothingToSuggest(field)}
 							<Button
 								type="button"
 								variant="outline"
 								size="sm"
-								disabled={locked.includes(field.id) || suggestion(field) === '' || suggestion(field) === form[field.id]}
-								onclick={() => suggest(field)}
+								class="aria-disabled:cursor-not-allowed aria-disabled:opacity-50 aria-disabled:hover:bg-popover"
+								aria-disabled={idle !== '' || undefined}
+								aria-describedby={idle === '' ? undefined : `${input}-idle`}
+								title={idle || undefined}
+								onclick={() => idle === '' && suggest(field)}
 							>
-								From {fields.find((other) => other.id === field.source)?.label ?? field.source}
+								From {sourceLabel(field)}
 							</Button>
+							{#if idle !== ''}<span id="{input}-idle" class="sr-only">{idle}</span>{/if}
 						{/if}
 					</div>
 				{:else if field.type === 'email'}
@@ -356,6 +383,11 @@
 						bind:value={form[field.id] as string}
 						oninput={onchange}
 					/>
+				{/if}
+				{#if nearLimit(field) && field.type === 'text'}
+					<p class="text-xs tabular {characters(String(form[field.id] ?? '')) > field.max_chars ? 'text-destructive' : 'text-muted-foreground'}" id="{input}-count" data-testid="text-count">
+						{characters(String(form[field.id] ?? '')).toLocaleString()} of {field.max_chars.toLocaleString()} characters
+					</p>
 				{/if}
 				{#if problemOf(field)}
 					<p class="text-xs text-destructive" id="{input}-problem" data-testid="field-problem" data-field={at(field).slice(1)}>
