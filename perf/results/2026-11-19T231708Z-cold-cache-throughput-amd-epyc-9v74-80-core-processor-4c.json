@@ -1,0 +1,113 @@
+{
+  "scenario": "throughput",
+  "endpoint": "cold-cache",
+  "date": "2026-11-19T23:17:08Z",
+  "commit": "079e44d",
+  "dirty": false,
+  "machine": {
+    "id": "amd-epyc-9v74-80-core-processor-4c",
+    "cpu": "AMD EPYC 9V74 80-Core Processor",
+    "cores": 4,
+    "memory_gb": 15,
+    "os": "Linux 7.0.0-1019-azure"
+  },
+  "topology": {
+    "servers": 1,
+    "workers": 0,
+    "balancer": null
+  },
+  "k6": "v2.3.0",
+  "params": {
+    "total": 30000,
+    "vus": 64
+  },
+  "requests": 30091,
+  "rps": 505,
+  "failed": 0,
+  "checks_failed": 0,
+  "dropped": 0,
+  "latency_ms": {
+    "avg": 116.098,
+    "p50": 114.782,
+    "p90": 131.382,
+    "p95": 137.87,
+    "p99": 152.6,
+    "p999": 170.332,
+    "max": 306.753
+  },
+  "database_transactions_during_run": 182665,
+  "server_warnings": 0,
+  "thresholds_passed": true,
+  "resources": {
+    "samples": 11,
+    "server_rss_kb": {
+      "first": 33016,
+      "last": 47008,
+      "max": 47008
+    },
+    "server_cpu_percent": {
+      "avg": 27.9,
+      "max": 36.7
+    },
+    "postgres_connections": {
+      "last": 23,
+      "max": 23
+    },
+    "client": {
+      "samples": 11,
+      "k6_rss_kb": {
+        "first": 72488,
+        "last": 89468,
+        "max": 89468
+      },
+      "k6_cpu_percent": {
+        "avg": 30.2,
+        "max": 50.0
+      },
+      "readyz": {
+        "first": "200",
+        "last": "200",
+        "non_200": 0
+      }
+    }
+  },
+  "l03": {
+    "reads": {
+      "cold_fills": 24000,
+      "uncached_fills": 6000,
+      "uncached_keeps": 0
+    },
+    "served": {
+      "hit": 0,
+      "miss": 24000,
+      "coalesced": 0,
+      "bypass": 6000
+    },
+    "errors": 0,
+    "gates": {
+      "every_cold_read_a_fill": true,
+      "every_bypass_read_uncached": true,
+      "nothing_served_from_cache": true,
+      "cache_kept_up": true,
+      "no_errors": true,
+      "cold_p95": true,
+      "cold_p99": true
+    },
+    "spec": "L03: cold cache / 100% unique keys — cold-origin gate (p95 <=300 ms, p99 <=750 ms), bounded pools, no unbounded database queue",
+    "corpus_entries": 2048,
+    "latency_ms": {
+      "all": {
+        "p95": 137.87049,
+        "p99": 152.5997938
+      },
+      "cold": {
+        "p50": 114.920617,
+        "p95": 138.0353706,
+        "p99": 152.74247380999992,
+        "max": 188.780967
+      }
+    },
+    "held": true,
+    "gate": "every request a unique key: all cold reads origin fills ('miss' or a counted 'bypass' flap, <=2%), all empty reads 'bypass', zero hit/coalesced/errors; cold arm p95 <300 ms, p99 <750 ms; db transactions per request sit beside this in the result"
+  }
+}
