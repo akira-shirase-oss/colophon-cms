@@ -40,6 +40,12 @@ export interface World {
 	issue: 'grant' | 'not-configured' | 'unavailable' | 'limit' | 'invalid' | 'already-live' | 'offline';
 	/** Where the publish request stands. */
 	request: 'awaiting_review' | 'published';
+	/** The entry is live as drafted: readers get its current revision, from release 3. */
+	live: boolean;
+	/** The project's request list names the request (the editor then reads it to find the entry). */
+	listed: boolean;
+	/** Holds `GET {P}/changesets/{id}` until released (a slow read of the request). */
+	requestRead: Promise<void> | null;
 	/** What each `POST {P}/previews` asked for, as its body. */
 	issued: Record<string, unknown>[];
 	/** Milliseconds before an issued grant ends. */
@@ -72,6 +78,9 @@ export function world(overrides: Partial<World> = {}): World {
 		template: TEMPLATE,
 		issue: 'grant',
 		request: 'awaiting_review',
+		live: false,
+		listed: false,
+		requestRead: null,
 		issued: [],
 		lasts: 12.5 * 60_000,
 		renew: 'ok',
@@ -141,6 +150,11 @@ function draft(w: World, extra: Record<string, unknown> = {}) {
 		localizations: [],
 		...extra
 	};
+}
+
+/** What readers get of the entry: its current revision when it is live. */
+function livePart(w: World) {
+	return w.live ? { revision_id: `rev-${w.revision}`, generation: 3 } : null;
 }
 
 function changeset(w: World) {
@@ -296,8 +310,11 @@ async function answer(w: World, request: Request): Promise<{ status: number; bod
 	// What the entry editor and the project's frame read.
 	if (rest === '/content-types') return ok({ data: [TYPE] });
 	if (rest === '/content-types/articles') return ok({ data: TYPE });
-	if (rest === '/changesets') return ok({ data: [] });
-	if (rest === `/changesets/${CHANGESET}`) return ok({ data: changeset(w) });
+	if (rest === '/changesets') return ok({ data: w.listed ? [changeset(w)] : [] });
+	if (rest === `/changesets/${CHANGESET}`) {
+		if (w.requestRead !== null) await w.requestRead;
+		return ok({ data: changeset(w) });
+	}
 	if (rest === '/schedules') return ok({ data: [] });
 	// The request page reads its review tasks to say who it waits for (P2-12).
 	if (rest === '/tasks') return ok({ data: [], next_cursor: null });
@@ -310,10 +327,10 @@ async function answer(w: World, request: Request): Promise<{ status: number; bod
 	if (rest === '/destinations') return ok({ data: [] });
 	if (rest === '/collections/articles/entries') {
 		const { revision: rev, updated_at, created_by } = draft(w);
-		return ok({ data: [{ id: ENTRY, created_by, updated_at, revision: rev, published: null, locale: null }], next_cursor: null });
+		return ok({ data: [{ id: ENTRY, created_by, updated_at, revision: rev, published: livePart(w), locale: null }], next_cursor: null });
 	}
 	if (rest === `/collections/articles/entries/${ENTRY}` && method === 'GET') {
-		return ok({ data: draft(w, { published: null, referenced_by: [] }) }, { etag: `"rev-${w.revision}"` });
+		return ok({ data: draft(w, { published: livePart(w), referenced_by: [] }) }, { etag: `"rev-${w.revision}"` });
 	}
 	if (rest === `/collections/articles/entries/${ENTRY}` && method === 'PUT') {
 		if (w.save === 'fail') return refusal(500, 'internal', 'internal error');
