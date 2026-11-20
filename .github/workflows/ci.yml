@@ -136,6 +136,8 @@ jobs:
         run: scripts/test-homebrew-formula.sh
       - name: CI's retry wrapper (scripts/test-retry.sh)
         run: scripts/test-retry.sh
+      - name: The quick start's --keep leaves the project and its folder (scripts/test-quickstart-keep.sh)
+        run: scripts/test-quickstart-keep.sh
       - name: The droplet's logical backup (deploy/droplet/test-backup-logical.sh)
         run: deploy/droplet/test-backup-logical.sh
       - name: The droplet's Neon URL fix (deploy/droplet/test-neon-url.sh)
