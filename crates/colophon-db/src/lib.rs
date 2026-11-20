@@ -182,7 +182,7 @@ pub enum DbError {
     },
     /// The installation already retains all the pending payload metadata its bound allows
     /// (spec §33, D-135): [`work::check_payload`] refused this transaction's stored bytes,
-    /// under the install-wide byte lock. The transaction is aborted and the caller rolls it
+    /// under the payload counter's lock (D-216). The transaction is aborted and the caller rolls it
     /// back.
     #[error(
         "the installation's pending payload is over its bound ({pending} of {limit} bytes held)"
