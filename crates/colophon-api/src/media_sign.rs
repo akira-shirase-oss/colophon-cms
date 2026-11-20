@@ -1,7 +1,7 @@
 //! Short-lived signed media addresses (D-229). Media is private until it is published, so an answer that shows
 //! unpublished or members-only content — a preview, a signed-in site member's read — signs the media addresses it
 //! names: `?expires=<unix seconds>&signature=<base64url HMAC-SHA256>` over the address's path and its expiry, with
-//! the installation's one key (migration 0081, read once per process). An address works for
+//! the installation's one key (migration 0082, read once per process). An address works for
 //! `SIGNED_FOR_SECS`, then answers 404 like any unknown asset; its bytes are served `private, no-store`, so no
 //! shared cache keeps them.
 

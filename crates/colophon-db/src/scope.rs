@@ -293,7 +293,7 @@ pub async fn begin_as_token_isolated(
 /// Begins a transaction and enters `project` as the API token that acts as `identity`, in one round
 /// trip after BEGIN (D-227): `colophon_enter_project_as_token` (migration 0079) sets both settings,
 /// checks the token with the share lock that makes its revocation wait for this request (D-063),
-/// reads its permissions and resolves `environment`: today's statements, in today's order. Since 0080
+/// reads its permissions and resolves `environment`: today's statements, in today's order. Since 0081
 /// it also reads its creator's role, and the token does what both allow (D-228). `None` if there is no
 /// live token for `identity` in `project`, or its creator is no longer a member there.
 async fn enter_as_token(
@@ -320,7 +320,7 @@ async fn enter_as_token(
         return Ok(None);
     };
     let decoded = decode_context(&row, false)?;
-    // What the token holds, within what its creator's role allows now (D-228, migration 0080).
+    // What the token holds, within what its creator's role allows now (D-228, migration 0081).
     let get = |error: sqlx::Error| DbError::from_query(error);
     let creator = policy(
         row.try_get::<Vec<String>, _>("role_actions").map_err(get)?,

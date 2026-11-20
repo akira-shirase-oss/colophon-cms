@@ -283,7 +283,7 @@ async fn twenty_creators_racing_for_the_last_slot_make_exactly_one_token() {
     db.drop().await;
 }
 
-/// A token does what both it and its creator's role, as it is now, allow (D-228, migration 0080): a
+/// A token does what both it and its creator's role, as it is now, allow (D-228, migration 0081): a
 /// demotion narrows it at its next request, and once its creator is no longer a member it opens
 /// nothing, revoked or not; removing them revokes it, with nothing else of the project's touched.
 #[tokio::test]

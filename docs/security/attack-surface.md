@@ -162,4 +162,4 @@ own 15 s attempt and 4 MiB answer; the local rate-limit fallback clears at 100,0
    input so a stall fails like a crash.
 3. **The attack suite**, `crates/colophon-server/tests/attacks/`: real requests against the running stack, one
    module per attack class, each asserting the refusal; it runs in CI's integration job with the other stack
-   tests.
+   tests, under `--no-fail-fast`, so a failing binary that sorts before it can't keep its own red from showing.
