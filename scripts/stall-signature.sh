@@ -5,6 +5,12 @@
 # slow statements within five seconds of it, 90% or more are COMMITs, the fsync a stalled disk delays). A failure the server never logged (a
 # wrong body, a check that failed on a 200) has no such seconds, so it is never attributed to the runner.
 #
+# Where the seconds come from (D-224): a failed request is a WARN or ERROR line with a code or status, or a refusal's
+# own DEBUG line on colophon_api::refusals (an outage's refusals are one WARN and a summary a window, so each one is
+# also said there, at DEBUG, for this). Summary and recovery lines carry counts, never a code: not failed requests.
+# A slow statement is any sqlx::query line with elapsed_secs: INFO from 100 ms, WARN ("slow statement") from 1 s.
+# CI's LOAD_LOG turns both on (scripts/test-run-smoke.sh checks it).
+#
 #   scripts/stall-signature.sh <server.log> <pressure.txt>
 #
 # Prints one JSON object: {stall, reason, failure_seconds, io_full_min (% of a second, exact), io_full_avg10_min
@@ -17,6 +23,9 @@ log=$1 pressure=$2
 # 0.74%). 20% takes both; over-attribution is guarded by the COMMIT condition, which an ordinary latency miss or a
 # lock convoy doesn't meet (the server logs no failed request, or its slow statements aren't COMMITs).
 IO_FULL_MIN=20 COMMIT_SHARE_MIN=0.9
+# A statement under this isn't evidence, whatever reached the log: the server's layer drops them (D-224), but a log
+# without it would offer every statement, and fast COMMITs would make any second look like a COMMIT queue.
+SLOW_SECS_MIN=0.1
 
 # The pressure samples, one a second: the share of that second the runner's tasks were all stalled on IO, from
 # the change in `full total` (microseconds) since the sample before. `full avg10` lags a short stall (a 0.4 s stall
@@ -31,13 +40,13 @@ samples=$(awk '{
   | [range(1; length) as $i | .[$i - 1] as $a | .[$i] as $b | select($b.t > $a.t)
      | {t: $b.t, avg10: $b.avg10, full: ((($b.total - $a.total) / (($b.t - $a.t) * 10000)) * 100 | round / 100)}]' || echo '[]')
 
-jq -Rnc --argjson samples "$samples" --argjson io_min "$IO_FULL_MIN" --argjson share_min "$COMMIT_SHARE_MIN" '
+jq -Rnc --argjson samples "$samples" --argjson io_min "$IO_FULL_MIN" --argjson share_min "$COMMIT_SHARE_MIN" --argjson slow_min "$SLOW_SECS_MIN" '
   def second: (.timestamp // "")[0:19] + "Z" | try fromdateiso8601 catch null;
   [inputs | fromjson? | select(type == "object")] as $lines
   # Failed requests: a WARN or ERROR naming a code or status, not the slow-statement evidence itself.
-  | [$lines[] | select((.level == "WARN" or .level == "ERROR") and (.code or .status) and .target != "sqlx::query")
+  | [$lines[] | select((.level == "WARN" or .level == "ERROR" or .target == "colophon_api::refusals") and (.code or .status) and .target != "sqlx::query")
        | second | select(. != null)] | unique as $failures
-  | [$lines[] | select(.target == "sqlx::query" and ((.message // "") | startswith("slow statement")))
+  | [$lines[] | select(.target == "sqlx::query" and ((.elapsed_secs // $slow_min) >= $slow_min) and (.elapsed_secs != null or ((.message // "") | startswith("slow statement"))))
        | {t: second, commit: ((.summary // "") == "COMMIT")} | select(.t != null)] as $slow
   | ($samples | map({key: (.t | tostring), value: .full}) | from_entries) as $io
   | ($samples | map({key: (.t | tostring), value: .avg10}) | from_entries) as $avg10

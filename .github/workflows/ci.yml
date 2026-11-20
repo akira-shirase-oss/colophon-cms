@@ -284,8 +284,9 @@ jobs:
           set -o pipefail
           scripts/install-k6.sh "$RUNNER_TEMP/bin"
           export PATH="$RUNNER_TEMP/bin:$PATH" KEEP=0 DURATION=20s
-          # D-221's evidence: statements over 100 ms (sqlx) and requests over 200 ms with their phases, per smoke.
-          export COLOPHON_DB_SLOW_STATEMENT_MS=100 LOAD_LOG=info,colophon_api::slow=debug,colophon_server::lag=debug
+          # D-221's evidence: statements over 100 ms (sqlx, INFO since D-224) and requests over 200 ms with their phases,
+          # per smoke; each refusal on its own line (D-224) for the stall attribution.
+          export LOAD_LOG=info,sqlx::query=info,colophon_api::refusals=debug,colophon_api::slow=debug,colophon_server::lag=debug
           logs="$RUNNER_TEMP/integration-logs"; mkdir -p "$logs"
           # The runner itself, every second (D-221's key): CPU steal, iowait and the run queue (vmstat), and how long
           # tasks waited for CPU, I/O and memory (/proc/pressure). Beside the server's lag tickers, a stall then says
@@ -486,7 +487,9 @@ jobs:
           logs="$RUNNER_TEMP/smoke-logs"; mkdir -p "$logs"
           ran=() failed=()
           # D-221: every smoke's server runs its lag tickers, and the runner is sampled each second (as in integration).
-          export LOAD_LOG=warn,colophon_server::lag=debug
+          # D-224: the stall attribution's evidence (scripts/stall-signature.sh): statements from 100 ms at INFO (a short
+          # stall's COMMITs are 100-220 ms) and each refusal on its own line. scripts/test-run-smoke.sh checks both.
+          export LOAD_LOG=warn,sqlx::query=info,colophon_api::refusals=debug,colophon_server::lag=debug
           vmstat -t 1 >"$logs/vmstat.txt" 2>&1 &
           vmstat_pid=$!
           (while :; do echo "$(date -u +%FT%TZ) cpu: $(tr '\n' ' ' </proc/pressure/cpu)| io: $(tr '\n' ' ' </proc/pressure/io)| memory: $(tr '\n' ' ' </proc/pressure/memory)"; sleep 1; done) >"$logs/pressure.txt" 2>&1 &
@@ -558,7 +561,7 @@ jobs:
             echo "| $name | postgres CPU $cpu |" >>"$GITHUB_STEP_SUMMARY"
           }
           # The worker at debug for assets alone: its per-attempt and per-claim timing lines are D-218's evidence.
-          smoke LOAD_LOG=info,colophon_worker=debug TOTAL=10000 P99_MS=$(limit 500) scripts/load.sh assets throughput
+          smoke LOAD_LOG=info,sqlx::query=info,colophon_api::refusals=debug,colophon_worker=debug TOTAL=10000 P99_MS=$(limit 500) scripts/load.sh assets throughput
           smoke TOTAL=10000 USERS=64 P99_MS=$(limit 700) scripts/load.sh audience throughput
           smoke TOTAL=10000 P99_MS=$(limit 500) scripts/load.sh bulk throughput
           smoke DURATION=10s P99_MS=$(limit 500) scripts/load.sh cache-down throughput
