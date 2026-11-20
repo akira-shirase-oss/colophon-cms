@@ -19,6 +19,8 @@ npm run check --workspaces --if-present
 npm test --workspaces --if-present
 # The load scenarios' shared helpers (perf/k6/lib): the Idempotency-Key builder against the API's rule.
 node --test perf/k6/lib/*.test.mjs
+# The e2e server's port is picked free, never fixed (two checks on one machine can't meet).
+node --test scripts/test-free-ports.mjs
 # What npm would ship of @colophon-cms/sdk and @colophon-cms/rich-text, installed and used from
 # the tarballs (D-170): allowlist, budgets, publint, attw, Node, TypeScript, a browser bundle.
 node packages/sdk/scripts/pack-check.mjs
