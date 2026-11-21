@@ -10,11 +10,20 @@ use serde_json::{Map, Value};
 
 use super::{
     Image, MAX_ALT_CHARS, MAX_BYTES, MAX_DEPTH, MAX_IMAGES, MAX_NODES, RejectCode, Rejection,
-    RichText, SCHEMA, VERSION, href::is_allowed_href, json::write_string, pointer::Pointer,
+    RichText, SCHEMA, VERSION,
+    href::is_allowed_href,
+    json::{escaped_len, write_string},
+    pointer::Pointer,
 };
 
 /// Checks `value` against `colophon/rich-text` v1 and returns it in canonical form.
 pub fn validate(value: &Value) -> Result<RichText, Rejection> {
+    run(value).0
+}
+
+/// [`validate`], with how long the canonical text grew while checking: tests hold that to the
+/// limit, so a refusal for size never builds the oversized text first.
+fn run(value: &Value) -> (Result<RichText, Rejection>, usize) {
     let mut validator = Validator {
         pointer: Pointer::new(),
         out: String::with_capacity(256),
@@ -23,19 +32,28 @@ pub fn validate(value: &Value) -> Result<RichText, Rejection> {
         images: Vec::new(),
         named: HashSet::new(),
     };
-    validator.envelope(value)?;
-    if validator.out.len() > MAX_BYTES {
-        return Err(Rejection {
-            code: RejectCode::TooLarge,
-            pointer: String::new(),
-        });
+    if let Err(rejection) = validator.envelope(value) {
+        return (Err(rejection), validator.out.len());
     }
-    Ok(RichText {
-        canonical: validator.out,
-        nodes: validator.nodes,
-        depth: validator.depth,
-        images: validator.images,
-    })
+    let grown = validator.out.len();
+    if grown > MAX_BYTES {
+        return (
+            Err(Rejection {
+                code: RejectCode::TooLarge,
+                pointer: String::new(),
+            }),
+            grown,
+        );
+    }
+    (
+        Ok(RichText {
+            canonical: validator.out,
+            nodes: validator.nodes,
+            depth: validator.depth,
+            images: validator.images,
+        }),
+        grown,
+    )
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -275,6 +293,14 @@ impl Validator {
                 pointer: String::new(),
             });
         }
+        // What one node writes besides its text is bounded (an alt, a link, a language), but
+        // not what MAX_NODES of them write: past the limit, the next node stops the document.
+        if self.out.len() > MAX_BYTES {
+            return Err(Rejection {
+                code: RejectCode::TooLarge,
+                pointer: String::new(),
+            });
+        }
         let Value::Object(node) = value else {
             return Err(self.reject(RejectCode::WrongType));
         };
@@ -448,6 +474,21 @@ impl Validator {
             Some(Value::String(text)) => text,
             Some(_) => return Err(self.reject_at(RejectCode::WrongType, "text")),
         };
+        // Text is the one part whose size no count bounds: refuse before writing what can't
+        // fit, counted as it will be written (a control character escapes to six bytes), so
+        // the canonical form never grows past the limit for a text.
+        if self
+            .out
+            .len()
+            .saturating_add(escaped_len(text))
+            .saturating_add(r#","text":"#.len())
+            > MAX_BYTES
+        {
+            return Err(Rejection {
+                code: RejectCode::TooLarge,
+                pointer: String::new(),
+            });
+        }
         self.out.push_str(r#","text":"#);
         write_string(&mut self.out, text);
 
@@ -605,7 +646,9 @@ fn is_blank(character: char) -> bool {
 mod tests {
     use serde_json::{Value, json};
 
-    use super::super::{MAX_BYTES, MAX_DEPTH, MAX_IMAGES, MAX_NODES, RejectCode, validate};
+    use super::super::{
+        MAX_ALT_CHARS, MAX_BYTES, MAX_DEPTH, MAX_IMAGES, MAX_NODES, RejectCode, validate,
+    };
 
     fn doc(content: &Value) -> Value {
         json!({ "schema": "colophon/rich-text", "version": 1, "doc": { "type": "doc", "content": content } })
@@ -678,6 +721,59 @@ mod tests {
         assert_eq!(
             validate(&value).map(|document| document.nodes()),
             Ok(MAX_NODES)
+        );
+    }
+
+    /// Text is the one part of a document whose size isn't bounded by a count: a document
+    /// that can't fit is refused before its text is written out, so a body of control
+    /// characters (six bytes each, escaped) never grows to six times its size first.
+    #[test]
+    fn oversized_text_is_refused_before_it_is_written() {
+        let text = "\u{1}".repeat(4 * MAX_BYTES);
+        let value =
+            doc(&json!([{ "type": "paragraph", "content": [{ "type": "text", "text": text }] }]));
+        let (result, grown) = super::run(&value);
+        assert_eq!(
+            result.map(|_| ()).map_err(|rejection| rejection.code),
+            Err(RejectCode::TooLarge)
+        );
+        assert!(grown <= MAX_BYTES, "grew to {grown} bytes before refusing");
+    }
+
+    /// Review 2026-11-21: the raw length fits, the escaped one doesn't. Text just under the
+    /// limit of control characters escapes to six times its size; it must be refused before
+    /// it is written, not after.
+    #[test]
+    fn text_that_fits_raw_but_not_escaped_is_refused_before_it_is_written() {
+        let text = "\u{1}".repeat(MAX_BYTES - 1024);
+        let value =
+            doc(&json!([{ "type": "paragraph", "content": [{ "type": "text", "text": text }] }]));
+        let (result, grown) = super::run(&value);
+        assert_eq!(
+            result.map(|_| ()).map_err(|rejection| rejection.code),
+            Err(RejectCode::TooLarge)
+        );
+        assert!(grown <= MAX_BYTES, "grew to {grown} bytes before refusing");
+    }
+
+    /// The same for what a count bounds only per node: one image named again and again, each
+    /// time with an alt of control characters, grows by about 1.8 KB a node; the canonical
+    /// text stops near the limit instead of reaching `MAX_NODES` of them.
+    #[test]
+    fn many_escaped_attributes_stop_near_the_limit() {
+        let alt = format!("a{}", "\u{1}".repeat(MAX_ALT_CHARS - 1));
+        let image = json!({ "type": "image", "attrs": {
+            "assetId": "0199f0a2-6c1e-7b3a-9d42-5e8f1a2b3c4e", "alt": alt
+        }});
+        let value = doc(&Value::Array(vec![image; 2_000]));
+        let (result, grown) = super::run(&value);
+        assert_eq!(
+            result.map(|_| ()).map_err(|rejection| rejection.code),
+            Err(RejectCode::TooLarge)
+        );
+        assert!(
+            grown <= MAX_BYTES + 16 * 1024,
+            "grew to {grown} bytes before refusing"
         );
     }
 

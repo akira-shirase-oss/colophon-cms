@@ -390,3 +390,32 @@ mod tests {
         assert_eq!(reader.next_line().await.expect("read"), None);
     }
 }
+
+/// Never-panics properties for the framing every MCP client message goes through, over stdio
+/// and over HTTP alike (D-231): any bytes are parsed or refused, never a panic.
+#[cfg(test)]
+mod never_panics {
+    use proptest::prelude::*;
+
+    use super::parse;
+
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(512))]
+
+        #[test]
+        fn any_bytes_are_parsed_or_refused(line in proptest::collection::vec(any::<u8>(), 0..400)) {
+            let _ = parse(&line);
+        }
+
+        #[test]
+        fn message_shaped_lines_are_parsed_or_refused(
+            id in prop_oneof![Just("1".to_owned()), Just("null".to_owned()), Just("\"a\"".to_owned()), Just("1.5".to_owned()), Just("[]".to_owned()), Just("{}".to_owned())],
+            method in prop_oneof![Just("\"tools/call\"".to_owned()), Just("1".to_owned()), Just("null".to_owned())],
+            params in prop_oneof![Just("{}".to_owned()), Just("[]".to_owned()), Just("1".to_owned()), Just("{\"a\":[1,{}]}".to_owned())],
+            version in prop_oneof![Just("\"2.0\"".to_owned()), Just("\"1.0\"".to_owned()), Just("2".to_owned())],
+        ) {
+            let line = format!("{{\"jsonrpc\":{version},\"id\":{id},\"method\":{method},\"params\":{params}}}");
+            let _ = parse(line.as_bytes());
+        }
+    }
+}

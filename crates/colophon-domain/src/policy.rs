@@ -518,6 +518,52 @@ impl Policy {
         })
     }
 
+    /// What both policies allow: an API token's own permissions within its creator's role as it
+    /// is now, so a token never does more than the person who made it still may (D-228).
+    ///
+    /// Each permission is a set of (collection, entry, field) a holder may act on, and a policy
+    /// is the union of its permissions, so the intersection is the union of each pair's
+    /// intersection: the same action, the narrower subject (everything and one collection meet in
+    /// that collection; two different collections don't meet), `own` if either says so, and the
+    /// fields both list. A token's `own` entries are the ones the token created.
+    #[must_use]
+    pub fn intersect(&self, other: &Self) -> Self {
+        let mut both = Vec::new();
+        for mine in &self.permissions {
+            for theirs in other.permissions.iter().filter(|p| p.action == mine.action) {
+                let subject = match (&mine.subject, &theirs.subject) {
+                    (Subject::All, narrower) | (narrower, Subject::All) => narrower.clone(),
+                    (Subject::Collection(one), Subject::Collection(other)) if one == other => {
+                        mine.subject.clone()
+                    }
+                    (Subject::Collection(_), Subject::Collection(_)) => continue,
+                };
+                let fields = match (&mine.fields, &theirs.fields) {
+                    (None, None) => None,
+                    (Some(list), None) | (None, Some(list)) => Some(list.clone()),
+                    (Some(one), Some(other)) => {
+                        let common: Vec<String> = one
+                            .iter()
+                            .filter(|field| other.contains(field))
+                            .cloned()
+                            .collect();
+                        if common.is_empty() {
+                            continue;
+                        }
+                        Some(common)
+                    }
+                };
+                both.push(Permission {
+                    action: mine.action,
+                    subject,
+                    fields,
+                    condition: mine.condition.or(theirs.condition),
+                });
+            }
+        }
+        Self::new(both)
+    }
+
     /// Which fields this policy lets its holder `action` on an entry of `collection`, `own` when
     /// they created it; `None` when it allows nothing there (step R.3). Every permission that
     /// applies (its action, its subject everything or this collection, its condition met) adds
@@ -712,6 +758,71 @@ pub fn only_permitted_changes(saved: &str, stored: &str, update: &Fields) -> Res
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn stored(action: &str, subject: &str, fields: Option<&[&str]>, own: bool) -> Permission {
+        let fields: Option<Vec<String>> =
+            fields.map(|list| list.iter().map(|field| (*field).to_owned()).collect());
+        Permission::parse_narrowed(action, subject, fields.as_deref(), own.then_some("own"))
+            .expect("a permission")
+    }
+
+    /// A token is held to its creator's role as it is now (D-228): what both allow, on the
+    /// narrower subject, the common fields and the stricter condition, and nothing else.
+    #[test]
+    fn a_token_does_only_what_its_creator_still_may() {
+        let token = Policy::new(vec![
+            Permission::everywhere(Action::ContentRead),
+            Permission::everywhere(Action::ContentPublish),
+            Permission::everywhere(Action::SchemaChange),
+            stored(
+                "content.update",
+                "articles",
+                Some(&["title", "body"]),
+                false,
+            ),
+        ]);
+        // An owner still: the token keeps everything it holds.
+        assert_eq!(token.intersect(&Policy::builtin(Role::Owner)), token);
+        // Demoted to editor: no publishing, no schema, and updates as the token had them.
+        let as_editor = token.intersect(&Policy::builtin(Role::Editor));
+        assert!(as_editor.allows(Action::ContentRead, Some("articles")));
+        assert!(!as_editor.allows(Action::ContentPublish, Some("articles")));
+        assert!(!as_editor.allows(Action::SchemaChange, None));
+        assert_eq!(
+            as_editor.fields(Action::ContentUpdate, "articles", false),
+            Some(Fields::Only(["body".to_owned(), "title".to_owned()].into()))
+        );
+        // A custom role on one collection, some fields, own entries only.
+        let custom = Policy::new(vec![
+            stored("content.read", "articles", None, true),
+            stored(
+                "content.update",
+                "articles",
+                Some(&["title", "slug"]),
+                false,
+            ),
+        ]);
+        let narrow = token.intersect(&custom);
+        assert_eq!(narrow.fields(Action::ContentRead, "articles", false), None);
+        assert_eq!(
+            narrow.fields(Action::ContentRead, "articles", true),
+            Some(Fields::All)
+        );
+        assert_eq!(narrow.fields(Action::ContentRead, "pages", true), None);
+        assert_eq!(
+            narrow.fields(Action::ContentUpdate, "articles", false),
+            Some(Fields::Only(["title".to_owned()].into()))
+        );
+        // Nothing in common is nothing at all; and the intersection never exceeds either side.
+        assert_eq!(token.intersect(&Policy::default()), Policy::default());
+        for role in [Role::Owner, Role::Developer, Role::Editor, Role::Publisher] {
+            let both = token.intersect(&Policy::builtin(role));
+            assert!(
+                token.covers(&both) && Policy::builtin(role).covers(&both),
+                "{role:?}"
+            );
+        }
+    }
 
     /// D-042's table, as module 03 writes it: read, write content, change content types, manage
     /// members, review, publish, manage destinations.

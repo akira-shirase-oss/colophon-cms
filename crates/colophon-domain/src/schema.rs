@@ -1612,8 +1612,16 @@ fn condition(value: &Value, depth: usize, pointer: &Pointer) -> Result<Condition
         .filter(|id| is_field_id(id))
         .ok_or_else(|| invalid("`when.field` names a field of this content type"))?
         .to_owned();
+    let refused = || {
+        invalid(
+            "`when.is` is a value, or a list of 1 to 100 different values, of the field it depends on",
+        )
+    };
+    // The length first: the distinct check below is quadratic, so only a list already held
+    // to its limit may reach it (docs/security/attack-surface.md, "Content types").
     let is = match object.get("is") {
-        Some(Value::Array(values)) => values.clone(),
+        Some(Value::Array(values)) if values.len() <= MAX_CONDITION_VALUES => values.clone(),
+        Some(Value::Array(_)) => return Err(refused()),
         Some(value) => vec![value.clone()],
         None => Vec::new(),
     };
@@ -1621,10 +1629,8 @@ fn condition(value: &Value, depth: usize, pointer: &Pointer) -> Result<Condition
         .iter()
         .enumerate()
         .all(|(index, value)| !is[..index].contains(value));
-    if is.is_empty() || is.len() > MAX_CONDITION_VALUES || !distinct {
-        return Err(invalid(
-            "`when.is` is a value, or a list of 1 to 100 different values, of the field it depends on",
-        ));
+    if is.is_empty() || !distinct {
+        return Err(refused());
     }
     Ok(Condition { field, is })
 }

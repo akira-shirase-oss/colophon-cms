@@ -28,9 +28,32 @@ pub(crate) fn write_string(out: &mut String, text: &str) {
     out.push('"');
 }
 
+/// How many bytes [`write_string`] writes for `text`, quotes included, without writing them: a
+/// size check can refuse text before it is escaped.
+pub(crate) fn escaped_len(text: &str) -> usize {
+    text.chars().fold(2, |length, character| {
+        length.saturating_add(match character {
+            '"' | '\\' | '\u{8}' | '\u{c}' | '\n' | '\r' | '\t' => 2,
+            control if u32::from(control) < 0x20 => 6,
+            other => other.len_utf8(),
+        })
+    })
+}
+
 #[cfg(test)]
 mod tests {
-    use super::write_string;
+    use super::{escaped_len, write_string};
+
+    #[test]
+    fn escaped_len_is_what_write_string_writes() {
+        let every_kind: String = (0_u32..0x80)
+            .filter_map(char::from_u32)
+            .chain(['é', '€', '\u{2028}', '😀'])
+            .collect();
+        for text in ["", "plain", "\"q\\", every_kind.as_str()] {
+            assert_eq!(escaped_len(text), written(text).len(), "{text:?}");
+        }
+    }
 
     fn written(text: &str) -> String {
         let mut out = String::new();

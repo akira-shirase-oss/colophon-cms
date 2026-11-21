@@ -258,7 +258,7 @@ impl TokenView {
 }
 
 /// What the audit log keeps about a token: never its secret.
-fn recorded(token: &StoredToken) -> serde_json::Value {
+pub(crate) fn recorded(token: &StoredToken) -> serde_json::Value {
     json!({
         "name": token.name,
         "kind": token.kind.as_str(),

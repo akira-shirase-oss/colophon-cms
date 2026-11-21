@@ -148,8 +148,9 @@ struct Stamp {
 }
 
 /// One upload as a site sees it (D-178): `url` and the renditions name the exact bytes the
-/// release published and never change (cached a year, D-157); `current_url` follows
-/// replacements, for a site that wants the newest bytes without publishing again.
+/// release published and never change (cached a year, D-157); `current_url` is the bare address,
+/// which shows the public the newest published version (D-229). In a site member's answer it is
+/// `url` itself: a member's signature opens only versions a release recorded (review S1).
 #[derive(Serialize)]
 pub(crate) struct MediaView {
     url: String,
@@ -161,12 +162,61 @@ pub(crate) struct MediaView {
     renditions: BTreeMap<String, String>,
 }
 
-/// Where an answer's media URLs start: `{origin}/media/v1/{project}/{environment}`.
-pub(crate) struct MediaBase(String);
+/// Where an answer's media URLs start: `{origin}/media/v1/{project}/{environment}` — and, for an
+/// answer that shows what isn't public (a preview, a site member's read), the key and expiry its
+/// addresses are signed with (D-229).
+pub(crate) struct MediaBase {
+    origin: String,
+    path: String,
+    signer: Option<(
+        std::sync::Arc<aws_lc_rs::hmac::Key>,
+        i64,
+        crate::media_sign::Purpose,
+    )>,
+}
 
 impl MediaBase {
     pub(crate) fn new(origin: &str, project: Uuid, environment: &str) -> Self {
-        Self(format!("{origin}/media/v1/{project}/{environment}"))
+        Self {
+            origin: origin.to_owned(),
+            path: format!("/media/v1/{project}/{environment}"),
+            signer: None,
+        }
+    }
+
+    /// The same base, its addresses signed for `purpose` for
+    /// [`crate::media_sign::SIGNED_FOR_SECS`] from now: the media of unpublished or members-only
+    /// content is private until it is published.
+    pub(crate) async fn signed(
+        mut self,
+        services: &crate::state::Services,
+        purpose: crate::media_sign::Purpose,
+    ) -> Result<Self, ApiError> {
+        let key = std::sync::Arc::clone(services.media_keys.key(&services.pool).await?);
+        let expires =
+            time::OffsetDateTime::now_utc().unix_timestamp() + crate::media_sign::SIGNED_FOR_SECS;
+        self.signer = Some((key, expires, purpose));
+        Ok(self)
+    }
+
+    /// Whether this base signs for a site member.
+    fn member_signed(&self) -> bool {
+        matches!(
+            self.signer,
+            Some((_, _, crate::media_sign::Purpose::Member))
+        )
+    }
+
+    /// `{origin}{path}`, with its signature when this base signs.
+    fn address(&self, path: &str) -> String {
+        match &self.signer {
+            None => format!("{}{path}", self.origin),
+            Some((key, expires, purpose)) => format!(
+                "{}{path}?{}",
+                self.origin,
+                crate::media_sign::query(key, *purpose, path, *expires)
+            ),
+        }
     }
 
     /// The views of a publication's recorded `media`. Only what the server itself wrote is
@@ -176,7 +226,7 @@ impl MediaBase {
     fn views(&self, media: &str) -> Result<BTreeMap<String, MediaView>, ApiError> {
         let stamps: BTreeMap<String, Stamp> =
             serde_json::from_str(media).map_err(ApiError::internal)?;
-        let base = &self.0;
+        let base = &self.path;
         Ok(stamps
             .into_iter()
             .filter_map(|(asset, stamp)| {
@@ -194,7 +244,7 @@ impl MediaBase {
                 ))
             })
             .map(|(asset, sha, kind, width, height, renditions)| {
-                let url = format!("{base}/{asset}/{sha}");
+                let path = format!("{base}/{asset}/{sha}");
                 let renditions = renditions
                     .iter()
                     .filter(|name| {
@@ -204,11 +254,19 @@ impl MediaBase {
                                 .bytes()
                                 .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit())
                     })
-                    .map(|name| (name.clone(), format!("{url}/{name}")))
+                    .map(|name| (name.clone(), self.address(&format!("{path}/{name}"))))
                     .collect();
+                let url = self.address(&path);
+                // A member's signature never opens the bare address (it serves the newest
+                // upload, published or not): their answer's `current_url` is the version itself.
+                let current_url = if self.member_signed() {
+                    url.clone()
+                } else {
+                    self.address(&format!("{base}/{asset}"))
+                };
                 let view = MediaView {
-                    current_url: format!("{base}/{asset}"),
                     url,
+                    current_url,
                     kind,
                     width,
                     height,
@@ -520,6 +578,14 @@ pub(crate) async fn list(
     // Who the read is for: a live site session makes it a member's, reading as its role
     // (D-137) — otherwise anonymous, which the generation-keyed cache is for.
     let audience = audience::reader(services, project, &request).await?;
+    // A member's answer may name media only members may see: its addresses are signed (D-229).
+    let media = if matches!(audience, Audience::Member { .. }) {
+        media
+            .signed(services, crate::media_sign::Purpose::Member)
+            .await?
+    } else {
+        media
+    };
     let scope = Scope {
         project: project.as_u128(),
         environment: environment.id.as_u128(),
@@ -595,6 +661,14 @@ pub(crate) async fn get(
     }
     // Who the read is for (D-137), as in `list`.
     let audience = audience::reader(services, project, &request).await?;
+    // A member's answer may name media only members may see: its addresses are signed (D-229).
+    let media = if matches!(audience, Audience::Member { .. }) {
+        media
+            .signed(services, crate::media_sign::Purpose::Member)
+            .await?
+    } else {
+        media
+    };
     let scope = Scope {
         project: project.as_u128(),
         environment: environment.id.as_u128(),
@@ -727,6 +801,14 @@ pub(crate) async fn query(
         .map(|inner| format!("q1:{generation}:{inner}"));
     // Who the read is for (D-137), as in `list`.
     let audience = audience::reader(services, project, &request).await?;
+    // A member's answer may name media only members may see: its addresses are signed (D-229).
+    let media = if matches!(audience, Audience::Member { .. }) {
+        media
+            .signed(services, crate::media_sign::Purpose::Member)
+            .await?
+    } else {
+        media
+    };
     let scope = Scope {
         project: project.as_u128(),
         environment: environment.id.as_u128(),
@@ -885,6 +967,53 @@ mod tests {
         assert!(base.views("{}").expect("empty").is_empty());
     }
 
+    /// Review S1 (2026-11-21): a site member's answer signs only versions a release recorded. Its
+    /// `current_url` is the version's address, never the bare one, which a preview's signature
+    /// alone opens (it serves the newest upload, published or not).
+    #[test]
+    fn a_member_s_media_addresses_name_only_recorded_versions() {
+        use crate::media_sign::{Purpose, verifies};
+
+        let key = std::sync::Arc::new(aws_lc_rs::hmac::Key::new(
+            aws_lc_rs::hmac::HMAC_SHA256,
+            &[7; 32],
+        ));
+        let expires = 1_800_000_060;
+        let asset = "0199f0a2-6c1e-7b3a-9d42-5e8f1a2b3c4d";
+        let sha = "ab".repeat(32);
+        let stored = serde_json::json!({
+            asset: {"sha": sha, "type": "image/png", "width": 400, "height": 4, "renditions": ["w320"]}
+        })
+        .to_string();
+        let address = format!("/media/v1/{}/production/{asset}", uuid::Uuid::nil());
+        for (purpose, current) in [
+            (Purpose::Member, format!("{address}/{sha}")),
+            (Purpose::Preview, address.clone()),
+        ] {
+            let mut base =
+                super::MediaBase::new("https://media.example", uuid::Uuid::nil(), "production");
+            base.signer = Some((std::sync::Arc::clone(&key), expires, purpose));
+            let views = base.views(&stored).expect("parses");
+            let view = serde_json::to_value(&views).expect("serializes");
+            let current_url = view[asset]["current_url"].as_str().expect("an address");
+            let (path, query) = current_url
+                .strip_prefix("https://media.example")
+                .and_then(|rest| rest.split_once('?'))
+                .expect("a signed address");
+            assert_eq!(path, current, "{purpose:?}");
+            assert!(verifies(&key, &[purpose], path, Some(query), expires - 60));
+            if purpose == Purpose::Member {
+                assert_eq!(view[asset]["current_url"], view[asset]["url"]);
+                // Every address it names is a version's: none is the bare address.
+                let named = [&view[asset]["url"], &view[asset]["renditions"]["w320"]];
+                for address in named {
+                    let address = address.as_str().expect("an address");
+                    assert!(address.contains(&sha), "{address}");
+                }
+            }
+        }
+    }
+
     use super::*;
 
     #[test]
@@ -952,5 +1081,47 @@ mod tests {
         assert!(none_match("*", &tag));
         assert!(!none_match("\"other\"", &tag));
         assert!(!none_match("", &tag));
+    }
+}
+
+/// Never-panics properties for what a client sends delivery (D-231): its cursors and its
+/// `If-None-Match`. Refused or answered, never a panic; and a cursor only ever opens its own list.
+#[cfg(test)]
+mod never_panics {
+    use proptest::prelude::*;
+
+    use super::{CollectionPath, after_cursor, after_query_cursor, cursor, none_match};
+
+    fn list() -> CollectionPath {
+        CollectionPath {
+            project: "p".to_owned(),
+            environment: "production".to_owned(),
+            collection: "articles".to_owned(),
+        }
+    }
+
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(512))]
+
+        #[test]
+        fn cursors_never_panic(text in ".{0,400}") {
+            let _ = after_cursor(&list(), uuid::Uuid::nil(), &text);
+            let _ = after_query_cursor(&text);
+        }
+
+        #[test]
+        fn a_cursor_opens_only_its_own_list(generation in any::<i64>(), last in any::<u128>(), other in any::<u128>()) {
+            let last = uuid::Uuid::from_u128(last);
+            let made = cursor(&list(), uuid::Uuid::nil(), generation, last);
+            prop_assert_eq!(after_cursor(&list(), uuid::Uuid::nil(), &made).ok(), Some((generation, last)));
+            let project = uuid::Uuid::from_u128(other);
+            prop_assume!(project != uuid::Uuid::nil());
+            prop_assert!(after_cursor(&list(), project, &made).is_err());
+        }
+
+        #[test]
+        fn if_none_match_never_panics(header in ".{0,400}", etag in ".{0,40}") {
+            let _ = none_match(&header, &etag);
+        }
     }
 }

@@ -4,14 +4,15 @@
 // A release records the version of every image its entries name — asset fields and images inside
 // rich text alike — so `url` is the exact bytes that release published (an immutable address,
 // cacheable for a year) and a pinned read at generation N shows N's images. Replacing an image
-// reaches `url` at the entry's next publish; `current_url` always follows the newest version, for
-// sites that want that instead (`mediaFor(row, { current: true })`).
+// reaches `url` at the entry's next publish; `current_url` follows the newest published version, for
+// sites that want that instead (`mediaFor(row, { current: true })`). In a signed-in site member's
+// answer `current_url` is `url`: a member's signed addresses name versions only.
 
 import type { components } from './api.types.js';
 
 /** One image a published revision names, as its delivery row's `media` sidecar records it —
  *  the generated wire type: `url` (the released version's original, immutable),
- *  `current_url` (follows replacements), `type`, the original's `width`/`height`, and
+ *  `current_url` (the newest published version), `type`, the original's `width`/`height`, and
  *  `renditions` by name (`wN` exists only when the original is wider than N, and is exactly N
  *  pixels wide). */
 export type PublishedMedia = components['schemas']['PublishedMedia'];
@@ -31,7 +32,7 @@ export interface ImageSource {
 }
 
 export interface MediaOptions {
-	/** Follow replacements: `current_url` and its bare-address renditions instead of the
+	/** Follow published replacements: `current_url` and its bare-address renditions instead of the
 	 *  released version's immutable ones. Images then change without a republish — and may
 	 *  differ from what a pinned read of the same generation showed. */
 	current?: boolean;
@@ -52,11 +53,14 @@ function renditionWidth(name: string): number | undefined {
  *  width, with each `wN` rendition as an `N w` candidate, narrowest first. */
 export function imageSource(media: PublishedMedia, options: MediaOptions = {}): ImageSource {
 	const original = options.current === true ? media.current_url : media.url;
+	// A bare address's renditions sit under it. A site member's answer names versions only, signed
+	// (`current_url` is `url`, D-229): its renditions are the addresses it gave.
+	const bare = options.current === true && media.current_url !== media.url;
 	const candidates: Array<[string, number]> = [];
 	for (const [name, url] of Object.entries(media.renditions ?? {})) {
 		const width = renditionWidth(name);
 		if (width === undefined || width >= media.width) continue;
-		candidates.push([options.current === true ? `${media.current_url}/${name}` : url, width]);
+		candidates.push([bare ? `${media.current_url}/${name}` : url, width]);
 	}
 	candidates.sort((a, b) => a[1] - b[1]);
 	const source: ImageSource = { src: original, width: media.width, height: media.height };
