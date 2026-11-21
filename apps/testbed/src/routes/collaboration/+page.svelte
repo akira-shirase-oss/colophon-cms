@@ -92,9 +92,10 @@
 
 	async function loadProject() {
 		const mine = ++latest;
+		const forProject = projectId;
 		const found = await call('GET', `/api/v1/projects/${projectId}/members`);
 		const reply = await call('GET', `${base}/collections/articles/entries?limit=100`);
-		if (mine !== latest) return;
+		if (mine !== latest || projectId !== forProject) return;
 		members = found.status === 200 ? (found.body as { data: Member[] }).data : [];
 		entries = reply.status === 200 ? (reply.body as { data: Listed[] }).data : [];
 		// An entry belongs to one project: on a switch, the previous project's entry (and the comment and task
@@ -117,9 +118,10 @@
 			return;
 		}
 		const mine = ++latest;
+		const forEntry = entryId;
 		const list = await call('GET', `${entryPath}/comments?limit=100`);
 		const all = await call('GET', `${base}/tasks?entry=${entryId}&limit=100`);
-		if (mine !== latest) return;
+		if (mine !== latest || entryId !== forEntry) return;
 		comments = list.status === 200 ? (list.body as { data: Comment[] }).data : [];
 		tasks = all.status === 200 ? (all.body as { data: Task[] }).data : [];
 		if (openComment !== null) openComment = comments.find((item) => item.id === openComment?.id) ?? null;

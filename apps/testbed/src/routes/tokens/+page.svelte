@@ -2,6 +2,7 @@
 	import { onMount } from 'svelte';
 	import { resolve } from '$app/paths';
 	import { call, csrfToken, detailsOf, envelopeOf, listProjects, type Reply } from '#lib/api.ts';
+	import { latestFor } from '#lib/latest.ts';
 
 	interface Project {
 		id: string;
@@ -54,6 +55,9 @@
 		return { 'Content-Type': 'application/json', 'X-CSRF-Token': csrfToken() };
 	}
 
+	// Latest load wins: an answer for an older load, or another project, is dropped (#lib/latest.ts).
+	const loads = latestFor(() => projectId);
+
 	async function loadProjects() {
 		const reply = await listProjects<Project>();
 		signedIn = reply.status === 200;
@@ -63,9 +67,12 @@
 	}
 
 	async function load() {
+		const current = loads.start();
 		const listed = await call('GET', `${base}/tokens`);
+		if (!current()) return;
 		tokens = listed.status === 200 ? (listed.body as { data: Token[] }).data : [];
 		const read = await call('GET', `${base}/audit?limit=5`);
+		if (!current()) return;
 		const page = read.status === 200 ? (read.body as { data: Event[]; next_cursor: string | null }) : { data: [], next_cursor: null };
 		events = page.data;
 		older = page.next_cursor;
