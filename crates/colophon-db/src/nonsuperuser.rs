@@ -656,6 +656,7 @@ mod tests {
             for word in [
                 "COMMIT",
                 "ROLLBACK",
+                // D-217: a word the wrappers must not contain, searched for; nothing begins here.
                 "BEGIN;",
                 "START TRANSACTION",
                 "SAVEPOINT",
