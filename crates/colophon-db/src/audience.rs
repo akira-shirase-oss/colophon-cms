@@ -46,6 +46,14 @@ pub use crate::throttle::{LOCK_AFTER, LOCK_FOR};
 
 /// A project-scoped transaction with no person in it: what the public audience endpoints
 /// open. Row-level security still confines every statement to the project.
+///
+/// CONDITION (D-235 review; `context-writers.allow`): the project comes from the site's public
+/// URL, so any visitor opens this for any project, and as plain `colophon_api` with the project
+/// set, the data tables' policies would admit that project's entries, revisions and tokens. It
+/// is safe only because every statement run in it touches the audience's own tables (site
+/// users, their sessions, magic links, audience roles and origins, the throttle, the audience
+/// actor's audit rows). That is enforced by review today, not by the database; a dedicated
+/// role that can reach only those tables is the planned fix.
 async fn project_tx(
     pool: &PgPool,
     project: Uuid,
