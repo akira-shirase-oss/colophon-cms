@@ -33,7 +33,8 @@ mkdir -p "$etc"
 . ./public-host.sh
 caddyfile_for_host Caddyfile "$HOST" >"$etc/Caddyfile"
 # The stand-in server, for this test only: what Caddy forwarded, as text.
-printf '\nhttp://:58000 {\n\trespond "xff=[{header.X-Forwarded-For}]"\n}\n' >>"$etc/Caddyfile"
+# Like the server, it sends nosniff on the Studio itself: Caddy's own must not double it.
+printf '\nhttp://:58000 {\n\theader /studio/* X-Content-Type-Options nosniff\n\trespond "xff=[{header.X-Forwarded-For}]"\n}\n' >>"$etc/Caddyfile"
 openssl req -x509 -newkey rsa:2048 -nodes -subj "/CN=$HOST" -days 1 \
   -keyout "$etc/origin.key" -out "$etc/origin.pem" 2>/dev/null
 trusted() { printf 'trusted_proxies static %s\n' "$1" >"$etc/cloudflare-trusted.caddy"; }
@@ -116,6 +117,17 @@ for p in /livez /studio/ /nope /studio; do
   [[ "$got" == xff=* ]] || fail "GET $p didn't reach the server untouched: $got"
 done
 ok "GET / redirects 302 to /studio/; /livez, /studio/, /studio and an unknown /nope reach the server unredirected"
+
+# nosniff on every response, JSON errors included.
+nosniff_of() {
+  curl -sS -D - -o /dev/null --max-time 5 -k --connect-to "$HOST:443:127.0.0.1:$port" \
+    --cert "$work/aop/client.pem" --key "$work/aop/client.key" "https://$HOST$1" 2>/dev/null \
+    | tr -d '\r' | grep -ic '^x-content-type-options: nosniff$' || true
+}
+for p in /nope /studio/ /livez; do
+  [[ "$(nosniff_of "$p")" == 1 ]] || fail "GET $p: X-Content-Type-Options nosniff missing or doubled ($(nosniff_of "$p") headers)"
+done
+ok "X-Content-Type-Options: nosniff, once, on /nope, /studio/ and /livez"
 
 # HSTS for this host alone: a year, no includeSubDomains, no preload.
 hsts=$(curl -sS -D - -o /dev/null --max-time 5 -k --connect-to "$HOST:443:127.0.0.1:$port" \

@@ -279,6 +279,8 @@ What the Caddyfile does, each checked by `test-caddy.sh` in CI:
   `/var/lib/caddy/admin.sock` (0600), not TCP 2019, which every local process could reach and
   reconfigure Caddy through. `systemctl reload caddy` uses it.
 - **HTTP/1.1 and HTTP/2 only**: HTTP/3 is UDP, which the firewall doesn't open.
+- **`X-Content-Type-Options: nosniff`** on every response, the server's JSON included (set after
+  the server answers, so the Studio's own isn't doubled).
 - **The bare root** (`https://colophonapp.404human.dev/`) redirects to `/studio/` with a 302 (the
   server itself answers `route_not_found` there); no other path is redirected.
 - **HSTS** for this host: `max-age=31536000`, without `includeSubDomains` (the zone's other hosts
