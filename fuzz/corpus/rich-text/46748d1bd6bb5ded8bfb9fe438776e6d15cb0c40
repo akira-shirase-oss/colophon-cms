@@ -1,0 +1,1 @@
+{"schema": "colophon/rich-text", "version": 1, "doc": {"type": "doc", "content": [{"type": "orderedList", "attrs": {"start": 0}, "content": [{"type": "listItem", "content": [{"type": "paragraph", "content": [{"type": "text", "text": "x"}]}]}]}]}}

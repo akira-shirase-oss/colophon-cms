@@ -80,7 +80,7 @@ Built in DX.8 (D-112): `@colophon-cms/sdk`, versioned `0.1.0-alpha.1` with the s
   ([06](06-delivery.md), [07](07-media.md)) — into the rich-text renderer's `media` option
   (renderer v2, [12](12-content-renderer.md)): the immutable versioned source, `width`/`height`,
   and the `wN` renditions as `srcset` width candidates with a default `sizes`. `{ current: true }`
-  follows replacements through `current_url` instead. An id the sidecar doesn't hold answers
+  follows `current_url` instead: the newest published version. An id the sidecar doesn't hold answers
   `undefined`, so the renderer falls back to its bare address. The sidecar's type is the
   generated `PublishedMedia`.
 

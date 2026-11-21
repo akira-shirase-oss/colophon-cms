@@ -289,7 +289,27 @@ pub(crate) async fn remove(
         };
         let change = serde_json::json!({"role": before});
         crate::audit::record(&mut tx, action, &identity.to_string(), &change).await?;
+        // Their tokens go with them, each with its own audit row saying why (D-228).
+        let revoked = colophon_db::tokens::revoke_created_by(&mut tx, identity)
+            .await
+            .map_err(ApiError::from_db)?;
+        for token in &revoked {
+            let mut detail = crate::tokens::recorded(token);
+            detail["reason"] = serde_json::json!(if identity == caller.identity {
+                "creator_left"
+            } else {
+                "creator_removed"
+            });
+            crate::audit::record(&mut tx, "token.revoked", &token.id.to_string(), &detail).await?;
+        }
+        let project = tx.project;
         tx.commit().await.map_err(ApiError::from_db)?;
+        // Their remembered refusals end at once here; other servers hear the change hint.
+        if !revoked.is_empty()
+            && let Some(admission) = &state.admission
+        {
+            admission.tokens_changed(project);
+        }
     }
     change_result(outcome)
 }

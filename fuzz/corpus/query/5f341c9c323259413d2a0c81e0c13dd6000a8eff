@@ -1,0 +1,1 @@
+{"filters": [{"field": "section", "op": "in", "value": ["News", "Guides"]}], "fields": ["headline"], "depth": 1}

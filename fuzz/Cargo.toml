@@ -1,0 +1,74 @@
+# Coverage-guided fuzzing of every parser of outside input (D-231; docs/security/attack-surface.md).
+# Outside the workspace with its own lockfile: cargo-fuzz builds on nightly with sanitizers, and its
+# dependencies (libfuzzer-sys) never reach the server's. Run one target with
+# `cargo +nightly fuzz run rich-text`; CI's fuzz job runs each one for a bounded time from its seed
+# corpus (fuzz/corpus/<target>), and any crash it finds is a failing build.
+[package]
+name = "colophon-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2024"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4.13"
+serde_json = "1.0.154"
+url = { version = "2.5.8", default-features = false, features = ["std"] }
+colophon-domain = { path = "../crates/colophon-domain" }
+
+# Detached from the parent workspace.
+[workspace]
+
+[profile.release]
+debug = 1
+
+[[bin]]
+name = "rich-text"
+path = "fuzz_targets/rich_text.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "content-type"
+path = "fuzz_targets/content_type.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "entry"
+path = "fuzz_targets/entry.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "query"
+path = "fuzz_targets/query.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "operations"
+path = "fuzz_targets/operations.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "import-item"
+path = "fuzz_targets/import_item.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "text-parsers"
+path = "fuzz_targets/text_parsers.rs"
+test = false
+doc = false
+bench = false

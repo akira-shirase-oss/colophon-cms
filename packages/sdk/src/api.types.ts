@@ -1834,7 +1834,7 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** The asset's current version's verified bytes, publicly */
+        /** The asset's verified bytes: its newest published version to anyone, its current one to a member or a signed address (D-229) */
         get: operations["serveAsset"];
         put?: never;
         post?: never;
@@ -3098,7 +3098,7 @@ export interface components {
             title?: string;
         };
         PublishedMedia: {
-            /** @description follows replacements, without publishing again */
+            /** @description the bare address: the newest published version (D-229); in a site member's answer, the same version as url */
             current_url: string;
             height: number;
             /** @description `wN`: N pixels wide, present only when the original is wider */
@@ -15067,7 +15067,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description the stored `Content-Type`; `max-age=60, must-revalidate` with the version's `ETag` (a replace or delete moves this address, D-157) — a matching `If-None-Match` answers 304; a version's sha address is `immutable` */
+            /** @description the stored `Content-Type`; published: `max-age=60, must-revalidate` with the version's `ETag` (a publish or delete moves this address, D-157) — a matching `If-None-Match` answers 304; a version's sha address is `immutable`. Not yet published: only to a signed-in member or with `?expires=&signature=` (the addresses preview and members' delivery answers carry), `private, no-store`; anyone else gets 404 */
             200: {
                 headers: {
                     [name: string]: unknown;

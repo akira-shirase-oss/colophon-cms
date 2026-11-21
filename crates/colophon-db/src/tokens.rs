@@ -369,6 +369,33 @@ pub async fn create(tx: &mut MemberTransaction, token: &NewToken<'_>) -> Result<
     })))
 }
 
+/// Revokes every live token `creator` made in the project, by the transaction's identity, and
+/// returns them: a person removed from a project keeps no way in through a token they made
+/// (D-228). Waits for requests the tokens are serving.
+pub async fn revoke_created_by(
+    tx: &mut MemberTransaction,
+    creator: Uuid,
+) -> Result<Vec<StoredToken>, DbError> {
+    let ids = sqlx::query_scalar!(
+        "UPDATE api_tokens SET revoked_at = now(), revoked_by = $3
+         WHERE project_id = $1 AND created_by = $2 AND revoked_at IS NULL
+         RETURNING id",
+        tx.project,
+        creator,
+        tx.identity
+    )
+    .fetch_all(&mut *tx.transaction)
+    .await
+    .map_err(DbError::from_write)?;
+    let mut revoked = Vec::with_capacity(ids.len());
+    for id in ids {
+        if let Some(token) = get(tx, id).await? {
+            revoked.push(token);
+        }
+    }
+    Ok(revoked)
+}
+
 /// Revokes a token, by the transaction's identity. Waits for requests it is serving.
 pub async fn revoke(tx: &mut MemberTransaction, id: Uuid) -> Result<Revoked, DbError> {
     let changed = sqlx::query!(

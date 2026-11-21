@@ -239,8 +239,11 @@ pub fn parse(operations: &Value) -> Result<Vec<Op>, Refusal> {
 /// The field holding `path`'s last segment, navigated to: every earlier segment must exist
 /// (a field of an object, a position a list really has).
 fn parent<'a>(document: &'a mut Value, path: &[Segment]) -> Result<&'a mut Value, Refusal> {
+    let Some((_, before)) = path.split_last() else {
+        return Err(nowhere(path));
+    };
     let mut node = document;
-    for (index, segment) in path[..path.len() - 1].iter().enumerate() {
+    for (index, segment) in before.iter().enumerate() {
         node = match (segment, node) {
             (Segment::Field(field), Value::Object(map)) => map.get_mut(field),
             (Segment::Index(at), Value::Array(list)) => list.get_mut(*at),
@@ -381,6 +384,11 @@ pub fn apply(document: &Value, ops: &[Op]) -> Result<Value, Refusal> {
     for op in ops {
         match op {
             Op::Fill { path, value } => put(&mut out, path, value.clone())?,
+            // `parse` never makes an empty path, but `Op` is public: the whole document is
+            // not a field, so it can be neither moved nor moved onto.
+            Op::Move { from, to } if from.is_empty() || to.is_empty() => {
+                return Err(nowhere(if from.is_empty() { from } else { to }));
+            }
             Op::Move { from, to } => {
                 // An entry that never had the field has nothing to move. `to` is checked
                 // against the document as written, so the index or field an author named is

@@ -90,10 +90,13 @@ L10, L11, L13, the spec §27 cache-isolation tests and the mixed-release checker
   release recorded in `publications.media`. Each carries `url` (the versioned address
   `{COLOPHON_MEDIA_URL}/media/v1/{project}/{env}/{asset}/{sha}`, immutable and cached a year, D-157),
   `renditions` (`w320`, `w1280` under that version, only those the worker wrote), `width`, `height`, `type`, and
-  `current_url` (the bare address, which follows replacements). A site that uses `url` shows exactly the bytes
+  `current_url` (the bare address, which shows the public the newest published version, D-229; in a signed-in site
+  member's answer it is `url` itself, because a member's signed address opens only a version a release recorded).
+  A site that uses `url` shows exactly the bytes
   that were released, so a pinned read at generation N shows N's images; a replaced image reaches it when the
   entries that use it are published again (publishing an unchanged entry whose upload has a newer version reopens
-  its publication). A site that wants the newest bytes without publishing uses `current_url`.
+  its publication). A site that wants the newest published bytes without republishing every entry uses
+  `current_url`; a replacement no release has named yet reaches nobody but the project's members and previews.
   `COLOPHON_MEDIA_URL` (an http(s) origin, default `COLOPHON_PUBLIC_URL`) puts a CDN or asset host in front.
   On a query, a row's `media` is what its answered `content` names: `fields` narrowing drops the stamps of the
   fields it left out, and `depth` adds the versions each populated reference's own release recorded (an avatar on
