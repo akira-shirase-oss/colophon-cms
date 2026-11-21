@@ -6634,7 +6634,7 @@ fn media_parts() -> Value {
             "required": ["url", "current_url", "type", "width", "height", "renditions"],
             "properties": {
                 "url": { "type": "string", "description": "the exact bytes the release published: immutable, cached a year" },
-                "current_url": { "type": "string", "description": "follows replacements, without publishing again" },
+                "current_url": { "type": "string", "description": "the bare address: the newest published version (D-229); in a site member's answer, the same version as url" },
                 "type": { "type": "string" },
                 "width": { "type": "integer" },
                 "height": { "type": "integer" },

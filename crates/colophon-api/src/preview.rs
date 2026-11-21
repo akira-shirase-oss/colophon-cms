@@ -999,7 +999,7 @@ pub(crate) async fn list(
                 reading.tx.project,
                 &path.environment,
             )
-            .signed(services(&state)?)
+            .signed(services(&state)?, crate::media_sign::Purpose::Preview)
             .await?;
             let project = reading.tx.project;
             let before = params
@@ -1072,7 +1072,7 @@ pub(crate) async fn get(
                 reading.tx.project,
                 &path.environment,
             )
-            .signed(services(&state)?)
+            .signed(services(&state)?, crate::media_sign::Purpose::Preview)
             .await?;
             may_read(&reading.tx, &path.collection).map_err(|_| ApiError::NotFound)?;
             let (content_type, _) = content_type(&state, &mut reading.tx, &path.collection).await?;
@@ -1131,7 +1131,7 @@ pub(crate) async fn query(
                 reading.tx.project,
                 &path.environment,
             )
-            .signed(services(&state)?)
+            .signed(services(&state)?, crate::media_sign::Purpose::Preview)
             .await?;
             may_read(&reading.tx, &path.collection).map_err(|_| ApiError::NotFound)?;
             let (content_type, _) = content_type(&state, &mut reading.tx, &path.collection).await?;

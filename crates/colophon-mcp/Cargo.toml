@@ -23,6 +23,8 @@ tracing-subscriber.workspace = true
 uuid.workspace = true
 
 [dev-dependencies]
+# Never-panics properties for the JSON-RPC framing it reads from a client (D-231).
+proptest.workspace = true
 # Cookies only for the Keycloak side of the stack test's sign-in.
 reqwest = { workspace = true, features = ["cookies"] }
 # The stack test drives the binary over its stdin and stdout.

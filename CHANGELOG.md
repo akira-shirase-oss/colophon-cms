@@ -40,7 +40,9 @@ through `--version` and `GET /version`.
   release names it; until then it answers `404` (as if it didn't exist), except to a signed-in member
   of the project and to the short-lived signed addresses that preview answers, and delivery answers
   for signed-in site members, now carry (`?expires=&signature=`). A replaced image's bare address
-  keeps showing the published version until the next publish. A site that linked uploads by id before
+  keeps showing the published version until the next publish. In a signed-in site member's answer,
+  `current_url` is the published version's own address (the same as `url`): a member's signed address
+  never opens a replacement nobody has published. A site that linked uploads by id before
   publishing them gets `404`s: use the addresses an answer gives.
 - **JSON bodies are at most 1 MiB** (D-230) unless a route documents more: imports 16 MiB, bulk chunks
   and remote-MCP messages 2 MiB. Before, every signed-in route read up to the upload limit (21 MiB).
@@ -61,8 +63,13 @@ through `--version` and `GET /version`.
   refused before its quadratic duplicate check, an import over 512 items is refused while it is read
   and before the collection is locked, oversized rich text is refused before it is copied out, and a
   migration operation with an empty path or a schedule at an extreme instant is refused, not a panic.
-- Every parser of outside input is property-tested and fuzzed in CI, and every attack class in
-  `docs/security/attack-surface.md` has a regression test against the running server (D-231).
+- Every parser of outside input is property-tested, the domain's parsers are also fuzzed in CI, and
+  every attack class in `docs/security/attack-surface.md` has a regression test against the running
+  server (D-231).
+- An import's body is read only after its caller is known to belong to the project (D-230): a
+  stranger's 16 MiB import is refused before any of it arrives, and no transaction waits on it.
+- The proxies in `deploy/` keep idle connections to the server 5 seconds, below its 10 s header timeout,
+  which also ends idle keep-alives: a reused connection the server had just closed answered 502 (D-230).
 
 ### Fixed
 

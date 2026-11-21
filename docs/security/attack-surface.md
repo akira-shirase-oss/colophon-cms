@@ -142,6 +142,16 @@ handler and no `javascript:` URL.
 | Unpublished media served to anyone with its id | private until a release names it; members and signed addresses only (D-229) | attack `media` |
 | No header-read timeout; 21 MiB JSON on every signed-in route | a header deadline on the listener, 1 MiB JSON unless documented (D-230) | attack `bodies` |
 
+The independent review (2026-11-21) found what these fixes still left open, each fixed with a test that fails without it:
+
+| Finding | Fixed by | Test |
+|---|---|---|
+| S1: a site member's answer signed the bare media address, which serves the newest upload: a shareable link to an unpublished replacement | a signed purpose; a member's addresses are versions only, and a bare address opens to a preview's signature alone (D-229) | attack `a_site_member_s_answer_never_links_an_unpublished_replacement`, `a_signature_opens_only_what_its_purpose_may`, `a_member_s_media_addresses_name_only_recorded_versions` |
+| S2-1: the 10 s header timer also closes idle keep-alives, and Caddy reused them for 2 minutes | `keepalive 5s` in both Caddyfiles (D-230) | attack `an_idle_keep_alive_connection_is_closed_at_the_header_timeout`; CI's `caddy validate` |
+| F counted raw length: control characters grew six times past it, and repeated escaped attributes without bound | the escaped length, and a size check at every node (D-231) | `text_that_fits_raw_but_not_escaped_is_refused_before_it_is_written`, `many_escaped_attributes_stop_near_the_limit` |
+| E read 16 MiB before the membership check | membership first, then the body, then the work's transaction (D-230) | attack `a_stranger_s_import_is_refused_before_its_body_is_read` |
+| `tenancy` asserted a 404 with no positive control or code; media's `/w320` case had no rendition to find | the owner reads every path first, and outsiders get `not_found`; a 400-pixel upload with a real `w320` | attack `tenancy`, `media` |
+
 Checked and found to hold, now with a regression test each: cross-project reads and writes and token path
 tricks (`tenancy`), login CSRF through a cross-site form and cookie writes without origin or CSRF token
 (`sessions`), hostile query and GraphQL input (`injection`), script in rich text (`sessions`), a forged
@@ -154,10 +164,13 @@ own 15 s attempt and 4 MiB answer; the local rate-limit fallback clears at 100,0
 
 ## How it runs
 
-1. **Never-panics property tests** in `crates/colophon-domain/tests/never_panics.rs` (stable, part of
-   `cargo test`): every parser above, seeded from `fixtures/rich-text/v1` and hand-written cases, with round-trip
-   properties where they hold (cursor, visibility, locale, canonical forms, a preview address's origin).
-2. **cargo-fuzz targets** in `fuzz/`, outside the workspace with its own lockfile, one per parser family, each
+1. **Never-panics property tests** (stable, part of `cargo test`): the domain's parsers in
+   `crates/colophon-domain/tests/never_panics.rs`, seeded from `fixtures/rich-text/v1` and hand-written cases, with
+   round-trip properties where they hold (cursor, visibility, locale, canonical forms, a preview address's
+   origin); the API's own beside their code (`media_sign` signed addresses, `entries` an import's body,
+   `delivery` and `assets` cursors and `If-None-Match`); MCP's JSON-RPC framing in `colophon-mcp`'s `jsonrpc`.
+2. **cargo-fuzz targets** in `fuzz/`, outside the workspace with its own lockfile, one per parser family of
+   `colophon-domain` (not the API's or MCP's: those would need a fuzz build of the server's dependencies), each
    with a seed corpus in `fuzz/corpus/<target>`; CI's fuzz job runs every target for 60 s, with a 2 s limit per
    input so a stall fails like a crash.
 3. **The attack suite**, `crates/colophon-server/tests/attacks/`: real requests against the running stack, one

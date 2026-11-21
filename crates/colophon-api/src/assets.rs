@@ -851,16 +851,25 @@ const VERSIONED_CACHE: &str = "public, max-age=31536000, immutable";
 /// cache, so a draft never sits in a CDN and a publish is seen at once.
 const PRIVATE_CACHE: &str = "private, no-store";
 
-/// Whether the request's address is signed and still valid (D-229).
-async fn signed(state: &AppState, uri: &axum::http::Uri) -> Result<bool, ApiError> {
+/// Whether the request's address is signed and still valid (D-229). A version's own address
+/// (`pinned`) opens to a preview's signature or a site member's; the bare address, which serves
+/// the newest upload, to a preview's alone (review S1, 2026-11-21).
+async fn signed(state: &AppState, uri: &axum::http::Uri, pinned: bool) -> Result<bool, ApiError> {
+    use crate::media_sign::Purpose;
     if uri.query().is_none() {
         return Ok(false);
     }
     let services = services(state)?;
     let key = services.media_keys.key(&services.pool).await?;
     let now = time::OffsetDateTime::now_utc().unix_timestamp();
+    let purposes: &[Purpose] = if pinned {
+        &[Purpose::Preview, Purpose::Member]
+    } else {
+        &[Purpose::Preview]
+    };
     Ok(crate::media_sign::verifies(
         key,
+        purposes,
         uri.path(),
         uri.query(),
         now,
@@ -998,7 +1007,7 @@ async fn streamed(
     // while a newer one waits for its publish (D-229).
     let (mut key, public) = if resolved.published {
         (current, true)
-    } else if signed(state, uri).await?
+    } else if signed(state, uri, pinned).await?
         || member_reads(state, request, uri, project, &environment).await
     {
         (current, false)
@@ -1437,6 +1446,35 @@ mod tests {
         assert_eq!(read_cursor(&write_cursor(at, id)).ok(), Some((at, id)));
         for bad in ["", "x", "YTE6MTox", &"a".repeat(201)] {
             assert!(read_cursor(bad).is_err(), "{bad:?}");
+        }
+    }
+}
+
+/// Never-panics properties for what a client sends the asset routes and the media origin (D-231).
+#[cfg(test)]
+mod never_panics {
+    use axum::http::{HeaderMap, HeaderValue, header};
+    use proptest::prelude::*;
+
+    use super::{none_match, read_cursor};
+
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(512))]
+
+        #[test]
+        fn cursors_never_panic(text in ".{0,400}") {
+            let _ = read_cursor(&text);
+        }
+
+        #[test]
+        fn if_none_match_never_panics(values in proptest::collection::vec(proptest::collection::vec(any::<u8>(), 0..120), 0..4), etag in ".{0,40}") {
+            let mut headers = HeaderMap::new();
+            for value in values {
+                if let Ok(value) = HeaderValue::from_bytes(&value) {
+                    headers.append(header::IF_NONE_MATCH, value);
+                }
+            }
+            let _ = none_match(&headers, &etag);
         }
     }
 }

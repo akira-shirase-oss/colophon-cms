@@ -6,5 +6,12 @@
 	reverse_proxy 127.0.0.1:58000 {
 		# Live updates are server-sent events: pass each event on as it is written.
 		flush_interval -1
+		# The server closes a connection idle for its header timeout (COLOPHON_HEADER_TIMEOUT_MS,
+		# 10 s by default; hyper's header timer also ends idle keep-alives, D-230). Caddy keeps idle
+		# upstream connections 2 minutes unless told, and would reuse one the server just closed: a 502
+		# for a request it can't retry. Keep them a shorter while than the server does.
+		transport http {
+			keepalive 5s
+		}
 	}
 }

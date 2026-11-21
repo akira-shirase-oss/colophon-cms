@@ -10,7 +10,10 @@ use serde_json::{Map, Value};
 
 use super::{
     Image, MAX_ALT_CHARS, MAX_BYTES, MAX_DEPTH, MAX_IMAGES, MAX_NODES, RejectCode, Rejection,
-    RichText, SCHEMA, VERSION, href::is_allowed_href, json::write_string, pointer::Pointer,
+    RichText, SCHEMA, VERSION,
+    href::is_allowed_href,
+    json::{escaped_len, write_string},
+    pointer::Pointer,
 };
 
 /// Checks `value` against `colophon/rich-text` v1 and returns it in canonical form.
@@ -290,6 +293,14 @@ impl Validator {
                 pointer: String::new(),
             });
         }
+        // What one node writes besides its text is bounded (an alt, a link, a language), but
+        // not what MAX_NODES of them write: past the limit, the next node stops the document.
+        if self.out.len() > MAX_BYTES {
+            return Err(Rejection {
+                code: RejectCode::TooLarge,
+                pointer: String::new(),
+            });
+        }
         let Value::Object(node) = value else {
             return Err(self.reject(RejectCode::WrongType));
         };
@@ -464,9 +475,15 @@ impl Validator {
             Some(_) => return Err(self.reject_at(RejectCode::WrongType, "text")),
         };
         // Text is the one part whose size no count bounds: refuse before writing what can't
-        // fit (escaping never makes text shorter), so the canonical form never grows past the
-        // limit by more than one escaped text first.
-        if self.out.len().saturating_add(text.len()) > MAX_BYTES {
+        // fit, counted as it will be written (a control character escapes to six bytes), so
+        // the canonical form never grows past the limit for a text.
+        if self
+            .out
+            .len()
+            .saturating_add(escaped_len(text))
+            .saturating_add(r#","text":"#.len())
+            > MAX_BYTES
+        {
             return Err(Rejection {
                 code: RejectCode::TooLarge,
                 pointer: String::new(),

@@ -3243,7 +3243,7 @@
       "PublishedMedia": {
         "properties": {
           "current_url": {
-            "description": "follows replacements, without publishing again",
+            "description": "the bare address: the newest published version (D-229); in a site member's answer, the same version as url",
             "type": "string"
           },
           "height": {

@@ -3098,7 +3098,7 @@ export interface components {
             title?: string;
         };
         PublishedMedia: {
-            /** @description follows replacements, without publishing again */
+            /** @description the bare address: the newest published version (D-229); in a site member's answer, the same version as url */
             current_url: string;
             height: number;
             /** @description `wN`: N pixels wide, present only when the original is wider */
