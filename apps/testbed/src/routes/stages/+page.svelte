@@ -82,8 +82,9 @@
 
 	async function load() {
 		const ticket = ++loading;
+		const forProject = projectId;
 		const stages = await call('GET', `${api}/review-stages`);
-		if (ticket !== loading) return;
+		if (ticket !== loading || projectId !== forProject) return;
 		if (stages.status === 200) {
 			defined = (stages.body as { data: { stages: StageDef[] } }).data.stages;
 			etag = stages.headers.get('etag') ?? '';
@@ -92,7 +93,7 @@
 			message = describe(stages);
 		}
 		const [list, releases] = await Promise.all([call('GET', `${api}/collections/articles/entries?limit=100`), call('GET', `${api}/releases`)]);
-		if (ticket !== loading) return;
+		if (ticket !== loading || projectId !== forProject) return;
 		entries = list.status === 200 ? (list.body as { data: Summary[] }).data : [];
 		base = releases.headers.get('colophon-generation') ?? '0';
 		picked = [];

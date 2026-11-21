@@ -2,6 +2,7 @@
 	import { onMount } from 'svelte';
 	import { resolve } from '$app/paths';
 	import { call, csrfToken, detailsOf, envelopeOf, listProjects, type Reply } from '#lib/api.ts';
+	import { latestFor } from '#lib/latest.ts';
 
 	interface Project {
 		id: string;
@@ -47,6 +48,9 @@
 		return { 'Content-Type': 'application/json', 'X-CSRF-Token': csrfToken() };
 	}
 
+	// Latest load wins: an answer for an older load, or another project, is dropped (#lib/latest.ts).
+	const loads = latestFor(() => projectId);
+
 	async function loadProjects() {
 		const reply = await listProjects<Project>();
 		signedIn = reply.status === 200;
@@ -56,10 +60,13 @@
 	}
 
 	async function load() {
+		const current = loads.start();
 		const listed = await call('GET', `${base}/members`);
+		if (!current()) return;
 		members = listed.status === 200 ? (listed.body as { data: Member[] }).data : [];
 		// Only owners may list invitations; anyone else gets 403 and an empty list here.
 		const invited = await call('GET', `${base}/invitations`);
+		if (!current()) return;
 		pending = invited.status === 200 ? (invited.body as { data: Invitation[] }).data : [];
 	}
 

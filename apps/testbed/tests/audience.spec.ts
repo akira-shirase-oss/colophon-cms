@@ -264,3 +264,37 @@ test('a paused sign-in refuses exactly like a wrong password, account or not', a
 	expect(paused.status()).toBe(400);
 	await expect(page.getByTestId('message')).toHaveText('400 sign_in_failed');
 });
+
+// Every load the page starts assigns what it gets back, so one that answers late used to overwrite a newer one: the page
+// opens on its first project and loads it, the test chooses another and creates a role there, and a slow first answer
+// landed after the role list and replaced it (CI 44871512422). The first role list is held until the role is listed,
+// then let go; the list must still show it.
+test("a slow load for the project the page opened on never replaces the chosen project's roles", async ({ page }) => {
+	await signIn(page, 'dev-owner');
+	const projectId = await newProject(page);
+	let release = (): void => {};
+	const held = new Promise<void>((resolve) => (release = resolve));
+	let delivered = (): void => {};
+	const landed = new Promise<void>((resolve) => (delivered = resolve));
+	let first = true;
+	await page.route('**/api/v1/projects/*/audience/roles', async (route) => {
+		if (route.request().method() !== 'GET' || !first) return route.continue();
+		first = false;
+		const response = await route.fetch();
+		await held;
+		await route.fulfill({ response });
+		delivered();
+	});
+	await page.goto('/audience');
+	await page.getByLabel('Project').selectOption(projectId);
+	await page.getByLabel('Name', { exact: true }).fill('member');
+	await page.getByRole('button', { name: 'Create role' }).click();
+	await expect(page.getByTestId('message')).toHaveText('created role member');
+	await expect(page.locator('li[data-name="member"]')).toContainText('open to signup');
+	release();
+	await landed;
+	// Two frames for the late answer's assignment to render, if the page were to take it.
+	await page.evaluate(() => new Promise((done) => requestAnimationFrame(() => requestAnimationFrame(done))));
+	await expect(page.locator('li[data-name="member"]')).toContainText('open to signup');
+	await expect(page.getByLabel('Project')).toHaveValue(projectId);
+});
