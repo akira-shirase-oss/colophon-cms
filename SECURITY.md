@@ -57,3 +57,25 @@ advisory unless they ask not to be.
   must go through a proxy can't send webhooks yet.
 - Vulnerabilities in dependencies are watched by daily RustSec/OSV checks and
   `cargo deny` (module 19), triaged by severity.
+
+## The project context (threat model)
+
+Tenant isolation rests on PostgreSQL row-level security, keyed on a transaction-local setting,
+`app.project_id` (with `app.identity_id` and `app.token_id`).
+
+- **`app.project_id` is a capability.** Only the entry functions issue it: `colophon_enter_project`
+  sets it after finding the caller's own membership row, and `colophon_enter_project_as_token`
+  after checking the token live. A few non-member paths set it with their own proof of the project
+  (public delivery, a site's audience routes, invitations and preview grants found by their secret,
+  the worker's and the scheduler's job rows). Every writer is listed, with its reason, in
+  `crates/colophon-db/context-writers.allow`, and a test (`tests/context_writers.rs`) fails on
+  any other.
+- **Row security enforces "within the entered project", not membership.** With no project entered,
+  an identity alone sees nothing of a project it isn't a member of (`tests/rls_layer.rs`). Once a
+  project is set, the data tables' policies trust it.
+- **Residual risk.** A foothold that can run arbitrary SQL as the application's role can call
+  `set_config` itself and forge any of these settings, the identity included, so no policy keyed on
+  them can stop it. The defense is that no SQL is built from input: every query binds its
+  parameters, and dynamic SQL needs `AssertSqlSafe`, the marker reviews audit. An unforgeable
+  context, recorded by the entry functions where only they can write it, is an open decision
+  (O-018 in docs/DECISIONS.md).
