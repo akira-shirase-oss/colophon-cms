@@ -339,6 +339,27 @@ impl Worker {
                     if cancel.is_cancelled() {
                         return;
                     }
+                    // Asset jobs whose worker stopped answering wait again, for the next
+                    // claim (the claim itself looks only at waiting jobs): bounded passes,
+                    // the stop heard between them.
+                    match colophon_db::assets::release_lapsed_all(
+                        &self.pool,
+                        colophon_db::assets::RELEASE_BUDGET,
+                        &stopping,
+                    )
+                    .await
+                    {
+                        Ok(0) => {}
+                        Ok(released) => {
+                            tracing::info!(released, "asset jobs whose lease ran out wait again");
+                        }
+                        Err(error) => {
+                            tracing::warn!(error = %error, "releasing lapsed asset jobs failed; trying again later");
+                        }
+                    }
+                    if cancel.is_cancelled() {
+                        return;
+                    }
                     // The budget reconciler (D-113): free reservations of jobs that ended,
                     // flag held rows that outlived their work as `uncertain` and audit the
                     // discrepancy.

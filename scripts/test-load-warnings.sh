@@ -21,6 +21,17 @@ log=$(cat <<'LINES'
 not json
 LINES
 )
+# As sqlx really logs them, elapsed_secs is a string (CI 44790031484's assets log: "1.410548621"); the fixtures above
+# use numbers. A string under the tier is evidence; over it, a failure; one that won't parse counts as slow, never as
+# evidence, so a malformed field can't hide a slow statement.
+strings=$(cat <<'LINES'
+{"level":"WARN","target":"sqlx::query","message":"slow statement: execution time exceeded alert threshold","summary":"COMMIT","elapsed_secs":"0.4"}
+{"level":"WARN","target":"sqlx::query","message":"slow statement: execution time exceeded alert threshold","summary":"COMMIT","elapsed_secs":"10.1"}
+{"level":"WARN","target":"sqlx::query","message":"slow statement: execution time exceeded alert threshold","summary":"COMMIT","elapsed_secs":"2.7"}
+{"level":"WARN","target":"sqlx::query","message":"slow statement: execution time exceeded alert threshold","summary":"COMMIT","elapsed_secs":"fast"}
+{"level":"WARN","target":"sqlx::query","message":"slow statement: execution time exceeded alert threshold","summary":"COMMIT","elapsed_secs":0.5}
+LINES
+)
 fail=0
 expect() { if [[ "$2" != "$3" ]]; then echo "FAIL: $1: got $2, want $3" >&2; fail=1; fi; }
 # As load.sh counts a whole log (count_logged), and as it splices the predicate mid-pipeline.
@@ -34,5 +45,9 @@ slow=$(jq -Rn "[inputs | fromjson? | $lib select(slow_statement)] | length" <<<"
 expect "warnings that fail the run" "$counted" 5
 expect "the same, spliced mid-pipeline" "$spliced" 5
 expect "slow statements recorded as evidence (D-224's INFO tier too)" "$slow" 5
+# Counted: "10.1", "2.7" and "fast". Evidence: "0.4" and the number 0.5.
+expect "string durations: counted as load.sh counts them" "$(jq -Rn "[inputs | fromjson? | $lib select(counted)] | length" <<<"$strings")" 3
+# The record's slowest is by value, not by text ("2.7" sorts after "10.1"), over the durations that parse.
+expect "the record's slowest statement" "$(jq -Rn "$lib [inputs | fromjson? | select(slow_statement) | elapsed] | slow_summary | .max_ms" <<<"$strings")" 10100
 (( fail == 0 )) && echo "load warnings: slow statements under 1 s are evidence; everything else fails the run"
 exit "$fail"

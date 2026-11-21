@@ -59,7 +59,25 @@ through `--version` and `GET /version`.
   until the old window ran out. The remembered refusal now ends as the change commits, on every
   server.
 
+### Correction
+
+- **The cold-read benchmark (L03) read fewer than a third of its corpus.** Its load test chose which
+  entries to read by a counter each simulated user keeps for itself, so every user read the same
+  entries in step: 675 of the 2,048 it was meant to cover. The test now numbers reads across all
+  users and reads all 2,048. The published figure is replaced by a CI run of the fixed test (p99
+  152.6 ms at 505 requests a second on an AMD EPYC 9V74, commit `079e44d`); the earlier laptop figure
+  (p99 68.2 ms at 1,017 a second) came from different hardware, and the old and fixed tests run side
+  by side showed no consistent latency difference. `docs/BENCHMARKS.md` has the details.
+
 ### Performance
+
+- **The media worker picks up its next upload without reading every upload before it**. Each
+  time it asked for work it read every job the table had ever held, finished ones included, and
+  sorted the queue to take one to four; under a steady stream of uploads that grew to seconds a
+  claim and the queue backed up. It now takes waiting jobs by one indexed lookup that stops at what
+  it asked for. A job whose worker stopped answering (a crash) is put back in the queue, in its old
+  place, by the worker's 10-second sweep, so it is picked up within 10 seconds of its lease running
+  out. Upgrading runs migration 0080, which adds one index to the media job table.
 
 - **Submitting work no longer waits on every other project's submissions** (D-216). The
   installation's 1 GiB bound on pending work metadata used to be counted from scratch on every

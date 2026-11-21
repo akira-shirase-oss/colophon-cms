@@ -676,7 +676,6 @@ fi
 # The predicates live in scripts/lib/load-warnings.jq, which scripts/test-load-warnings.sh tests.
 warnings_lib="$(cat scripts/lib/load-warnings.jq)"
 counted_jq="$warnings_lib select(counted)"
-slow_jq="$warnings_lib select(slow_statement)"
 count_logged() { jq -Rn "[inputs | fromjson? | $counted_jq] | length"; }
 if [[ "$cluster" == "1" ]]; then
   server_warnings=0
@@ -739,8 +738,7 @@ fi
 # The evidence the gate no longer counts, kept in the record: how many slow statements, and the slowest.
 slow_logs=("$work/server.log")
 for log in "$work"/worker*.log; do [[ -f "$log" ]] && slow_logs+=("$log"); done
-slow_statements=$(cat "${slow_logs[@]}" | jq -Rsc "[split(\"\\n\")[] | fromjson? | $slow_jq | .elapsed_secs // 0]
-  | {count: length, max_ms: ((max // 0) * 1000 | round)}")
+slow_statements=$(cat "${slow_logs[@]}" | jq -Rsc "$warnings_lib [split(\"\\n\")[] | fromjson? | select(slow_statement) | elapsed] | slow_summary")
 
 # mixed.js cannot read the windows file itself — open() is init-stage only — so
 # with drills announced it stamps every failed assertion `L05FAIL <epoch_s>` on
@@ -922,10 +920,16 @@ record=$(jq -c '.hard_failures_total = ([.hard_failures | to_entries[] | select(
 # systematic gap between the two would bias the scale, and every record shows it.
 if [[ -n "${RUNNER_SCALE:-}" ]]; then
   record=$(jq -c --arg health "${RUNNER_HEALTH_RPS:-}" --arg long "${RUNNER_LONG_HEALTH_RPS:-}" --arg reference "${RUNNER_REFERENCE_RPS:-}" --arg scale "$RUNNER_SCALE" --arg p99 "${P99_MS:-}" --arg judged "${RUNNER_JUDGED:-yes}" \
+    --arg wrps "${RUNNER_WRITE_RPS:-}" --arg wsource "${RUNNER_WRITE_SOURCE:-}" --arg wkept "${RUNNER_WRITE_KEPT:-}" --arg wdiscarded "${RUNNER_WRITE_DISCARDED:-}" \
     '($health | tonumber? // null) as $h | ($long | tonumber? // null) as $l
      | .runner = {cpu: .machine.cpu, judged: ($judged == "yes"), health_rps: $h, long_health_rps: $l,
                   probe_to_long: (if $h and $l and $l > 0 then ($h / $l * 1000 | round / 1000) else null end),
-                  reference_rps: ($reference | tonumber? // null), scale: ($scale | tonumber? // null), p99_limit_ms: ($p99 | tonumber? // null)}' <<<"$record")
+                  reference_rps: ($reference | tonumber? // null), scale: ($scale | tonumber? // null), p99_limit_ms: ($p99 | tonumber? // null)}
+     # The D-223 write probe, recorded (phase 1: not applied). Its runs are in projects of their own.
+     | if $wsource != "" then .runner += {write_rps: ($wrps | tonumber? // null), write_scale_source: $wsource,
+                                         write_probe: {kept: ($wkept | tonumber? // 0), discarded: ($wdiscarded | tonumber? // 0),
+                                                       isolated: "a project per run (entries setup)", applied: false}}
+       else . end' <<<"$record")
 fi
 echo "$record" | jq .
 # RECORD_OUT: the record as a file too, for a caller that judges it (CI's smoke verdict, D-209).
