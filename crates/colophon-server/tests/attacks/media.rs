@@ -98,6 +98,14 @@ fn now() -> i64 {
         .expect("seconds fit")
 }
 
+/// `address` with the first character of its signature replaced by a different one.
+fn tampered(address: &str) -> String {
+    let at = address.find("signature=").expect("a signed address") + "signature=".len();
+    let first = &address[at..=at];
+    let other = if first == "A" { "B" } else { "A" };
+    format!("{}{other}{}", &address[..at], &address[at + 1..])
+}
+
 #[tokio::test]
 #[ignore = "needs the stack and scripts/migrate.sh"]
 async fn an_unpublished_upload_is_private_until_a_release_names_it() {
@@ -137,7 +145,9 @@ async fn an_unpublished_upload_is_private_until_a_release_names_it() {
         signed(&path, now() - 1).await,
         signed(&path, now() + 365 * 24 * 3600).await,
         good.replace("expires=", "expires=1"),
-        format!("{}A", &good[..good.len() - 1]),
+        // One character of the signature changed. Not the last: of a 32-byte MAC's 43 characters
+        // it carries 4 bits, so "set it to A" was a no-op one run in 16 (CI 44869366703).
+        tampered(&good),
         // Another address's signature on this one.
         {
             let other = format!("/media/v1/{project}/production/{}", Uuid::now_v7());
