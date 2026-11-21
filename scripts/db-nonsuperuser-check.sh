@@ -191,30 +191,32 @@ SQL
   expect "the caller's project and audience after $name's error, caught by a savepoint" "after:$other|members" "$(grep '^after:' <<<"$got")"
 done
 
-# A run held open inside a migration, then killed (D-234): the run's grants are its migration
-# transaction's own. A second database in the same cluster (roles are cluster-wide, as on Neon):
-# _sqlx_migrations made first with sqlx's own DDL and held in SHARE mode, so the run reads it,
-# applies migration 1 (prologue, body, epilogue) and waits at its INSERT, uncommitted.
+# A run held open inside a migration, then killed (D-234): each migration's grants are its own
+# transaction's. A second database in the same cluster (roles are cluster-wide, as on Neon):
+# _sqlx_migrations made first with sqlx's own DDL, and another session holding an uncommitted row
+# for version 2, so the run commits migration 1 (prologue, body, epilogue) and waits inside
+# migration 2, at its INSERT of the same version: one migration committed, one open.
 SUPER_DB=postgres super -c "CREATE DATABASE colophon_held OWNER neon_owner" >/dev/null
 held_url="postgres://neon_owner:$OWNER_PASSWORD@127.0.0.1:$PORT/colophon_held"
 docker exec -i -e "PGPASSWORD=$OWNER_PASSWORD" "$CONTAINER" psql -h 127.0.0.1 -U neon_owner -d colophon_held -XAtq -v ON_ERROR_STOP=1 -c "
   CREATE TABLE _sqlx_migrations (version BIGINT PRIMARY KEY, description TEXT NOT NULL,
     installed_on TIMESTAMPTZ NOT NULL DEFAULT now(), success BOOLEAN NOT NULL, checksum BYTEA NOT NULL,
     execution_time BIGINT NOT NULL)" >/dev/null
-SUPER_DB=colophon_held super -c "BEGIN; LOCK TABLE _sqlx_migrations IN SHARE MODE; SELECT pg_sleep(60); COMMIT;" >/dev/null 2>&1 &
+SUPER_DB=colophon_held super -c "BEGIN; INSERT INTO _sqlx_migrations (version, description, success, checksum, execution_time) VALUES (2, 'held', true, '\\x00', 0); SELECT pg_sleep(60); COMMIT;" >/dev/null 2>&1 &
 holder=$!
 for _ in $(seq 1 50); do
-  [[ "$(SUPER_DB=colophon_held super -c "SELECT count(*) FROM pg_locks l JOIN pg_class c ON c.oid = l.relation WHERE c.relname = '_sqlx_migrations' AND l.mode = 'ShareLock' AND l.granted")" == 1 ]] && break
+  [[ "$(SUPER_DB=colophon_held super -c "SELECT count(*) FROM pg_stat_activity WHERE datname = 'colophon_held' AND query LIKE '%pg_sleep(60)%' AND state = 'active' AND pid <> pg_backend_pid()")" == 1 ]] && break
   sleep 0.1
 done
 COLOPHON_MIGRATION_DATABASE_URL="$held_url" "$COLOPHON_BIN" admin migrate >"$work/held.out" 2>&1 &
 held_cli=$!
 waiting=0
 for _ in $(seq 1 300); do
-  if [[ "$(SUPER_DB=colophon_held super -c "SELECT count(*) FROM pg_locks l JOIN pg_class c ON c.oid = l.relation WHERE c.relname = '_sqlx_migrations' AND NOT l.granted")" -ge 1 ]]; then waiting=1; break; fi
+  if [[ "$(SUPER_DB=colophon_held super -c "SELECT count(*) FROM pg_locks l JOIN pg_stat_activity a ON a.pid = l.pid WHERE NOT l.granted AND a.datname = 'colophon_held' AND a.usename = 'neon_owner'")" -ge 1 ]]; then waiting=1; break; fi
   sleep 0.1
 done
-expect "a run held inside its first migration (waiting to record it)" "1" "$waiting"
+expect "a run held inside its second migration (waiting to record it)" "1" "$waiting"
+expect "the first migration committed while the run is held" "1" "$(SUPER_DB=colophon_held super -c "SELECT count(*) FROM _sqlx_migrations WHERE version = 1")"
 # held_leftovers: committed CREATE on public in colophon_held, and the owner inheriting colophon_deleter.
 held_leftovers() {
   SUPER_DB=colophon_held super -c "
@@ -225,7 +227,7 @@ held_leftovers() {
            || '|deleter inherited:' || coalesce((SELECT bool_or(m.inherit_option)::text FROM pg_auth_members m
                      WHERE m.roleid = 'colophon_deleter'::regrole AND m.member = 'neon_owner'::regrole), 'none')"
 }
-expect "while it is held, nobody else sees its grants" "none|deleter inherited:false" "$(held_leftovers)"
+expect "while it is held, the committed migration left no grant and the open one shows none" "none|deleter inherited:false" "$(held_leftovers)"
 got=$(docker exec -i -e "PGPASSWORD=$APP_PASSWORD" "$CONTAINER" psql -h 127.0.0.1 -U colophon_app -d colophon_held -XAtq 2>&1 <<'SQL'
 SET ROLE colophon_delivery;
 CREATE FUNCTION public.planted_by_the_app() RETURNS int LANGUAGE sql AS 'SELECT 1';
