@@ -118,7 +118,7 @@ fi
 init_err=$(mktemp)
 if ! colophon admin init-roles --database-url-file "$CREDS/migration_database_url" --app-password-file "$CREDS/app_password" >/dev/null 2>"$init_err"; then
   cat "$init_err" >&2
-  echo "refusing: colophon admin init-roles failed (its error is above); nothing after it was run" >&2
+  echo "refusing: the roles step failed (colophon admin init-roles; its error is above); nothing after it was run" >&2
   # A failed statement that held the password as text may be in the database server's log.
   if grep -q 'rotate the application' "$init_err"; then
     echo "and ROTATE the application's password before running this again: rm $CREDS/app_password $CREDS/database_url (a new one is generated), and if colophon_app already exists, ALTER ROLE colophon_app PASSWORD to the new one as the owner" >&2

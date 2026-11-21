@@ -86,7 +86,7 @@ if command -v colophon >/dev/null && [[ -r "$creds/migration_database_url" ]]; t
   elif [[ -z "$grants" ]]; then
     bad "couldn't read the migration grants from colophon admin migrate-status"
   else
-    bad "migration grants left behind: $grants (colophon admin migrate removes them; D-234)"
+    bad "migration grants left behind: $grants (the next 'colophon admin migrate' run removes them; D-234)"
   fi
 fi
 
