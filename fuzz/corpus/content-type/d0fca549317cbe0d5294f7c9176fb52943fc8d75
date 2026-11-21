@@ -1,0 +1,1 @@
+{"name": "T", "title_field": "t", "fields": [{"id": "t", "label": "T", "type": "text"}, {"id": "f", "label": "F", "type": "boolean"}, {"id": "x", "label": "X", "type": "text", "when": {"field": "f", "is": [true, false]}}]}

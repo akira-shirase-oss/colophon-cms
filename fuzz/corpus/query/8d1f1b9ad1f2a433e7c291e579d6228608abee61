@@ -1,0 +1,1 @@
+{"filters": [{"field": "rating", "op": "gte", "value": 3}], "sort": [{"field": "publish_at", "dir": "desc"}], "limit": 20}

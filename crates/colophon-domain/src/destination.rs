@@ -35,14 +35,29 @@ fn is_public_v4(ip: Ipv4Addr) -> bool {
 }
 
 fn is_public_v6(ip: Ipv6Addr) -> bool {
-    let first = ip.segments()[0];
-    !(ip.is_unspecified()
-        || ip.is_loopback()
-        || ip.is_multicast()
+    let [first, second, third, fourth, ..] = ip.segments();
+    // An address that carries an IPv4 address is judged by it: IPv4-compatible `::a.b.c.d`
+    // (`::` and `::1` land on 0.0.0.0 and 0.0.0.1, refused as 0/8) and 6to4 `2002:aabb:ccdd::`,
+    // which relays to aa.bb.cc.dd. Without this, `[2002:7f00:1::]` reached 127.0.0.1's relay.
+    if ip.segments()[..6].iter().all(|segment| *segment == 0) {
+        let [.., high, low] = ip.segments();
+        return is_public_v4(Ipv4Addr::from((u32::from(high) << 16) | u32::from(low)));
+    }
+    if first == 0x2002 {
+        return is_public_v4(Ipv4Addr::from((u32::from(second) << 16) | u32::from(third)));
+    }
+    !(ip.is_multicast()
         || (first & 0xfe00) == 0xfc00
         || (first & 0xffc0) == 0xfe80
-        || (first == 0x2001 && ip.segments()[1] == 0x0db8)
-        || (first == 0x0064 && ip.segments()[1] == 0xff9b))
+        // Site-local, deprecated but still routed by some stacks.
+        || (first & 0xffc0) == 0xfec0
+        || (first == 0x2001 && second == 0x0db8)
+        // Teredo: its server and client addresses are IPv4 addresses, obfuscated.
+        || (first == 0x2001 && second == 0)
+        // NAT64, the well-known prefix and the local-use one (RFC 8215).
+        || (first == 0x0064 && second == 0xff9b)
+        // The discard-only prefix (RFC 6666).
+        || (first == 0x0100 && second == 0 && third == 0 && fourth == 0))
 }
 
 /// Checks a destination address before any connection: http or https only, https unless

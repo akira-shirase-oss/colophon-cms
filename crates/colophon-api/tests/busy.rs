@@ -58,6 +58,7 @@ async fn a_request_that_cannot_get_a_connection_is_told_to_retry() {
             passwords: colophon_db::passwords::PasswordGate::new(1),
             magic_links: colophon_db::audience::MagicLinkLimits::DEFAULT,
             media_origin: "http://localhost:58000".to_owned(),
+            media_keys: colophon_api::media_sign::Keys::default(),
             uploads: colophon_api::uploads::UploadGate::new(256, 21 * 1024 * 1024),
             install_kind: None,
         })),

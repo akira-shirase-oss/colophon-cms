@@ -308,6 +308,7 @@ fn api_services(
         passwords: colophon_db::passwords::PasswordGate::new(config.password_concurrency),
         magic_links: config.magic_links,
         media_origin: config.media_origin.clone(),
+        media_keys: colophon_api::media_sign::Keys::default(),
         uploads: colophon_api::uploads::UploadGate::new(
             config.upload_memory_mb,
             config.max_body_bytes,
@@ -453,7 +454,7 @@ pub async fn run(
     let background = start_background(&config, &pool, &event_bus, &admission, &cancel)?;
 
     let outcome = tokio::select! {
-        outcome = shutdown::serve(listener, app, readiness, timing, trigger) => outcome.context("serving")?,
+        outcome = shutdown::serve(listener, app, readiness, timing, config.header_timeout, trigger) => outcome.context("serving")?,
         never = supervisor.watch() => match never {},
     };
 

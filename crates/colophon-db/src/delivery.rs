@@ -89,6 +89,13 @@ pub struct MediaObject {
     /// The literal object key to serve — `None` when the environment exists but the asset or
     /// version does not (or isn't `usable`): the origin answers 404.
     pub public_key: Option<String>,
+    /// Whether that version is published: named by a publication anyone may read, of any generation no takedown revoked (D-229,
+    /// migration 0082). Anything else is served only to the project's members or with a signed
+    /// address, privately.
+    pub published: bool,
+    /// For the bare address only: the newest published version's key, which the public sees
+    /// while a newer version waits for its publish (D-229). `None` when no version is published.
+    pub published_key: Option<String>,
 }
 
 /// The media origin's whole read (`media_object`, migration 0051): resolve `slug` and pick the
@@ -106,7 +113,8 @@ pub async fn media_object(
 ) -> Result<Option<MediaObject>, DbError> {
     sqlx::query_as!(
         MediaObject,
-        r#"SELECT environment_id AS "environment_id!", public_key
+        r#"SELECT environment_id AS "environment_id!", public_key, published AS "published!",
+                  published_key
            FROM media_object($1, $2, $3, $4)"#,
         project,
         slug,
@@ -116,6 +124,14 @@ pub async fn media_object(
     .fetch_optional(pool)
     .await
     .map_err(DbError::from_query)
+}
+
+/// The installation's key for signing short-lived media addresses (D-229, migration 0082).
+pub async fn media_signing_key(pool: &PgPool) -> Result<Vec<u8>, DbError> {
+    sqlx::query_scalar!("SELECT key FROM media_signing_keys WHERE id = 1")
+        .fetch_one(pool)
+        .await
+        .map_err(DbError::from_query)
 }
 
 /// The audience a delivery transaction reads as (D-137): what `app.audience_role` is set to,

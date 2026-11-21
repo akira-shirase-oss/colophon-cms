@@ -16,7 +16,9 @@
 // three arms share one origin cache and a fill lands on whichever arm asks first. The share
 // served `hit`/`coalesced` is reported per region as evidence, not gated: the fills are a
 // fixed count while the requests scale with the runner (CI's RATE is 300 x the runner's
-// scale), so a share floor failed slower runners with nothing wrong (CI 44817664396).
+// scale), so a share floor failed slower runners with nothing wrong (CI 44817664396). The server
+// also counts fills of a key it stored less than a lifetime ago, which this bound can't see per key;
+// scripts/load.sh adds that count to `l10` as a gate at zero.
 //
 // The arms are time-boxed: TOTAL and VUS are unused. `steady` and `throughput` run the
 // same plan. handleSummary() computes the verdict into `l10` — per-region requests, hit
@@ -71,6 +73,13 @@ const KINDS = ['latest', 'entry', 'pinned'];
 const fillsByKind = {};
 for (const kind of KINDS) fillsByKind[kind] = new Counter(`l10_fills_${kind}`);
 const lastIteration = new Trend('l10_iteration');
+// The publisher's own delivery reads that filled (its base reads and the read-back of what it
+// published): with the edges' fills, every fill the server did, which its count of stores must cover.
+const publisherFills = new Counter('l10_fills_publisher');
+function publisherRead(res) {
+  if (res.headers['Colophon-Cache'] === 'miss') publisherFills.add(1);
+  return res;
+}
 // Where each edge's answer came from and the newest generation it observed — one root
 // counter per (region, how) and one root trend per region. Root metrics, not tagged
 // submetrics: a `{arm:edge_iad}` submetric only reaches the summary when it carries a
@@ -226,7 +235,7 @@ export function edge(data) {
 // and each release must land exactly one ahead.
 export function publisher(data) {
   const write = { Cookie: data.session.cookie, 'X-CSRF-Token': data.session.csrf, Origin: PUBLIC_URL, 'Content-Type': 'application/json' };
-  const latest = http.get(`${data.delivery}?limit=1`, { redirects: 0, tags: { arm: 'publisher', endpoint: 'base', name: 'content' } });
+  const latest = publisherRead(http.get(`${data.delivery}?limit=1`, { redirects: 0, tags: { arm: 'publisher', endpoint: 'base', name: 'content' } }));
   if (!check(latest, { 'base read 200': (r) => r.status === 200 })) { errors.add(1); return; }
   const base = parseInt(latest.headers['Colophon-Generation'] || '-1', 10);
   const made = http.post(data.entries, article(`Release ${key()}`, 'new'), {
@@ -254,7 +263,7 @@ export function publisher(data) {
   if (published.status === 409) {
     // Another publish won between the base read and this one — read the generation and
     // republish, the honest retry.
-    const again = http.get(`${data.delivery}?limit=1`, { redirects: 0, tags: { arm: 'publisher', endpoint: 'base', name: 'content' } });
+    const again = publisherRead(http.get(`${data.delivery}?limit=1`, { redirects: 0, tags: { arm: 'publisher', endpoint: 'base', name: 'content' } }));
     const moved = parseInt(again.headers['Colophon-Generation'] || '-1', 10);
     published = http.post(`${path}/publish`, JSON.stringify({ base_generation: moved }), {
       headers: Object.assign({ 'Idempotency-Key': key() }, ifMatch), redirects: 0,
@@ -270,7 +279,7 @@ export function publisher(data) {
   if (!landed) { errors.add(1); return; }
   publishes.add(1);
   // A region would see it like this: the new entry reads back at the release it minted.
-  const back = http.get(`${data.delivery}/${id}`, { redirects: 0, tags: { arm: 'publisher', endpoint: 'published-read', name: 'content/{entry}' } });
+  const back = publisherRead(http.get(`${data.delivery}/${id}`, { redirects: 0, tags: { arm: 'publisher', endpoint: 'published-read', name: 'content/{entry}' } }));
   if (!check(back, {
     'published read 200': (r) => r.status === 200,
     'served at the release it minted': (r) => r.headers['Colophon-Generation'] === String(published.json('data.generation')),
@@ -346,6 +355,7 @@ export function handleSummary(data) {
       bound,
       total: fillsTotal,
       total_bound: fillBound,
+      publisher: count('l10_fills_publisher'),
       releases,
       entries_read: entriesRead,
     },

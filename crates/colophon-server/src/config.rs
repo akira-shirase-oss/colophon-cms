@@ -131,6 +131,9 @@ pub struct Config {
     pub log_filter: String,
     /// `COLOPHON_REQUEST_TIMEOUT_MS`, default 10 s.
     pub request_timeout: Duration,
+    /// `COLOPHON_HEADER_TIMEOUT_MS`, default 10 s (100 ms to 60 s): how long a connection has to
+    /// send a request's headers before it is closed (D-230).
+    pub header_timeout: Duration,
     /// `COLOPHON_MAX_BODY_BYTES`, default 21 MiB: JSON requests stay small, but the upload
     /// endpoint legitimately carries a 20 MiB image (its own intent check bounds it tighter).
     pub max_body_bytes: usize,
@@ -738,6 +741,7 @@ impl Config {
         let log_format = env.parse("COLOPHON_LOG_FORMAT", LogFormat::Json);
         let log_filter = env.raw("COLOPHON_LOG").unwrap_or_else(|| "info".to_owned());
         let request_timeout = env.millis("COLOPHON_REQUEST_TIMEOUT_MS", 10_000, 100..=120_000);
+        let header_timeout = env.millis("COLOPHON_HEADER_TIMEOUT_MS", 10_000, 100..=60_000);
         let max_body_bytes = env.ranged("COLOPHON_MAX_BODY_BYTES", 21 * MIB, KIB..=64 * MIB);
         let upload_memory_mb = env.ranged("COLOPHON_UPLOAD_MEMORY_MB", 256, 1..=16 * 1024);
         let db_max_connections = env.ranged("COLOPHON_DB_MAX_CONNECTIONS", 16, 1..=1_000);
@@ -856,6 +860,7 @@ impl Config {
                 log_format,
                 log_filter,
                 request_timeout,
+                header_timeout,
                 max_body_bytes,
                 upload_memory_mb,
                 db_max_connections,
@@ -918,6 +923,7 @@ mod tests {
         let config = load(&[("COLOPHON_DATABASE_URL", DB)]).expect("valid");
         assert_eq!(config.listen_addr.to_string(), "127.0.0.1:58000");
         assert_eq!(config.request_timeout, Duration::from_secs(10));
+        assert_eq!(config.header_timeout, Duration::from_secs(10));
         assert_eq!(config.max_body_bytes, 21 * MIB);
         assert_eq!(config.probe_interval, Duration::from_secs(2));
         assert!(config.cache_url.is_none());
