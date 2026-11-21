@@ -179,6 +179,20 @@ chmod 0400 /etc/colophon/credentials/database_url
 If the first connection fails on the certificate, stop: `verify-full` against Neon is S0's first
 real proof (SAAS_PLAN "Neon"), and weakening it is not the fix.
 
+**Neon's owner is not a superuser** (D-234), and the two commands above handle that themselves:
+`init-roles` gives `colophon_app`'s password as text when Neon refuses a SCRAM verifier ("Neon
+only supports being given plaintext passwords"; over this `verify-full` connection), and grants
+the owner SET and INHERIT on Colophon's roles; `migrate` runs four migrations (0011, 0012, 0051,
+0082) from substitutes that need no superuser, and gives the owner roles CREATE on `public` for
+the run only. The database records the same migrations and checksums as a superuser's install,
+so `admin migrate-status` reads them alike. Proved on a fresh cluster with such an owner by
+`scripts/db-nonsuperuser-check.sh` (in CI). Migration 0048 turns the owner's INHERIT on
+`colophon_deleter` off on purpose; nothing turns it back on.
+
+To look at the database with `psql` itself, add `&sslrootcert=system` to the URL: libpq checks
+`verify-full` against `~/.postgresql/root.crt` unless told to use the system's roots (Colophon's
+own driver always uses them).
+
 ## 4. The cache (Valkey's API, from Ubuntu's `redis-server`)
 
 ```sh
@@ -379,7 +393,7 @@ certificate, and a test CA and client certificate for Authenticated Origin Pulls
 | `--rollback`: 5 s; a failing release rolled back by itself | R2: uploads, the ledger export, the logical backup's upload |
 | Caddy: 200 with the origin-pull client certificate, refused without it | systemd credentials (`LoadCredential=`): Docker can't provide them, so the rehearsal read the files directly |
 | `smoke.sh`'s server checks, idle memory (24–38 MiB) | The release archives from `release.yml` and the edge channel's provenance on a real build |
-| The Neon URL fix (pooled host → direct, `require` → `verify-full`), tested | The database round trip, Toronto ↔ Neon us-east-2: `smoke.sh` prints p50/p95 of 20 × `SELECT 1` (warns over 20 ms); record the deploy-day number here: **p50 — ms, p95 — ms** (Neon's first query after idle was 367 ms, a cold start) |
+| The Neon URL fix (pooled host → direct, `require` → `verify-full`), tested | The database round trip to Neon us-east-2 (the S0 droplet ended up in SFO2, San Francisco: 91 ms measured on 2026-11-21, so moving Neon nearer is open): `smoke.sh` prints p50/p95 of 20 × `SELECT 1` (warns over 20 ms); record the deploy-day number here: **p50 — ms, p95 — ms** (Neon's first query after idle was 367 ms, a cold start) |
 | Pruning under the backups bucket's 7-day lock, tested with a stub | The lock rule itself on R2 |
 
 

@@ -27,6 +27,7 @@ pub mod ledger;
 pub mod login_roles;
 pub mod members;
 pub mod migrations;
+pub mod nonsuperuser;
 pub mod passwords;
 pub mod previews;
 pub mod projects;
@@ -60,9 +61,16 @@ pub use transactions::{Phases, begin_tx, begin_tx_snapshot, with_phases};
 pub static MIGRATOR: sqlx::migrate::Migrator = sqlx::migrate!("./migrations");
 
 /// Applies any migrations the database doesn't have yet. Run as the migrator role (the table
-/// owner), never as the application role.
+/// owner), never as the application role. A superuser runs [`MIGRATOR`]; any other migrator
+/// (Neon's owner role, for one) runs [`nonsuperuser::migrate`] (D-234), which records the same
+/// migrations with the same checksums.
 pub async fn migrate(pool: &PgPool) -> Result<(), DbError> {
-    MIGRATOR.run(pool).await.map_err(DbError::Migrate)
+    let mut conn = pool.acquire().await.map_err(DbError::from_query)?;
+    if nonsuperuser::is_superuser(&mut conn).await? {
+        MIGRATOR.run(&mut *conn).await.map_err(DbError::Migrate)
+    } else {
+        nonsuperuser::migrate(&mut conn).await
+    }
 }
 
 /// Pool settings. Every value is a bound: connections, waiting, and statement time.

@@ -4,9 +4,11 @@
 //!
 //! The two lists below are the single source; a unit test holds `roles.sql` to them, so the
 //! development stack and an installation can never disagree on a role or a grant. Passwords
-//! never travel as text: each login role gets a SCRAM-SHA-256 verifier computed here, so the
-//! password is not in the statement, in `pg_stat_activity`, or in a server log that records a
-//! failed statement.
+//! don't travel as text where the server allows it: each login role gets a SCRAM-SHA-256 verifier
+//! computed here, so the password is not in the statement, in `pg_stat_activity`, or in a server
+//! log that records a failed statement. Neon refuses a verifier ("Neon only supports being given
+//! plaintext passwords"), and only on that refusal [`init`] runs again with the password itself
+//! in the statement, over the connection's verify-full TLS (D-234).
 
 use std::num::NonZeroU32;
 
@@ -160,6 +162,58 @@ pub async fn init(
     app_password: &str,
     backup_password: Option<&str>,
 ) -> Result<Vec<RoleOutcome>, InitError> {
+    match init_as(pool, app_password, backup_password, PasswordForm::Verifier).await {
+        // The whole transaction rolled back with the refused statement; running again is safe,
+        // as every run is (existing roles are left as they are).
+        Err(InitError::Db(DbError::Query(error))) if refuses_verifier_error(&error) => {
+            init_as(pool, app_password, backup_password, PasswordForm::Text).await
+        }
+        outcome => outcome,
+    }
+}
+
+/// How a login role's password reaches `CREATE ROLE`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PasswordForm {
+    /// A SCRAM-SHA-256 verifier computed here: the password itself never leaves this process.
+    Verifier,
+    /// The password itself, as a string literal: only for a server that refuses verifiers
+    /// (Neon), over the connection's verify-full TLS.
+    Text,
+}
+
+/// Neon's control plane takes a role's password only as text; given a verifier it answers
+/// `Received HTTP code 400 from control plane: {..."error":"Neon only supports being given
+/// plaintext passwords"}` (seen 2026-11-21). Nothing else counts as that refusal.
+pub fn refuses_verifier(message: &str) -> bool {
+    message
+        .to_ascii_lowercase()
+        .contains("only supports being given plaintext passwords")
+}
+
+fn refuses_verifier_error(error: &sqlx::Error) -> bool {
+    error
+        .as_database_error()
+        .is_some_and(|database| refuses_verifier(database.message()))
+}
+
+/// `password` as a single-quoted SQL literal, for a statement run with
+/// `standard_conforming_strings` on (a backslash is then an ordinary character).
+fn text_literal(password: &str) -> String {
+    format!("'{}'", password.replace('\'', "''"))
+}
+
+/// [`init`] with the passwords in one [`PasswordForm`].
+///
+/// # Errors
+///
+/// As [`init`].
+pub async fn init_as(
+    pool: &PgPool,
+    app_password: &str,
+    backup_password: Option<&str>,
+    form: PasswordForm,
+) -> Result<Vec<RoleOutcome>, InitError> {
     check_password(app_password).map_err(|reason| InitError::Password {
         role: "colophon_app",
         reason,
@@ -171,10 +225,15 @@ pub async fn init(
         })?;
     }
     let random = aws_lc_rs::rand::SystemRandom::new();
-    let verifier = |password: &str| {
-        let mut salt = [0_u8; 16];
-        random.fill(&mut salt).map_err(|_| InitError::Random)?;
-        Ok::<_, InitError>(scram_verifier(password, &salt))
+    // The `PASSWORD` operand for each login role: a verifier literal (base64, digits, `$` and `:`
+    // only: nothing that can end the literal) or the password's own quoted literal.
+    let verifier = |password: &str| match form {
+        PasswordForm::Verifier => {
+            let mut salt = [0_u8; 16];
+            random.fill(&mut salt).map_err(|_| InitError::Random)?;
+            Ok::<_, InitError>(format!("'{}'", scram_verifier(password, &salt)))
+        }
+        PasswordForm::Text => Ok(text_literal(password)),
     };
     let app_verifier = verifier(app_password)?;
     let backup_verifier = backup_password.map(verifier).transpose()?;
@@ -185,6 +244,14 @@ pub async fn init(
         .execute(&mut *tx)
         .await
         .map_err(DbError::from_query)?;
+    if form == PasswordForm::Text {
+        // The literal above doubles quotes only, which is complete with this on.
+        sqlx::query("SET LOCAL standard_conforming_strings = on")
+            .execute(&mut *tx)
+            .await
+            .map_err(DbError::from_query)?;
+    }
+    let superuser = crate::nonsuperuser::is_superuser(&mut tx).await?;
     let mut outcomes = Vec::with_capacity(ROLES.len());
     for (name, attributes) in ROLES {
         let exists: bool =
@@ -216,8 +283,7 @@ pub async fn init(
             continue;
         }
         let statement = match password {
-            // Base64, digits, `$` and `:` only: nothing that can end the literal.
-            Some(verifier) => format!("CREATE ROLE {name} {attributes} PASSWORD '{verifier}'"),
+            Some(operand) => format!("CREATE ROLE {name} {attributes} PASSWORD {operand}"),
             None => format!("CREATE ROLE {name} {attributes}"),
         };
         sqlx::raw_sql(sqlx::AssertSqlSafe(statement))
@@ -235,6 +301,11 @@ pub async fn init(
             .await
             .map_err(DbError::from_query)?;
     }
+    if !superuser {
+        // A migrator that isn't a superuser (Neon's owner) hands objects to these roles and
+        // replaces theirs: it needs SET and INHERIT on each (D-234).
+        crate::nonsuperuser::ensure_memberships(&mut tx).await?;
+    }
     tx.commit().await.map_err(DbError::from_query)?;
     Ok(outcomes)
 }
@@ -242,6 +313,34 @@ pub async fn init(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Neon's refusal, exactly as its control plane worded it on 2026-11-21, and nothing else.
+    #[test]
+    fn only_neon_s_refusal_of_a_verifier_counts() {
+        let neon = r#"Received HTTP code 400 from control plane: {"request_id":"596824af-5584-4af7-91d9-b9c5cca60faf","error":"Neon only supports being given plaintext passwords"}"#;
+        assert!(refuses_verifier(neon));
+        for other in [
+            "permission denied to create role",
+            r#"role "colophon_app" already exists"#,
+            "password is too short",
+            "Received HTTP code 500 from control plane: {\"error\":\"internal error\"}",
+            "",
+        ] {
+            assert!(!refuses_verifier(other), "{other}");
+        }
+    }
+
+    /// The text form quotes for `standard_conforming_strings = on`: quotes doubled, a backslash
+    /// left as it is.
+    #[test]
+    fn a_text_password_is_one_literal() {
+        assert_eq!(text_literal("abc-DEF_123"), "'abc-DEF_123'");
+        assert_eq!(text_literal("it's"), "'it''s'");
+        assert_eq!(
+            text_literal("a\\'; DROP ROLE x; --"),
+            "'a\\''; DROP ROLE x; --'"
+        );
+    }
 
     #[test]
     fn development_and_short_passwords_are_refused() {

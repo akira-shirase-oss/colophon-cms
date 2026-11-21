@@ -113,7 +113,13 @@ if [[ "$fixed" != "$url" ]]; then
   for note in "${NEON_URL_NOTES[@]}"; do say "Neon URL: $note"; done
 fi
 [[ -s "$CREDS/app_password" ]] || { (umask 077; head -c 32 /dev/urandom | base64 | tr '+/' '-_' | tr -d '=\n' >"$CREDS/app_password"); chmod 0400 "$CREDS/app_password"; say "generated the application's password"; }
-colophon admin init-roles --database-url-file "$CREDS/migration_database_url" --app-password-file "$CREDS/app_password" >/dev/null && say "roles ready"
+# A failure stops here: `cmd && say` under set -e went on to migrate without the roles (2026-11-21).
+# On Neon (no superuser) init-roles gives the password as text and the owner its memberships (D-234).
+if ! colophon admin init-roles --database-url-file "$CREDS/migration_database_url" --app-password-file "$CREDS/app_password" >/dev/null; then
+  echo "refusing: colophon admin init-roles failed (its error is above); nothing after it was run" >&2
+  exit 1
+fi
+say "roles ready"
 if [[ ! -s "$CREDS/database_url" ]]; then
   read -r rest <<<"$(sed -E 's#^postgres(ql)?://[^@]+@##' "$CREDS/migration_database_url")"
   (umask 077; printf 'postgres://colophon_app:%s@%s' "$(cat "$CREDS/app_password")" "$rest" >"$CREDS/database_url"); chmod 0400 "$CREDS/database_url"

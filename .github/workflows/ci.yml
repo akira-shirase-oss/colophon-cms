@@ -158,6 +158,8 @@ jobs:
         run: deploy/droplet/test-public-host.sh
       - name: The droplet's edge channel refuses what it can't prove (deploy/droplet/test-upgrade-edge.sh, D-211)
         run: deploy/droplet/test-upgrade-edge.sh
+      - name: The droplet's Cloudflare ranges survive a re-run (deploy/droplet/test-cloudflare-ips.sh)
+        run: deploy/droplet/test-cloudflare-ips.sh
       - name: The leftover test database sweep (scripts/test-sweep-test-databases.sh, D-195)
         run: scripts/test-sweep-test-databases.sh
       - name: The shared-stack guard (scripts/test-stack-guard.sh, D-187)
@@ -220,6 +222,12 @@ jobs:
       # text fail; require, verify-ca and channel_binding=require are refused before connecting).
       - name: Database TLS against a private CA (scripts/db-tls-check.sh)
         run: scripts/db-tls-check.sh
+      # D-234: Neon's database owner is not a superuser. A fresh postgres of the script's own whose
+      # owner has CREATEROLE and CREATEDB only, and the real CLI as that owner: init-roles, migrate and
+      # migrate-status, twice; the run's grants undone; the four substituted migrations' functions keep
+      # the caller's context after a call and after an error caught by a savepoint.
+      - name: Installed by a non-superuser owner, as on Neon (scripts/db-nonsuperuser-check.sh)
+        run: scripts/db-nonsuperuser-check.sh
       # Before the stack tests: the site test runs the reference site's runner (apps/web) with Node.
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
