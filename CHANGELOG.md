@@ -8,6 +8,8 @@ through `--version` and `GET /version`.
 
 ## [Unreleased]
 
+## [0.1.0-alpha.2] — 2026-11-21
+
 ### Added
 
 - A SvelteKit demo site (D-220): Butter & Thyme's recipes prerendered with SvelteKit 3 at one release per
@@ -15,6 +17,17 @@ through `--version` and `GET /version`.
   marker on every page, and a rebuild on publish with the other demo sites (`apps/sites/sveltekit`).
 - A Next.js demo site (D-220a): the same recipes as a Next.js 16 static export, with one release pinned for all
   of Next's build workers before the build, and its own npm install, separate from the CMS's (`apps/sites/nextjs`).
+
+### Changed
+
+- The Studio takes the website's look (D-210a): page titles in Geist Pixel, a larger Overview whose Get
+  started steps sit in the website's inverted panel, and a pixel icon with one line on every empty state.
+  Work screens stay as dense as before.
+- **An outage is logged once, not once per request** (D-224): a repeating fault (no database connection
+  free, a full work bound, a dependency's failed probe) is said in full at once, then once per 10-second
+  window while it lasts, then once when a whole window passes without it. Slow statements come in two
+  tiers: INFO from `COLOPHON_DB_SLOW_STATEMENT_INFO_MS` (default 100) as evidence, WARN from
+  `COLOPHON_DB_SLOW_STATEMENT_MS` (default 1000) as an alert.
 
 ### Changed — read before upgrading
 
@@ -96,6 +109,16 @@ through `--version` and `GET /version`.
   by side showed no consistent latency difference. `docs/BENCHMARKS.md` has the details.
 
 ### Performance
+
+- **An authenticated project request sets its database context in one round trip instead of four**
+  (D-227): the identity, the membership or token with its permissions, the project and the environment
+  are set by one database function, in the same order, under the caller's own policies. On a remote
+  database each round trip saved is one network latency per request. Upgrading runs migration 0079,
+  which adds those functions.
+
+- The release check (D-217) runs on one release in 256 once the server has proved at startup that it
+  catches a connection left inside a transaction; until then, and whenever that proof fails, it runs on
+  every release (D-226).
 
 - **The media worker picks up its next upload without reading every upload before it**. Each
   time it asked for work it read every job the table had ever held, finished ones included, and

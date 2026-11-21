@@ -66,7 +66,7 @@ The commands run on the droplet as root unless they say otherwise. `$CHECKOUT` i
 repository on the droplet (step 2). **The version is in one place:**
 
 ```sh
-export COLOPHON_VERSION=0.1.0-alpha.1    # the release this guide installs; change only this to upgrade
+export COLOPHON_VERSION=0.1.0-alpha.2    # the release this guide installs; change only this to upgrade
 ```
 
 ## 1. The host
@@ -143,9 +143,8 @@ git clone --depth 1 --branch v$v https://github.com/akira-shirase-oss/colophon-c
 CHECKOUT=/opt/colophon-src
 ```
 
-> The draft release `v0.1.0-alpha.1` is cut once the hardening batch and D-183 are merged; its
-> checksummed musl archives are what this step installs. Building from source on a 2 GB droplet
-> is not recommended (the Rust build needs more memory than the host has).
+> The release `v0.1.0-alpha.2` carries the checksummed musl archives this step installs. Building
+> from source on a 2 GB droplet is not recommended (the Rust build needs more memory than the host has).
 
 ## 3. Neon: the roles and the schema
 

@@ -1,6 +1,6 @@
 {
   "name": "@colophon-cms/cli",
-  "version": "0.1.0-alpha.1",
+  "version": "0.1.0-alpha.2",
   "license": "MIT",
   "description": "colophon, the command line for Colophon CMS, prebuilt for macOS, Linux and Windows: no Rust needed.",
   "keywords": [
@@ -27,11 +27,11 @@
     "node": ">=18"
   },
   "optionalDependencies": {
-    "@colophon-cms/cli-darwin-arm64": "0.1.0-alpha.1",
-    "@colophon-cms/cli-darwin-x64": "0.1.0-alpha.1",
-    "@colophon-cms/cli-linux-arm64": "0.1.0-alpha.1",
-    "@colophon-cms/cli-linux-x64": "0.1.0-alpha.1",
-    "@colophon-cms/cli-win32-x64": "0.1.0-alpha.1"
+    "@colophon-cms/cli-darwin-arm64": "0.1.0-alpha.2",
+    "@colophon-cms/cli-darwin-x64": "0.1.0-alpha.2",
+    "@colophon-cms/cli-linux-arm64": "0.1.0-alpha.2",
+    "@colophon-cms/cli-linux-x64": "0.1.0-alpha.2",
+    "@colophon-cms/cli-win32-x64": "0.1.0-alpha.2"
   },
   "scripts": {
     "test": "node --test test/*.test.*"

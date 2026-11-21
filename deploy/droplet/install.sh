@@ -11,7 +11,7 @@
 # (migration_database_url, s3_secret_key, origin.pem, origin.key) and the ids (r2_account_id,
 # r2_access_key_id, ssh_ip); COLOPHON_RELEASE_BASE a local release directory (upgrade.sh).
 set -euo pipefail
-export COLOPHON_VERSION="${COLOPHON_VERSION:-0.1.0-alpha.1}"
+export COLOPHON_VERSION="${COLOPHON_VERSION:-0.1.0-alpha.2}"
 here=$(cd "$(dirname "$0")" && pwd)
 CREDS=/etc/colophon/credentials
 ENV_FILE=/etc/colophon/colophon.env
