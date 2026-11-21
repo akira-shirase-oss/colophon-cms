@@ -150,6 +150,7 @@ The independent review (2026-11-21) found what these fixes still left open, each
 | S2-1: the 10 s header timer also closes idle keep-alives, and Caddy reused them for 2 minutes | `keepalive 5s` in both Caddyfiles (D-230) | attack `an_idle_keep_alive_connection_is_closed_at_the_header_timeout`; CI's `caddy validate` |
 | F counted raw length: control characters grew six times past it, and repeated escaped attributes without bound | the escaped length, and a size check at every node (D-231) | `text_that_fits_raw_but_not_escaped_is_refused_before_it_is_written`, `many_escaped_attributes_stop_near_the_limit` |
 | E read 16 MiB before the membership check | membership first, then the body, then the work's transaction (D-230) | attack `a_stranger_s_import_is_refused_before_its_body_is_read` |
+| S2-2: one signing key forever, no id, kept by a restored copy | key ids in the signature, rotation (`admin media-key rotate`), a new key on every restore (D-233) | `colophon-db/tests/media_keys.rs`, attack `a_rotated_key_s_links_live_one_rotation_and_a_retired_key_s_die`, the restore drill |
 | `tenancy` asserted a 404 with no positive control or code; media's `/w320` case had no rendition to find | the owner reads every path first, and outsiders get `not_found`; a 400-pixel upload with a real `w320` | attack `tenancy`, `media` |
 
 Checked and found to hold, now with a regression test each: cross-project reads and writes and token path

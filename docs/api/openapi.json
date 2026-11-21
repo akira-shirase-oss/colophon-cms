@@ -23125,7 +23125,7 @@
         ],
         "responses": {
           "200": {
-            "description": "the stored `Content-Type`; published: `max-age=60, must-revalidate` with the version's `ETag` (a publish or delete moves this address, D-157) — a matching `If-None-Match` answers 304; a version's sha address is `immutable`. Not yet published: only to a signed-in member or with `?expires=&signature=` (the addresses preview and members' delivery answers carry), `private, no-store`; anyone else gets 404"
+            "description": "the stored `Content-Type`; published: `max-age=60, must-revalidate` with the version's `ETag` (a publish or delete moves this address, D-157) — a matching `If-None-Match` answers 304; a version's sha address is `immutable`. Not yet published: only to a signed-in member or with `?kid=&expires=&signature=` (the addresses preview and members' delivery answers carry), `private, no-store`; anyone else gets 404"
           },
           "404": {
             "content": {
