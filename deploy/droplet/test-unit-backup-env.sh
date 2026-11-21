@@ -46,13 +46,17 @@ STUB
 chmod 0755 /usr/local/bin/colophon /usr/local/bin/colophon-backup-logical
 for u in "${units[@]}"; do install -m 0644 "$u" /etc/systemd/system/; done
 systemctl daemon-reload
-# seen <unit>: start it once (oneshot) and print its stand-in's line.
+# seen <unit>: start it once (oneshot) and print its stand-in's line from THIS start only (by
+# invocation id: a second-resolution --since also caught the previous start's line).
 seen() {
-  local since
-  since=$(date '+%Y-%m-%d %H:%M:%S')
+  local id
   systemctl start "$1" || true
-  journalctl -u "$1" --since "$since" --no-pager -o cat | grep '^seen:' | tail -1
+  id=$(systemctl show "$1" -p InvocationID --value)
+  [[ -n "$id" ]] || return 0
+  journalctl _SYSTEMD_INVOCATION_ID="$id" --no-pager -o cat | grep '^seen:' | tail -1 || true
 }
+# last_journal <unit>: the journal of its last start.
+last_journal() { journalctl _SYSTEMD_INVOCATION_ID="$(systemctl show "$1" -p InvocationID --value)" --no-pager -o cat; }
 
 env_file
 got=$(seen colophon-ledger-export.service)
@@ -67,8 +71,8 @@ echo "  ok    the logical backup is handed the backups' secret, not the media on
 env_file without
 got=$(seen colophon-ledger-export.service)
 [[ -z "$got" ]] || fail "the ledger export ran without COLOPHON_BACKUP_S3_ACCESS_KEY: $got"
-journalctl -u colophon-ledger-export --no-pager -n 20 -o cat | grep -q 'no COLOPHON_BACKUP_S3_ACCESS_KEY' \
-  || fail "no refusal in the journal: $(journalctl -u colophon-ledger-export --no-pager -n 5 -o cat)"
+last_journal colophon-ledger-export | grep -q 'no COLOPHON_BACKUP_S3_ACCESS_KEY' \
+  || fail "no refusal in the journal: $(last_journal colophon-ledger-export | tail -5)"
 echo "  ok    without COLOPHON_BACKUP_S3_ACCESS_KEY the ledger export refuses to start"
 
 grep -q 'backup_s3_secret_key' ../production/colophon.service && fail "the server's unit loads the backups' secret"
