@@ -125,6 +125,12 @@ pub enum DbError {
     /// No answer within the deadline.
     #[error("database did not answer within {0:?}")]
     Timeout(Duration),
+    /// Another non-superuser migration run held the run lock for the whole wait (D-234):
+    /// nothing was changed. Is another `admin migrate` (an upgrade) still running?
+    #[error(
+        "another migration run held the run lock for {0:?}; nothing was changed (is another `colophon admin migrate` running?)"
+    )]
+    RunLocked(Duration),
     /// A unique value (such as a slug) is already taken.
     #[error("already exists")]
     Conflict,

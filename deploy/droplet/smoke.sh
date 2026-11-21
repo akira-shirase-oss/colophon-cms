@@ -76,6 +76,20 @@ if command -v psql >/dev/null && [[ -r "$creds/database_url" ]]; then
   fi
 fi
 
+# A non-superuser migration's grants (D-234) exist only inside its transaction: none may be left.
+# migrate-status reads the owner URL from its file (never a command line) and reports them.
+if command -v colophon >/dev/null && [[ -r "$creds/migration_database_url" ]]; then
+  status=$(colophon admin migrate-status --database-url-file "$creds/migration_database_url" --json 2>/dev/null || true)
+  grants=$(jq -c '.data.grants // empty' <<<"$status" 2>/dev/null || true)
+  if [[ "$grants" == '{"create_on_public":[],"deleter_inherited":false}' ]]; then
+    ok "no migration grant left behind (CREATE on public, the deleter's INHERIT)"
+  elif [[ -z "$grants" ]]; then
+    bad "couldn't read the migration grants from colophon admin migrate-status"
+  else
+    bad "migration grants left behind: $grants (colophon admin migrate removes them; D-234)"
+  fi
+fi
+
 echo "the Studio and delivery, on loopback"
 headers=$(curl -sSI --max-time 5 "$local_url/studio/" || true)
 grep -qiE '^HTTP/[0-9.]+ 200' <<<"$headers" && ok "the Studio answers 200" || bad "the Studio: $(head -1 <<<"$headers")"

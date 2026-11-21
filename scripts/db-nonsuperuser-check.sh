@@ -191,6 +191,80 @@ SQL
   expect "the caller's project and audience after $name's error, caught by a savepoint" "after:$other|members" "$(grep '^after:' <<<"$got")"
 done
 
+# A run held open inside a migration, then killed (D-234): the run's grants are its migration
+# transaction's own. A second database in the same cluster (roles are cluster-wide, as on Neon):
+# _sqlx_migrations made first with sqlx's own DDL and held in SHARE mode, so the run reads it,
+# applies migration 1 (prologue, body, epilogue) and waits at its INSERT, uncommitted.
+SUPER_DB=postgres super -c "CREATE DATABASE colophon_held OWNER neon_owner" >/dev/null
+held_url="postgres://neon_owner:$OWNER_PASSWORD@127.0.0.1:$PORT/colophon_held"
+docker exec -i -e "PGPASSWORD=$OWNER_PASSWORD" "$CONTAINER" psql -h 127.0.0.1 -U neon_owner -d colophon_held -XAtq -v ON_ERROR_STOP=1 -c "
+  CREATE TABLE _sqlx_migrations (version BIGINT PRIMARY KEY, description TEXT NOT NULL,
+    installed_on TIMESTAMPTZ NOT NULL DEFAULT now(), success BOOLEAN NOT NULL, checksum BYTEA NOT NULL,
+    execution_time BIGINT NOT NULL)" >/dev/null
+SUPER_DB=colophon_held super -c "BEGIN; LOCK TABLE _sqlx_migrations IN SHARE MODE; SELECT pg_sleep(60); COMMIT;" >/dev/null 2>&1 &
+holder=$!
+for _ in $(seq 1 50); do
+  [[ "$(SUPER_DB=colophon_held super -c "SELECT count(*) FROM pg_locks l JOIN pg_class c ON c.oid = l.relation WHERE c.relname = '_sqlx_migrations' AND l.mode = 'ShareLock' AND l.granted")" == 1 ]] && break
+  sleep 0.1
+done
+COLOPHON_MIGRATION_DATABASE_URL="$held_url" "$COLOPHON_BIN" admin migrate >"$work/held.out" 2>&1 &
+held_cli=$!
+waiting=0
+for _ in $(seq 1 300); do
+  if [[ "$(SUPER_DB=colophon_held super -c "SELECT count(*) FROM pg_locks l JOIN pg_class c ON c.oid = l.relation WHERE c.relname = '_sqlx_migrations' AND NOT l.granted")" -ge 1 ]]; then waiting=1; break; fi
+  sleep 0.1
+done
+expect "a run held inside its first migration (waiting to record it)" "1" "$waiting"
+# held_leftovers: committed CREATE on public in colophon_held, and the owner inheriting colophon_deleter.
+held_leftovers() {
+  SUPER_DB=colophon_held super -c "
+    SELECT coalesce((SELECT string_agg(r.rolname, ',' ORDER BY r.rolname)
+                     FROM pg_namespace n, aclexplode(coalesce(n.nspacl, acldefault('n', n.nspowner))) a
+                     JOIN pg_roles r ON r.oid = a.grantee
+                     WHERE n.nspname = 'public' AND a.privilege_type = 'CREATE' AND r.rolname LIKE 'colophon\_%'), 'none')
+           || '|deleter inherited:' || coalesce((SELECT bool_or(m.inherit_option)::text FROM pg_auth_members m
+                     WHERE m.roleid = 'colophon_deleter'::regrole AND m.member = 'neon_owner'::regrole), 'none')"
+}
+expect "while it is held, nobody else sees its grants" "none|deleter inherited:false" "$(held_leftovers)"
+got=$(docker exec -i -e "PGPASSWORD=$APP_PASSWORD" "$CONTAINER" psql -h 127.0.0.1 -U colophon_app -d colophon_held -XAtq 2>&1 <<'SQL'
+SET ROLE colophon_delivery;
+CREATE FUNCTION public.planted_by_the_app() RETURNS int LANGUAGE sql AS 'SELECT 1';
+SQL
+)
+if grep -q 'permission denied for schema public' <<<"$got"; then
+  pass "while it is held, colophon_app (SET ROLE colophon_delivery) can't create in public"
+else
+  fail "while it is held, colophon_app created in public: ${got:-no error}"
+fi
+kill -9 "$held_cli" 2>/dev/null || true
+wait "$held_cli" 2>/dev/null || true
+# The killed run's backend goes with its client; wait for it before looking.
+for _ in $(seq 1 50); do
+  [[ "$(SUPER_DB=colophon_held super -c "SELECT count(*) FROM pg_stat_activity WHERE datname = 'colophon_held' AND usename = 'neon_owner'")" == 0 ]] && break
+  sleep 0.1
+done
+expect "after the run is killed: no grant left behind" "none|deleter inherited:false" "$(held_leftovers)"
+SUPER_DB=postgres super -c "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = 'colophon_held' AND query LIKE '%pg_sleep(60)%'" >/dev/null
+wait "$holder" 2>/dev/null || true
+code=0
+out=$(COLOPHON_MIGRATION_DATABASE_URL="$held_url" "$COLOPHON_BIN" admin migrate 2>&1) || code=$?
+if [[ "$code" == 0 ]]; then pass "the next run completes"; else fail "the next run (exit $code): $(tail -3 <<<"$out")"; fi
+expect "after the next run: no grant left behind" "none|deleter inherited:false" "$(held_leftovers)"
+
+# Leftovers that got past all that (a hand-made grant, an older build's crash): migrate-status
+# reports them, and the next run's sweep removes them.
+super -c "GRANT CREATE ON SCHEMA public TO colophon_delivery, colophon_worker" >/dev/null
+docker exec -i -e "PGPASSWORD=$OWNER_PASSWORD" "$CONTAINER" psql -h 127.0.0.1 -U neon_owner -d colophon -XAtq -v ON_ERROR_STOP=1 \
+  -c "GRANT colophon_deleter TO neon_owner WITH INHERIT TRUE" >/dev/null
+cli admin migrate-status --json
+expect "migrate-status reports the leftover CREATE on public" '["colophon_delivery","colophon_worker"]' "$(jq -c '.data.grants.create_on_public' <<<"$out" 2>/dev/null)"
+expect "migrate-status reports the owner inheriting colophon_deleter" "true" "$(jq -c '.data.grants.deleter_inherited' <<<"$out" 2>/dev/null)"
+cli admin migrate
+if [[ "$code" == 0 ]]; then pass "admin migrate with leftovers"; else fail "admin migrate with leftovers (exit $code): $(tail -3 <<<"$out")"; fi
+grants_after "after a run swept leftovers"
+cli admin migrate-status --json
+expect "migrate-status after the sweep" '{"create_on_public":[],"deleter_inherited":false}' "$(jq -c '.data.grants' <<<"$out" 2>/dev/null)"
+
 if [[ "$failures" -gt 0 ]]; then
   echo "non-superuser install: $failures of $checks checks failed" >&2
   exit 1

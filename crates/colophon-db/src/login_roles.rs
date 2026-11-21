@@ -150,6 +150,11 @@ pub enum InitError {
     /// The database refused or failed.
     #[error(transparent)]
     Db(#[from] DbError),
+    /// The retry with the password as text (Neon, D-234) failed too. That statement held the
+    /// password, and PostgreSQL logs a failed statement's text (`log_min_error_statement`), so it
+    /// may be in the database server's log: the password must be replaced.
+    #[error("the roles couldn't be created with the password as text either; that statement may be in the database server's log with the password in it: rotate the application's password (a new app_password file, then init-roles again)")]
+    TextPasswordFailed(#[source] DbError),
 }
 
 /// Creates every missing role and grants the memberships, in one transaction on the
@@ -166,7 +171,12 @@ pub async fn init(
         // The whole transaction rolled back with the refused statement; running again is safe,
         // as every run is (existing roles are left as they are).
         Err(InitError::Db(DbError::Query(error))) if refuses_verifier_error(&error) => {
-            init_as(pool, app_password, backup_password, PasswordForm::Text).await
+            init_as(pool, app_password, backup_password, PasswordForm::Text)
+                .await
+                .map_err(|error| match error {
+                    InitError::Db(error) => InitError::TextPasswordFailed(error),
+                    other => other,
+                })
         }
         outcome => outcome,
     }
@@ -305,6 +315,9 @@ pub async fn init_as(
         // A migrator that isn't a superuser (Neon's owner) hands objects to these roles and
         // replaces theirs: it needs SET and INHERIT on each (D-234).
         crate::nonsuperuser::ensure_memberships(&mut tx).await?;
+        // The backstop (D-234): no colophon role keeps CREATE on public, and the deleter
+        // membership stays as migration 0048 defines it.
+        crate::nonsuperuser::sweep(&mut tx).await?;
     }
     tx.commit().await.map_err(DbError::from_query)?;
     Ok(outcomes)

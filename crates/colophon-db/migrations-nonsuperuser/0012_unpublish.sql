@@ -85,6 +85,7 @@ BEGIN
     PERFORM set_config('app.project_id', coalesce(caller_project_id, ''), true);
 END
 $$;
+COMMENT ON FUNCTION delivery_environment(uuid, text) IS 'D-234 non-superuser substitute: the caller''s app.* settings are captured and restored in the body instead of a SET clause (colophon_db::nonsuperuser)';
 
 ALTER FUNCTION delivery_environment(uuid, text) OWNER TO colophon_delivery;
 REVOKE ALL ON FUNCTION delivery_environment(uuid, text) FROM PUBLIC;
