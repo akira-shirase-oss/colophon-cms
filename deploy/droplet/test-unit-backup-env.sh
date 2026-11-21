@@ -46,17 +46,18 @@ STUB
 chmod 0755 /usr/local/bin/colophon /usr/local/bin/colophon-backup-logical
 for u in "${units[@]}"; do install -m 0644 "$u" /etc/systemd/system/; done
 systemctl daemon-reload
-# seen <unit>: start it once (oneshot) and print its stand-in's line from THIS start only (by
-# invocation id: a second-resolution --since also caught the previous start's line).
+# seen <unit>: start it once (oneshot) and print its stand-in's line from THIS start only: the
+# journal after a cursor taken just before (a second-resolution --since caught the previous start's
+# line, and a finished oneshot unit no longer reports its InvocationID). LAST_JOURNAL keeps the
+# start's whole journal.
 seen() {
-  local id
+  local cursor
+  cursor=$(journalctl -n 1 -o cat --show-cursor --no-pager 2>/dev/null | sed -n 's/^-- cursor: //p' | tail -1)
   systemctl start "$1" || true
-  id=$(systemctl show "$1" -p InvocationID --value)
-  [[ -n "$id" ]] || return 0
-  journalctl _SYSTEMD_INVOCATION_ID="$id" --no-pager -o cat | grep '^seen:' | tail -1 || true
+  if [[ -n "$cursor" ]]; then LAST_JOURNAL=$(journalctl -u "$1" --after-cursor="$cursor" --no-pager -o cat)
+  else LAST_JOURNAL=$(journalctl -u "$1" --no-pager -o cat); fi
+  grep '^seen:' <<<"$LAST_JOURNAL" | tail -1 || true
 }
-# last_journal <unit>: the journal of its last start.
-last_journal() { journalctl _SYSTEMD_INVOCATION_ID="$(systemctl show "$1" -p InvocationID --value)" --no-pager -o cat; }
 
 env_file
 got=$(seen colophon-ledger-export.service)
@@ -71,8 +72,8 @@ echo "  ok    the logical backup is handed the backups' secret, not the media on
 env_file without
 got=$(seen colophon-ledger-export.service)
 [[ -z "$got" ]] || fail "the ledger export ran without COLOPHON_BACKUP_S3_ACCESS_KEY: $got"
-last_journal colophon-ledger-export | grep -q 'no COLOPHON_BACKUP_S3_ACCESS_KEY' \
-  || fail "no refusal in the journal: $(last_journal colophon-ledger-export | tail -5)"
+grep -q 'no COLOPHON_BACKUP_S3_ACCESS_KEY' <<<"$LAST_JOURNAL" \
+  || fail "no refusal in the journal: $(tail -5 <<<"$LAST_JOURNAL")"
 echo "  ok    without COLOPHON_BACKUP_S3_ACCESS_KEY the ledger export refuses to start"
 
 grep -q 'backup_s3_secret_key' ../production/colophon.service && fail "the server's unit loads the backups' secret"
