@@ -629,7 +629,9 @@ fn is_blank(character: char) -> bool {
 mod tests {
     use serde_json::{Value, json};
 
-    use super::super::{MAX_BYTES, MAX_DEPTH, MAX_IMAGES, MAX_NODES, RejectCode, validate};
+    use super::super::{
+        MAX_ALT_CHARS, MAX_BYTES, MAX_DEPTH, MAX_IMAGES, MAX_NODES, RejectCode, validate,
+    };
 
     fn doc(content: &Value) -> Value {
         json!({ "schema": "colophon/rich-text", "version": 1, "doc": { "type": "doc", "content": content } })
@@ -719,6 +721,43 @@ mod tests {
             Err(RejectCode::TooLarge)
         );
         assert!(grown <= MAX_BYTES, "grew to {grown} bytes before refusing");
+    }
+
+    /// Review 2026-11-21: the raw length fits, the escaped one doesn't. Text just under the
+    /// limit of control characters escapes to six times its size; it must be refused before
+    /// it is written, not after.
+    #[test]
+    fn text_that_fits_raw_but_not_escaped_is_refused_before_it_is_written() {
+        let text = "\u{1}".repeat(MAX_BYTES - 1024);
+        let value =
+            doc(&json!([{ "type": "paragraph", "content": [{ "type": "text", "text": text }] }]));
+        let (result, grown) = super::run(&value);
+        assert_eq!(
+            result.map(|_| ()).map_err(|rejection| rejection.code),
+            Err(RejectCode::TooLarge)
+        );
+        assert!(grown <= MAX_BYTES, "grew to {grown} bytes before refusing");
+    }
+
+    /// The same for what a count bounds only per node: one image named again and again, each
+    /// time with an alt of control characters, grows by about 1.8 KB a node; the canonical
+    /// text stops near the limit instead of reaching `MAX_NODES` of them.
+    #[test]
+    fn many_escaped_attributes_stop_near_the_limit() {
+        let alt = format!("a{}", "\u{1}".repeat(MAX_ALT_CHARS - 1));
+        let image = json!({ "type": "image", "attrs": {
+            "assetId": "0199f0a2-6c1e-7b3a-9d42-5e8f1a2b3c4e", "alt": alt
+        }});
+        let value = doc(&Value::Array(vec![image; 2_000]));
+        let (result, grown) = super::run(&value);
+        assert_eq!(
+            result.map(|_| ()).map_err(|rejection| rejection.code),
+            Err(RejectCode::TooLarge)
+        );
+        assert!(
+            grown <= MAX_BYTES + 16 * 1024,
+            "grew to {grown} bytes before refusing"
+        );
     }
 
     #[test]
