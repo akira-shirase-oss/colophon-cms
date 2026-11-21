@@ -34,18 +34,22 @@ concurrency:
   group: perf-compare-${{ inputs.suite }}
   cancel-in-progress: false
 
+# Every job's first step is the outgoing-port guard, ahead of checkout and before anything can open a socket:
+# Linux hands outgoing connections local ports from 32768 to 60999, which includes every fixed port CI listens
+# on (the stack's and its test servers', 53900 and up). k6 took 58090 first ("address in use", twice), and a
+# loopback client took the credential test's 56398 (CI 44868206132). scripts/test-ci-ports.sh keeps it so.
 jobs:
   compare:
     name: compare (${{ inputs.suite }})
     runs-on: ubuntu-latest
     timeout-minutes: 150
     steps:
+      - name: Keep outgoing ports below the stack's
+        run: sudo sysctl -w net.ipv4.ip_local_port_range="20000 50999"
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
           fetch-depth: 0
-      - name: Keep outgoing ports below the stack's
-        run: sudo sysctl -w net.ipv4.ip_local_port_range="20000 50999"
       - name: Start the stack
         run: scripts/stack.sh up
       - name: Install the pinned toolchain
