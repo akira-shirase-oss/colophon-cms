@@ -183,11 +183,15 @@ real proof (SAAS_PLAN "Neon"), and weakening it is not the fix.
 `init-roles` gives `colophon_app`'s password as text when Neon refuses a SCRAM verifier ("Neon
 only supports being given plaintext passwords"; over this `verify-full` connection), and grants
 the owner SET and INHERIT on Colophon's roles; `migrate` runs four migrations (0011, 0012, 0051,
-0082) from substitutes that need no superuser, and gives the owner roles CREATE on `public` for
-the run only. The database records the same migrations and checksums as a superuser's install,
-so `admin migrate-status` reads them alike. Proved on a fresh cluster with such an owner by
-`scripts/db-nonsuperuser-check.sh` (in CI). Migration 0048 turns the owner's INHERIT on
-`colophon_deleter` off on purpose; nothing turns it back on.
+0082) from substitutes that need no superuser, and gives the owner roles CREATE on `public`
+**inside each migration's own transaction only**: no other session ever sees it, and a run that
+dies (a dropped connection, a kill) takes it with its rollback. The database records the same
+migrations and checksums as a superuser's install, so `admin migrate-status` reads them alike;
+it also reports any colophon role holding CREATE on `public`, or the owner inheriting
+`colophon_deleter`, and `smoke.sh` fails on either (`admin migrate` removes both). Proved on a
+fresh cluster with such an owner by `scripts/db-nonsuperuser-check.sh` (in CI), a run killed
+mid-migration included. Migration 0048 turns the owner's INHERIT on `colophon_deleter` off on
+purpose; nothing leaves it on.
 
 To look at the database with `psql` itself, add `&sslrootcert=system` to the URL: libpq checks
 `verify-full` against `~/.postgresql/root.crt` unless told to use the system's roots (Colophon's

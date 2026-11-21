@@ -14,8 +14,10 @@ through `--version` and `GET /version`.
   init-roles` gives a login role's password as text when the server refuses a verifier (Neon: "only supports being
   given plaintext passwords"), over the connection's `verify-full` TLS, and grants the owner SET and INHERIT on
   Colophon's roles. `colophon admin migrate` runs four migrations (0011, 0012, 0051, 0082) from substitutes that pin
-  no custom setting on a function, with the rights the run needs granted for the run only; the database records the
-  same migrations and checksums as a superuser's install. A superuser's install is unchanged.
+  no custom setting on a function, with the rights each migration needs granted inside that migration's own
+  transaction (never visible to the application, gone with a crash's rollback); the database records the same
+  migrations and checksums as a superuser's install, and `admin migrate-status` reports any such right left outside
+  a migration (`smoke.sh` fails on it). A superuser's install is unchanged.
 
 ### Fixed
 
