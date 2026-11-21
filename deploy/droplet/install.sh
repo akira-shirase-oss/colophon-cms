@@ -16,6 +16,8 @@ export COLOPHON_VERSION="${COLOPHON_VERSION:-0.1.0-alpha.3}"
 here=$(cd "$(dirname "$0")" && pwd)
 # shellcheck source=deploy/droplet/public-host.sh
 . "$here/public-host.sh"
+# shellcheck source=deploy/droplet/r2-keys.sh
+. "$here/r2-keys.sh"
 CREDS=/etc/colophon/credentials
 ENV_FILE=/etc/colophon/colophon.env
 answers="${COLOPHON_INSTALL_ANSWERS:-}"
@@ -185,13 +187,27 @@ step "5. settings and the R2 secret"
 hex32() { [[ "$2" =~ ^[0-9a-f]{32}$ ]] || { rm -f "/etc/colophon/install/$1"; echo "refusing: $1 must be 32 lowercase hex characters (asked again on the next run)" >&2; exit 1; }; }
 account=$(value r2_account_id "Your Cloudflare account id (R2)"); hex32 r2_account_id "$account"
 access=$(value r2_access_key_id "The media R2 token's access key id (Object Read & Write on colophon-media only)"); hex32 r2_access_key_id "$access"
-backup_access=$(value r2_backup_access_key_id "The backups R2 token's access key id (Object Read & Write on colophon-backups only)"); hex32 r2_backup_access_key_id "$backup_access"
-[[ "$access" != "$backup_access" ]] || { rm -f /etc/colophon/install/r2_backup_access_key_id; echo "refusing: the backups need their own R2 token, not the media one (CREATE.md)" >&2; exit 1; }
+if r2_backup_shared /etc/colophon/install; then
+  # One token on both buckets, by the operator's choice (r2-keys.sh): the backups' files hold the media token's,
+  # so the backup units read their usual files and a rotated media token reaches them on the next run.
+  backup_access=$access
+  printf '%s' "$access" >/etc/colophon/install/r2_backup_access_key_id
+else
+  backup_access=$(value r2_backup_access_key_id "The backups R2 token's access key id (Object Read & Write on colophon-backups only)"); hex32 r2_backup_access_key_id "$backup_access"
+fi
 grep -q '^COLOPHON_BACKUP_S3_ACCESS_KEY=' "$ENV_FILE" || echo 'COLOPHON_BACKUP_S3_ACCESS_KEY=<r2-backup-access-key-id>' >>"$ENV_FILE"
 sed -i "s#<r2-account-id>#$account#; s#<r2-access-key-id>#$access#; s#<r2-backup-access-key-id>#$backup_access#" "$ENV_FILE"
 ask "$CREDS/s3_secret_key" "The media R2 token's secret access key"
-ask "$CREDS/backup_s3_secret_key" "The backups R2 token's secret access key"
-cmp -s "$CREDS/s3_secret_key" "$CREDS/backup_s3_secret_key" && { echo "refusing: the backups' R2 secret is the media one; make the backups their own token (CREATE.md)" >&2; exit 1; }
+if r2_backup_shared /etc/colophon/install; then
+  (umask 077; rm -f "$CREDS/backup_s3_secret_key"; cp "$CREDS/s3_secret_key" "$CREDS/backup_s3_secret_key"); chmod 0400 "$CREDS/backup_s3_secret_key"
+else
+  ask "$CREDS/backup_s3_secret_key" "The backups R2 token's secret access key"
+fi
+if ! r2_backup_check "$access" "$backup_access" "$CREDS/s3_secret_key" "$CREDS/backup_s3_secret_key" /etc/colophon/install; then
+  # Two tokens expected and the backups' id or secret is the media one: ask for them again on the next run.
+  r2_backup_shared /etc/colophon/install || rm -f /etc/colophon/install/r2_backup_access_key_id "$CREDS/backup_s3_secret_key"
+  exit 1
+fi
 # The hostname is one setting: COLOPHON_PUBLIC_URL. Caddy's site address and the links below follow it.
 public=$(public_url "$ENV_FILE") || { echo "refusing: fix COLOPHON_PUBLIC_URL in $ENV_FILE, then run this again" >&2; exit 1; }
 host=${public#https://}
