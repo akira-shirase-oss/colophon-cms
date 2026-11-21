@@ -257,7 +257,7 @@ async fn row_security_is_forced_again_on_projects_and_memberships_after_0087() {
 /// application role may UPDATE projects at all. THREAT: a later feature that grants UPDATE on
 /// projects (a rename, say) would let an account move a project onto another account's cap and
 /// quotas, or off its own. That feature must fail here first, and add a column-level refusal (a
-/// trigger) for owner_account before this test may change.
+/// trigger) for `owner_account` before this test may change.
 #[tokio::test]
 #[ignore = "needs the stack and scripts/migrate.sh"]
 async fn no_application_role_may_update_a_project_s_owner_account() {

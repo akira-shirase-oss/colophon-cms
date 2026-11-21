@@ -1,4 +1,4 @@
-//! Self-serve tenant isolation (D-235, SAAS_PLAN S1's exit gate): two accounts that are no
+//! Self-serve tenant isolation (D-235, `SAAS_PLAN` S1's exit gate): two accounts that are no
 //! administrators each create a project of their own on an installation with open registration
 //! (the development stack's). Each sees and changes only its own, through every API family —
 //! management, content, assets, MCP, audience administration, previews, destinations, tokens,
