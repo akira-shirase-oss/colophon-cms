@@ -47,6 +47,71 @@ pub async fn begin_tx(pool: &PgPool) -> Result<Transaction<'static, Postgres>, s
     detached(async move { pool.begin().await }).await
 }
 
+/// The longest one statement of a background unit (a sweep, a fold, a pump pass) may run, and
+/// the longest it may wait on a lock: both under the server's 5 s cleanup deadline.
+pub const BACKGROUND_STATEMENT_TIMEOUT: Duration = Duration::from_secs(4);
+/// See [`BACKGROUND_STATEMENT_TIMEOUT`]. Shorter, so a unit queued behind a held row errors as
+/// a lock wait, not as a slow statement; not so short that ordinary contention fails a sweep.
+pub const BACKGROUND_LOCK_TIMEOUT: Duration = Duration::from_secs(3);
+
+/// Bounds `transaction` as a background unit's: its statements end at
+/// [`BACKGROUND_STATEMENT_TIMEOUT`] and its lock waits at [`BACKGROUND_LOCK_TIMEOUT`], server
+/// side. A background loop never drops a unit to stop it (a COMMIT cancelled in flight queues
+/// a `ROLLBACK` the server answers with "there is no transaction in progress", and leaves
+/// whether the work committed unknown); it lets the unit finish, and these bounds are what
+/// keep that finite: a stuck unit fails with an error and is rolled back, on its own.
+pub async fn bound_background(
+    transaction: &mut Transaction<'_, Postgres>,
+) -> Result<(), sqlx::Error> {
+    sqlx::query(
+        "SELECT set_config('statement_timeout', $1, true), set_config('lock_timeout', $2, true)",
+    )
+    .bind(BACKGROUND_STATEMENT_TIMEOUT.as_millis().to_string())
+    .bind(BACKGROUND_LOCK_TIMEOUT.as_millis().to_string())
+    .execute(&mut **transaction)
+    .await?;
+    Ok(())
+}
+
+/// Asked between a multi-statement background unit's statements: has its loop been told to
+/// stop? [`BACKGROUND_STATEMENT_TIMEOUT`] bounds one statement, not a unit of many, so a unit
+/// that runs several (the table sweep's passes, the budget reconciler, the hint pump) checks
+/// this before each after its first and, told to stop, ends with an explicit `ROLLBACK`
+/// (`transactions::stopped`): after a stop it runs at most the one statement it was in, inside the
+/// server's cleanup deadline. A loop that isn't stopping passes [`Stop::NEVER`] in effect.
+#[derive(Clone, Copy)]
+pub struct Stop<'a>(&'a (dyn Fn() -> bool + Send + Sync));
+
+fn never() -> bool {
+    false
+}
+
+impl<'a> Stop<'a> {
+    /// Never stops: for a caller with no loop to stop (a test, a one-off).
+    pub const NEVER: Stop<'static> = Stop(&never);
+
+    /// Stops once `requested` says so.
+    pub const fn new(requested: &'a (dyn Fn() -> bool + Send + Sync)) -> Self {
+        Self(requested)
+    }
+
+    /// Whether a stop has been requested.
+    pub fn requested(&self) -> bool {
+        (self.0)()
+    }
+}
+
+/// Ends a unit [`Stop`] told to stop: rolls `transaction` back, explicitly, and says so.
+pub(crate) async fn stopped<T>(
+    transaction: Transaction<'static, Postgres>,
+) -> Result<T, crate::DbError> {
+    transaction
+        .rollback()
+        .await
+        .map_err(crate::DbError::from_query)?;
+    Err(crate::DbError::Stopped)
+}
+
 /// Begins a `REPEATABLE READ` transaction: one snapshot for all its reads.
 pub async fn begin_tx_snapshot(
     pool: &PgPool,

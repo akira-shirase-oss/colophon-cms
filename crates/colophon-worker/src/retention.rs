@@ -21,13 +21,29 @@ const ENQUEUE: i64 = 200;
 /// How many objects under `quarantine/` one pass inspects; the rest wait for the next.
 const ORPHANS: usize = 500;
 
-/// The longest a pass may take: a stall anywhere inside is abandoned and retried whole next
-/// interval, every effect it made being idempotent.
+/// The longest a pass spends on the object store: past it, or once `cancel` fires, the pass
+/// stops listing and removing objects and the next carries on, every removal being idempotent.
+/// Its database steps are never cut short (a transaction dropped mid-COMMIT leaves unknown
+/// whether it committed): they run to their end, bounded server side
+/// ([`colophon_db::bound_background`]).
 const PASS_DEADLINE: Duration = Duration::from_secs(120);
 
+/// `work` (object-store I/O, never a database call), unless `cancel` fires or `deadline`
+/// passes first: then `None`, and the work is dropped, which nothing can be left half done by.
+async fn stoppable<T>(
+    cancel: &CancellationToken,
+    deadline: tokio::time::Instant,
+    work: impl std::future::Future<Output = T>,
+) -> Option<T> {
+    tokio::select! {
+        () = cancel.cancelled() => None,
+        () = tokio::time::sleep_until(deadline) => None,
+        done = work => Some(done),
+    }
+}
+
 /// Runs the sweep: `enqueue_expired` every `interval`, then the orphan listing, until `cancel`
-/// fires. A pass in progress when the deadline hits is dropped mid-await — safe, because its
-/// INSERT is one statement and its object removals are idempotent.
+/// fires.
 pub struct Sweeper {
     pool: PgPool,
     store: colophon_media::Shared,
@@ -54,16 +70,18 @@ impl Sweeper {
         }
     }
 
-    /// Passes until `cancel` fires; between items a cancellation is heard at the next await.
+    /// Passes until `cancel` fires; a pass under way finishes its database step and stops at
+    /// its next object.
     pub async fn run(self, cancel: CancellationToken) {
         tracing::info!("asset retention sweep started");
         loop {
-            let pass = tokio::select! {
-                () = cancel.cancelled() => break,
-                pass = tokio::time::timeout(PASS_DEADLINE, self.pass()) => pass,
-            };
-            if pass.is_err() {
-                tracing::warn!("an asset sweep pass ran out of time; trying again next pass");
+            if cancel.is_cancelled() {
+                break;
+            }
+            let deadline = tokio::time::Instant::now() + PASS_DEADLINE;
+            self.pass(&cancel, deadline).await;
+            if tokio::time::Instant::now() >= deadline {
+                tracing::warn!("an asset sweep pass ran out of time; carrying on next pass");
             }
             tokio::select! {
                 () = cancel.cancelled() => break,
@@ -77,7 +95,7 @@ impl Sweeper {
     /// adds against the room the installation's payload bound leaves (D-135): the jobs it
     /// commits carry their assets' recorded sizes as payload metadata, so a sweep must
     /// never be the admitter that tips the bound over.
-    async fn pass(&self) {
+    async fn pass(&self, cancel: &CancellationToken, stop_at: tokio::time::Instant) {
         let cutoff = OffsetDateTime::now_utc() - self.expiry;
         let deadline = OffsetDateTime::now_utc() + self.job_lifetime;
         let room = match colophon_db::work::install_payload(&self.pool).await {
@@ -101,8 +119,8 @@ impl Sweeper {
                 }
             }
         }
-        self.orphans(cutoff).await;
-        self.public_orphans(cutoff).await;
+        self.orphans(cutoff, cancel, stop_at).await;
+        self.public_orphans(cutoff, cancel, stop_at).await;
     }
 
     /// At most [`ORPHANS`] objects under `public/`: removes each older than `cutoff` which no
@@ -112,13 +130,23 @@ impl Sweeper {
     /// attempt deadline, far inside `expiry`, so the age guard is what keeps a landing
     /// mid-write safe; a deleted asset's objects are gone by its delete job already, and a
     /// live version's key is always recorded, so nothing served is ever listed here.
-    async fn public_orphans(&self, cutoff: OffsetDateTime) {
+    async fn public_orphans(
+        &self,
+        cutoff: OffsetDateTime,
+        cancel: &CancellationToken,
+        deadline: tokio::time::Instant,
+    ) {
         let cutoff_ms =
             i64::try_from(cutoff.unix_timestamp_nanos() / 1_000_000).unwrap_or(i64::MIN);
         let prefix = object_store::path::Path::from("public");
         let mut objects = self.store.list(Some(&prefix)).take(ORPHANS);
         let mut stale: Vec<object_store::path::Path> = Vec::new();
-        while let Some(object) = objects.next().await {
+        loop {
+            // Stopped (cancel or deadline): nothing was removed yet, so nothing is lost.
+            let Some(next) = stoppable(cancel, deadline, objects.next()).await else {
+                return;
+            };
+            let Some(object) = next else { break };
             match object {
                 Ok(meta) => {
                     if meta.last_modified.timestamp_millis() < cutoff_ms {
@@ -148,7 +176,10 @@ impl Sweeper {
             if !unrecorded.contains(path.as_ref()) {
                 continue;
             }
-            match self.store.delete(&path).await {
+            let Some(removed) = stoppable(cancel, deadline, self.store.delete(&path)).await else {
+                return;
+            };
+            match removed {
                 Ok(()) | Err(object_store::Error::NotFound { .. }) => {}
                 Err(error) => tracing::warn!(
                     key = %path,
@@ -164,13 +195,23 @@ impl Sweeper {
     /// so leftovers of verified, rejected and deleting assets go too, not only objects no row
     /// ever recorded (D-099). An object younger than `expiry` is never touched, which is what
     /// protects an upload mid-verify: the row's verdict takes less than `expiry` either way.
-    async fn orphans(&self, cutoff: OffsetDateTime) {
+    async fn orphans(
+        &self,
+        cutoff: OffsetDateTime,
+        cancel: &CancellationToken,
+        deadline: tokio::time::Instant,
+    ) {
         let cutoff_ms =
             i64::try_from(cutoff.unix_timestamp_nanos() / 1_000_000).unwrap_or(i64::MIN);
         let prefix = object_store::path::Path::from("quarantine");
         let mut objects = self.store.list(Some(&prefix)).take(ORPHANS);
         let mut stale: Vec<object_store::path::Path> = Vec::new();
-        while let Some(object) = objects.next().await {
+        loop {
+            // Stopped (cancel or deadline): nothing was removed yet, so nothing is lost.
+            let Some(next) = stoppable(cancel, deadline, objects.next()).await else {
+                return;
+            };
+            let Some(object) = next else { break };
             match object {
                 Ok(meta) => {
                     if meta.last_modified.timestamp_millis() < cutoff_ms {
@@ -197,7 +238,10 @@ impl Sweeper {
             if kept.contains(path.as_ref()) {
                 continue;
             }
-            match self.store.delete(&path).await {
+            let Some(removed) = stoppable(cancel, deadline, self.store.delete(&path)).await else {
+                return;
+            };
+            match removed {
                 Ok(()) | Err(object_store::Error::NotFound { .. }) => {}
                 Err(error) => tracing::warn!(
                     key = %path,

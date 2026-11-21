@@ -197,9 +197,21 @@ Each pool is a separate semaphore, so expensive work can never starve editorial 
 ### Retention (spec §27, D-135)
 - `colophon_worker::tables::Sweeper` runs beside the delivery loop and the scheduler on the worker's pool,
   ticking every `COLOPHON_TABLE_SWEEP_MS` (default 3_600_000 — hourly; 1 s to 24 h accepted). Each tick runs
-  `colophon_db::retention::sweep` up to 20 times, stopping when a pass removed nothing; a stalled tick is
-  abandoned at a 120-second deadline and retried whole next interval — every pass commits on its own, so a
-  partial tick is progress kept, never work to undo.
+  `colophon_db::retention::sweep` up to 20 times, stopping when a pass removed nothing; a tick starts no
+  pass after 120 seconds and the next interval carries on — every pass commits on its own, so a partial tick
+  is progress kept, never work to undo.
+- **Stopping never drops a transaction.** Every background loop (the delivery sweeps, the payload fold,
+  this sweep, the asset retention pass, the change-hint pump) hears a stop only between its units: the
+  unit under way runs to its end, since a unit dropped mid-COMMIT would leave unknown whether it committed
+  (the server logs "there is no transaction in progress" for the ROLLBACK queued behind it). Each unit's
+  transaction is bounded server side by `colophon_db::bound_background` (statements 4 s, lock waits 3 s).
+  Those bound one statement, not a unit, so a unit of several (the table sweep's ~20, the budget
+  reconciler's 3, the hint pump's 2) also takes a `colophon_db::Stop` and checks it before each statement
+  after its first: told to stop, it rolls back explicitly (`DbError::Stopped`, logged as nothing) and its
+  loop runs it again next start. The rest have one statement that can wait (the fold's tick, each expire,
+  the expiry enqueue). So after a stop every unit runs at most the one statement it is in, under 4 s,
+  inside D-197's 5-second cleanup budget. Only object-store I/O, which no transaction holds, is still cut
+  short by a stop. `tests/stopping.rs` proves it.
 - One pass is one `colophon_worker` transaction, at most `retention::BATCH` (500) rows a table, oldest
   first, in an order that orphans nothing mid-pass: settled `budget_reservations`, then `observations`,
   then terminal `jobs`/`asset_jobs`, then `bulk_items`/`bulk_jobs`, `migration_items`/`migration_plans`,

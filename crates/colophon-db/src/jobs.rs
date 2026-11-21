@@ -105,6 +105,10 @@ pub struct Claimed {
 /// sweeps and a supersede, each locking rows in its own order, deadlocked).
 pub async fn expire(pool: &PgPool) -> Result<u64, DbError> {
     let mut transaction = worker(pool).await?;
+    // A background unit: bounded server side, so a stop can let it finish.
+    crate::bound_background(&mut transaction)
+        .await
+        .map_err(DbError::from_query)?;
     let expired = sqlx::query!(
         "WITH due AS (
              SELECT project_id, environment_id, id FROM jobs

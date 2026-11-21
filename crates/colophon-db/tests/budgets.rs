@@ -693,7 +693,9 @@ async fn the_reconciler_closes_the_dead_and_flags_the_stuck() {
     .await
     .expect("a stale held reservation");
 
-    let done = budgets::reconcile(&db.app).await.expect("reconciled");
+    let done = budgets::reconcile(&db.app, colophon_db::Stop::NEVER)
+        .await
+        .expect("reconciled");
     assert_eq!(
         (done.released, done.uncertain),
         (1, 1),
@@ -730,7 +732,9 @@ async fn the_reconciler_closes_the_dead_and_flags_the_stuck() {
             .any(|row| row.id == lone && row.state == "uncertain"),
         "{ledger:?}"
     );
-    let again = budgets::reconcile(&db.app).await.expect("reconciled");
+    let again = budgets::reconcile(&db.app, colophon_db::Stop::NEVER)
+        .await
+        .expect("reconciled");
     assert_eq!((again.released, again.uncertain), (0, 0));
     owner.close().await;
     db.drop().await;

@@ -507,9 +507,14 @@ async fn a_pass_removes_dead_state_but_never_what_is_still_named() {
     .await
     .expect("setup code");
 
-    let swept = retention::sweep(&db.app, &Retention::DEFAULT, BATCH)
-        .await
-        .expect("sweep");
+    let swept = retention::sweep(
+        &db.app,
+        &Retention::DEFAULT,
+        BATCH,
+        colophon_db::Stop::NEVER,
+    )
+    .await
+    .expect("sweep");
 
     assert_eq!(swept.reservations, 2, "the two 100-day ledger rows age out");
     assert_eq!(
@@ -578,9 +583,14 @@ async fn a_pass_removes_dead_state_but_never_what_is_still_named() {
 
     // A second pass finds nothing: every delete is unconditional, so an empty pass is the
     // steady state, not a stall.
-    let again = retention::sweep(&db.app, &Retention::DEFAULT, BATCH)
-        .await
-        .expect("second sweep");
+    let again = retention::sweep(
+        &db.app,
+        &Retention::DEFAULT,
+        BATCH,
+        colophon_db::Stop::NEVER,
+    )
+    .await
+    .expect("second sweep");
     assert_eq!(again.total(), 0, "nothing left to remove");
 
     db.drop().await;
@@ -615,9 +625,14 @@ async fn dead_magic_links_are_swept_and_live_ones_kept() {
         .await
         .expect("a link");
     }
-    let swept = retention::sweep(&db.app, &Retention::DEFAULT, BATCH)
-        .await
-        .expect("swept");
+    let swept = retention::sweep(
+        &db.app,
+        &Retention::DEFAULT,
+        BATCH,
+        colophon_db::Stop::NEVER,
+    )
+    .await
+    .expect("swept");
     assert_eq!(
         swept.magic_links, 1,
         "only the link dead for a day: {swept:?}"
@@ -661,9 +676,14 @@ async fn idle_sign_in_keys_are_swept_and_live_ones_kept() {
         .await
         .expect("a key");
     }
-    let swept = retention::sweep(&db.app, &Retention::DEFAULT, BATCH)
-        .await
-        .expect("swept");
+    let swept = retention::sweep(
+        &db.app,
+        &Retention::DEFAULT,
+        BATCH,
+        colophon_db::Stop::NEVER,
+    )
+    .await
+    .expect("swept");
     assert_eq!(swept.sign_in_throttle, 2, "{swept:?}");
     let left: Vec<String> =
         sqlx::query_scalar("SELECT address FROM sign_in_throttle ORDER BY address")
@@ -706,9 +726,14 @@ async fn tables_strangers_grow_are_swept_ten_batches_a_pass() {
     .execute(&owner)
     .await
     .expect("idle keys");
-    let swept = retention::sweep(&db.app, &Retention::DEFAULT, BATCH)
-        .await
-        .expect("swept");
+    let swept = retention::sweep(
+        &db.app,
+        &Retention::DEFAULT,
+        BATCH,
+        colophon_db::Stop::NEVER,
+    )
+    .await
+    .expect("swept");
     assert_eq!(
         (swept.magic_links, swept.sign_in_throttle),
         (5_000, 5_000),

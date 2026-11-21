@@ -146,6 +146,10 @@ pub async fn reconcile_payload(pool: &sqlx::PgPool) -> Result<(i64, i64, i64), D
 /// It runs as `colophon_worker`, the role the fold belongs to.
 pub async fn fold_payload(pool: &sqlx::PgPool) -> Result<Option<i64>, DbError> {
     let mut transaction = crate::begin_tx(pool).await.map_err(DbError::from_query)?;
+    // A background unit: bounded server side, so a stop can let it finish.
+    crate::bound_background(&mut transaction)
+        .await
+        .map_err(DbError::from_query)?;
     sqlx::query("SET LOCAL ROLE colophon_worker")
         .execute(&mut *transaction)
         .await

@@ -39,6 +39,14 @@ through `--version` and `GET /version`.
 
 ### Fixed
 
+- **Stopping the server no longer cuts background work off mid-transaction**. The worker's
+  sweeps, the pending-work fold, the media and table retention sweeps and the change-hint sender
+  each stopped the moment shutdown began, even while a database transaction was committing, so
+  whether that work was saved could stay unknown and the database logged "there is no
+  transaction in progress". Each now finishes the step it is on and stops before the next; a step
+  stuck behind a lock gives up on its own within four seconds and is rolled back, so shutdown still
+  completes inside its deadline.
+
 - **A delivery or media job's deadline sweep can no longer deadlock with a publish** (D-216). The
   sweep that fails jobs past their deadline now leaves a job another transaction holds for its next
   pass, and every update that must take several jobs takes them in one order. Under concurrent

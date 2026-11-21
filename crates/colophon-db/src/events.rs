@@ -31,8 +31,12 @@ pub const PUMP_BATCH: i64 = 5_000;
 /// 0068): PostgreSQL serialises every committing transaction that issued a NOTIFY on one
 /// lock until its WAL flush, so only this pass takes it, a few times a second. Returns how
 /// many rows it drained.
-pub async fn pump(pool: &PgPool) -> Result<u64, DbError> {
+pub async fn pump(pool: &PgPool, stop: crate::Stop<'_>) -> Result<u64, DbError> {
     let mut transaction = crate::begin_tx(pool).await.map_err(DbError::from_query)?;
+    // A background unit: bounded server side, so a stop can let it finish.
+    crate::bound_background(&mut transaction)
+        .await
+        .map_err(DbError::from_query)?;
     let payloads: Vec<String> = sqlx::query_scalar!(
         r#"DELETE FROM change_hints
            WHERE ctid IN (SELECT ctid FROM change_hints LIMIT $1 FOR UPDATE SKIP LOCKED)
@@ -46,6 +50,10 @@ pub async fn pump(pool: &PgPool) -> Result<u64, DbError> {
     if payloads.is_empty() {
         transaction.commit().await.map_err(DbError::from_query)?;
         return Ok(0);
+    }
+    // Told to stop between the two: the hints go back to the queue, the next start sends them.
+    if stop.requested() {
+        return crate::transactions::stopped(transaction).await;
     }
     // Distinct, in the order they were found: one notification per hint however many
     // statements — or transactions — queued it.

@@ -1020,6 +1020,10 @@ async fn land_usable(
 /// Like `jobs::expire` it never waits: a job another transaction holds is the next pass's.
 pub async fn expire(pool: &PgPool) -> Result<u64, DbError> {
     let mut transaction = worker(pool).await?;
+    // A background unit: bounded server side, so a stop can let it finish.
+    crate::bound_background(&mut transaction)
+        .await
+        .map_err(DbError::from_query)?;
     let expired = sqlx::query!(
         "WITH due AS (
              SELECT project_id, environment_id, id FROM asset_jobs
@@ -1069,6 +1073,10 @@ pub async fn enqueue_expired(
     room: i64,
 ) -> Result<u64, DbError> {
     let mut transaction = worker(pool).await?;
+    // A background unit: bounded server side, so a stop can let it finish.
+    crate::bound_background(&mut transaction)
+        .await
+        .map_err(DbError::from_query)?;
     let enqueued = sqlx::query!(
         "WITH collectable AS (
              SELECT a.project_id, a.environment_id, a.id, a.created_at, a.size_bytes,
