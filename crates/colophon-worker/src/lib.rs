@@ -345,7 +345,7 @@ impl Worker {
                     match colophon_db::assets::release_lapsed_all(
                         &self.pool,
                         colophon_db::assets::RELEASE_BUDGET,
-                        &stopping,
+                        colophon_db::Stop::new(&stopping),
                     )
                     .await
                     {

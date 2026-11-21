@@ -666,12 +666,10 @@ pub const RELEASE_BATCH: i64 = 200;
 /// it released. The sweep runs passes back to back ([`release_lapsed_all`]).
 pub async fn release_lapsed(pool: &PgPool) -> Result<u64, DbError> {
     let mut transaction = worker(pool).await?;
-    sqlx::query(
-        "SELECT set_config('statement_timeout', '4000', true), set_config('lock_timeout', '3000', true)",
-    )
-    .execute(&mut *transaction)
-    .await
-    .map_err(DbError::from_query)?;
+    // A background unit: bounded server side, so a stop can let it finish.
+    crate::bound_background(&mut transaction)
+        .await
+        .map_err(DbError::from_query)?;
     let released = sqlx::query!(
         "WITH lapsed AS (
              SELECT project_id, environment_id, id FROM asset_jobs
@@ -700,15 +698,15 @@ pub async fn release_lapsed(pool: &PgPool) -> Result<u64, DbError> {
 pub const RELEASE_BUDGET: Duration = Duration::from_secs(5);
 
 /// One sweep's release of lapsed leases: [`release_lapsed`] passes, each its own short
-/// transaction, back to back until one comes back short of [`RELEASE_BATCH`], `stop()` says
-/// so (asked between passes, never during one) or `budget` has gone by. So every lease that
+/// transaction, back to back until one comes back short of [`RELEASE_BATCH`], `stop` is
+/// requested (asked between passes, never during one) or `budget` has gone by. So every lease that
 /// lapsed is released by the next sweep, however many a crash stranded, unless releasing them
 /// takes longer than `budget`; only then does the rest wait for the sweeps after. How many it
 /// released.
 pub async fn release_lapsed_all(
     pool: &PgPool,
     budget: Duration,
-    stop: &(dyn Fn() -> bool + Send + Sync),
+    stop: crate::Stop<'_>,
 ) -> Result<u64, DbError> {
     let started = std::time::Instant::now();
     let full = u64::try_from(RELEASE_BATCH).unwrap_or(u64::MAX);
@@ -716,7 +714,7 @@ pub async fn release_lapsed_all(
     loop {
         let released = release_lapsed(pool).await?;
         total += released;
-        if released < full || stop() || started.elapsed() >= budget {
+        if released < full || stop.requested() || started.elapsed() >= budget {
             return Ok(total);
         }
     }

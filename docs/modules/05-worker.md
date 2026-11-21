@@ -206,7 +206,7 @@ Each pool is a separate semaphore, so expensive work can never starve editorial 
   (the server logs "there is no transaction in progress" for the ROLLBACK queued behind it). Each unit's
   transaction is bounded server side by `colophon_db::bound_background` (statements 4 s, lock waits 3 s).
   Those bound one statement, not a unit, so a unit of several (the table sweep's ~20, the budget
-  reconciler's 3, the hint pump's 2) also takes a `colophon_db::Stop` and checks it before each statement
+  reconciler's 3, the hint pump's 2, the lapsed-lease release's passes) also takes a `colophon_db::Stop` and checks it before each statement
   after its first: told to stop, it rolls back explicitly (`DbError::Stopped`, logged as nothing) and its
   loop runs it again next start. The rest have one statement that can wait (the fold's tick, each expire,
   the expiry enqueue). So after a stop every unit runs at most the one statement it is in, under 4 s,

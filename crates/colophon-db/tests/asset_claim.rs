@@ -292,9 +292,8 @@ async fn one_sweep_releases_every_lapsed_lease_a_bounded_pass_at_a_time() {
     .execute(&owner)
     .await
     .expect("a live lease");
-    let never = || false;
     assert_eq!(
-        assets::release_lapsed_all(&db.app, assets::RELEASE_BUDGET, &never)
+        assets::release_lapsed_all(&db.app, assets::RELEASE_BUDGET, colophon_db::Stop::NEVER)
             .await
             .expect("a sweep"),
         250,
@@ -315,9 +314,13 @@ async fn one_sweep_releases_every_lapsed_lease_a_bounded_pass_at_a_time() {
         true
     };
     assert_eq!(
-        assets::release_lapsed_all(&db.app, assets::RELEASE_BUDGET, &stopped)
-            .await
-            .expect("a stopped sweep"),
+        assets::release_lapsed_all(
+            &db.app,
+            assets::RELEASE_BUDGET,
+            colophon_db::Stop::new(&stopped),
+        )
+        .await
+        .expect("a stopped sweep"),
         u64::try_from(assets::RELEASE_BATCH).expect("a count"),
         "one pass, then the stop"
     );
