@@ -600,6 +600,14 @@ pub struct Claimed {
 
 /// Claims up to `limit` due asset jobs for `owner` under `lease`, rows another worker is
 /// claiming skipped not waited for (the delivery jobs' discipline, minus destinations).
+///
+/// Only waiting jobs, by an ordered scan of `asset_jobs_due` that stops at the limit. A job
+/// whose worker stopped answering is made waiting again by [`release_lapsed`], on the sweep's
+/// interval, rather than looked for here: a claim that also searched `lease_expires_at <
+/// now()` walked the dead index entry every finished job leaves there once its lease time
+/// passes, on every claim, for as long as an open snapshot kept those entries from being
+/// marked dead (train-3's assets smoke: claim tails climbing with the run's history). And one
+/// `WHERE … OR …` over both kinds could use no index in order at all (1-3.5 s claims).
 pub async fn claim(
     pool: &PgPool,
     owner: &str,
@@ -613,8 +621,7 @@ pub async fn claim(
         "WITH due AS (
              SELECT j.project_id, j.environment_id, j.id
              FROM asset_jobs j
-             WHERE ((j.status IN ('pending', 'retrying') AND j.next_attempt_at <= now())
-                    OR (j.status = 'running' AND j.lease_expires_at < now()))
+             WHERE j.status IN ('pending', 'retrying') AND j.next_attempt_at <= now()
                AND j.deadline_at > now()
              ORDER BY j.next_attempt_at
              LIMIT $3
@@ -642,6 +649,77 @@ pub async fn claim(
     .map_err(DbError::from_query)?;
     transaction.commit().await.map_err(DbError::from_query)?;
     Ok(claimed)
+}
+
+/// How many lapsed leases one [`release_lapsed`] pass releases.
+pub const RELEASE_BATCH: i64 = 200;
+
+/// Makes asset jobs whose lease ran out waiting again (`retrying`, keeping their place: their
+/// `next_attempt_at` was due when they were claimed, so the next [`claim`] takes them before
+/// newer work): the worker that held one stopped answering (a crash, a kill), and the job is
+/// anyone's. Runs on the worker's sweep interval, so such a job is picked up within
+/// that interval of its lease running out (D-093's addendum). Never waits: a job another
+/// transaction holds is the next pass's (`SKIP LOCKED`, in id order). Its old holder's late
+/// finish is refused ([`finish`] needs the job running under that holder's lease). A pass is
+/// one bounded statement: at most [`RELEASE_BATCH`] jobs, a 4 s statement and a 3 s lock wait,
+/// server side, so a stop that lets it finish waits under the 5 s cleanup deadline. How many
+/// it released. The sweep runs passes back to back ([`release_lapsed_all`]).
+pub async fn release_lapsed(pool: &PgPool) -> Result<u64, DbError> {
+    let mut transaction = worker(pool).await?;
+    sqlx::query(
+        "SELECT set_config('statement_timeout', '4000', true), set_config('lock_timeout', '3000', true)",
+    )
+    .execute(&mut *transaction)
+    .await
+    .map_err(DbError::from_query)?;
+    let released = sqlx::query!(
+        "WITH lapsed AS (
+             SELECT project_id, environment_id, id FROM asset_jobs
+             WHERE status = 'running' AND lease_expires_at < now() AND deadline_at > now()
+             ORDER BY id
+             LIMIT $1
+             FOR UPDATE SKIP LOCKED
+         )
+         UPDATE asset_jobs j SET status = 'retrying', lease_owner = NULL, lease_expires_at = NULL,
+                                 updated_at = now()
+         FROM lapsed
+         WHERE j.project_id = lapsed.project_id AND j.environment_id = lapsed.environment_id
+           AND j.id = lapsed.id",
+        RELEASE_BATCH
+    )
+    .execute(&mut *transaction)
+    .await
+    .map_err(DbError::from_query)?
+    .rows_affected();
+    transaction.commit().await.map_err(DbError::from_query)?;
+    Ok(released)
+}
+
+/// The longest one sweep keeps starting [`release_lapsed`] passes: under the worker's 10 s
+/// sweep interval, so a sweep never runs into the next.
+pub const RELEASE_BUDGET: Duration = Duration::from_secs(5);
+
+/// One sweep's release of lapsed leases: [`release_lapsed`] passes, each its own short
+/// transaction, back to back until one comes back short of [`RELEASE_BATCH`], `stop()` says
+/// so (asked between passes, never during one) or `budget` has gone by. So every lease that
+/// lapsed is released by the next sweep, however many a crash stranded, unless releasing them
+/// takes longer than `budget`; only then does the rest wait for the sweeps after. How many it
+/// released.
+pub async fn release_lapsed_all(
+    pool: &PgPool,
+    budget: Duration,
+    stop: &(dyn Fn() -> bool + Send + Sync),
+) -> Result<u64, DbError> {
+    let started = std::time::Instant::now();
+    let full = u64::try_from(RELEASE_BATCH).unwrap_or(u64::MAX);
+    let mut total = 0;
+    loop {
+        let released = release_lapsed(pool).await?;
+        total += released;
+        if released < full || stop() || started.elapsed() >= budget {
+            return Ok(total);
+        }
+    }
 }
 
 /// What a delete attempt decided under the asset's row lock (media M3, D-098).

@@ -549,7 +549,7 @@ jobs:
           rate() { awk -v r="$1" -v s="$scale" 'BEGIN {v = int(r * s + 0.5); if (v < 1) v = 1; print v}'; }
           limit() { awk -v l="$1" -v s="$scale" 'BEGIN {printf "%d", l / s + 0.5}'; }
           smoke() {
-            local name="${*: -2:1}" sampler
+            local name="${*: -2:1}" sampler snapshots
             ran+=("$name")
             echo "$(date -u +%FT%TZ) start $name" >>"$logs/windows.txt"
             echo "::group::$*"
@@ -558,6 +558,11 @@ jobs:
             pgq -c "SELECT pg_stat_statements_reset()" >/dev/null || true
             (while :; do echo "$(date -u +%FT%TZ) $(docker stats --no-stream --format '{{.CPUPerc}}' "$pgc" 2>/dev/null)"; sleep 1; done) >"$logs/$name.postgres-cpu.txt" &
             sampler=$!
+            # The oldest snapshot an application backend holds, each second: its xid age and how long its
+            # transaction has been open. A long one keeps dead index entries from being marked dead, so queue
+            # scans walk them (<smoke>.statements.txt's blks_per_call says how much a statement read).
+            (while :; do echo "$(date -u +%FT%TZ) $(pgq -c "SELECT coalesce(max(age(backend_xmin)), 0) || ' xids ' || coalesce(round(max(extract(epoch FROM now() - xact_start)) FILTER (WHERE backend_xmin IS NOT NULL)::numeric, 1), 0) || ' s' FROM pg_stat_activity WHERE datname = 'colophon'" 2>/dev/null)"; sleep 1; done) >"$logs/$name.snapshots.txt" &
+            snapshots=$!
             # A hard failure inside a runner IO stall is re-run once and the re-run decides (scripts/run-smoke.sh).
             if scripts/run-smoke.sh "$name" "$logs/$name.record.json" "$logs/$name.server.log" "$logs/pressure.txt" -- "$@"; then echo "::endgroup::"; else
               echo "::endgroup::"; echo "::warning::smoke failed: $* (the verdict below decides whether it was expected)"; failed+=("$name")
@@ -566,7 +571,7 @@ jobs:
                 -c "SELECT status, attempts, lease_owner IS NOT NULL AS leased, next_attempt_at > now() AS waiting, left(last_error, 200) AS last_error, count(*) FROM asset_jobs GROUP BY 1, 2, 3, 4, 5 ORDER BY 6 DESC LIMIT 20" \
                 -c "SELECT state, count(*) FROM assets GROUP BY 1" >"$logs/$name.work-tables.txt" 2>&1 || true
             fi
-            kill "$sampler" 2>/dev/null || true
+            kill "$sampler" "$snapshots" 2>/dev/null || true
             # D-218's evidence, pass or fail: each upload's created → finished time and the backlog from
             # asset_jobs, and the worker's own work, fetch / decode / land times and claim sizes from its log.
             if [[ "$name" == assets ]]; then
@@ -580,10 +585,10 @@ jobs:
               jq -r --arg n "$name" '(.hard_failures // {}) as $h | [$n, (.latency_ms.p99 // ""), ([.l08.ratios[]?] | max // ""), (.hard_failures_total // ""), ([$h | to_entries[] | select(.key != "failed_checks" and (.value | type) == "number" and .value > 0) | "\(.key)=\(.value)"] + ($h.failed_checks // []) | join("; "))] | @tsv' "$logs/$name.record.json" >>"$logs/metrics.tsv"
             fi
             echo "$(date -u +%FT%TZ) end $name" >>"$logs/windows.txt"
-            pgq -c "SELECT round(total_exec_time::numeric, 1) AS total_ms, calls, round(mean_exec_time::numeric, 3) AS mean_ms, rows, left(regexp_replace(query, '\\s+', ' ', 'g'), 160) FROM pg_stat_statements ORDER BY total_exec_time DESC LIMIT 10" \
-              >"$logs/$name.statements.txt" 2>&1 || true
+            scripts/smoke-statements.sh >"$logs/$name.statements.txt" 2>&1 || true
             cpu=$(awk '{print $2}' "$logs/$name.postgres-cpu.txt" | tr -d '%' | awk 'NF {s += $1; n++; if ($1 > m) m = $1} END {if (n) printf "avg %.0f%%, max %.0f%%", s / n, m; else print "not sampled"}')
-            echo "| $name | postgres CPU $cpu |" >>"$GITHUB_STEP_SUMMARY"
+            oldest=$(awk '{print $2, $4}' "$logs/$name.snapshots.txt" | awk 'NF == 2 {if ($1 > x) x = $1; if ($2 > s) s = $2} END {printf "oldest snapshot %d xids, %.1f s", x, s}')
+            echo "| $name | postgres CPU $cpu | $oldest |" >>"$GITHUB_STEP_SUMMARY"
           }
           # The worker at debug for assets alone: its per-attempt and per-claim timing lines are D-218's evidence.
           smoke LOAD_LOG=info,sqlx::query=info,colophon_api::refusals=debug,colophon_worker=debug TOTAL=10000 P99_MS=$(limit 500) scripts/load.sh assets throughput

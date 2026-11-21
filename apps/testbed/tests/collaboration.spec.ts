@@ -39,6 +39,9 @@ test('comment on a revision, resolve and reopen on its etag, and run a task', as
 	await page.getByLabel('If-Match etag').fill(`sha256:${'0'.repeat(64)}`);
 	await page.getByTestId('resolve').click();
 	await expect(page.getByTestId('message')).toHaveText('409 conflict (comment_moved)');
+	// The 409's refresh puts the comment's etag back in the field when it lands; typing before then races it
+	// (it landed mid-fill in CI 44790031484 and the retry sent the etag twice). Type once it has.
+	await expect(page.getByLabel('If-Match etag')).toHaveValue(etag);
 	await page.getByLabel('If-Match etag').fill(etag);
 	await page.getByTestId('resolve').click();
 	await expect(page.getByTestId('comment-state')).toHaveText('resolved');
