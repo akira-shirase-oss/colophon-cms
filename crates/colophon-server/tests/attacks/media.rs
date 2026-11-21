@@ -79,24 +79,35 @@ async fn get(path: &str, viewer: Option<&Session>) -> reqwest::Response {
     request.send().await.expect("request")
 }
 
-/// `path` signed until `expires` with the installation's key for `purpose`: `preview` as a preview answer
-/// signs it, `member` as a site member's delivery answer does (D-229).
-async fn signed_for(purpose: &str, path: &str, expires: i64) -> String {
+/// The installation's current media signing key (the highest id, D-233): its id and bytes.
+async fn current_key() -> (i16, Vec<u8>) {
     let database = owner_database().await;
-    let bytes: Vec<u8> = sqlx::query_scalar("SELECT key FROM media_signing_keys WHERE id = 1")
-        .fetch_one(&database)
-        .await
-        .expect("the signing key");
+    let key: (i16, Vec<u8>) =
+        sqlx::query_as("SELECT id, key FROM media_signing_keys ORDER BY id DESC LIMIT 1")
+            .fetch_one(&database)
+            .await
+            .expect("the signing key");
     database.close().await;
-    let key = hmac::Key::new(hmac::HMAC_SHA256, &bytes);
+    key
+}
+
+/// `path` signed until `expires` with key `kid` for `purpose`, as the server signs (D-229, D-233).
+fn sign_with(kid: i16, key: &[u8], purpose: &str, path: &str, expires: i64) -> String {
     let tag = hmac::sign(
-        &key,
-        format!("colophon-media-v1\n{purpose}\n{path}\n{expires}").as_bytes(),
+        &hmac::Key::new(hmac::HMAC_SHA256, key),
+        format!("colophon-media-v2\n{kid}\n{purpose}\n{path}\n{expires}").as_bytes(),
     );
     format!(
-        "{path}?expires={expires}&signature={}",
+        "{path}?kid={kid}&expires={expires}&signature={}",
         URL_SAFE_NO_PAD.encode(tag.as_ref())
     )
+}
+
+/// `path` signed until `expires` with the current key for `purpose`: `preview` as a preview answer signs it,
+/// `member` as a site member's delivery answer does (D-229).
+async fn signed_for(purpose: &str, path: &str, expires: i64) -> String {
+    let (kid, key) = current_key().await;
+    sign_with(kid, &key, purpose, path, expires)
 }
 
 /// `path` signed as a preview answer signs it.
@@ -197,15 +208,9 @@ async fn an_unpublished_upload_is_private_until_a_release_names_it() {
         // A member's signature is for a version a release named, never the bare address that follows
         // the newest upload (review S1, 2026-11-21).
         signed_for("member", &path, now() + 300).await,
-        // The message without a purpose, as addresses were signed before.
+        // The message without a purpose or a key id, as addresses were signed before D-229's fix and D-233.
         {
-            let database = owner_database().await;
-            let bytes: Vec<u8> =
-                sqlx::query_scalar("SELECT key FROM media_signing_keys WHERE id = 1")
-                    .fetch_one(&database)
-                    .await
-                    .expect("the signing key");
-            database.close().await;
+            let (_, bytes) = current_key().await;
             let expires = now() + 300;
             let tag = hmac::sign(
                 &hmac::Key::new(hmac::HMAC_SHA256, &bytes),
@@ -215,6 +220,11 @@ async fn an_unpublished_upload_is_private_until_a_release_names_it() {
                 "{path}?expires={expires}&signature={}",
                 URL_SAFE_NO_PAD.encode(tag.as_ref())
             )
+        },
+        // The same signature without its key id: never read as some default key.
+        {
+            let (kid, _) = current_key().await;
+            good.replacen(&format!("kid={kid}&"), "", 1)
         },
     ] {
         let refused = get(&bad, None).await;
@@ -481,4 +491,95 @@ async fn a_site_member_s_answer_never_links_an_unpublished_replacement() {
             assert_eq!(bytes, published, "{address} serves the published version");
         }
     }
+}
+
+/// D-233 (the review's S2-2): the signing key rotates. A link signed with the previous key still works, one with a
+/// key the server hasn't read yet works at once (another server rotated), and after `--retire-previous` the old
+/// key's links are refused once the server reads the keys again (here: a server started afresh; the minute's
+/// bound is the unit tests').
+#[tokio::test]
+#[ignore = "needs the stack and scripts/migrate.sh"]
+async fn a_rotated_key_s_links_live_one_rotation_and_a_retired_key_s_die() {
+    let server = Server::start_with(&[("COLOPHON_WORKER_POLL_MS", "50")]).await;
+    let owner = sign_in("dev-owner").await;
+    let project = project(&owner).await;
+    let asset = usable(&owner, &project).await;
+    let path = format!("/media/v1/{project}/production/{asset}");
+    let rotate = |retire: bool| async move {
+        let database = owner_database().await;
+        let kid: i16 = sqlx::query_scalar("SELECT colophon_rotate_media_key($1, 'admin')")
+            .bind(retire)
+            .fetch_one(&database)
+            .await
+            .expect("rotated");
+        database.close().await;
+        kid
+    };
+    let status = |address: String| async move { get(&address, None).await.status() };
+
+    let (old_kid, old_key) = current_key().await;
+    let old = sign_with(old_kid, &old_key, "preview", &path, now() + 300);
+    assert_eq!(
+        status(old.clone()).await,
+        StatusCode::OK,
+        "the current key's link"
+    );
+
+    // Rotated (by an operator, as another server would see it): the server hasn't read the new key, but a link
+    // naming it makes it read the keys once, and the old key still verifies.
+    let new_kid = rotate(false).await;
+    assert_eq!(new_kid, old_kid + 1);
+    let (current, new_key) = current_key().await;
+    assert_eq!(current, new_kid);
+    let new = sign_with(new_kid, &new_key, "preview", &path, now() + 300);
+    assert_eq!(
+        status(new.clone()).await,
+        StatusCode::OK,
+        "a just-made key's link"
+    );
+    assert_eq!(
+        status(old.clone()).await,
+        StatusCode::OK,
+        "the previous key still verifies"
+    );
+    // A key id nobody holds, and one from the old key under the new id: refused.
+    assert_eq!(
+        status(sign_with(
+            new_kid + 5,
+            &new_key,
+            "preview",
+            &path,
+            now() + 300
+        ))
+        .await,
+        StatusCode::NOT_FOUND
+    );
+    assert_eq!(
+        status(sign_with(new_kid, &old_key, "preview", &path, now() + 300)).await,
+        StatusCode::NOT_FOUND
+    );
+
+    // Retired: a leaked key. Once the keys are read again, its links are refused and the new one's work.
+    let newest = rotate(true).await;
+    drop(server);
+    let _server = Server::start_with(&[("COLOPHON_WORKER_POLL_MS", "50")]).await;
+    assert_eq!(
+        status(old).await,
+        StatusCode::NOT_FOUND,
+        "a retired key's link"
+    );
+    assert_eq!(status(new).await, StatusCode::NOT_FOUND, "retired with it");
+    let (current, newest_key) = current_key().await;
+    assert_eq!(current, newest);
+    assert_eq!(
+        status(sign_with(
+            newest,
+            &newest_key,
+            "preview",
+            &path,
+            now() + 300
+        ))
+        .await,
+        StatusCode::OK
+    );
 }
