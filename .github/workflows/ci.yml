@@ -154,6 +154,8 @@ jobs:
         run: deploy/droplet/test-backup-logical.sh
       - name: The droplet's Neon URL fix (deploy/droplet/test-neon-url.sh)
         run: deploy/droplet/test-neon-url.sh
+      - name: The droplet's hostname is one setting, odd values refused (deploy/droplet/test-public-host.sh)
+        run: deploy/droplet/test-public-host.sh
       - name: The droplet's edge channel refuses what it can't prove (deploy/droplet/test-upgrade-edge.sh, D-211)
         run: deploy/droplet/test-upgrade-edge.sh
       - name: The leftover test database sweep (scripts/test-sweep-test-databases.sh, D-195)
@@ -723,7 +725,7 @@ jobs:
             deploy/droplet/colophon-backup-logical.service deploy/droplet/colophon-backup-logical.timer
           caddy_dir=$(mktemp -d)
           cp deploy/droplet/Caddyfile deploy/droplet/cloudflare-origin-pull-ca.pem "$caddy_dir/"
-          openssl req -x509 -newkey rsa:2048 -nodes -subj /CN=app.colophon.404human.dev -days 1 \
+          openssl req -x509 -newkey rsa:2048 -nodes -subj /CN=colophonapp.404human.dev -days 1 \
             -keyout "$caddy_dir/origin.key" -out "$caddy_dir/origin.pem" 2>/dev/null
           echo 'trusted_proxies static 173.245.48.0/20 2400:cb00::/32' >"$caddy_dir/cloudflare-trusted.caddy"
           docker run --rm -v "$caddy_dir:/etc/caddy:ro" \

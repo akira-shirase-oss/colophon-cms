@@ -143,7 +143,7 @@ services:
 
   # The database roles, with the generated passwords (`colophon admin init-roles`, D-173).
   roles:
-    image: ${COLOPHON_IMAGE:-ghcr.io/akira-shirase-oss/colophon:0.1.0-alpha.1}
+    image: ${COLOPHON_IMAGE:-ghcr.io/akira-shirase-oss/colophon:0.1.0-alpha.2}
     network_mode: service:pod
     entrypoint: ["/usr/local/bin/colophon"]
     command: ["admin", "init-roles"]
@@ -164,7 +164,7 @@ services:
 
   # The schema. Refuses a database holding migrations this image doesn't know.
   migrate:
-    image: ${COLOPHON_IMAGE:-ghcr.io/akira-shirase-oss/colophon:0.1.0-alpha.1}
+    image: ${COLOPHON_IMAGE:-ghcr.io/akira-shirase-oss/colophon:0.1.0-alpha.2}
     network_mode: service:pod
     entrypoint: ["/usr/local/bin/colophon"]
     command: ["admin", "migrate"]
@@ -185,7 +185,7 @@ services:
   # Colophon: the API, the worker and the Studio in one process (`--role all`), on
   # http://localhost:${COLOPHON_PORT:-8080}. Healthy once `colophon doctor` says ready.
   colophon:
-    image: ${COLOPHON_IMAGE:-ghcr.io/akira-shirase-oss/colophon:0.1.0-alpha.1}
+    image: ${COLOPHON_IMAGE:-ghcr.io/akira-shirase-oss/colophon:0.1.0-alpha.2}
     network_mode: service:pod
     environment:
       COLOPHON_PUBLIC_URL: http://localhost:${COLOPHON_PORT:-8080}
