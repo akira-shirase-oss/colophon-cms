@@ -179,10 +179,13 @@ epochs. Spec §10's deprecation window for contract changes applies when the SDK
   process or a real server (`ORIGIN`, `PROJECT`, `COLLECTION`, `ENTRY`), and records the client's
   p50/p99 overhead (budget: p99 within 1 ms of bare fetch) and heap growth once every call's
   15-second deadline timer has fired (budget 20 MB). `scripts/frontend.sh` runs a 20,000-call smoke
-  with the overhead budget loosened to 25 ms for shared runners. On 2026-11-17 a smoke on a busy
-  laptop (other builds running) had 0 failures and no heap growth (−0.6 MB) while its overhead swung
-  from −0.9 to +11.5 ms between runs: noise, not evidence. The full 1,000,000-call run on a quiet
-  machine is owed.
+  that gates failed calls and heap growth and records the overhead without gating it
+  (`OVERHEAD_GATE=record`): on a shared machine the gap between two tails measures the machine's load,
+  not the client. On 2026-11-17 a smoke on a busy laptop had 0 failures and no heap growth (−0.6 MB)
+  while its overhead swung from −0.9 to +11.5 ms between runs, and on 2026-11-21 the same code's p99
+  overhead was 25.05 ms at a load average near 50 and 0.38 ms near 20, which failed QUICK on the
+  loosened 25 ms bound it then had. The full 1,000,000-call run, on a quiet machine or the evidence
+  runner, gates all three; it is owed.
 - The packed packages against the real server (`apps/testbed/tests/sdk.spec.ts`, D-170): a person
   publishes in the browser; the SDK and rich-text tarballs, installed in a scratch project, check
   the server's version (`compat: 'throw'`), read the release anonymously, render its body, and pin
