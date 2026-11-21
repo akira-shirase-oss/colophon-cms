@@ -153,7 +153,9 @@ pub enum InitError {
     /// The retry with the password as text (Neon, D-234) failed too. That statement held the
     /// password, and PostgreSQL logs a failed statement's text (`log_min_error_statement`), so it
     /// may be in the database server's log: the password must be replaced.
-    #[error("the roles couldn't be created with the password as text either; that statement may be in the database server's log with the password in it: rotate the application's password (a new app_password file, then init-roles again)")]
+    #[error(
+        "the roles couldn't be created with the password as text either; that statement may be in the database server's log with the password in it: rotate the application's password (a new app_password file, then init-roles again)"
+    )]
     TextPasswordFailed(#[source] DbError),
 }
 
