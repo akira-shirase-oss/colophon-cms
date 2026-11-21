@@ -2,7 +2,9 @@
 # Install, upgrade or roll back Colophon on the S0 droplet (deploy/droplet/DEPLOY.md). Targets:
 # an upgrade in under 2 minutes with under ~5 s unavailable, a rollback in under 1 minute.
 #
-#   sudo upgrade.sh <version>       install that release and switch to it (install.sh calls this)
+#   sudo upgrade.sh <version>       install that release and switch to it (install.sh calls this):
+#                                   provenance verified (release.yml on refs/tags/v<version> of this
+#                                   repository) for every archive, then each against SHA256SUMS
 #   sudo upgrade.sh --channel edge  the newest build of main (D-211): provenance verified (edge.yml
 #                                   on refs/heads/main of this repository), every file against
 #                                   SHA256SUMS, EDGE's commit equal to the attested one
@@ -24,7 +26,9 @@
 # lock_timeout and retry) isn't in yet: a migration waiting on a lock waits.
 #
 # COLOPHON_RELEASE_BASE overrides where releases come from (default: GitHub releases; a directory
-# path or file:// URL for a rehearsal). UPGRADE_NO_VERSION_CHECK=1, for rehearsals only, skips the
+# path or file:// URL for a rehearsal). A rehearsal's own builds carry no provenance:
+# COLOPHON_RELEASE_UNVERIFIED=rehearsal skips that check, for a local directory only, and says so
+# loudly; from GitHub it is refused. UPGRADE_NO_VERSION_CHECK=1, for rehearsals only, skips the
 # check that /version reports the version just installed. The last 3 releases are kept.
 set -euo pipefail
 ROOT="${COLOPHON_ROOT:-/opt/colophon}"
@@ -33,8 +37,11 @@ BASE="${COLOPHON_RELEASE_BASE:-https://github.com/akira-shirase-oss/colophon-cms
 REPO=akira-shirase-oss/colophon-cms
 EDGE_WORKFLOW=$REPO/.github/workflows/edge.yml
 EDGE_REF=refs/heads/main
+# The release channel's (D-062): release.yml, on the version's tag.
+RELEASE_WORKFLOW=$REPO/.github/workflows/release.yml
 TESTING="${COLOPHON_UPGRADE_TEST:-0}"   # scripts/tests only: no root, no systemd, no /usr/local links
 CREDS=/etc/colophon/credentials
+[[ "$TESTING" == 1 && -n "${COLOPHON_CREDENTIALS_DIR:-}" ]] && CREDS=$COLOPHON_CREDENTIALS_DIR
 LOCAL=http://127.0.0.1:58000
 KEEP=3
 here=$(cd "$(dirname "$0")" && pwd)
@@ -83,6 +90,30 @@ verify_edge() {
   EDGE_COMMIT=$commit
 }
 
+# verify_release <dir> <version> <file>...: each file's provenance, from the release's bundle
+# (colophon-<version>.intoto.jsonl, which release.yml publishes): built by release.yml on
+# refs/tags/v<version> of this repository. On failure, `why`.
+verify_release() {
+  local dir=$1 version=$2 f bundle; shift 2
+  bundle=colophon-$version.intoto.jsonl
+  [[ -s "$dir/$bundle" ]] || { why="no provenance bundle ($bundle) in the release"; return 1; }
+  command -v gh >/dev/null || { why="gh isn't installed (install.sh installs it), so the provenance can't be checked"; return 1; }
+  for f in "$@"; do
+    gh attestation verify "$dir/$f" --bundle "$dir/$bundle" --repo "$REPO" --signer-workflow "$RELEASE_WORKFLOW" \
+      --source-ref "refs/tags/v$version" >/dev/null 2>&1 \
+      || { why="$f's provenance doesn't verify (not release.yml on refs/tags/v$version of $REPO)"; return 1; }
+  done
+}
+
+# unverified_ok: the rehearsal opt-out, for a local release directory only, said loudly.
+unverified_ok() {
+  [[ "${COLOPHON_RELEASE_UNVERIFIED:-}" == rehearsal ]] || return 1
+  case "$BASE" in
+    http://* | https://*) die "COLOPHON_RELEASE_UNVERIFIED is for a local rehearsal directory only, not $BASE: refusing" ;;
+  esac
+  log "WARNING: PROVENANCE NOT CHECKED (COLOPHON_RELEASE_UNVERIFIED=rehearsal, releases from the local $BASE); checksums only. A rehearsal, never production."
+}
+
 current_version() { [[ -L $ROOT/current ]] && basename "$(readlink "$ROOT/current")" || echo ""; }
 
 ready() { # waits up to $1 seconds for /readyz to say ready
@@ -107,11 +138,13 @@ restart_and_check() { # restart onto `current` (expected version $1); ready and 
   systemctl restart colophon
   ready 60 || { log "not ready within 60 s"; return 1; }
   if [[ -x "$here/smoke.sh" && "${UPGRADE_SKIP_SMOKE:-0}" != 1 ]]; then
-    local expect="${1:-}"
+    local expect="${1:-}" smoke_log
     # A rehearsal installs one build under two names, so it can't expect /version to differ.
     [[ "${UPGRADE_NO_VERSION_CHECK:-0}" == 1 ]] && expect=""
-    SMOKE_SCOPE=local SMOKE_EXPECT_VERSION="$expect" "$here/smoke.sh" >/tmp/colophon-upgrade-smoke.log 2>&1 \
-      || { log "smoke failed: $(grep FAIL /tmp/colophon-upgrade-smoke.log | head -3 | tr -s ' ')"; return 1; }
+    smoke_log=$(mktemp "${TMPDIR:-/tmp}/colophon-upgrade-smoke.XXXXXX")
+    SMOKE_SCOPE=local SMOKE_EXPECT_VERSION="$expect" "$here/smoke.sh" >"$smoke_log" 2>&1 \
+      || { log "smoke failed (all of it: $smoke_log): $(grep FAIL "$smoke_log" | head -3 | tr -s ' ')"; return 1; }
+    rm -f "$smoke_log"
   fi
 }
 
@@ -133,7 +166,16 @@ download() {
   why=""
   if [[ "$channel" == release ]]; then
     local server=colophon-server-$version-$arch-unknown-linux-musl.tar.gz cli=colophon-cli-$version-$arch-unknown-linux-musl.tar.gz studio=colophon-studio-$version.tar.gz
+    local unverified=0
+    unverified_ok && unverified=1
     for f in SHA256SUMS "$server" "$cli" "$studio"; do fetch "$f" "$dir" "v$version"; done
+    # The provenance first: SHA256SUMS comes from the same place as the archives, so it proves
+    # only that they weren't damaged on the way, not who built them.
+    if ((unverified == 0)); then
+      fetch "colophon-$version.intoto.jsonl" "$dir" "v$version" 2>/dev/null || true
+      verify_release "$dir" "$version" "$server" "$cli" "$studio" || die "$why: nothing installed"
+      log "provenance verified: release.yml on refs/tags/v$version"
+    fi
     sums_cover "$dir" "$server" "$cli" "$studio" || die "$why: nothing installed"
     ASSETS=("$server" "$cli" "$studio" "colophon-studio-$version")
     return 0
@@ -194,12 +236,16 @@ install_release() {
 
   # A database migrated by a newer binary than this one is refused: serving it would be guessing.
   # (--rollback is the deliberate exception: forward-compatible for one release.)
+  # A status it can't read is a refusal too: nothing is known about the database then.
   if [[ -s $CREDS/migration_database_url ]]; then
-    local schema
+    local schema state
     schema=$("$release/bin/colophon" admin migrate-status --database-url-file "$CREDS/migration_database_url" --json 2>/dev/null || true)
-    if [[ "$(jq -r '.data.status // empty' <<<"$schema" 2>/dev/null)" == unknown ]]; then
-      die "the database has migrations v$version doesn't know ($(jq -r '.data.unknown | join(", ")' <<<"$schema")): a newer build migrated it; refusing to switch to an older one (use --rollback for the one release you came from)"
-    fi
+    state=$(jq -r '.data.status // empty' <<<"$schema" 2>/dev/null || true)
+    case "$state" in
+      current | behind) ;;
+      unknown) die "the database has migrations v$version doesn't know ($(jq -r '.data.unknown | join(", ")' <<<"$schema")): a newer build migrated it; refusing to switch to an older one (use --rollback for the one release you came from)" ;;
+      *) die "can't read the database's migration status with v$version (migrate-status gave no status): nothing switched; check the database URL and the network" ;;
+    esac
   fi
 
   # The new binary migrates while the old one serves (forward-compatible for one release).

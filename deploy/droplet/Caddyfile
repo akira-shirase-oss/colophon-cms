@@ -1,32 +1,50 @@
 # Caddy for the S0 droplet (deploy/droplet/DEPLOY.md): Cloudflare terminates visitors' TLS and
 # connects here over TLS with "Full (strict)", so Caddy serves Cloudflare's Origin Certificate
 # (no ACME: port 80 stays closed). Only Cloudflare reaches 443 (the firewall, cloudflare-ips.sh), and
-# only with this zone's origin-pull client certificate (Authenticated Origin Pulls).
+# only with an origin-pull client certificate (Authenticated Origin Pulls, origin-pull-ca.sh).
+# test-caddy.sh runs this file in Caddy and checks each of these.
 #
 # The site address below is replaced at install by the host of COLOPHON_PUBLIC_URL in
 # /etc/colophon/colophon.env (install.sh, public-host.sh): the hostname is that one setting.
 {
+	# The admin API on a socket only Caddy's user and root can open, not TCP 127.0.0.1:2019, which
+	# every local process reaches (and could rewrite this config through). `caddy reload`, the
+	# unit's ExecReload, reads this address from here.
+	admin unix//var/lib/caddy/admin.sock|0600
 	auto_https off
 	servers {
-		# Cloudflare's ranges, so Caddy passes the visitor's address on in X-Forwarded-For
-		# (cloudflare-ips.sh writes this file).
+		# Cloudflare's ranges (cloudflare-ips.sh writes this file). From a peer in them, the client
+		# is Cf-Connecting-Ip, which Cloudflare sets itself, and nothing else: X-Forwarded-For can
+		# carry whatever the visitor (or another account's Worker, whose egress is a Cloudflare
+		# address) put in it. From any other peer, the client is the peer.
 		import /etc/caddy/cloudflare-trusted.caddy
+		client_ip_headers Cf-Connecting-Ip
+		# HTTP/3 is UDP, which the firewall doesn't open: don't advertise it.
+		protocols h1 h2
 	}
 }
 
 colophonapp.404human.dev:443 {
 	# Cloudflare's Origin Certificate for visitors' side of Cloudflare, and Authenticated Origin
-	# Pulls for ours: only a connection presenting Cloudflare's client certificate is served
-	# (origin-pull-ca.sh installs the CA). Cloudflare's ranges are shared by all its customers;
-	# the client certificate is this zone's.
+	# Pulls for ours: only a connection presenting a client certificate from a trusted CA is served.
+	# Which CAs is origin-pull-ca.sh's (origin-pull-trust.caddy): Cloudflare's default certificate
+	# is shared by every Cloudflare customer, so the end state is our own, uploaded to this zone
+	# (custom-origin-pull.sh).
 	tls /etc/caddy/origin.pem /etc/caddy/origin.key {
 		client_auth {
 			mode require_and_verify
-			trust_pool file /etc/caddy/cloudflare-origin-pull-ca.pem
+			import /etc/caddy/origin-pull-trust.caddy
 		}
 	}
+	# HSTS for this host only: no includeSubDomains (other 404human.dev hosts are served by
+	# Cloudflare Pages) and no preload, which is a later, deliberate step.
+	header Strict-Transport-Security "max-age=31536000"
 	encode zstd gzip
 	reverse_proxy 127.0.0.1:58000 {
+		# The server is told one address, Caddy's verdict above, replacing any X-Forwarded-For that
+		# came in. The server trusts loopback alone (COLOPHON_TRUSTED_PROXIES=127.0.0.1/32), so
+		# its per-address limits key by exactly this.
+		header_up X-Forwarded-For {client_ip}
 		# Live updates are server-sent events: pass each event on as it is written.
 		flush_interval -1
 		# During an upgrade's restart (upgrade.sh) the server is briefly not listening: hold each

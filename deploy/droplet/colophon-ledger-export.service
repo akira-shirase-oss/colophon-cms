@@ -12,13 +12,14 @@ After=network-online.target
 [Service]
 Type=oneshot
 LoadCredential=migration_database_url:/etc/colophon/credentials/migration_database_url
-LoadCredential=s3_secret_key:/etc/colophon/credentials/s3_secret_key
+LoadCredential=backup_s3_secret_key:/etc/colophon/credentials/backup_s3_secret_key
 EnvironmentFile=/etc/colophon/colophon.env
-# The backups bucket, not the media bucket the server writes to.
-Environment=COLOPHON_S3_BUCKET=colophon-backups
 Environment=COLOPHON_MIGRATION_DATABASE_URL_FILE=%d/migration_database_url
-Environment=COLOPHON_S3_SECRET_KEY_FILE=%d/s3_secret_key
-ExecStart=/bin/sh -c 'exec /usr/local/bin/colophon admin ledger-export --s3-key "deletion-ledger/$(date -u +%%Y-%%m-%%dT%%H%%M%%SZ).jsonl" --json'
+# The backups bucket and the backups' own R2 token (CREATE.md), not the media bucket and token the
+# server uses. Set in the command, not with Environment=: EnvironmentFile= overrides Environment=,
+# so colophon.env's COLOPHON_S3_BUCKET=colophon-media used to win and the ledger landed in the
+# media bucket. Without COLOPHON_BACKUP_S3_ACCESS_KEY in colophon.env, nothing runs.
+ExecStart=/bin/sh -c 'export COLOPHON_S3_BUCKET=colophon-backups COLOPHON_S3_SECRET_KEY_FILE=%d/backup_s3_secret_key COLOPHON_S3_ACCESS_KEY="$${COLOPHON_BACKUP_S3_ACCESS_KEY:?no COLOPHON_BACKUP_S3_ACCESS_KEY in colophon.env}"; exec /usr/local/bin/colophon admin ledger-export --s3-key "deletion-ledger/$$(date -u +%%Y-%%m-%%dT%%H%%M%%SZ).jsonl" --json'
 DynamicUser=yes
 NoNewPrivileges=yes
 ProtectSystem=strict

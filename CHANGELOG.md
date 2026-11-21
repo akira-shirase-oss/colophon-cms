@@ -8,6 +8,43 @@ through `--version` and `GET /version`.
 
 ## [Unreleased]
 
+### Security
+
+- **The droplet's rate limits key by the real visitor** (white-hat review of S0, 2026-11-21). Caddy now takes the
+  client from `Cf-Connecting-Ip` when the peer is Cloudflare and tells the server that one address, replacing any
+  `X-Forwarded-For`; the server trusts loopback alone. Trusting all of Cloudflare's ranges in the server let a
+  request from a Cloudflare address (another account's Worker) choose its own client address, and with it a fresh
+  per-address password limit for every attempt.
+- **Caddy's admin API is a 0600 socket** (`/var/lib/caddy/admin.sock`), not TCP 2019, which every local process
+  could reach and rewrite Caddy's config through. HTTP/3, which the firewall doesn't open, isn't advertised.
+- **HSTS**: the droplet sends `Strict-Transport-Security: max-age=31536000` for its own host (no
+  `includeSubDomains`: other hosts of the zone are on Cloudflare Pages; no preload yet). `smoke.sh` checks it.
+- **Our own origin-pull certificate**: Cloudflare's default one is shared by every Cloudflare zone.
+  `custom-origin-pull.sh` makes a client CA and certificate and uploads them to the zone (the token and the key
+  from files, never a command line); `origin-pull-ca.sh --add-custom` / `--custom-only` move Caddy's trust over
+  without downtime.
+- **Releases are installed only with verified provenance**: `upgrade.sh` checks each archive with
+  `gh attestation verify` against the release's own bundle (built by `release.yml` on the version's tag), which
+  `release.yml` now publishes; `SHA256SUMS` alone came from the same place as the archives. `install.sh` installs
+  `gh` from GitHub's repository with a pinned key.
+- **The backups have their own R2 token** (`COLOPHON_BACKUP_S3_ACCESS_KEY`, `credentials/backup_s3_secret_key`),
+  scoped to the backups bucket; the internet-facing server holds the media token alone.
+- `smoke.sh` gives psql the database password through libpq's environment and the API token through a 0600 header
+  file, never a command line; SSH allows no forwarding and 3 tries; the Redis password file is never briefly
+  world-readable; the R2 ids are checked before they go into the env file; `upgrade.sh` refuses a switch when it
+  can't read the migration status; the server's unit adds `ProcSubset=pid`, `PrivateUsers=yes` and
+  `SystemCallFilter=~@resources`.
+
+### Fixed
+
+- **The droplet's deletion-ledger export wrote to the media bucket**: its unit set `COLOPHON_S3_BUCKET` with
+  `Environment=`, which `EnvironmentFile=` (colophon.env's `colophon-media`) overrides. It is now set in the command.
+- `install.sh` stops when the Caddyfile doesn't validate (`validate && reload` under `set -e` went on).
+- **`smoke.sh`'s database checks work against Neon**: psql is given `sslrootcert=system` for a `verify-full` URL
+  that names no CA (libpq otherwise looks for `~/.postgresql/root.crt`), in psql's own environment only:
+  `PGSSLROOTCERT` in the shell broke the `colophon` CLI, whose driver reads it as a file path (found live on
+  alpha.3).
+
 ## [0.1.0-alpha.3] — 2026-11-21
 
 ### Added
