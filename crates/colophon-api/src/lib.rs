@@ -54,7 +54,7 @@ mod visibility;
 
 use axum::{Router, http::HeaderMap, routing::get};
 
-pub use cache::{DeliveryCache, InvalidCacheUrl};
+pub use cache::{DeliveryCache, InvalidCacheUrl, REFILLS, Refills};
 pub use colophon_version::BuildInfo;
 pub use error::{ApiError, ErrorCode, ErrorDetails, PublicError};
 pub use health::{CheckState, Dependency, Readiness, ReadinessReport, Status};

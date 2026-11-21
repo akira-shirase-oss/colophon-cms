@@ -31,9 +31,11 @@ echo "|---|---|---|---:|---:|---:|---:|"
 for n in 01 02 03 04 05 06 07 08 09 10 11 12 13 14; do
   case="l$n"
   # The newest stored run whose own verdict held. `// empty` would swallow a computed
-  # held:false, so the filter reads it raw; the pick is by the record's own date.
+  # held:false, so the filter reads it raw; the pick is by the record's own date, except that a
+  # run whose server counted L10's duplicate fills beats one that didn't (a cluster run, D-232).
   record=$(jq -cs --arg l "$case" \
-    '[.[] | select(.[$l] != null and .[$l].held == true)] | sort_by(.date) | last // empty' \
+    '[.[] | select(.[$l] != null and .[$l].held == true)]
+     | sort_by([(.[$l].fills.duplicate_fills? != null), .date]) | last // empty' \
     "$history")
   if [[ -z $record ]]; then
     echo "| $(tr '[:lower:]' '[:upper:]' <<<"$case") | owed | - | - | - | - | - |"

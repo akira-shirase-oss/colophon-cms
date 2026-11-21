@@ -383,8 +383,9 @@ else
     # The public URL is the sign-in redirect URI registered in the development realm.
     export COLOPHON_LISTEN_ADDR="127.0.0.1:$port" COLOPHON_PUBLIC_URL="http://localhost:$port" COLOPHON_LOG="${LOAD_LOG:-warn}" COLOPHON_LOG_FORMAT=json
     # L10 counts the fills the cache should have answered (a key this process stored, filled again within
-    # its lifetime: D-232); the server logs each on its own target, at INFO.
-    if [[ "$endpoint" == "cdn-warm" ]]; then export COLOPHON_LOG="$COLOPHON_LOG,colophon_api::cache_refill=info"; fi
+    # its lifetime: D-232). The server says them once a window on their own target, at DEBUG when the window
+    # had none, so the run can tell a zero from a count that wasn't taken.
+    if [[ "$endpoint" == "cdn-warm" ]]; then export COLOPHON_LOG="$COLOPHON_LOG,colophon_api::cache_refill=debug"; fi
     # A load run can hold hundreds of live sockets, and a big response keeps each one open
     # longer: under this Mac's 256-file default the accept loop hit EMFILE about once a second
     # on GET /openapi.json at 2,000/s (D-110's scenario). Production runs under a service
@@ -624,6 +625,15 @@ if [[ "$endpoint" == "uploads-slow" ]]; then
   exit "$uploads_status"
 fi
 
+# Valkey's own evictions during the run, beside L10's refill count: the local Valkey is shared, and
+# another checkout's load can evict this run's keys (an eviction refill is the cache's, not the code's).
+valkey_evicted() {
+  docker compose -f deploy/compose.yaml exec -T valkey valkey-cli -a colophon-dev --no-auth-warning INFO stats 2>/dev/null \
+    | tr -d '\r' | awk -F: '$1 == "evicted_keys" { print $2 }'
+}
+evicted_before=""
+[[ "$endpoint" == "cdn-warm" ]] && evicted_before=$(valkey_evicted || true)
+
 echo "running k6: $endpoint $scenario"
 k6_status=0
 k6_drill_env=()
@@ -743,23 +753,36 @@ slow_logs=("$work/server.log")
 for log in "$work"/worker*.log; do [[ -f "$log" ]] && slow_logs+=("$log"); done
 slow_statements=$(cat "${slow_logs[@]}" | jq -Rsc "$warnings_lib [split(\"\\n\")[] | fromjson? | select(slow_statement) | elapsed] | slow_summary")
 
-# L10's duplicate fills (D-232): each fill of a key the server had stored less than a lifetime ago is a
-# line on colophon_api::cache_refill. k6 can't see them, so the count joins l10 here, as a gate at zero,
-# before the record and the lNN gate loop read summary.json. A run through the balancer has no server
-# log of its own here, so it's left as k6 judged it, and says so.
+# L10's duplicate fills (D-232): the server says, once a window on colophon_api::cache_refill, how many
+# keys it filled again within their lifetime. k6 can't see them, so their total joins l10 here, as a gate
+# at zero, before the record and the lNN gate loop read summary.json. The windows are the positive
+# control: a run with none (a renamed target, a wrong filter) wasn't counted, and fails rather than read
+# as zero. A run through the balancer has no server log here: not counted, and the record says so.
 if [[ "$endpoint" == "cdn-warm" && -f "$work/summary.json" ]] && jq -e '.l10 | type == "object"' "$work/summary.json" >/dev/null; then
+  evicted_after=$(valkey_evicted || true)
+  evicted=null
+  if [[ "$evicted_before" =~ ^[0-9]+$ && "$evicted_after" =~ ^[0-9]+$ ]]; then evicted=$(( evicted_after - evicted_before )); fi
   if [[ "$cluster" != "1" && -f "$work/server.log" ]]; then
-    duplicates=$(jq -Rs '[split("\n")[] | fromjson? | select(.target == "colophon_api::cache_refill")] | {count: length, by_kind: (group_by(.kind) | map({key: .[0].kind, value: length}) | from_entries)}' "$work/server.log")
+    duplicates=$(jq -Rs '[split("\n")[] | fromjson? | select(.target == "colophon_api::cache_refill" and (.total | type) == "number")]
+      | {windows: length, count: (map(.total) | add // 0),
+         by_kind: {list: (map(.list) | add // 0), entry: (map(.entry) | add // 0),
+                   query: (map(.query) | add // 0), other: (map(.other) | add // 0)}}' "$work/server.log")
+    if [[ "$(jq '.windows' <<<"$duplicates")" == 0 ]]; then
+      echo "warning: no refill window was logged (colophon_api::cache_refill at debug): the duplicate fills weren't counted" >&2
+    fi
   else
     duplicates=null
   fi
-  jq --argjson d "$duplicates" '
+  jq --argjson d "$duplicates" --argjson evicted "$evicted" '
     .l10.fills.duplicate_fills = $d
-    | .l10.gates.no_duplicate_fills = (if $d == null then null else ($d.count == 0) end)
-    | .l10.gate = ((.l10.gate // "") + "; no key filled again within its lifetime (counted by the server)")
+    | .l10.fills.valkey_evicted_keys = $evicted
+    | .l10.gates.no_duplicate_fills = (if $d == null then null else ($d.windows > 0 and $d.count == 0) end)
+    | .l10.gate = ((.l10.gate // "") + (if $d == null
+        then "; duplicate fills not counted: cluster run"
+        else "; no key filled again within its lifetime (counted by the server, once a window)" end))
     | .l10.held = ([.l10.gates[] | select(. != null)] | all)' "$work/summary.json" > "$work/summary.l10.json"
   mv "$work/summary.l10.json" "$work/summary.json"
-  echo "    duplicate fills (the server's count, D-232): $(jq -c '.l10.fills.duplicate_fills' "$work/summary.json")"
+  echo "    duplicate fills (the server's count, D-232): $(jq -c '.l10.fills.duplicate_fills' "$work/summary.json"); Valkey evicted keys during the run: $evicted"
 fi
 
 # mixed.js cannot read the windows file itself — open() is init-stage only — so
