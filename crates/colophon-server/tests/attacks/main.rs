@@ -17,6 +17,7 @@ mod injection;
 mod limits;
 mod media;
 mod replay;
+mod selfserve_tenancy;
 mod sessions;
 mod ssrf;
 mod tenancy;
