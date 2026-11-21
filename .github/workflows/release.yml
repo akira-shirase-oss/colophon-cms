@@ -601,9 +601,25 @@ jobs:
           name: release-${{ needs.plan.outputs.version }}
           path: dist
       - name: Sign build provenance for every file in SHA256SUMS
+        id: attest
         uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
         with:
           subject-checksums: dist/SHA256SUMS
+      - name: The provenance bundle ships with the release, and verifies each archive offline as upgrade.sh checks it
+        env:
+          BUNDLE: ${{ steps.attest.outputs.bundle-path }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          # deploy/droplet/upgrade.sh fetches colophon-<version>.intoto.jsonl and verifies each
+          # archive against it (release.yml, refs/tags/v<version>) with no GitHub login.
+          cp "$BUNDLE" "dist/colophon-$VERSION.intoto.jsonl"
+          cd dist
+          for f in colophon-server-"$VERSION"-*.tar.gz colophon-cli-"$VERSION"-*.tar.gz colophon-studio-"$VERSION".tar.gz; do
+            env -u GH_TOKEN -u GITHUB_TOKEN gh attestation verify "$f" --bundle "colophon-$VERSION.intoto.jsonl" --repo "$GH_REPO" \
+              --signer-workflow "$GH_REPO/.github/workflows/release.yml" --source-ref "refs/tags/v$VERSION" >/dev/null
+            echo "verified offline: $f"
+          done
       - name: Draft the release (the maintainer checks it and publishes it by hand)
         env:
           GH_TOKEN: ${{ github.token }}
