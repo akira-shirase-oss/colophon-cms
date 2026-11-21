@@ -20,6 +20,14 @@ fail() { echo "FAIL: $*" >&2; journalctl -u colophon --no-pager -n 40 >&2 || tru
 work=$(mktemp -d)
 cleanup() { systemctl stop colophon 2>/dev/null || true; docker rm -f unit-cred-pg unit-cred-valkey >/dev/null 2>&1 || true; rm -rf "$work"; }
 trap cleanup EXIT
+# The host port Docker gave a container's port: chosen and bound by Docker when the container starts, so no other
+# socket can take it first, as one took a fixed 56398 here (CI 44868206132).
+host_port() {
+  local port
+  port=$(docker port "$1" "$2/tcp" | sed -n 's/^127\.0\.0\.1:\([0-9][0-9]*\)$/\1/p' | head -1)
+  [[ -n "$port" ]] || fail "no 127.0.0.1 host port for $1's $2: $(docker port "$1" 2>&1)"
+  printf '%s' "$port"
+}
 
 # A TLS-only PostgreSQL behind a CA of this run's own, named localhost.
 openssl req -x509 -new -nodes -newkey rsa:2048 -days 1 -subj "/CN=unit credentials CA" \
@@ -29,14 +37,16 @@ printf 'subjectAltName=DNS:localhost\nextendedKeyUsage=serverAuth\n' >"$work/ext
 openssl x509 -req -days 1 -in "$work/server.csr" -CA "$work/ca.pem" -CAkey "$work/ca.key" -CAcreateserial -extfile "$work/ext" -out "$work/server.pem" 2>/dev/null
 printf 'local all all trust\nhostssl all all all scram-sha-256\nhostnossl all all all reject\n' >"$work/pg_hba.conf"
 owner_pw=$(openssl rand -hex 16)
-docker create --name unit-cred-pg -p 127.0.0.1:55498:5432 -e POSTGRES_USER=owner -e POSTGRES_DB=colophon -e "POSTGRES_PASSWORD=$owner_pw" \
+docker create --name unit-cred-pg -p 127.0.0.1::5432 -e POSTGRES_USER=owner -e POSTGRES_DB=colophon -e "POSTGRES_PASSWORD=$owner_pw" \
   --entrypoint sh postgres:18 -c 'set -eu; install -d -o postgres -m 0700 /tls
     install -o postgres -m 0600 /in/server.key /tls/server.key; install -o postgres -m 0644 /in/server.pem /in/pg_hba.conf /tls/
     exec docker-entrypoint.sh postgres -c ssl=on -c ssl_cert_file=/tls/server.pem -c ssl_key_file=/tls/server.key -c hba_file=/tls/pg_hba.conf' >/dev/null
 docker cp "$work/." unit-cred-pg:/in >/dev/null && docker start unit-cred-pg >/dev/null
+pg_port=$(host_port unit-cred-pg 5432)
 for _ in $(seq 60); do docker exec unit-cred-pg pg_isready -q -h 127.0.0.1 2>/dev/null && break; sleep 1; done
 cache_pw=$(openssl rand -hex 16)
-docker run -d --name unit-cred-valkey -p 127.0.0.1:56398:6379 valkey/valkey:8 valkey-server --requirepass "$cache_pw" >/dev/null
+docker run -d --name unit-cred-valkey -p 127.0.0.1::6379 valkey/valkey:8 valkey-server --requirepass "$cache_pw" >/dev/null
+cache_port=$(host_port unit-cred-valkey 6379)
 
 # The droplet's layout: binaries, Studio, the CA readable by all (it's public), credentials root-only.
 install -m 0755 "$server_bin" /usr/local/bin/colophon-server
@@ -46,13 +56,13 @@ install -d -m 0755 /etc/colophon && install -m 0644 "$work/ca.pem" /etc/colophon
 install -d -m 0700 /etc/colophon/credentials
 umask 077
 q="sslmode=verify-full&sslrootcert=/etc/colophon/ci-ca.pem"
-printf 'postgres://owner:%s@localhost:55498/colophon?%s' "$owner_pw" "$q" >/etc/colophon/credentials/migration_database_url
+printf 'postgres://owner:%s@localhost:%s/colophon?%s' "$owner_pw" "$pg_port" "$q" >/etc/colophon/credentials/migration_database_url
 openssl rand -hex 24 | tr -d '\n' >/etc/colophon/credentials/app_password
 colophon admin init-roles --database-url-file /etc/colophon/credentials/migration_database_url --app-password-file /etc/colophon/credentials/app_password >/dev/null
 colophon admin migrate --database-url-file /etc/colophon/credentials/migration_database_url >/dev/null
 app_pw=$(cat /etc/colophon/credentials/app_password)
-printf 'postgres://colophon_app:%s@localhost:55498/colophon?%s' "$app_pw" "$q" >/etc/colophon/credentials/database_url
-printf 'redis://:%s@127.0.0.1:56398' "$cache_pw" >/etc/colophon/credentials/cache_url
+printf 'postgres://colophon_app:%s@localhost:%s/colophon?%s' "$app_pw" "$pg_port" "$q" >/etc/colophon/credentials/database_url
+printf 'redis://:%s@127.0.0.1:%s' "$cache_pw" "$cache_port" >/etc/colophon/credentials/cache_url
 printf 'unused-here' >/etc/colophon/credentials/s3_secret_key
 chmod 0400 /etc/colophon/credentials/*
 umask 022
