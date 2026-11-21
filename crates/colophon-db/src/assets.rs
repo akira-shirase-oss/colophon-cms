@@ -601,7 +601,17 @@ pub struct Claimed {
 /// Claims up to `limit` due asset jobs for `owner` under `lease`, rows another worker is
 /// claiming skipped not waited for (the delivery jobs' discipline, minus destinations).
 ///
-/// Only waiting jobs, by an ordered scan of `asset_jobs_due` that stops at the limit. A job
+/// Only waiting jobs, by an ordered scan of `asset_jobs_due` that stops at the limit; each
+/// claimed row is then updated by its key and its asset's fields read by theirs, so a claim
+/// reads a few blocks however many assets and jobs there are. Two plans broke that on main
+/// (CI 44868206132, 70,871 blocks a claim, 4.5 s by the end of the assets smoke): joining
+/// `assets` in the UPDATE let the planner read every asset of the environment per claimed row
+/// and filter on the id afterwards, so the asset fields come from scalar subqueries on the full
+/// key; and a generic plan, which a prepared statement settles on after five calls, can't know
+/// `LIMIT $3` is a handful and scans the whole table for the UPDATE's join, so the claim plans
+/// for its own limit every call (`plan_cache_mode = force_custom_plan`). That costs about
+/// 0.5 ms of planning a call (measured: 0.47 ms, against 0.2 ms for a cached generic plan); keep
+/// it — the generic plan it replaces read the whole table. A job
 /// whose worker stopped answering is made waiting again by [`release_lapsed`], on the sweep's
 /// interval, rather than looked for here: a claim that also searched `lease_expires_at <
 /// now()` walked the dead index entry every finished job leaves there once its lease time
@@ -615,6 +625,11 @@ pub async fn claim(
     limit: i64,
 ) -> Result<Vec<Claimed>, DbError> {
     let mut transaction = worker(pool).await?;
+    // Planned for this call's limit every time, never once for all (see above).
+    sqlx::query("SET LOCAL plan_cache_mode = force_custom_plan")
+        .execute(&mut *transaction)
+        .await
+        .map_err(DbError::from_query)?;
     let lease_ms = i64::try_from(lease.as_millis()).unwrap_or(i64::MAX);
     let claimed = sqlx::query_as!(
         Claimed,
@@ -631,13 +646,21 @@ pub async fn claim(
                             lease_expires_at = now() + make_interval(secs => $2::bigint / 1000.0),
                             lease_generation = j.lease_generation + 1, attempts = j.attempts + 1,
                             updated_at = now()
-         FROM due, assets a
+         FROM due
          WHERE j.project_id = due.project_id AND j.environment_id = due.environment_id AND j.id = due.id
-           AND a.project_id = j.project_id AND a.environment_id = j.environment_id AND a.id = j.asset_id
          RETURNING j.project_id, j.environment_id, j.id, j.kind, j.asset_id,
-                   coalesce(j.quarantine_key, a.quarantine_key) AS \"quarantine_key!\",
-                   coalesce(j.declared_type, a.declared_type) AS \"declared_type!\",
-                   coalesce(j.size_bytes, a.size_bytes) AS \"size_bytes!\",
+                   coalesce(j.quarantine_key,
+                            (SELECT a.quarantine_key FROM assets a
+                             WHERE a.project_id = j.project_id AND a.environment_id = j.environment_id
+                               AND a.id = j.asset_id)) AS \"quarantine_key!\",
+                   coalesce(j.declared_type,
+                            (SELECT a.declared_type FROM assets a
+                             WHERE a.project_id = j.project_id AND a.environment_id = j.environment_id
+                               AND a.id = j.asset_id)) AS \"declared_type!\",
+                   coalesce(j.size_bytes,
+                            (SELECT a.size_bytes FROM assets a
+                             WHERE a.project_id = j.project_id AND a.environment_id = j.environment_id
+                               AND a.id = j.asset_id)) AS \"size_bytes!\",
                    j.idempotency_key, j.attempts,
                    j.lease_generation, j.deadline_at",
         owner,
