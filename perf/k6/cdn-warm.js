@@ -16,7 +16,9 @@
 // three arms share one origin cache and a fill lands on whichever arm asks first. The share
 // served `hit`/`coalesced` is reported per region as evidence, not gated: the fills are a
 // fixed count while the requests scale with the runner (CI's RATE is 300 x the runner's
-// scale), so a share floor failed slower runners with nothing wrong (CI 44817664396).
+// scale), so a share floor failed slower runners with nothing wrong (CI 44817664396). The server
+// also counts fills of a key it stored less than a lifetime ago, which this bound can't see per key;
+// scripts/load.sh adds that count to `l10` as a gate at zero.
 //
 // The arms are time-boxed: TOTAL and VUS are unused. `steady` and `throughput` run the
 // same plan. handleSummary() computes the verdict into `l10` — per-region requests, hit

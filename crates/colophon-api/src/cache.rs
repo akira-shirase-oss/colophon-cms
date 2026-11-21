@@ -10,12 +10,16 @@
 //! one database read). When Valkey is down or slow, answers come from Postgres and are marked
 //! `bypass`: the cache is disposable, never a source of truth (DL7, L11, F08). Postgres stays
 //! bounded either way: fills go through its pool, and a full pool answers 503 with `Retry-After`.
+//!
+//! A key this process stored is filled again within its lifetime only if the cache lost the answer
+//! (an eviction, a flush, a lost store): each such fill is logged on the `colophon_api::cache_refill`
+//! target, and L10 gates their count at zero (D-232).
 
 use std::{
     collections::HashMap,
     future::Future,
     sync::{Arc, Mutex, PoisonError},
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 use tokio::sync::OnceCell;
@@ -29,6 +33,9 @@ const TTL: Duration = Duration::from_secs(300);
 const JITTER: Duration = Duration::from_secs(60);
 /// Larger answers are served but not cached, so a few huge pages can't evict everything else.
 const MAX_CACHED_BYTES: usize = 1 << 20;
+/// The most stored keys the duplicate-fill check remembers. Past it, it drops the ones whose lifetime
+/// has passed, then all of them: it can miss a duplicate, never report one that wasn't.
+const MAX_TRACKED_FILLS: usize = 16_384;
 
 /// Where an answer came from, for the `Colophon-Cache` response header.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -111,6 +118,9 @@ pub struct DeliveryCache {
     /// Valkey, when configured; a call that fails or is slow falls back to Postgres.
     valkey: Valkey,
     flights: Mutex<HashMap<String, Flight>>,
+    /// When this process last stored each key it filled, to tell a fill the cache should have
+    /// answered (the key was stored less than a lifetime ago) from a first one (D-232).
+    stored: Mutex<HashMap<String, Instant>>,
     /// How long a stored answer lives.
     ttl: Duration,
     /// Up to this much extra each store draws, so entries made together don't expire together.
@@ -136,6 +146,7 @@ impl DeliveryCache {
         Self {
             valkey: Valkey::disabled(),
             flights: Mutex::new(HashMap::new()),
+            stored: Mutex::new(HashMap::new()),
             ttl: TTL,
             jitter: JITTER,
         }
@@ -181,14 +192,14 @@ impl DeliveryCache {
         }
     }
 
-    /// Stores `value` under `key` for a jittered lifetime. Failures are ignored: the cache is
-    /// disposable.
-    async fn put(&self, key: &str, value: &Cached, jitter: u64) {
+    /// Stores `value` under `key` for a jittered lifetime, and says whether Valkey took it. A failure
+    /// is otherwise ignored: the cache is disposable.
+    async fn put(&self, key: &str, value: &Cached, jitter: u64) -> bool {
         if value.body.len() > MAX_CACHED_BYTES {
-            return;
+            return false;
         }
         let Some(mut connection) = self.valkey.connection().await else {
-            return;
+            return false;
         };
         // `PX`, not `EX`: the configured lifetimes are milliseconds (COLOPHON_CACHE_TTL_MS),
         // and a whole-second store would silently round a 1,500-ms TTL down to one.
@@ -204,8 +215,27 @@ impl DeliveryCache {
                 .query_async::<()>(&mut connection),
         )
         .await;
-        if !matches!(stored, Ok(Ok(()))) {
+        let kept = matches!(stored, Ok(Ok(())));
+        if !kept {
             self.valkey.fail();
+        }
+        kept
+    }
+
+    /// Records that this process stored `key`, and logs it when it had already stored it less than
+    /// the shortest lifetime ago: the cache lost an answer it was meant to keep.
+    fn stored(&self, key: &str) {
+        let again = {
+            let mut stored = self.stored.lock().unwrap_or_else(PoisonError::into_inner);
+            record_fill(&mut stored, key, Instant::now(), self.ttl)
+        };
+        if let Some(age) = again {
+            tracing::info!(
+                target: "colophon_api::cache_refill",
+                kind = key_kind(key),
+                age_ms = u64::try_from(age.as_millis()).unwrap_or(u64::MAX),
+                "delivery cache filled a key again within its lifetime"
+            );
         }
     }
 
@@ -239,8 +269,11 @@ impl DeliveryCache {
                     return Ok((Filled::Keep(cached), Source::Cache));
                 }
                 let filled = fill().await?;
-                if reachable && let Filled::Keep(cached) = &filled {
-                    self.put(key, cached, jitter).await;
+                if reachable
+                    && let Filled::Keep(cached) = &filled
+                    && self.put(key, cached, jitter).await
+                {
+                    self.stored(key);
                 }
                 Ok((filled, Source::Database))
             })
@@ -267,6 +300,41 @@ impl DeliveryCache {
     }
 }
 
+/// Records a store of `key` at `now`; the age of the previous store when it was less than `lifetime`
+/// ago (a fill the cache should have answered), or `None`. Bounded by [`MAX_TRACKED_FILLS`].
+fn record_fill(
+    stored: &mut HashMap<String, Instant>,
+    key: &str,
+    now: Instant,
+    lifetime: Duration,
+) -> Option<Duration> {
+    let again = stored
+        .get(key)
+        .map(|at| now.saturating_duration_since(*at))
+        .filter(|age| *age < lifetime);
+    if stored.len() >= MAX_TRACKED_FILLS && !stored.contains_key(key) {
+        stored.retain(|_, at| now.saturating_duration_since(*at) < lifetime);
+        if stored.len() >= MAX_TRACKED_FILLS {
+            stored.clear();
+        }
+    }
+    stored.insert(key.to_owned(), now);
+    again
+}
+
+/// Which kind of answer a key holds, for the duplicate-fill line (never the key: it names projects).
+fn key_kind(key: &str) -> &'static str {
+    if key.contains(":list:") {
+        "list"
+    } else if key.contains(":entry:") {
+        "entry"
+    } else if key.contains(":query:") {
+        "query"
+    } else {
+        "other"
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::{
@@ -281,6 +349,83 @@ mod tests {
             etag: "\"e\"".to_owned(),
             body: body.to_owned(),
         }
+    }
+
+    #[test]
+    fn a_key_stored_again_within_its_lifetime_is_a_duplicate_fill_and_after_it_is_not() {
+        let lifetime = Duration::from_secs(300);
+        let start = Instant::now();
+        let mut stored = HashMap::new();
+        assert_eq!(
+            record_fill(&mut stored, "k", start, lifetime),
+            None,
+            "a first fill"
+        );
+        let soon = start + Duration::from_secs(2);
+        assert_eq!(
+            record_fill(&mut stored, "k", soon, lifetime),
+            Some(Duration::from_secs(2)),
+            "refilled 2 s after it was stored: the cache lost it"
+        );
+        assert_eq!(
+            record_fill(&mut stored, "other", soon, lifetime),
+            None,
+            "another key"
+        );
+        // Measured from the latest store: a lifetime after the 2-s refill, the key had expired.
+        let later = soon + lifetime;
+        assert_eq!(
+            record_fill(&mut stored, "k", later, lifetime),
+            None,
+            "expired, not lost"
+        );
+    }
+
+    #[test]
+    fn the_fill_record_is_bounded_and_only_ever_forgets() {
+        let lifetime = Duration::from_secs(300);
+        let start = Instant::now();
+        let mut stored = HashMap::new();
+        for n in 0..MAX_TRACKED_FILLS {
+            assert_eq!(
+                record_fill(&mut stored, &format!("k{n}"), start, lifetime),
+                None
+            );
+        }
+        assert_eq!(stored.len(), MAX_TRACKED_FILLS);
+        // Full of live keys: a new one clears the record rather than grow it.
+        let soon = start + Duration::from_secs(1);
+        assert_eq!(record_fill(&mut stored, "new", soon, lifetime), None);
+        assert_eq!(stored.len(), 1);
+        // Forgetting can miss a duplicate but never invents one: k0 was stored, now it reads as first.
+        assert_eq!(record_fill(&mut stored, "k0", soon, lifetime), None);
+        // Full again of keys past their lifetime: only those are dropped.
+        let mut stored = HashMap::new();
+        for n in 0..MAX_TRACKED_FILLS {
+            record_fill(&mut stored, &format!("old{n}"), start, lifetime);
+        }
+        let stored_live = start + lifetime + Duration::from_millis(999);
+        let past = start + lifetime + Duration::from_secs(1);
+        record_fill(&mut stored, "live", stored_live, lifetime);
+        assert_eq!(
+            stored.len(),
+            1,
+            "every old key expired, so retain dropped them and kept the record small"
+        );
+        assert_eq!(
+            record_fill(&mut stored, "live", past, lifetime),
+            Some(Duration::from_millis(1)),
+            "the live key is still remembered"
+        );
+    }
+
+    #[test]
+    fn a_duplicate_fill_names_the_kind_of_key_never_the_key() {
+        let scope = "colophon:delivery:r1:m0:p0:e0:x0:g3:u0";
+        assert_eq!(key_kind(&format!("{scope}:list:50:-:articles")), "list");
+        assert_eq!(key_kind(&format!("{scope}:entry:00ff:articles")), "entry");
+        assert_eq!(key_kind(&format!("{scope}:query:ab:-:articles")), "query");
+        assert_eq!(key_kind("something else"), "other");
     }
 
     #[test]
