@@ -1,0 +1,47 @@
+# Who may write the row-security context (D-235; SECURITY.md, "The project context").
+#
+# app.project_id is a capability: row security enforces "within the entered project", not
+# membership. Only the functions below may set app.project_id, app.identity_id or app.token_id
+# (set_config, SET [LOCAL], a computed set_config) or open a context through scope's non-member
+# primitives. tests/context_writers.rs fails on any writer not listed here, and on any line here
+# that no longer matches a writer. One line each: <path> <function>   # why it may.
+
+# The gate: membership (or a live token) proven, then the project set.
+crates/colophon-db/migrations/0079_enter_project.sql colophon_enter_project   # member routes: the project is set only after the caller's own membership row is found
+crates/colophon-db/migrations/0079_enter_project.sql colophon_enter_project_as_token   # token routes: the project is set with the token's own, checked live in the same statement
+crates/colophon-db/migrations/0081_token_within_creator.sql colophon_enter_project_as_token   # the same, redefined to bound the token by its creator's role
+crates/colophon-db/src/scope.rs begin_isolated   # the primitive the scope API is built on; callers below decide what it is given
+
+# Definer functions that set their own project for one bounded query and restore the caller's (D-234).
+crates/colophon-db/migrations/0011_delivery_environment.sql delivery_environment   # reads one environment's id/epoch for delivery; the function's own project, restored on return
+crates/colophon-db/migrations/0012_unpublish.sql delivery_environment   # the same function, redefined
+crates/colophon-db/migrations/0051_asset_versions.sql media_object   # resolves one asset version for the media origin; its own project, restored
+crates/colophon-db/migrations/0082_private_media.sql media_object   # the same, redefined for private media
+crates/colophon-db/migrations-nonsuperuser/0011_delivery_environment.sql delivery_environment   # D-234 substitute: capture, set, restore in the body
+crates/colophon-db/migrations-nonsuperuser/0012_unpublish.sql delivery_environment   # D-234 substitute
+crates/colophon-db/migrations-nonsuperuser/0051_asset_versions.sql media_object   # D-234 substitute
+crates/colophon-db/migrations-nonsuperuser/0082_private_media.sql media_object   # D-234 substitute
+
+# Paths that are not a staff member's, each with its own proof of the project.
+crates/colophon-db/src/delivery.rs begin   # public delivery as colophon_delivery: published rows only, by its own policies
+crates/colophon-db/src/content_types.rs current_definition   # a content type's current definition for delivery and populate: public schema metadata
+crates/colophon-db/src/audience.rs project_tx   # a site's audience routes (sign-up, sign-in, magic links): audience tables only, project from the site's URL
+crates/colophon-db/src/previews.rs in_project   # a preview token's reads: the project its verified grant names
+crates/colophon-db/src/members.rs offer   # an invitation looked up by its secret: the project the invitation row names
+crates/colophon-db/src/members.rs accept   # accepting it: the same, then the membership it grants
+crates/colophon-db/src/tokens.rs touch   # a token's last-used mark: the project the authenticated token row names
+crates/colophon-db/src/ledger.rs apply   # the deletion ledger's replay as colophon_deleter (restore runbook): projects the ledger names
+crates/colophon-db/src/schedules.rs run   # due schedules: the project and identity the schedule row names
+crates/colophon-worker/src/lib.rs apply_bulk_item   # a bulk job's items: the job row's project, as its creator or token
+
+# No project at all: identity only, which shows nothing of any project (tests/rls_layer.rs).
+crates/colophon-db/src/identity.rs profile   # the signed-in person's own profile
+crates/colophon-db/src/projects.rs list   # the caller's own projects, through memberships
+crates/colophon-db/src/projects.rs page   # the same, a page at a time
+crates/colophon-db/src/projects.rs get   # one project, through the caller's membership
+
+# A project that doesn't exist yet.
+crates/colophon-db/src/projects.rs create_capped   # the new project's own id, for the rows that make it; owner_account is the caller (0087's policy)
+
+# Not a writer: the D-234 guard's own test cases, as strings.
+crates/colophon-db/src/nonsuperuser.rs the_guard_finds_every_form_of_a_pinned_setting   # test input strings, never executed
