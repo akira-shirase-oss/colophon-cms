@@ -448,31 +448,37 @@ async fn a_site_member_s_answer_never_links_an_unpublished_replacement() {
             .map(|address| address.as_str().expect("an address").to_owned()),
     );
     assert!(addresses.len() >= 3, "{view}");
-    let replacement = app()
-        .get(format!(
-            "{ORIGIN}/media/v1/{project}/production/{asset}/{sha2}"
-        ))
-        .header(header::COOKIE, &owner.cookie)
-        .send()
-        .await
-        .expect("request")
-        .bytes()
-        .await
-        .expect("bytes");
-    assert_eq!(
-        replacement.as_ref(),
-        PNG,
-        "the replacement is the 1x1 image"
-    );
+    // Each version's bytes as the server stored them (it re-encodes an upload, so not `PNG` itself),
+    // read by the owner. They differ, so a served body says which version it is.
+    let stored = |sha: &str| {
+        let owner = &owner;
+        let address = format!("{ORIGIN}/media/v1/{project}/production/{asset}/{sha}");
+        async move {
+            app()
+                .get(address)
+                .header(header::COOKIE, &owner.cookie)
+                .send()
+                .await
+                .expect("request")
+                .bytes()
+                .await
+                .expect("bytes")
+        }
+    };
+    let (published, replacement) = (stored(&sha1).await, stored(&sha2).await);
+    assert_ne!(published, replacement, "the two versions' bytes differ");
     for address in addresses {
         assert!(!address.contains(&sha2), "{address} names the replacement");
         let served = app().get(&address).send().await.expect("request");
         let status = served.status();
         let bytes = served.bytes().await.expect("bytes");
-        assert!(
-            status == StatusCode::OK && bytes.as_ref() != PNG,
-            "{address}: {status}, the replacement's bytes: {}",
-            bytes.as_ref() == PNG
+        assert_eq!(status, StatusCode::OK, "{address}");
+        assert_ne!(
+            bytes, replacement,
+            "{address} served the unpublished replacement"
         );
+        if !address.contains("/w320") {
+            assert_eq!(bytes, published, "{address} serves the published version");
+        }
     }
 }
