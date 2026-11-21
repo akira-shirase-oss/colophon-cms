@@ -607,7 +607,7 @@ mod tests {
     }
 
     /// Every migration runs in a transaction: the grants live and die with it. A no-transaction
-    /// migration would need them committed (visible to colophon_app, left by a crash).
+    /// migration would need them committed (visible to `colophon_app`, left by a crash).
     #[test]
     fn no_migration_runs_outside_a_transaction() {
         let no_tx: Vec<i64> = MIGRATOR
