@@ -229,3 +229,59 @@ async fn colophon_accounts_reads_projects_id_and_owner_and_holds_nothing_else() 
         "colophon_accounts logs in, bypasses row security or inherits another role"
     );
 }
+
+/// 0087 lifts row security's FORCE on projects and memberships for its backfill: it must be
+/// back on after the migration, or tenant isolation would be off for the owner role for good.
+/// (db-nonsuperuser-check.sh checks the same on the non-superuser path.)
+#[tokio::test]
+#[ignore = "needs the stack and scripts/migrate.sh"]
+async fn row_security_is_forced_again_on_projects_and_memberships_after_0087() {
+    let forced: Vec<(String, bool)> = sqlx::query_as(
+        "SELECT relname::text, relforcerowsecurity FROM pg_class
+         WHERE relname IN ('projects', 'memberships') AND relkind = 'r' ORDER BY relname",
+    )
+    .fetch_all(&owner_database().await)
+    .await
+    .expect("pg_class");
+    assert_eq!(
+        forced,
+        [
+            ("memberships".to_owned(), true),
+            ("projects".to_owned(), true)
+        ],
+        "row security isn't forced on both"
+    );
+}
+
+/// The account a project counts against never changes (D-235): today the only guard is that no
+/// application role may UPDATE projects at all. THREAT: a later feature that grants UPDATE on
+/// projects (a rename, say) would let an account move a project onto another account's cap and
+/// quotas, or off its own. That feature must fail here first, and add a column-level refusal (a
+/// trigger) for owner_account before this test may change.
+#[tokio::test]
+#[ignore = "needs the stack and scripts/migrate.sh"]
+async fn no_application_role_may_update_a_project_s_owner_account() {
+    let db = owner_database().await;
+    for role in [
+        "colophon_api",
+        "colophon_app",
+        "colophon_delivery",
+        "colophon_worker",
+        "colophon_deleter",
+        "colophon_retention",
+        "colophon_accounts",
+    ] {
+        let (column, table): (bool, bool) = sqlx::query_as(
+            "SELECT has_column_privilege($1, 'projects', 'owner_account', 'UPDATE'),
+                    has_table_privilege($1, 'projects', 'UPDATE')",
+        )
+        .bind(role)
+        .fetch_one(&db)
+        .await
+        .expect("privileges");
+        assert!(
+            !column && !table,
+            "{role} may UPDATE projects (column {column}, table {table})"
+        );
+    }
+}
