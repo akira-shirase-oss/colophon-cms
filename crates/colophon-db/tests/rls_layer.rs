@@ -84,6 +84,15 @@ async fn an_identity_alone_sees_and_writes_nothing_of_a_project_it_isn_t_in() {
             seen.push(format!("{table}({rows})"));
         }
     }
+    // projects itself keys on id, not project_id: checked on its own.
+    let project_rows: i64 = sqlx::query_scalar("SELECT count(*) FROM projects WHERE id = $1")
+        .bind(beta.id)
+        .fetch_one(&mut *connection)
+        .await
+        .expect("projects");
+    if project_rows > 0 {
+        seen.push(format!("projects({project_rows})"));
+    }
     assert!(
         seen.is_empty(),
         "an identity alone sees another project's rows in {seen:?}"
