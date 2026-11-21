@@ -11,7 +11,7 @@
 # (migration_database_url, s3_secret_key, origin.pem, origin.key) and the ids (r2_account_id,
 # r2_access_key_id, ssh_ip); COLOPHON_RELEASE_BASE a local release directory (upgrade.sh).
 set -euo pipefail
-export COLOPHON_VERSION="${COLOPHON_VERSION:-0.1.0-alpha.2}"
+export COLOPHON_VERSION="${COLOPHON_VERSION:-0.1.0-alpha.3}"
 here=$(cd "$(dirname "$0")" && pwd)
 # shellcheck source=deploy/droplet/public-host.sh
 . "$here/public-host.sh"

@@ -8,6 +8,8 @@ through `--version` and `GET /version`.
 
 ## [Unreleased]
 
+## [0.1.0-alpha.3] — 2026-11-21
+
 ### Added
 
 - **Colophon installs on a database whose owner is not a superuser, Neon's included** (D-234). `colophon admin
