@@ -65,7 +65,7 @@ export interface paths {
         /** The projects the caller belongs to, by name */
         get: operations["listProjects"];
         put?: never;
-        /** Create a project (administrators only) */
+        /** Create a project (administrators; any account where registration is open, up to the per-account cap) */
         post: operations["createProject"];
         delete?: never;
         options?: never;
@@ -3878,7 +3878,7 @@ export interface operations {
                     "application/json": components["schemas"]["Error"];
                 };
             };
-            /** @description `administrators_only, not_set_up` — only an administrator creates projects */
+            /** @description `administrators_only, not_set_up` — only an administrator creates projects here */
             403: {
                 headers: {
                     [name: string]: unknown;
@@ -3887,7 +3887,7 @@ export interface operations {
                     "application/json": components["schemas"]["Error"];
                 };
             };
-            /** @description `project_exists` — a project with this slug exists */
+            /** @description `project_exists, project_limit` — a project with this slug exists, or the account owns as many projects as it may */
             409: {
                 headers: {
                     [name: string]: unknown;
