@@ -18,6 +18,8 @@ set -uo pipefail
 here=$(cd "$(dirname "$0")" && pwd)
 # shellcheck source=deploy/droplet/public-host.sh
 . "$here/public-host.sh"
+# shellcheck source=deploy/droplet/pg-env.sh
+. "$here/pg-env.sh"
 # SMOKE_DOMAIN, else the host of COLOPHON_PUBLIC_URL in the droplet's env file, else the shipped name.
 domain="${SMOKE_DOMAIN:-}"
 [[ -n "$domain" ]] || domain=$(droplet_domain /etc/colophon/colophon.env) || { echo "smoke: no domain to check" >&2; exit 1; }
@@ -47,7 +49,8 @@ jq -e '.version' <<<"$version" >/dev/null 2>&1 && ok "/version: $(jq -r '.versio
 # app URL that names it would quietly turn tenant isolation off (init-roles' colophon_app has none).
 creds="${SMOKE_CREDENTIALS:-/etc/colophon/credentials}"
 if command -v psql >/dev/null && [[ -r "$creds/database_url" ]]; then
-  role=$(PGCONNECT_TIMEOUT=10 psql "$(cat "$creds/database_url")" -XAtqc "select current_user || ' ' || rolbypassrls || ' ' || rolsuper from pg_roles where rolname = current_user" 2>/dev/null)
+  # The URL's password goes to psql through libpq's environment, never its command line (pg-env.sh).
+  role=$(pg_url_run "$(cat "$creds/database_url")" env PGCONNECT_TIMEOUT=10 psql -XAtqc "select current_user || ' ' || rolbypassrls || ' ' || rolsuper from pg_roles where rolname = current_user" 2>/dev/null)
   case "$role" in
     *" false false") ok "the server's database role (${role%% *}) has neither BYPASSRLS nor superuser" ;;
     "") bad "couldn't read the server's database role" ;;
@@ -61,7 +64,7 @@ fi
 creds="${SMOKE_CREDENTIALS:-/etc/colophon/credentials}"
 if command -v psql >/dev/null && [[ -r "$creds/database_url" ]]; then
   queries=(-c '\timing on'); for _ in $(seq 20); do queries+=(-c 'SELECT 1'); done
-  times=$(PGCONNECT_TIMEOUT=10 psql "$(cat "$creds/database_url")" -XAtq "${queries[@]}" 2>/dev/null \
+  times=$(pg_url_run "$(cat "$creds/database_url")" env PGCONNECT_TIMEOUT=10 psql -XAtq "${queries[@]}" 2>/dev/null \
     | sed -n 's/^Time: \([0-9.]*\) ms.*/\1/p' | sort -n)
   if [[ $(wc -l <<<"$times" | tr -d ' ') -ge 10 ]]; then
     p50=$(awk '{a[NR]=$1} END {print a[int((NR+1)/2)]}' <<<"$times")
@@ -109,14 +112,24 @@ fi
 
 echo "through Cloudflare"
 # The server keys every per-address limit — the 5-a-second password limit above all (D-213) — by
-# the visitor X-Forwarded-For names past the proxies it trusts. Trusting only loopback, it would
-# see every visitor as a Cloudflare edge, and one visitor's flood would shut everyone out.
+# the address Caddy tells it. Caddy takes it from Cf-Connecting-Ip when the peer is one of
+# Cloudflare's ranges, and replaces any X-Forwarded-For with it; the server trusts Caddy
+# (loopback) alone. Trusting Cloudflare's ranges in the server as well let a request from a
+# Cloudflare address (another account's Worker) choose its own address.
 proxies=$(sed -n 's/^COLOPHON_TRUSTED_PROXIES=//p' "${SMOKE_ENV_FILE:-/etc/colophon/colophon.env}" | tail -1)
-ranges=$(tr ',' '\n' <<<"$proxies" | grep -cv '^127\.0\.0\.1\(/32\)\?$\|^$' || true)
-if (( ranges >= 10 )); then
-  ok "the server trusts loopback and $ranges Cloudflare ranges, so limits key by the visitor"
+[[ "$proxies" == 127.0.0.1/32 ]] && ok "the server trusts Caddy (loopback) alone" \
+  || bad "COLOPHON_TRUSTED_PROXIES is '$proxies', not 127.0.0.1/32: a forged X-Forwarded-For could choose the client's address (run cloudflare-ips.sh)"
+caddy_etc=${SMOKE_CADDY_DIR:-/etc/caddy}
+ranges=$(sed -n 's/^trusted_proxies static //p' "$caddy_etc/cloudflare-trusted.caddy" 2>/dev/null | wc -w | tr -d ' ')
+grep -q 'client_ip_headers Cf-Connecting-Ip' "$caddy_etc/Caddyfile" 2>/dev/null \
+  && grep -q 'header_up X-Forwarded-For {client_ip}' "$caddy_etc/Caddyfile" && (( ranges >= 10 )) \
+  && ok "Caddy trusts $ranges Cloudflare ranges and tells the server Cf-Connecting-Ip alone" \
+  || bad "Caddy doesn't tell the server Cf-Connecting-Ip alone ($ranges Cloudflare ranges; Caddyfile from install.sh, ranges from cloudflare-ips.sh)"
+if curl -sS -o /dev/null --max-time 2 http://127.0.0.1:2019/config/ 2>/dev/null; then
+  bad "Caddy's admin API answers on TCP 127.0.0.1:2019 (every local process could reconfigure it): install.sh's Caddyfile puts it on a socket"
 else
-  bad "COLOPHON_TRUSTED_PROXIES has $ranges Cloudflare ranges besides loopback: every visitor would share one per-address limit (run cloudflare-ips.sh)"
+  [[ -S /var/lib/caddy/admin.sock && "$(stat -c %a /var/lib/caddy/admin.sock 2>/dev/null)" == 600 ]] \
+    && ok "Caddy's admin API is a 0600 socket, not TCP" || bad "Caddy's admin socket /var/lib/caddy/admin.sock is missing or not 0600"
 fi
 code=$(curl -sS -o /dev/null -w '%{http_code} %{ssl_verify_result}' --max-time 10 "$public/livez" || echo "000 x")
 [[ "$code" == "200 0" ]] && ok "$public/livez answers 200 over valid TLS" || bad "$public/livez: HTTP/verify $code"
@@ -126,6 +139,8 @@ direct=$(curl -sS -o /dev/null -w '%{http_code}' --max-time 5 -k --resolve "$dom
 [[ "$direct" != 200 ]] && ok "the origin refuses a connection without Cloudflare's client certificate" || bad "the origin served a connection without Cloudflare's client certificate"
 headers=$(curl -sSI --max-time 10 "$public/studio/" || true)
 grep -qi '^server: cloudflare' <<<"$headers" && ok "served through Cloudflare" || bad "not through Cloudflare (no server: cloudflare header)"
+grep -qiE '^strict-transport-security: *max-age=[1-9][0-9]{6,}' <<<"$headers" && ok "HSTS is sent ($(grep -i '^strict-transport-security:' <<<"$headers" | tr -d '\r' | cut -d' ' -f2-))" \
+  || bad "no Strict-Transport-Security (the droplet's Caddyfile sends max-age=31536000)"
 grep -qi '^content-security-policy:' <<<"$headers" && ok "the Studio has a content security policy" || bad "no content-security-policy on /studio/"
 grep -qiE '^HTTP/[0-9.]+ 200' <<<"$headers" && ok "the Studio answers 200" || bad "the Studio: $(head -1 <<<"$headers")"
 body=$(curl -sS --max-time 10 "$public/content/v1/00000000-0000-4000-8000-000000000000/production/articles" || true)
@@ -150,12 +165,13 @@ free -m | awk '/^Mem:/ {printf "  info  host: %d MiB used of %d, %d available\n"
 
 if [[ -n "${SMOKE_TOKEN_FILE:-}" && -n "${SMOKE_PROJECT:-}" ]]; then
   echo "an upload, end to end (R2)"
-  token=$(tr -d '\n' <"$SMOKE_TOKEN_FILE")
-  png=$(mktemp); trap 'rm -f "$png"' EXIT
+  # The token goes to curl from a 0600 header file (-H @file), never its command line.
+  png=$(mktemp); auth=$(mktemp); trap 'rm -f "$png" "$auth"' EXIT
+  chmod 0600 "$auth"; printf 'authorization: Bearer %s\n' "$(tr -d '\n' <"$SMOKE_TOKEN_FILE")" >"$auth"
   # A 1x1 transparent PNG.
   base64 -d >"$png" <<<'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg=='
   env_path="$public/api/v1/projects/$SMOKE_PROJECT/environments/production"
-  up=$(curl -sS --max-time 30 -X POST "$env_path/assets" -H "authorization: Bearer $token" \
+  up=$(curl -sS --max-time 30 -X POST "$env_path/assets" -H @"$auth" \
     -H 'content-type: image/png' -H 'x-colophon-file-name: smoke.png' -H "idempotency-key: smoke-$(date +%s)" \
     --data-binary @"$png" || true)
   asset=$(jq -r '.data.id // empty' <<<"$up" 2>/dev/null)
@@ -165,7 +181,7 @@ if [[ -n "${SMOKE_TOKEN_FILE:-}" && -n "${SMOKE_PROJECT:-}" ]]; then
     ok "uploaded asset $asset"
     verified=""
     for _ in $(seq 30); do
-      got=$(curl -sS --max-time 10 "$env_path/assets/$asset" -H "authorization: Bearer $token" || true)
+      got=$(curl -sS --max-time 10 "$env_path/assets/$asset" -H @"$auth" || true)
       if jq -e '(.data.versions // []) | length > 0' <<<"$got" >/dev/null 2>&1; then verified=$got; break; fi
       sleep 2
     done

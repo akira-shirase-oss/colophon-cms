@@ -3,7 +3,11 @@
 # finds the first one's 443 rules and replaces them. Before 2026-11-21 that died: `yes | ufw delete`
 # under pipefail ends in SIGPIPE (141) once ufw has read its one answer, so a re-run of install.sh
 # stopped after deleting one rule. The stub reads one answer from stdin when not given --force,
-# as ufw does. Also checks SSH's rule is left alone and the trusted ranges reach Caddy and Colophon.
+# as ufw does. Also checks SSH's rule is left alone, Caddy gets the ranges, and the server trusts
+# loopback alone (Caddy tells it Cf-Connecting-Ip; trusting Cloudflare's ranges in the server let a
+# request from a Cloudflare address choose its client address): an older run's Cloudflare list in
+# colophon.env is replaced, a file without the setting gets it, and a list that isn't address ranges
+# writes nothing.
 # Runs on macOS's bash 3.2 and on Linux.
 set -euo pipefail
 here=$(cd "$(dirname "$0")" && pwd)
@@ -50,7 +54,8 @@ export PATH="$work/bin:$PATH" UFW_STUB_RULES="$work/rules"
 export COLOPHON_CLOUDFLARE_IPS_TEST=1 COLOPHON_CLOUDFLARE_IPS_FROM="$work/cf"
 export COLOPHON_CADDY_TRUSTED_FILE="$work/cloudflare-trusted.caddy" COLOPHON_ENV_FILE="$work/colophon.env"
 printf '22/tcp                     ALLOW IN    Anywhere                   # ssh: maintainer\n' >"$work/rules"
-printf 'COLOPHON_LISTEN_ADDR=127.0.0.1:58000\nCOLOPHON_TRUSTED_PROXIES=127.0.0.1/32\n' >"$COLOPHON_ENV_FILE"
+# As an older cloudflare-ips.sh left it: Cloudflare's ranges trusted by the server.
+printf 'COLOPHON_LISTEN_ADDR=127.0.0.1:58000\nCOLOPHON_TRUSTED_PROXIES=127.0.0.1/32,173.245.48.0/20,2400:cb00::/32\n' >"$COLOPHON_ENV_FILE"
 
 failures=0
 # check <what> <wanted> <got>
@@ -68,9 +73,23 @@ for run in first second; do
   check "after the $run run: SSH's rule is left alone" 1 "$(count '^22/tcp .*# ssh: maintainer' "$work/rules")"
 done
 check "Caddy trusts every range" "$ranges" "$(tr ' ' '\n' <"$COLOPHON_CADDY_TRUSTED_FILE" | grep -c /)"
-check "Colophon trusts loopback and the ranges, on one line" 1 \
-  "$(count '^COLOPHON_TRUSTED_PROXIES=127.0.0.1/32,173.245.48.0/20,' "$COLOPHON_ENV_FILE")"
+check "Colophon trusts loopback alone, on one line (the older Cloudflare list replaced)" "COLOPHON_TRUSTED_PROXIES=127.0.0.1/32" \
+  "$(grep '^COLOPHON_TRUSTED_PROXIES=' "$COLOPHON_ENV_FILE")"
 check "the env file's other settings are kept" 1 "$(count '^COLOPHON_LISTEN_ADDR=127.0.0.1:58000$' "$COLOPHON_ENV_FILE")"
+
+# A file without the setting gets loopback added.
+printf 'COLOPHON_LOG=info\n' >"$COLOPHON_ENV_FILE"
+"$here/cloudflare-ips.sh" >/dev/null 2>&1 || true
+check "a file without COLOPHON_TRUSTED_PROXIES gets loopback alone" "COLOPHON_TRUSTED_PROXIES=127.0.0.1/32" \
+  "$(grep '^COLOPHON_TRUSTED_PROXIES=' "$COLOPHON_ENV_FILE")"
+
+# A list that isn't address ranges: nothing written, ufw untouched.
+cp "$work/rules" "$work/rules.before"; rm -f "$COLOPHON_CADDY_TRUSTED_FILE"
+printf '173.245.48.0/20\n<html>\n' >"$work/cf/ips-v4"
+code=0; "$here/cloudflare-ips.sh" >/dev/null 2>&1 || code=$?
+check "a list with '<html>' is refused" 1 "$code"
+check "a refused list writes no Caddy file" "absent" "$([[ -e "$COLOPHON_CADDY_TRUSTED_FILE" ]] && echo present || echo absent)"
+check "a refused list leaves ufw alone" "same" "$(cmp -s "$work/rules" "$work/rules.before" && echo same || echo changed)"
 
 if [[ "$failures" -gt 0 ]]; then
   echo "test-cloudflare-ips: $failures failed" >&2
