@@ -50,6 +50,9 @@ pub struct Refills {
     /// Every store Valkey kept in the window: the fill path's own count, so a window of zero refills
     /// is a measured zero (D-232's positive control), not a path that stopped counting.
     stored: AtomicU64,
+    /// Every answer a fill meant to store that Valkey didn't keep (too big, an error, past the
+    /// deadline): with `stored`, every fill of the window is accounted for.
+    unkept: AtomicU64,
     list: AtomicU64,
     entry: AtomicU64,
     query: AtomicU64,
@@ -88,8 +91,14 @@ impl Refills {
         self.stored.fetch_add(1, Ordering::Relaxed);
     }
 
+    /// Counts one answer a fill meant to store that Valkey didn't keep.
+    fn not_kept(&self) {
+        self.unkept.fetch_add(1, Ordering::Relaxed);
+    }
+
     fn say(&self, even_none: bool) {
         let stored = self.stored.swap(0, Ordering::Relaxed);
+        let unkept = self.unkept.swap(0, Ordering::Relaxed);
         let list = self.list.swap(0, Ordering::Relaxed);
         let entry = self.entry.swap(0, Ordering::Relaxed);
         let query = self.query.swap(0, Ordering::Relaxed);
@@ -99,6 +108,7 @@ impl Refills {
             tracing::info!(
                 target: "colophon_api::cache_refill",
                 stored,
+                unkept,
                 list,
                 entry,
                 query,
@@ -110,6 +120,7 @@ impl Refills {
             tracing::debug!(
                 target: "colophon_api::cache_refill",
                 stored,
+                unkept,
                 list,
                 entry,
                 query,
@@ -355,11 +366,11 @@ impl DeliveryCache {
                     return Ok((Filled::Keep(cached), Source::Cache));
                 }
                 let filled = fill().await?;
-                if reachable
-                    && let Filled::Keep(cached) = &filled
-                    && let Some(at) = self.put(key, cached, jitter).await
-                {
-                    self.stored(key, at);
+                if reachable && let Filled::Keep(cached) = &filled {
+                    match self.put(key, cached, jitter).await {
+                        Some(at) => self.stored(key, at),
+                        None => self.refills.not_kept(),
+                    }
                 }
                 Ok((filled, Source::Database))
             })
@@ -630,8 +641,8 @@ mod tests {
     }
 
     /// Through `get_or_fill` against a real Valkey: a store is counted, a hit counts nothing, a key
-    /// Valkey lost within its lifetime is one refill, and an unreachable cache stores (and so counts)
-    /// nothing (D-232).
+    /// Valkey lost within its lifetime is one refill, and an answer Valkey refuses to keep is counted
+    /// as not kept, never as a store (D-232).
     #[tokio::test]
     #[ignore = "needs the local stack: scripts/stack.sh up"]
     async fn a_key_valkey_lost_is_counted_once_as_a_refill_and_a_hit_counts_nothing() {
@@ -682,18 +693,24 @@ mod tests {
             .query_async::<()>(&mut connection)
             .await
             .expect("cleaned up");
-        // A cache that can't store counts nothing.
-        let down: &'static Refills = Box::leak(Box::default());
-        let mut unreachable = DeliveryCache::new("redis://127.0.0.1:9/").expect("valid URL");
-        unreachable.refills = down;
-        let bypassed = unreachable
-            .get_or_fill(&key, 0, || async { Ok(Filled::Keep(answer("c"))) })
+        // An answer Valkey doesn't keep (over the 1 MiB it caches) is counted as not kept, never as
+        // a store: put is called with Valkey reachable, and says no.
+        let big = "x".repeat(MAX_CACHED_BYTES + 1);
+        let served = cache
+            .get_or_fill(&format!("{key}:big"), 0, || async {
+                Ok(Filled::Keep(answer(&big)))
+            })
             .await;
-        assert_eq!(bypassed, Ok((Filled::Keep(answer("c")), Served::Bypass)));
+        assert_eq!(served, Ok((Filled::Keep(answer(&big)), Served::Miss)));
         assert_eq!(
-            down.stored.load(Ordering::Relaxed),
-            0,
+            refills.stored.load(Ordering::Relaxed),
+            2,
             "a store that wasn't kept is never counted"
+        );
+        assert_eq!(
+            refills.unkept.load(Ordering::Relaxed),
+            1,
+            "it is counted as not kept"
         );
     }
 

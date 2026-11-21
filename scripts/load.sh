@@ -760,10 +760,12 @@ slow_statements=$(cat "${slow_logs[@]}" | jq -Rsc "$warnings_lib [split(\"\\n\")
 # many stores Valkey kept and how many keys it filled again within their lifetime. k6 can't see them, so
 # they join l10 here, before the record and the lNN gate loop read summary.json. The server is still up,
 # so this waits (at most 12 s) for a window that closed after k6 stopped: without it the run's last
-# seconds, a whole release's fills, went uncounted. Two gates: no refill, and the fill path counted
-# (its stores are at least the fills k6 saw; a run with no window after k6, a renamed target, a wrong
-# filter or a fill path that stopped counting fails rather than read as zero). A run through the
-# balancer has no server log here: not counted, and the record says so.
+# seconds, a whole release's fills, went uncounted. Two gates: no refill, and the fill path counted:
+# k6 saw fills at all (a cache that was off or unreachable bypasses every answer, so none), and the
+# stores the server kept or was refused cover every fill k6 saw, the edges' and the publisher's. A run
+# with no window after k6, a renamed target, a wrong filter, a cold cache or a fill path that stopped
+# counting fails rather than read as zero. A run through the balancer has no server log here: not
+# counted, and the record says so.
 if [[ "$endpoint" == "cdn-warm" && -f "$work/summary.json" ]] && jq -e '.l10 | type == "object"' "$work/summary.json" >/dev/null; then
   evicted_after=$(valkey_evicted || true)
   evicted=null
@@ -776,7 +778,7 @@ if [[ "$endpoint" == "cdn-warm" && -f "$work/summary.json" ]] && jq -e '.l10 | t
     done
     duplicates=$(jq -Rs --arg end "$k6_ended" "$refill_windows"'
       | {windows: length, windows_after_k6: (map(select(.timestamp[0:19] > $end)) | length),
-         stored: (map(.stored // 0) | add // 0), count: (map(.total) | add // 0),
+         stored: (map(.stored // 0) | add // 0), unkept: (map(.unkept // 0) | add // 0), count: (map(.total) | add // 0),
          by_kind: {list: (map(.list) | add // 0), entry: (map(.entry) | add // 0),
                    query: (map(.query) | add // 0), other: (map(.other) | add // 0)}}' "$work/server.log")
     if [[ "$(jq '.windows_after_k6' <<<"$duplicates")" == 0 ]]; then
@@ -789,7 +791,10 @@ if [[ "$endpoint" == "cdn-warm" && -f "$work/summary.json" ]] && jq -e '.l10 | t
     .l10.fills.duplicate_fills = $d
     | .l10.fills.valkey_evicted_keys = $evicted
     | .l10.gates.no_duplicate_fills = (if $d == null then null else ($d.windows_after_k6 > 0 and $d.count == 0) end)
-    | .l10.gates.fills_counted_by_the_server = (if $d == null then null else ($d.stored >= (.l10.fills.total // 0)) end)
+    | .l10.gates.fills_counted_by_the_server = (if $d == null then null else
+        ((.l10.fills.total | type) == "number" and (.l10.fills.publisher | type) == "number"
+         and .l10.fills.total > 0
+         and ($d.stored + $d.unkept) >= (.l10.fills.total + .l10.fills.publisher)) end)
     | .l10.gate = ((.l10.gate // "") + (if $d == null
         then "; duplicate fills not counted: cluster run"
         else "; no key filled again within its lifetime (counted by the server, once a window)" end))
