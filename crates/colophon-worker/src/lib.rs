@@ -334,7 +334,14 @@ impl Worker {
                     }
                     // Asset jobs whose worker stopped answering wait again, for the next
                     // claim (the claim itself looks only at waiting jobs).
-                    match colophon_db::assets::release_lapsed(&self.pool).await {
+                    let stopping = || cancel.is_cancelled();
+                    match colophon_db::assets::release_lapsed_all(
+                        &self.pool,
+                        colophon_db::assets::RELEASE_BUDGET,
+                        &stopping,
+                    )
+                    .await
+                    {
                         Ok(0) => {}
                         Ok(released) => {
                             tracing::info!(released, "asset jobs whose lease ran out wait again");

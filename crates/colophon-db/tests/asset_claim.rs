@@ -258,3 +258,74 @@ async fn a_claim_never_walks_finished_jobs_leases() {
     owner.close().await;
     db.drop().await;
 }
+
+/// A pass is bounded, a sweep is not: 250 lapsed leases are all released in one sweep, a
+/// pass of 200 then one of 50, and a live lease is never touched; a stop asked for between
+/// passes ends the sweep without starting another.
+#[tokio::test]
+#[ignore = "needs the local stack: scripts/stack.sh up"]
+async fn one_sweep_releases_every_lapsed_lease_a_bounded_pass_at_a_time() {
+    let db = TestDb::new().await;
+    one_upload(&db).await;
+    let owner = db.owner().await;
+    let strand = async || {
+        sqlx::query(
+            "INSERT INTO asset_jobs (project_id, environment_id, id, asset_id, kind,
+                                     idempotency_key, status, lease_owner, lease_expires_at,
+                                     next_attempt_at, deadline_at)
+             SELECT project_id, environment_id, gen_random_uuid(), asset_id, kind,
+                    'lapsed:' || gen_random_uuid(), 'running', 'gone',
+                    now() - interval '1 minute', now() - interval '2 minutes',
+                    now() + interval '1 hour'
+             FROM asset_jobs, generate_series(1, 250) n WHERE idempotency_key = 'verify:a'",
+        )
+        .execute(&owner)
+        .await
+        .expect("250 lapsed leases");
+    };
+    strand().await;
+    sqlx::query(
+        "UPDATE asset_jobs SET status = 'running', lease_owner = 'alive',
+                               lease_expires_at = now() + interval '1 minute'
+         WHERE idempotency_key = 'verify:a'",
+    )
+    .execute(&owner)
+    .await
+    .expect("a live lease");
+    let never = || false;
+    assert_eq!(
+        assets::release_lapsed_all(&db.app, assets::RELEASE_BUDGET, &never)
+            .await
+            .expect("a sweep"),
+        250,
+        "every lapsed lease, in one sweep"
+    );
+    let live: String =
+        sqlx::query_scalar("SELECT status FROM asset_jobs WHERE idempotency_key = 'verify:a'")
+            .fetch_one(&owner)
+            .await
+            .expect("the live job");
+    assert_eq!(live, "running", "a live lease is never released");
+
+    // Another 250, and a stop asked for during the first pass: the sweep ends after it.
+    strand().await;
+    let asked = std::sync::atomic::AtomicUsize::new(0);
+    let stopped = || {
+        asked.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        true
+    };
+    assert_eq!(
+        assets::release_lapsed_all(&db.app, assets::RELEASE_BUDGET, &stopped)
+            .await
+            .expect("a stopped sweep"),
+        u64::try_from(assets::RELEASE_BATCH).expect("a count"),
+        "one pass, then the stop"
+    );
+    assert_eq!(
+        asked.load(std::sync::atomic::Ordering::SeqCst),
+        1,
+        "asked once, between passes"
+    );
+    owner.close().await;
+    db.drop().await;
+}
