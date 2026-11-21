@@ -47,6 +47,9 @@ const MAX_TRACKED_FILLS: usize = 16_384;
 /// the current window. Bounded: four counters.
 #[derive(Debug, Default)]
 pub struct Refills {
+    /// Every store Valkey kept in the window: the fill path's own count, so a window of zero refills
+    /// is a measured zero (D-232's positive control), not a path that stopped counting.
+    stored: AtomicU64,
     list: AtomicU64,
     entry: AtomicU64,
     query: AtomicU64,
@@ -80,7 +83,13 @@ impl Refills {
         self.say(false);
     }
 
+    /// Counts one store Valkey kept.
+    fn kept(&self) {
+        self.stored.fetch_add(1, Ordering::Relaxed);
+    }
+
     fn say(&self, even_none: bool) {
+        let stored = self.stored.swap(0, Ordering::Relaxed);
         let list = self.list.swap(0, Ordering::Relaxed);
         let entry = self.entry.swap(0, Ordering::Relaxed);
         let query = self.query.swap(0, Ordering::Relaxed);
@@ -89,6 +98,7 @@ impl Refills {
         if total > 0 {
             tracing::info!(
                 target: "colophon_api::cache_refill",
+                stored,
                 list,
                 entry,
                 query,
@@ -99,6 +109,7 @@ impl Refills {
         } else if even_none {
             tracing::debug!(
                 target: "colophon_api::cache_refill",
+                stored,
                 list,
                 entry,
                 query,
@@ -194,6 +205,8 @@ pub struct DeliveryCache {
     /// When this process last stored each key it filled, to tell a fill the cache should have
     /// answered (the key was stored less than a lifetime ago) from a first one (D-232).
     stored: Mutex<HashMap<String, Instant>>,
+    /// Where its stores and refills are counted: the process's [`REFILLS`], or a test's own.
+    refills: &'static Refills,
     /// How long a stored answer lives.
     ttl: Duration,
     /// Up to this much extra each store draws, so entries made together don't expire together.
@@ -220,6 +233,7 @@ impl DeliveryCache {
             valkey: Valkey::disabled(),
             flights: Mutex::new(HashMap::new()),
             stored: Mutex::new(HashMap::new()),
+            refills: &REFILLS,
             ttl: TTL,
             jitter: JITTER,
         }
@@ -305,8 +319,9 @@ impl DeliveryCache {
         };
         // A full record is freed after the lock, not under it.
         drop(forgotten);
+        self.refills.kept();
         if again.is_some() {
-            REFILLS.note(key);
+            self.refills.note(key);
         }
     }
 
@@ -605,6 +620,80 @@ mod tests {
             next,
             Ok((Filled::Missing, Served::Bypass)),
             "a new fill, not the old failure"
+        );
+    }
+
+    /// The local stack's Valkey (deploy/local.env), or `COLOPHON_CACHE_URL`.
+    fn stack_valkey() -> String {
+        std::env::var("COLOPHON_CACHE_URL")
+            .unwrap_or_else(|_| "redis://:colophon-dev@127.0.0.1:56379".to_owned())
+    }
+
+    /// Through `get_or_fill` against a real Valkey: a store is counted, a hit counts nothing, a key
+    /// Valkey lost within its lifetime is one refill, and an unreachable cache stores (and so counts)
+    /// nothing (D-232).
+    #[tokio::test]
+    #[ignore = "needs the local stack: scripts/stack.sh up"]
+    async fn a_key_valkey_lost_is_counted_once_as_a_refill_and_a_hit_counts_nothing() {
+        let refills: &'static Refills = Box::leak(Box::default());
+        let mut cache = DeliveryCache::new(&stack_valkey()).expect("valid URL");
+        cache.refills = refills;
+        let key = format!(
+            "colophon:delivery:test:{}:entry:00ff:articles",
+            std::process::id()
+        );
+        let first = cache
+            .get_or_fill(&key, 0, || async { Ok(Filled::Keep(answer("a"))) })
+            .await;
+        assert_eq!(first, Ok((Filled::Keep(answer("a")), Served::Miss)));
+        assert_eq!(
+            refills.stored.load(Ordering::Relaxed),
+            1,
+            "the store is counted"
+        );
+        let hit = cache
+            .get_or_fill(&key, 0, || async { Ok(Filled::Keep(answer("never"))) })
+            .await;
+        assert_eq!(hit, Ok((Filled::Keep(answer("a")), Served::Hit)));
+        assert_eq!(
+            refills.stored.load(Ordering::Relaxed),
+            1,
+            "a hit stores nothing"
+        );
+        // Valkey loses the answer long before its lifetime (an eviction, a flush).
+        let mut connection = cache.valkey.connection().await.expect("the stack's Valkey");
+        redis::cmd("DEL")
+            .arg(&key)
+            .query_async::<()>(&mut connection)
+            .await
+            .expect("deleted");
+        let again = cache
+            .get_or_fill(&key, 0, || async { Ok(Filled::Keep(answer("b"))) })
+            .await;
+        assert_eq!(again, Ok((Filled::Keep(answer("b")), Served::Miss)));
+        assert_eq!(refills.stored.load(Ordering::Relaxed), 2);
+        assert_eq!(
+            refills.entry.load(Ordering::Relaxed),
+            1,
+            "one refill, of an entry key"
+        );
+        redis::cmd("DEL")
+            .arg(&key)
+            .query_async::<()>(&mut connection)
+            .await
+            .expect("cleaned up");
+        // A cache that can't store counts nothing.
+        let down: &'static Refills = Box::leak(Box::default());
+        let mut unreachable = DeliveryCache::new("redis://127.0.0.1:9/").expect("valid URL");
+        unreachable.refills = down;
+        let bypassed = unreachable
+            .get_or_fill(&key, 0, || async { Ok(Filled::Keep(answer("c"))) })
+            .await;
+        assert_eq!(bypassed, Ok((Filled::Keep(answer("c")), Served::Bypass)));
+        assert_eq!(
+            down.stored.load(Ordering::Relaxed),
+            0,
+            "a store that wasn't kept is never counted"
         );
     }
 

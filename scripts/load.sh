@@ -656,6 +656,9 @@ fi
   -e P99_MS="$P99_MS" -e USERS="${USERS:-512}" -e RECEIVER_URL="http://127.0.0.1:$receiver_port" -e SITE_URL="http://127.0.0.1:$site_port" \
   ${k6_drill_env[@]+"${k6_drill_env[@]}"} \
   "perf/k6/$endpoint.js" 2>&1 | tee "$work/k6-console.log" || k6_status=$?
+# When k6 stopped, to the second (UTC, as the server's JSON stamps its lines): L10's refill count must
+# include a window that closed after it, so the run's last seconds are counted too.
+k6_ended=$(date -u +%Y-%m-%dT%H:%M:%S)
 
 if [[ -n "$sampler_pid" ]]; then
   kill "$sampler_pid" 2>/dev/null || true
@@ -753,22 +756,31 @@ slow_logs=("$work/server.log")
 for log in "$work"/worker*.log; do [[ -f "$log" ]] && slow_logs+=("$log"); done
 slow_statements=$(cat "${slow_logs[@]}" | jq -Rsc "$warnings_lib [split(\"\\n\")[] | fromjson? | select(slow_statement) | elapsed] | slow_summary")
 
-# L10's duplicate fills (D-232): the server says, once a window on colophon_api::cache_refill, how many
-# keys it filled again within their lifetime. k6 can't see them, so their total joins l10 here, as a gate
-# at zero, before the record and the lNN gate loop read summary.json. The windows are the positive
-# control: a run with none (a renamed target, a wrong filter) wasn't counted, and fails rather than read
-# as zero. A run through the balancer has no server log here: not counted, and the record says so.
+# L10's duplicate fills (D-232): the server says, once a 10-s window on colophon_api::cache_refill, how
+# many stores Valkey kept and how many keys it filled again within their lifetime. k6 can't see them, so
+# they join l10 here, before the record and the lNN gate loop read summary.json. The server is still up,
+# so this waits (at most 12 s) for a window that closed after k6 stopped: without it the run's last
+# seconds, a whole release's fills, went uncounted. Two gates: no refill, and the fill path counted
+# (its stores are at least the fills k6 saw; a run with no window after k6, a renamed target, a wrong
+# filter or a fill path that stopped counting fails rather than read as zero). A run through the
+# balancer has no server log here: not counted, and the record says so.
 if [[ "$endpoint" == "cdn-warm" && -f "$work/summary.json" ]] && jq -e '.l10 | type == "object"' "$work/summary.json" >/dev/null; then
   evicted_after=$(valkey_evicted || true)
   evicted=null
   if [[ "$evicted_before" =~ ^[0-9]+$ && "$evicted_after" =~ ^[0-9]+$ ]]; then evicted=$(( evicted_after - evicted_before )); fi
   if [[ "$cluster" != "1" && -f "$work/server.log" ]]; then
-    duplicates=$(jq -Rs '[split("\n")[] | fromjson? | select(.target == "colophon_api::cache_refill" and (.total | type) == "number")]
-      | {windows: length, count: (map(.total) | add // 0),
+    refill_windows='[split("\n")[] | fromjson? | select(.target == "colophon_api::cache_refill" and (.total | type) == "number")]'
+    for _ in $(seq 24); do
+      jq -Rse --arg end "$k6_ended" "$refill_windows | map(select(.timestamp[0:19] > \$end)) | length > 0" "$work/server.log" >/dev/null && break
+      sleep 0.5
+    done
+    duplicates=$(jq -Rs --arg end "$k6_ended" "$refill_windows"'
+      | {windows: length, windows_after_k6: (map(select(.timestamp[0:19] > $end)) | length),
+         stored: (map(.stored // 0) | add // 0), count: (map(.total) | add // 0),
          by_kind: {list: (map(.list) | add // 0), entry: (map(.entry) | add // 0),
                    query: (map(.query) | add // 0), other: (map(.other) | add // 0)}}' "$work/server.log")
-    if [[ "$(jq '.windows' <<<"$duplicates")" == 0 ]]; then
-      echo "warning: no refill window was logged (colophon_api::cache_refill at debug): the duplicate fills weren't counted" >&2
+    if [[ "$(jq '.windows_after_k6' <<<"$duplicates")" == 0 ]]; then
+      echo "warning: no refill window closed after k6 stopped (colophon_api::cache_refill at debug): the duplicate fills weren't all counted" >&2
     fi
   else
     duplicates=null
@@ -776,7 +788,8 @@ if [[ "$endpoint" == "cdn-warm" && -f "$work/summary.json" ]] && jq -e '.l10 | t
   jq --argjson d "$duplicates" --argjson evicted "$evicted" '
     .l10.fills.duplicate_fills = $d
     | .l10.fills.valkey_evicted_keys = $evicted
-    | .l10.gates.no_duplicate_fills = (if $d == null then null else ($d.windows > 0 and $d.count == 0) end)
+    | .l10.gates.no_duplicate_fills = (if $d == null then null else ($d.windows_after_k6 > 0 and $d.count == 0) end)
+    | .l10.gates.fills_counted_by_the_server = (if $d == null then null else ($d.stored >= (.l10.fills.total // 0)) end)
     | .l10.gate = ((.l10.gate // "") + (if $d == null
         then "; duplicate fills not counted: cluster run"
         else "; no key filled again within its lifetime (counted by the server, once a window)" end))
