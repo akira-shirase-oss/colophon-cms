@@ -3,8 +3,8 @@
 # crate and npm package carries (docs/modules/19-oss.md, "Versions"). Given a git tag, it also
 # checks that the tag is `v` plus that version, so a tag can never release something else.
 #
-#   scripts/release-version.sh            # 0.1.0-alpha.2
-#   scripts/release-version.sh v0.1.0     # fails: the workspace is 0.1.0-alpha.2
+#   scripts/release-version.sh            # 0.1.0-alpha.3
+#   scripts/release-version.sh v0.1.0     # fails: the workspace is 0.1.0-alpha.3
 set -euo pipefail
 cd "$(dirname "$0")/.."
 

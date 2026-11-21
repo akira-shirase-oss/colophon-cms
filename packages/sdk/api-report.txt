@@ -112,7 +112,7 @@ class ApiError extends Error
   get pointer(): string | null;
   get retryable(): boolean;
 function errorOf(body: unknown): ErrorEnvelope['error'] | null;
-const SDK_VERSION = "0.1.0-alpha.2"
+const SDK_VERSION = "0.1.0-alpha.3"
 const API = "v1"
 const OLDEST_SERVER = "0.1.0-alpha.1"
 interface Compatibility

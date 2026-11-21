@@ -8,6 +8,27 @@ through `--version` and `GET /version`.
 
 ## [Unreleased]
 
+## [0.1.0-alpha.3] — 2026-11-21
+
+### Added
+
+- **Colophon installs on a database whose owner is not a superuser, Neon's included** (D-234). `colophon admin
+  init-roles` gives a login role's password as text when the server refuses a verifier (Neon: "only supports being
+  given plaintext passwords"), over the connection's `verify-full` TLS, and grants the owner SET and INHERIT on
+  Colophon's roles. `colophon admin migrate` runs four migrations (0011, 0012, 0051, 0082) from substitutes that pin
+  no custom setting on a function, with the rights each migration needs granted inside that migration's own
+  transaction (never visible to the application, gone with a crash's rollback); the database records the same
+  migrations and checksums as a superuser's install, and `admin migrate-status` reports any such right left outside
+  a migration (`smoke.sh` fails on it). A superuser's install is unchanged.
+
+### Fixed
+
+- **The droplet's `cloudflare-ips.sh` survives a re-run.** It replaced the 443 rules with `yes | ufw delete`, which
+  under `pipefail` ended in SIGPIPE once ufw had read its one answer, so every run that found rules to replace
+  (any re-run of `install.sh`) stopped after deleting one of them; its loop test had the same flaw. It now reads
+  ufw's answers whole and deletes with `--force`, and runs the same on macOS for its test.
+- **The droplet's `install.sh` stops when `init-roles` fails**, instead of going on to migrate without the roles.
+
 ## [0.1.0-alpha.2] — 2026-11-21
 
 ### Added

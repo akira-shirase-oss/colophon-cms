@@ -11,7 +11,7 @@
 # (migration_database_url, s3_secret_key, origin.pem, origin.key) and the ids (r2_account_id,
 # r2_access_key_id, ssh_ip); COLOPHON_RELEASE_BASE a local release directory (upgrade.sh).
 set -euo pipefail
-export COLOPHON_VERSION="${COLOPHON_VERSION:-0.1.0-alpha.2}"
+export COLOPHON_VERSION="${COLOPHON_VERSION:-0.1.0-alpha.3}"
 here=$(cd "$(dirname "$0")" && pwd)
 # shellcheck source=deploy/droplet/public-host.sh
 . "$here/public-host.sh"
@@ -113,7 +113,21 @@ if [[ "$fixed" != "$url" ]]; then
   for note in "${NEON_URL_NOTES[@]}"; do say "Neon URL: $note"; done
 fi
 [[ -s "$CREDS/app_password" ]] || { (umask 077; head -c 32 /dev/urandom | base64 | tr '+/' '-_' | tr -d '=\n' >"$CREDS/app_password"); chmod 0400 "$CREDS/app_password"; say "generated the application's password"; }
-colophon admin init-roles --database-url-file "$CREDS/migration_database_url" --app-password-file "$CREDS/app_password" >/dev/null && say "roles ready"
+# A failure stops here: `cmd && say` under set -e went on to migrate without the roles (2026-11-21).
+# On Neon (no superuser) init-roles gives the password as text and the owner its memberships (D-234).
+init_err=$(mktemp)
+if ! colophon admin init-roles --database-url-file "$CREDS/migration_database_url" --app-password-file "$CREDS/app_password" >/dev/null 2>"$init_err"; then
+  cat "$init_err" >&2
+  echo "refusing: the roles step failed (colophon admin init-roles; its error is above); nothing after it was run" >&2
+  # A failed statement that held the password as text may be in the database server's log.
+  if grep -q 'rotate the application' "$init_err"; then
+    echo "and ROTATE the application's password before running this again: rm $CREDS/app_password $CREDS/database_url (a new one is generated), and if colophon_app already exists, ALTER ROLE colophon_app PASSWORD to the new one as the owner" >&2
+  fi
+  rm -f "$init_err"
+  exit 1
+fi
+rm -f "$init_err"
+say "roles ready"
 if [[ ! -s "$CREDS/database_url" ]]; then
   read -r rest <<<"$(sed -E 's#^postgres(ql)?://[^@]+@##' "$CREDS/migration_database_url")"
   (umask 077; printf 'postgres://colophon_app:%s@%s' "$(cat "$CREDS/app_password")" "$rest" >"$CREDS/database_url"); chmod 0400 "$CREDS/database_url"
