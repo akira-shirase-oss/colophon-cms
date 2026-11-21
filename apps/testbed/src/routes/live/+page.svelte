@@ -2,6 +2,7 @@
 	import { onDestroy, onMount } from 'svelte';
 	import { resolve } from '$app/paths';
 	import { call, csrfToken, detailsOf, envelopeOf, listProjects, type Reply } from '#lib/api.ts';
+	import { latestFor } from '#lib/latest.ts';
 
 	interface Project {
 		id: string;
@@ -63,8 +64,14 @@
 		});
 	}
 
+	// Latest load wins: an answer for an older load, or another project or entry, is dropped (#lib/latest.ts).
+	const entryLoads = latestFor(() => projectId);
+	const commentLoads = latestFor(() => `${projectId} ${entries[0]?.id ?? ''}`);
+
 	async function loadEntries() {
+		const current = entryLoads.start();
 		const reply = await call('GET', `${base}/collections/articles/entries?limit=100`);
+		if (!current()) return;
 		if (reply.status === 200) entries = (reply.body as { data: Listed[] }).data;
 	}
 
@@ -74,7 +81,9 @@
 			comments = null;
 			return;
 		}
+		const current = commentLoads.start();
 		const reply = await call('GET', `${base}/collections/articles/entries/${first.id}/comments?limit=100`);
+		if (!current()) return;
 		if (reply.status === 200) comments = (reply.body as { data: unknown[] }).data.length;
 	}
 

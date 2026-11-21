@@ -2,6 +2,7 @@
 	import { onMount } from 'svelte';
 	import { resolve } from '$app/paths';
 	import { call, csrfToken, detailsOf, envelopeOf, listProjects, type Reply } from '#lib/api.ts';
+	import { latestFor } from '#lib/latest.ts';
 
 	interface Project {
 		id: string;
@@ -57,8 +58,14 @@
 		return `${reply.status} ${error?.code ?? ''}${details ? ` (${details.reason}${details.pointer ? ` at ${details.pointer}` : ''})` : ''}`;
 	}
 
+	// Latest load wins: an answer for an older load, or another project, plan or filter, is dropped (#lib/latest.ts).
+	const planLoads = latestFor(() => projectId);
+	const itemLoads = latestFor(() => `${projectId} ${plan?.id ?? ''} ${outcome}`);
+
 	async function loadPlans() {
+		const current = planLoads.start();
 		const reply = await call('GET', `${base}?limit=100`);
+		if (!current()) return;
 		plans = reply.status === 200 ? (reply.body as { data: Plan[] }).data : [];
 		if (plan !== null) await open(plan.id);
 	}
@@ -66,7 +73,9 @@
 	async function loadItems() {
 		if (plan === null) return;
 		const query = outcome === '' ? '' : `?outcome=${outcome}`;
+		const current = itemLoads.start();
 		const reply = await call('GET', `${base}/${plan.id}/items${query}${query === '' ? '?' : '&'}limit=100`);
+		if (!current()) return;
 		items = reply.status === 200 ? (reply.body as { data: Item[] }).data : [];
 	}
 
