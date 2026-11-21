@@ -80,12 +80,7 @@ async fn another_project_s_rows_are_not_found_by_anyone_outside_it() {
         // The positive control: the row is there, and its owner reads it. A path no route matches, or a
         // row that never existed, would be a 404 for everyone and prove nothing.
         let as_owner = send(&owner, Method::GET, path, None).await;
-        assert_eq!(
-            as_owner.status,
-            StatusCode::OK,
-            "{path}: {}",
-            as_owner.body
-        );
+        assert_eq!(as_owner.status, StatusCode::OK, "{path}: {}", as_owner.body);
         // Everyone outside: the project's own not_found, the same as a row that never existed (not
         // route_not_found, which would mean the path missed every route).
         let as_member_elsewhere = send(&stranger, Method::GET, path, None).await;

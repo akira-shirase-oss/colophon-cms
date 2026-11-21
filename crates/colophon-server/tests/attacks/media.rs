@@ -175,7 +175,11 @@ async fn an_unpublished_upload_is_private_until_a_release_names_it() {
     let sha = record.body["data"]["sha256"].as_str().expect("a sha256");
     let version = format!("{path}/{sha}");
     let as_member = get(&signed_for("member", &version, now() + 300).await, None).await;
-    assert_eq!(as_member.status(), StatusCode::OK, "a member's versioned address");
+    assert_eq!(
+        as_member.status(),
+        StatusCode::OK,
+        "a member's versioned address"
+    );
     for bad in [
         signed(&path, now() - 1).await,
         signed(&path, now() + 365 * 24 * 3600).await,
@@ -422,7 +426,9 @@ async fn a_site_member_s_answer_never_links_an_unpublished_replacement() {
 
     // The member's answer: every media address it names serves the first version's bytes, or nothing.
     let answer = app()
-        .get(format!("{ORIGIN}/content/v1/{project}/production/covers/{id}"))
+        .get(format!(
+            "{ORIGIN}/content/v1/{project}/production/covers/{id}"
+        ))
         .header(header::AUTHORIZATION, &bearer)
         .send()
         .await
@@ -443,7 +449,9 @@ async fn a_site_member_s_answer_never_links_an_unpublished_replacement() {
     );
     assert!(addresses.len() >= 3, "{view}");
     let replacement = app()
-        .get(format!("{ORIGIN}/media/v1/{project}/production/{asset}/{sha2}"))
+        .get(format!(
+            "{ORIGIN}/media/v1/{project}/production/{asset}/{sha2}"
+        ))
         .header(header::COOKIE, &owner.cookie)
         .send()
         .await
@@ -451,7 +459,11 @@ async fn a_site_member_s_answer_never_links_an_unpublished_replacement() {
         .bytes()
         .await
         .expect("bytes");
-    assert_eq!(replacement.as_ref(), PNG, "the replacement is the 1x1 image");
+    assert_eq!(
+        replacement.as_ref(),
+        PNG,
+        "the replacement is the 1x1 image"
+    );
     for address in addresses {
         assert!(!address.contains(&sha2), "{address} names the replacement");
         let served = app().get(&address).send().await.expect("request");
