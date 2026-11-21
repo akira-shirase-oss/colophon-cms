@@ -39,6 +39,9 @@ colophonapp.404human.dev:443 {
 	# HSTS for this host only: no includeSubDomains (other 404human.dev hosts are served by
 	# Cloudflare Pages) and no preload, which is a later, deliberate step.
 	header Strict-Transport-Security "max-age=31536000"
+	# The bare root opens the Studio (the server answers route_not_found there). A path matcher
+	# of "/" alone is exact: nothing else is redirected. 302, so browsers don't keep it.
+	redir / /studio/ 302
 	encode zstd gzip
 	reverse_proxy 127.0.0.1:58000 {
 		# The server is told one address, Caddy's verdict above, replacing any X-Forwarded-For that

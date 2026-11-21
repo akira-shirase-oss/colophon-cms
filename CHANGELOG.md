@@ -39,6 +39,7 @@ through `--version` and `GET /version`.
 
 - **The droplet's deletion-ledger export wrote to the media bucket**: its unit set `COLOPHON_S3_BUCKET` with
   `Environment=`, which `EnvironmentFile=` (colophon.env's `colophon-media`) overrides. It is now set in the command.
+- The droplet's bare root opens the Studio (a 302 to `/studio/`) instead of the server's `route_not_found`.
 - `install.sh` stops when the Caddyfile doesn't validate (`validate && reload` under `set -e` went on).
 - **`smoke.sh`'s database checks work against Neon**: psql is given `sslrootcert=system` for a `verify-full` URL
   that names no CA (libpq otherwise looks for `~/.postgresql/root.crt`), in psql's own environment only:

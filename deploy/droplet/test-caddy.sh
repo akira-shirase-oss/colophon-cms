@@ -57,7 +57,12 @@ reload() { docker exec "$name" caddy reload --config /etc/caddy/Caddyfile --adap
 # get [curl args...]: the stand-in's answer through the site, with our client certificate.
 get() {
   curl -sS --max-time 5 -k --connect-to "$HOST:443:127.0.0.1:$port" \
-    --cert "$work/aop/client.pem" --key "$work/aop/client.key" "$@" "https://$HOST/" 2>&1 || true
+    --cert "$work/aop/client.pem" --key "$work/aop/client.key" "$@" "https://$HOST/livez" 2>&1 || true
+}
+# get_path <path>: the stand-in's answer for that path, redirects not followed.
+get_path() {
+  curl -sS --max-time 5 -k --connect-to "$HOST:443:127.0.0.1:$port" \
+    --cert "$work/aop/client.pem" --key "$work/aop/client.key" "https://$HOST$1" 2>&1 || true
 }
 
 # The trust modes first: the shared CA alone can't verify our certificate.
@@ -99,6 +104,18 @@ mode=$(docker exec "$name" stat -c %a /var/lib/caddy/admin.sock)
 if docker exec "$name" wget -qO- -T 2 http://127.0.0.1:2019/config/ >/dev/null 2>&1; then fail "the admin API answers on TCP 2019"; fi
 reload || fail "caddy reload (the unit's ExecReload) failed through the socket"
 ok "the admin API is a 0600 socket only; TCP 2019 is closed; caddy reload works through the socket"
+
+# The bare root redirects to the Studio (302, so browsers don't keep it); nothing else does.
+status_of() { # <path>: "<code> <location>"
+  curl -sS -o /dev/null -w '%{http_code} %{redirect_url}' --max-time 5 -k --connect-to "$HOST:443:127.0.0.1:$port" \
+    --cert "$work/aop/client.pem" --key "$work/aop/client.key" "https://$HOST$1" 2>/dev/null || true
+}
+[[ "$(status_of /)" == "302 https://$HOST/studio/" ]] || fail "GET / is '$(status_of /)', not a 302 to /studio/"
+for p in /livez /studio/ /nope /studio; do
+  got=$(get_path "$p")
+  [[ "$got" == xff=* ]] || fail "GET $p didn't reach the server untouched: $got"
+done
+ok "GET / redirects 302 to /studio/; /livez, /studio/, /studio and an unknown /nope reach the server unredirected"
 
 # HSTS for this host alone: a year, no includeSubDomains, no preload.
 hsts=$(curl -sS -D - -o /dev/null --max-time 5 -k --connect-to "$HOST:443:127.0.0.1:$port" \
