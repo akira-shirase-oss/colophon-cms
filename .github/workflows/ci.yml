@@ -18,12 +18,18 @@ env:
   CARGO_TERM_COLOR: always
   CARGO_BUILD_WARNINGS: deny
 
+# Every job's first step is the outgoing-port guard, ahead of checkout and before anything can open a socket:
+# Linux hands outgoing connections local ports from 32768 to 60999, which includes every fixed port CI listens
+# on (the stack's and its test servers', 53900 and up). k6 took 58090 first ("address in use", twice), and a
+# loopback client took the credential test's 56398 (CI 44868206132). scripts/test-ci-ports.sh keeps it so.
 jobs:
   rust:
     name: rust (toolchain, fmt, clippy, test, docs, architecture)
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
+      - name: Keep outgoing ports below the stack's
+        run: sudo sysctl -w net.ipv4.ip_local_port_range="20000 50999"
       # Third-party actions are pinned to commit SHAs (spec §35).
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -62,6 +68,8 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
+      - name: Keep outgoing ports below the stack's
+        run: sudo sysctl -w net.ipv4.ip_local_port_range="20000 50999"
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
@@ -92,6 +100,8 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
+      - name: Keep outgoing ports below the stack's
+        run: sudo sysctl -w net.ipv4.ip_local_port_range="20000 50999"
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
@@ -121,6 +131,8 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
+      - name: Keep outgoing ports below the stack's
+        run: sudo sysctl -w net.ipv4.ip_local_port_range="20000 50999"
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
@@ -154,6 +166,8 @@ jobs:
         run: scripts/test-backup-plaintext.sh
       - name: A restore whose payload fails its hash is blocked, with why (scripts/test-restore-blocked.sh, D-196)
         run: scripts/test-restore-blocked.sh
+      - name: Every job's first step keeps outgoing ports below CI's listeners (scripts/test-ci-ports.sh)
+        run: scripts/test-ci-ports.sh --self-test
       - name: Every load smoke check.sh runs, CI runs too (scripts/test-smoke-parity.sh, D-209)
         run: scripts/test-smoke-parity.sh
       - name: The smokes job's strict verdict on its expected failures (scripts/test-smoke-verdict.sh, D-209)
@@ -180,15 +194,11 @@ jobs:
     # 1,051 s). Splitting it into two jobs is the follow-up.
     timeout-minutes: 65
     steps:
+      - name: Keep outgoing ports below the stack's
+        run: sudo sysctl -w net.ipv4.ip_local_port_range="20000 50999"
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      # Linux hands outgoing connections ports from 32768 to 60999, which includes every port the
-      # stack and its test servers listen on (53900 and up); with a dozen servers started back to
-      # back and k6's thousands of connections, one eventually took 58090 first ("address in
-      # use", twice). Keep outgoing ports below them.
-      - name: Keep outgoing ports below the stack's
-        run: sudo sysctl -w net.ipv4.ip_local_port_range="20000 50999"
       - name: ShellCheck
         run: >-
           docker run --rm -v "$PWD:/mnt:ro" -w /mnt
@@ -435,11 +445,11 @@ jobs:
     # Valkey here and nowhere else.
     timeout-minutes: 60
     steps:
+      - name: Keep outgoing ports below the stack's
+        run: sudo sysctl -w net.ipv4.ip_local_port_range="20000 50999"
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - name: Keep outgoing ports below the stack's
-        run: sudo sysctl -w net.ipv4.ip_local_port_range="20000 50999"
       # Which runner these numbers come from: smoke results are pass/fail checks, never capacity
       # claims, and they differ across runner CPUs (D-186's host check gates on this once it lands).
       - name: Record the runner
@@ -648,6 +658,8 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
+      - name: Keep outgoing ports below the stack's
+        run: sudo sysctl -w net.ipv4.ip_local_port_range="20000 50999"
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
@@ -757,6 +769,8 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
+      - name: Keep outgoing ports below the stack's
+        run: sudo sysctl -w net.ipv4.ip_local_port_range="20000 50999"
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
@@ -777,6 +791,8 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
+      - name: Keep outgoing ports below the stack's
+        run: sudo sysctl -w net.ipv4.ip_local_port_range="20000 50999"
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
