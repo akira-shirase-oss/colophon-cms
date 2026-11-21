@@ -28,6 +28,10 @@ through `--version` and `GET /version`.
   window while it lasts, then once when a whole window passes without it. Slow statements come in two
   tiers: INFO from `COLOPHON_DB_SLOW_STATEMENT_INFO_MS` (default 100) as evidence, WARN from
   `COLOPHON_DB_SLOW_STATEMENT_MS` (default 1000) as an alert.
+- The S0 droplet's address is `https://colophonapp.404human.dev`, one level under the zone that Cloudflare's
+  free certificate covers, and the hostname is one setting, `COLOPHON_PUBLIC_URL` in the droplet's env file:
+  the install takes Caddy's site address from it and the smoke check its domain, refusing anything but a
+  plain `https://<host>`.
 
 ### Changed — read before upgrading
 

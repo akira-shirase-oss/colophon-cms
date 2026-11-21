@@ -2,6 +2,9 @@
 # connects here over TLS with "Full (strict)", so Caddy serves Cloudflare's Origin Certificate
 # (no ACME: port 80 stays closed). Only Cloudflare reaches 443 (the firewall, cloudflare-ips.sh), and
 # only with this zone's origin-pull client certificate (Authenticated Origin Pulls).
+#
+# The site address below is replaced at install by the host of COLOPHON_PUBLIC_URL in
+# /etc/colophon/colophon.env (install.sh, public-host.sh): the hostname is that one setting.
 {
 	auto_https off
 	servers {
@@ -11,7 +14,7 @@
 	}
 }
 
-app.colophon.404human.dev:443 {
+colophonapp.404human.dev:443 {
 	# Cloudflare's Origin Certificate for visitors' side of Cloudflare, and Authenticated Origin
 	# Pulls for ours: only a connection presenting Cloudflare's client certificate is served
 	# (origin-pull-ca.sh installs the CA). Cloudflare's ranges are shared by all its customers;

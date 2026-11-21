@@ -1,7 +1,7 @@
 # Deploying Colophon to one droplet (S0)
 
 S0 in `docs/SAAS_PLAN.md`: Colophon on a 2 GB DigitalOcean droplet in Toronto, against Neon,
-behind Cloudflare at `https://app.colophon.404human.dev`, used by the maintainer only. This is the
+behind Cloudflare at `https://colophonapp.404human.dev`, used by the maintainer only. This is the
 production path without containers (`deploy/production/README.md`), filled in for that host.
 
 **Before you start:** everything in [CREATE.md](CREATE.md) exists. Secrets are typed or pasted
@@ -227,7 +227,10 @@ apt-get update && apt-get install -y caddy
 umask 077; cat >/etc/caddy/origin.pem; cat >/etc/caddy/origin.key
 chown root:caddy /etc/caddy/origin.pem /etc/caddy/origin.key && chmod 0640 /etc/caddy/origin.pem /etc/caddy/origin.key
 
-install -m 0644 $CHECKOUT/deploy/droplet/Caddyfile /etc/caddy/Caddyfile
+# The site address is the host of COLOPHON_PUBLIC_URL in /etc/colophon/colophon.env (one setting):
+( . $CHECKOUT/deploy/droplet/public-host.sh && caddyfile_for_host $CHECKOUT/deploy/droplet/Caddyfile \
+    "$(public_host /etc/colophon/colophon.env)" >/etc/caddy/Caddyfile.new ) \
+  && install -m 0644 /etc/caddy/Caddyfile.new /etc/caddy/Caddyfile && rm /etc/caddy/Caddyfile.new
 $CHECKOUT/deploy/droplet/origin-pull-ca.sh       # Cloudflare's origin-pull CA, its fingerprint checked
 $CHECKOUT/deploy/droplet/cloudflare-ips.sh       # Caddy's and Colophon's trusted ranges, ufw 443
 caddy validate --config /etc/caddy/Caddyfile && systemctl reload caddy
@@ -240,7 +243,7 @@ systemctl restart colophon
 journalctl -u colophon | grep "Setup code"
 ```
 
-Open `https://app.colophon.404human.dev/studio/`, enter the code, and create your account. The
+Open `https://colophonapp.404human.dev/studio/`, enter the code, and create your account. The
 code works once; after that, the installation has its administrator.
 
 ## 9. Email (optional for S0)
@@ -309,7 +312,7 @@ Revoke that token in the Studio afterwards and `rm /root/smoke-token`.
 From **your own machine** (not the droplet), check that only Cloudflare reaches it:
 
 ```sh
-curl -sS --max-time 5 --resolve app.colophon.404human.dev:443:<droplet-ip> https://app.colophon.404human.dev/livez \
+curl -sS --max-time 5 --resolve colophonapp.404human.dev:443:<droplet-ip> https://colophonapp.404human.dev/livez \
   && echo "FAIL: the droplet answers directly" || echo "ok: only Cloudflare reaches 443"
 ```
 

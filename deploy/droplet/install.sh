@@ -13,6 +13,8 @@
 set -euo pipefail
 export COLOPHON_VERSION="${COLOPHON_VERSION:-0.1.0-alpha.2}"
 here=$(cd "$(dirname "$0")" && pwd)
+# shellcheck source=deploy/droplet/public-host.sh
+. "$here/public-host.sh"
 CREDS=/etc/colophon/credentials
 ENV_FILE=/etc/colophon/colophon.env
 answers="${COLOPHON_INSTALL_ANSWERS:-}"
@@ -135,6 +137,10 @@ account=$(value r2_account_id "Your Cloudflare account id (R2)")
 access=$(value r2_access_key_id "The R2 token's access key id")
 sed -i "s#<r2-account-id>#$account#; s#<r2-access-key-id>#$access#" "$ENV_FILE"
 ask "$CREDS/s3_secret_key" "The R2 token's secret access key"
+# The hostname is one setting: COLOPHON_PUBLIC_URL. Caddy's site address and the links below follow it.
+public=$(public_url "$ENV_FILE") || { echo "refusing: fix COLOPHON_PUBLIC_URL in $ENV_FILE, then run this again" >&2; exit 1; }
+host=${public#https://}
+say "public address: $public"
 
 step "6. the service"
 install -m 0644 "$here/../production/colophon.service" /etc/systemd/system/colophon.service
@@ -144,7 +150,9 @@ step "7. Caddy: the origin certificate, Authenticated Origin Pulls, Cloudflare's
 ask /etc/caddy/origin.pem "Cloudflare's Origin Certificate (the PEM, -----BEGIN CERTIFICATE----- …)"
 ask /etc/caddy/origin.key "Its private key (-----BEGIN PRIVATE KEY----- …)"
 chown root:caddy /etc/caddy/origin.pem /etc/caddy/origin.key && chmod 0440 /etc/caddy/origin.pem /etc/caddy/origin.key
-install -m 0644 "$here/Caddyfile" /etc/caddy/Caddyfile
+rendered=$(mktemp)
+caddyfile_for_host "$here/Caddyfile" "$host" >"$rendered" || { rm -f "$rendered"; echo "refusing: no Caddyfile for $host" >&2; exit 1; }
+install -m 0644 "$rendered" /etc/caddy/Caddyfile && rm -f "$rendered" && say "Caddy's site address: $host (from COLOPHON_PUBLIC_URL)"
 "$here/origin-pull-ca.sh"
 "$here/cloudflare-ips.sh"
 caddy validate --config /etc/caddy/Caddyfile >/dev/null 2>&1 && systemctl reload-or-restart caddy && say "caddy serving 443"
@@ -154,7 +162,7 @@ step "8. the switch: migrate, start, check (upgrade.sh)"
 
 step "9. the first administrator"
 code=$(journalctl -u colophon --no-pager 2>/dev/null | grep -o 'Setup code[^"]*' | tail -1 || true)
-if [[ -n "$code" ]]; then say "$code — open https://app.colophon.404human.dev/studio/ and enter it"; else say "no setup code in the log: the installation already has an administrator"; fi
+if [[ -n "$code" ]]; then say "$code — open $public/studio/ and enter it"; else say "no setup code in the log: the installation already has an administrator"; fi
 
 step "10. backups: the ledger export and the logical dump"
 if [[ ! -s /etc/colophon/backup-age-identity ]]; then

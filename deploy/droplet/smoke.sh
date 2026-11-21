@@ -15,7 +15,12 @@
 # is checked from another machine: DEPLOY.md step 11.
 # shellcheck disable=SC2015  # ok and bad only print, so `test && ok || bad` is if-then-else here.
 set -uo pipefail
-domain="${SMOKE_DOMAIN:-app.colophon.404human.dev}"
+here=$(cd "$(dirname "$0")" && pwd)
+# shellcheck source=deploy/droplet/public-host.sh
+. "$here/public-host.sh"
+# SMOKE_DOMAIN, else the host of COLOPHON_PUBLIC_URL in the droplet's env file, else the shipped name.
+domain="${SMOKE_DOMAIN:-}"
+[[ -n "$domain" ]] || domain=$(droplet_domain /etc/colophon/colophon.env) || { echo "smoke: no domain to check" >&2; exit 1; }
 scope="${SMOKE_SCOPE:-full}"
 local_url="http://127.0.0.1:58000"
 public="https://$domain"
