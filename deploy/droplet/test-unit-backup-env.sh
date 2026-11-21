@@ -15,7 +15,9 @@ set -euo pipefail
 cd "$(dirname "$0")"
 fail() { echo "FAIL: $*" >&2; exit 1; }
 units=(colophon-ledger-export.service colophon-backup-logical.service)
+journal_file=$(mktemp)
 cleanup() {
+  rm -f "$journal_file"
   for u in "${units[@]}"; do rm -f "/etc/systemd/system/$u"; done
   systemctl daemon-reload || true
 }
@@ -48,15 +50,15 @@ for u in "${units[@]}"; do install -m 0644 "$u" /etc/systemd/system/; done
 systemctl daemon-reload
 # seen <unit>: start it once (oneshot) and print its stand-in's line from THIS start only: the
 # journal after a cursor taken just before (a second-resolution --since caught the previous start's
-# line, and a finished oneshot unit no longer reports its InvocationID). LAST_JOURNAL keeps the
-# start's whole journal.
+# line, and a finished oneshot unit no longer reports its InvocationID). The start's whole journal
+# goes to $journal_file: seen runs in a command substitution, so a variable wouldn't survive it.
 seen() {
   local cursor
   cursor=$(journalctl -n 1 -o cat --show-cursor --no-pager 2>/dev/null | sed -n 's/^-- cursor: //p' | tail -1)
   systemctl start "$1" || true
-  if [[ -n "$cursor" ]]; then LAST_JOURNAL=$(journalctl -u "$1" --after-cursor="$cursor" --no-pager -o cat)
-  else LAST_JOURNAL=$(journalctl -u "$1" --no-pager -o cat); fi
-  grep '^seen:' <<<"$LAST_JOURNAL" | tail -1 || true
+  if [[ -n "$cursor" ]]; then journalctl -u "$1" --after-cursor="$cursor" --no-pager -o cat >"$journal_file"
+  else journalctl -u "$1" --no-pager -o cat >"$journal_file"; fi
+  grep '^seen:' "$journal_file" | tail -1 || true
 }
 
 env_file
@@ -72,8 +74,8 @@ echo "  ok    the logical backup is handed the backups' secret, not the media on
 env_file without
 got=$(seen colophon-ledger-export.service)
 [[ -z "$got" ]] || fail "the ledger export ran without COLOPHON_BACKUP_S3_ACCESS_KEY: $got"
-grep -q 'no COLOPHON_BACKUP_S3_ACCESS_KEY' <<<"$LAST_JOURNAL" \
-  || fail "no refusal in the journal: $(tail -5 <<<"$LAST_JOURNAL")"
+grep -q 'no COLOPHON_BACKUP_S3_ACCESS_KEY' "$journal_file" \
+  || fail "no refusal in the journal: $(tail -5 "$journal_file")"
 echo "  ok    without COLOPHON_BACKUP_S3_ACCESS_KEY the ledger export refuses to start"
 
 grep -q 'backup_s3_secret_key' ../production/colophon.service && fail "the server's unit loads the backups' secret"
