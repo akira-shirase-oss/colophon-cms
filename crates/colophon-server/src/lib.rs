@@ -314,7 +314,31 @@ fn api_services(
             config.max_body_bytes,
         ),
         install_kind: config.install_kind,
+        selfserve: config.selfserve.clone(),
     })
+}
+
+/// Open registration without a bot check (D-235): loud where the public can reach the sign-up
+/// form, a note on a localhost stack (whose tests and load runs sign up freely, and treat any
+/// WARN as a defect).
+fn announce_registration(config: &Config) {
+    if config.selfserve.registration != colophon_api::selfserve::Registration::Open
+        || config.selfserve.turnstile_site_key.is_some()
+    {
+        return;
+    }
+    if config::is_loopback_origin(&config.public_origin) {
+        tracing::info!(
+            "COLOPHON_REGISTRATION=open without Turnstile on a localhost origin: anyone who \
+             reaches it may sign up (a development setting)"
+        );
+    } else {
+        tracing::warn!(
+            public_url = %config.public_origin,
+            "COLOPHON_REGISTRATION=open without a bot check: set COLOPHON_TURNSTILE_SITE_KEY \
+             and COLOPHON_TURNSTILE_SECRET_FILE before the sign-up form is public"
+        );
+    }
 }
 
 /// The uploads' object store (07-media): the S3 endpoint in `COLOPHON_S3_*`, or `None` — uploads
@@ -403,6 +427,7 @@ pub async fn run(
              loopback and link-local addresses — a development setting, never for production"
         );
     }
+    announce_registration(&config);
     let local_addr = listener.local_addr().context("reading the bound address")?;
     let build = colophon_version::build_info!();
     tracing::info!(

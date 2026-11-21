@@ -40,6 +40,7 @@ mod receipts;
 mod rich_text;
 mod roles;
 mod schedules;
+pub mod selfserve;
 pub mod session;
 mod setup;
 mod shape;

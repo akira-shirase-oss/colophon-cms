@@ -103,6 +103,7 @@ async fn world(window_ms: u64) -> World {
             media_origin: "http://localhost:58000".to_owned(),
             media_keys: colophon_api::media_sign::Keys::default(),
             install_kind: None,
+            selfserve: colophon_api::selfserve::SelfServe::default(),
         })),
         build: colophon_api::BuildInfo::unstamped("0.0.0-test"),
         admission: Some(Arc::clone(&admission)),

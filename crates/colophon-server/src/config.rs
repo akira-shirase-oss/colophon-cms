@@ -251,6 +251,16 @@ pub struct Config {
     /// the API address (a deployment's own relay, or a test receiver). `None` without a
     /// provider — links are then recorded but not delivered, as before.
     pub mail: Option<MailSettings>,
+    /// Self-serve accounts (D-235): registration, the project cap, the per-account quotas, the
+    /// sign-up cap per address, the signed-in hint's domain and Turnstile's site key.
+    pub selfserve: colophon_api::selfserve::SelfServe,
+    /// Cloudflare Turnstile's secret key (`COLOPHON_TURNSTILE_SECRET[_FILE]`), with
+    /// `COLOPHON_TURNSTILE_SITE_KEY`: both or neither.
+    pub turnstile_secret: Option<Secret>,
+    /// The installation's key for keyed digests in the staff auth log (`COLOPHON_AUTH_EVENT_KEY[_FILE]`):
+    /// a failed sign-in for an address with no account is recorded by HMAC-SHA256 under it, so
+    /// the log can't confirm a guessed address without the key. `None` records no digest.
+    pub auth_event_key: Option<Secret>,
 }
 
 /// Transactional mail configuration (D-145); `provider` is the seam further providers hang off.
@@ -297,7 +307,7 @@ fn parse_origin(text: &str) -> Option<String> {
 /// or a `*.localhost` name, or a loopback address. The development affordances need one (D-163):
 /// behind a reverse proxy a production server listens on loopback too, but serves a public
 /// origin.
-fn is_loopback_origin(origin: &str) -> bool {
+pub(crate) fn is_loopback_origin(origin: &str) -> bool {
     match url::Url::parse(origin)
         .ok()
         .as_ref()
@@ -508,6 +518,80 @@ impl<F: Fn(&str) -> Option<String>> Reader<F> {
                 None
             }
         }
+    }
+
+    /// Self-serve accounts (D-235, `colophon_api::selfserve`), and Turnstile's secret: the site
+    /// key and the secret go together, and the hint domain must cover the public host.
+    fn selfserve(
+        &mut self,
+        public_origin: &str,
+    ) -> (colophon_api::selfserve::SelfServe, Option<Secret>) {
+        use colophon_api::selfserve::{Quotas, Registration, SelfServe, hint_domain_covers};
+        let registration = match self.raw("COLOPHON_REGISTRATION") {
+            None => Registration::default(),
+            Some(value) => Registration::parse(&value).unwrap_or_else(|problem| {
+                self.problems.push(problem);
+                Registration::default()
+            }),
+        };
+        let projects_per_account = self.ranged("COLOPHON_PROJECTS_PER_ACCOUNT", 3, 1..=10_000);
+        let quotas = Quotas {
+            entries: self.ranged(
+                "COLOPHON_ACCOUNT_MAX_ENTRIES",
+                Quotas::DEFAULT.entries,
+                0..=1_000_000_000,
+            ),
+            assets: self.ranged(
+                "COLOPHON_ACCOUNT_MAX_ASSETS",
+                Quotas::DEFAULT.assets,
+                0..=1_000_000_000,
+            ),
+            storage_bytes: self.ranged(
+                "COLOPHON_ACCOUNT_MAX_STORAGE_BYTES",
+                Quotas::DEFAULT.storage_bytes,
+                0..=(1 << 50),
+            ),
+        };
+        let signups_per_address_hour =
+            self.ranged("COLOPHON_SIGNUPS_PER_ADDRESS_HOUR", 10, 1..=100_000);
+        let hint_domain = self.raw("COLOPHON_SIGNED_IN_HINT_DOMAIN").map(|domain| {
+            let host = url::Url::parse(public_origin)
+                .ok()
+                .and_then(|url| url.host_str().map(str::to_owned))
+                .unwrap_or_default();
+            if !hint_domain_covers(&domain, &host) {
+                self.problems.push(format!(
+                    "COLOPHON_SIGNED_IN_HINT_DOMAIN: {domain:?} must be COLOPHON_PUBLIC_URL's host \
+                     ({host:?}) or a parent of it, of two labels at least"
+                ));
+            }
+            domain.trim_start_matches('.').to_ascii_lowercase()
+        });
+        let site_key = self.raw("COLOPHON_TURNSTILE_SITE_KEY");
+        let secret = self.secret("COLOPHON_TURNSTILE_SECRET", false);
+        let (turnstile_site_key, turnstile_secret) = match (site_key, secret) {
+            (Some(site_key), Some(secret)) => (Some(site_key), Some(secret)),
+            (None, None) => (None, None),
+            _ => {
+                self.problems.push(
+                    "COLOPHON_TURNSTILE_SITE_KEY and COLOPHON_TURNSTILE_SECRET (or its _FILE) go \
+                     together: set both or neither"
+                        .to_owned(),
+                );
+                (None, None)
+            }
+        };
+        (
+            SelfServe {
+                registration,
+                projects_per_account,
+                quotas,
+                signups_per_address_hour,
+                hint_domain,
+                turnstile_site_key,
+            },
+            turnstile_secret,
+        )
     }
 
     /// The upload store's settings; all five `COLOPHON_S3_*` values or none, and plain HTTP only
@@ -837,6 +921,8 @@ impl Config {
             1..=256,
         );
         let mail = env.mail();
+        let (selfserve, turnstile_secret) = env.selfserve(&public_origin);
+        let auth_event_key = env.secret("COLOPHON_AUTH_EVENT_KEY", false);
         let install_kind = match env.raw("COLOPHON_INSTALL_KIND").as_deref() {
             None => None,
             Some("container") => Some("container"),
@@ -893,6 +979,9 @@ impl Config {
                 dev_mail,
                 install_kind,
                 mail,
+                selfserve,
+                turnstile_secret,
+                auth_event_key,
             })
         } else {
             Err(ConfigError {
@@ -1137,6 +1226,93 @@ mod tests {
         public.push(("COLOPHON_LISTEN_ADDR", "0.0.0.0:58000"));
         let error = load(&public).expect_err("refused on 0.0.0.0");
         assert!(error.to_string().contains("loopback"), "{error}");
+    }
+
+    #[test]
+    fn self_serve_defaults_to_invite_with_the_approved_bounds() {
+        let config = load(&[("COLOPHON_DATABASE_URL", DB)]).expect("defaults load");
+        let selfserve = &config.selfserve;
+        assert_eq!(
+            selfserve.registration,
+            colophon_api::selfserve::Registration::Invite
+        );
+        assert_eq!(selfserve.projects_per_account, 3);
+        assert_eq!(selfserve.quotas, colophon_api::selfserve::Quotas::DEFAULT);
+        assert_eq!(selfserve.signups_per_address_hour, 10);
+        assert_eq!(selfserve.hint_domain, None);
+        assert_eq!(selfserve.turnstile_site_key, None);
+        assert!(config.turnstile_secret.is_none() && config.auth_event_key.is_none());
+    }
+
+    #[test]
+    fn self_serve_settings_are_read_and_bad_ones_refused() {
+        let config = load(&[
+            ("COLOPHON_DATABASE_URL", DB),
+            ("COLOPHON_PUBLIC_URL", "https://colophonapp.404human.dev"),
+            ("COLOPHON_LISTEN_ADDR", "127.0.0.1:58000"),
+            ("COLOPHON_REGISTRATION", "open"),
+            ("COLOPHON_PROJECTS_PER_ACCOUNT", "5"),
+            ("COLOPHON_ACCOUNT_MAX_ENTRIES", "0"),
+            ("COLOPHON_ACCOUNT_MAX_STORAGE_BYTES", "2048"),
+            ("COLOPHON_SIGNUPS_PER_ADDRESS_HOUR", "20"),
+            ("COLOPHON_SIGNED_IN_HINT_DOMAIN", "404human.dev"),
+            ("COLOPHON_TURNSTILE_SITE_KEY", "1x00000000000000000000AA"),
+            (
+                "COLOPHON_TURNSTILE_SECRET",
+                "1x0000000000000000000000000000000AA",
+            ),
+        ])
+        .expect("loads");
+        let selfserve = &config.selfserve;
+        assert_eq!(
+            selfserve.registration,
+            colophon_api::selfserve::Registration::Open
+        );
+        assert_eq!(selfserve.projects_per_account, 5);
+        assert_eq!(selfserve.quotas.entries, 0, "0 is no bound");
+        assert_eq!(selfserve.quotas.storage_bytes, 2048);
+        assert_eq!(selfserve.signups_per_address_hour, 20);
+        assert_eq!(selfserve.hint_domain.as_deref(), Some("404human.dev"));
+        assert!(config.turnstile_secret.is_some());
+
+        for (pairs, wanted) in [
+            (
+                vec![("COLOPHON_REGISTRATION", "public")],
+                "COLOPHON_REGISTRATION",
+            ),
+            (
+                vec![("COLOPHON_PROJECTS_PER_ACCOUNT", "0")],
+                "COLOPHON_PROJECTS_PER_ACCOUNT",
+            ),
+            (
+                vec![("COLOPHON_TURNSTILE_SITE_KEY", "1x00000000000000000000AA")],
+                "COLOPHON_TURNSTILE_SITE_KEY",
+            ),
+            (
+                vec![(
+                    "COLOPHON_TURNSTILE_SECRET",
+                    "1x0000000000000000000000000000000AA",
+                )],
+                "COLOPHON_TURNSTILE_SITE_KEY",
+            ),
+            (
+                vec![("COLOPHON_SIGNED_IN_HINT_DOMAIN", "example.com")],
+                "COLOPHON_SIGNED_IN_HINT_DOMAIN",
+            ),
+            (
+                vec![("COLOPHON_SIGNED_IN_HINT_DOMAIN", "dev")],
+                "COLOPHON_SIGNED_IN_HINT_DOMAIN",
+            ),
+        ] {
+            let mut env = vec![
+                ("COLOPHON_DATABASE_URL", DB),
+                ("COLOPHON_PUBLIC_URL", "https://colophonapp.404human.dev"),
+                ("COLOPHON_LISTEN_ADDR", "127.0.0.1:58000"),
+            ];
+            env.extend(pairs.iter().copied());
+            let error = load(&env).expect_err(&format!("{pairs:?} refused"));
+            assert!(error.to_string().contains(wanted), "{pairs:?}: {error}");
+        }
     }
 
     #[test]

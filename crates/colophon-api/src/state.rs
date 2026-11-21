@@ -79,6 +79,8 @@ pub struct Services {
     /// How the server was installed (`COLOPHON_INSTALL_KIND`; `container` from the image,
     /// D-174), for the Studio's first-run hint; `None` when the installer didn't say.
     pub install_kind: Option<&'static str>,
+    /// Self-serve accounts (D-235): registration, the project cap and the per-account quotas.
+    pub selfserve: crate::selfserve::SelfServe,
 }
 
 /// The router's state. Cloning is two reference-count increments and a copy.
