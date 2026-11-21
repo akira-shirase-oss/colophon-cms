@@ -20,7 +20,7 @@ use crate::DbError;
 
 /// Every role, with the attributes `CREATE ROLE` gives it (passwords aside). Order matters:
 /// `colophon_app` is created `IN ROLE colophon_api`.
-pub const ROLES: [(&str, &str); 7] = [
+pub const ROLES: [(&str, &str); 8] = [
     ("colophon_api", "NOLOGIN NOSUPERUSER NOBYPASSRLS"),
     (
         "colophon_app",
@@ -34,6 +34,7 @@ pub const ROLES: [(&str, &str); 7] = [
         "LOGIN REPLICATION NOSUPERUSER NOBYPASSRLS NOCREATEDB NOCREATEROLE",
     ),
     ("colophon_retention", "NOLOGIN NOSUPERUSER NOBYPASSRLS"),
+    ("colophon_accounts", "NOLOGIN NOSUPERUSER NOBYPASSRLS"),
 ];
 
 /// The memberships between them; each is idempotent.

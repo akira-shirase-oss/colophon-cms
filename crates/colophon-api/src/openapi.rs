@@ -930,7 +930,7 @@ pub(crate) static TABLE: &[Route] = &[
                 |f| on(f, projects::create),
                 OpDoc {
                     id: "createProject",
-                    summary: "Create a project (administrators only)",
+                    summary: "Create a project (administrators; any account where registration is open, up to the per-account cap)",
                     tag: "projects",
                     body: Some(json("NewProject")),
                     ok: created("ProjectView"),
@@ -938,9 +938,13 @@ pub(crate) static TABLE: &[Route] = &[
                         refusal(
                             403,
                             "administrators_only, not_set_up",
-                            "only an administrator creates projects",
+                            "only an administrator creates projects here",
                         ),
-                        refusal(409, "project_exists", "a project with this slug exists"),
+                        refusal(
+                            409,
+                            "project_exists, project_limit",
+                            "a project with this slug exists, or the account owns as many projects as it may",
+                        ),
                         refusal(422, "invalid_slug, invalid_name", "the fields refused"),
                     ],
                     ..MIN

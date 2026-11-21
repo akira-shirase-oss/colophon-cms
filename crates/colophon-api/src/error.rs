@@ -153,6 +153,16 @@ pub struct ErrorDetails {
     /// that would publish it.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub changesets: Vec<PendingChangeset>,
+    /// For a per-account bound (D-235): which quota (`entries`, `assets`, `storage_bytes`);
+    /// absent for the project cap.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub quota: Option<&'static str>,
+    /// For a per-account bound (D-235): the bound.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub limit: Option<u64>,
+    /// For a per-account bound (D-235): what the account already uses.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub used: Option<u64>,
 }
 
 impl ErrorDetails {
@@ -166,6 +176,9 @@ impl ErrorDetails {
             permission: None,
             content_type: None,
             referenced_by: Vec::new(),
+            quota: None,
+            limit: None,
+            used: None,
             changesets: Vec::new(),
         }
     }
@@ -470,6 +483,18 @@ pub enum ApiError {
     /// 503 with `Retry-After`, so clients back off instead of piling on.
     #[error("the server is busy; try again shortly")]
     Busy,
+    /// The account already owns as many projects as an account may (D-235,
+    /// `COLOPHON_PROJECTS_PER_ACCOUNT`). 409; `details.reason` is `project_limit`, with
+    /// `details.limit` and `details.used`.
+    #[error(
+        "this account already owns {used} of the {limit} projects an account may own; delete one, or ask an administrator"
+    )]
+    ProjectLimit {
+        /// The cap.
+        limit: u32,
+        /// Projects the account owns.
+        used: u32,
+    },
     /// The project already retains all the unfinished work its bound allows (spec §33,
     /// D-131): the job this request asked to store is refused before acceptance. 503 with
     /// `Retry-After` — open work drains as workers finish it, so trying again then is the
@@ -618,6 +643,7 @@ impl ApiError {
             // 503, the project's own bound, not a budget or a pool (D-131); the
             // installation's payload bound answers the same way (D-135).
             DbError::WorkFull { open, limit } => Self::WorkFull { open, limit },
+            DbError::ProjectLimit { limit, used } => Self::ProjectLimit { limit, used },
             DbError::PayloadFull { pending, limit } => Self::PayloadFull { pending, limit },
             // 422, at the very place in the content (media M1): an asset field's value, or the
             // `assetId` of the rich-text image naming it (D-177).
@@ -710,6 +736,7 @@ impl ApiError {
             Self::Unauthorized => StatusCode::UNAUTHORIZED,
             Self::Forbidden { .. } => StatusCode::FORBIDDEN,
             Self::Conflict { .. }
+            | Self::ProjectLimit { .. }
             | Self::StaleRevision { .. }
             | Self::StaleVersion { .. }
             | Self::StaleChangeset { .. }
@@ -756,6 +783,7 @@ impl ApiError {
             Self::NotFound => ErrorCode::NotFound,
             Self::Gone => ErrorCode::Gone,
             Self::Conflict { .. }
+            | Self::ProjectLimit { .. }
             | Self::StaleRevision { .. }
             | Self::StaleVersion { .. }
             | Self::StaleChangeset { .. }
@@ -820,6 +848,11 @@ impl ApiError {
                 Some(ErrorDetails::new(reason, ""))
             }
             Self::WorkFull { .. } => Some(ErrorDetails::new("work_full", "")),
+            Self::ProjectLimit { limit, used } => Some(ErrorDetails {
+                limit: Some(u64::from(*limit)),
+                used: Some(u64::from(*used)),
+                ..ErrorDetails::new("project_limit", "")
+            }),
             Self::PayloadFull { .. } => Some(ErrorDetails::new("payload_full", "")),
             Self::TooManyRequests { .. } => Some(ErrorDetails::new("rate_limited", "")),
             Self::UploadsBusy => Some(ErrorDetails::new("uploads_busy", "")),

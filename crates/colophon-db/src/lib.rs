@@ -125,6 +125,14 @@ pub enum DbError {
     /// No answer within the deadline.
     #[error("database did not answer within {0:?}")]
     Timeout(Duration),
+    /// The account already owns as many projects as the cap allows (D-235); nothing was created.
+    #[error("the account owns {used} of the {limit} projects an account may own")]
+    ProjectLimit {
+        /// The cap.
+        limit: u32,
+        /// Projects the account owns.
+        used: u32,
+    },
     /// Another non-superuser migration run held the run lock for the whole wait (D-234):
     /// nothing was changed. Is another `admin migrate` (an upgrade) still running?
     #[error(

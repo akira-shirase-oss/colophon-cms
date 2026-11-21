@@ -193,8 +193,15 @@ impl Drop for Stopped {
 /// `COLOPHON_TEST_DATABASE` set to a database name, the server uses that database on the stack's
 /// Postgres instead of `colophon`: a branch with newer migrations is tested without migrating the
 /// database other checkouts share.
+///
+/// `COLOPHON_TEST_ENV_FILE` names another file in the same format instead: a builder's own
+/// Postgres and Valkey on their own ports, for a branch whose migrations change cluster-wide
+/// roles (D-235's `colophon_accounts`), which must never run on the shared stack's Postgres.
 pub(crate) fn local_env() -> Vec<(String, String)> {
-    let env_file = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../deploy/local.env");
+    let env_file = std::env::var_os("COLOPHON_TEST_ENV_FILE").map_or_else(
+        || PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../deploy/local.env"),
+        PathBuf::from,
+    );
     let database = std::env::var("COLOPHON_TEST_DATABASE").ok();
     std::fs::read_to_string(env_file)
         .expect("deploy/local.env")

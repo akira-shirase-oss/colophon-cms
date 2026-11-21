@@ -5155,7 +5155,7 @@
                 }
               }
             },
-            "description": "`administrators_only, not_set_up` — only an administrator creates projects"
+            "description": "`administrators_only, not_set_up` — only an administrator creates projects here"
           },
           "409": {
             "content": {
@@ -5165,7 +5165,7 @@
                 }
               }
             },
-            "description": "`project_exists` — a project with this slug exists"
+            "description": "`project_exists, project_limit` — a project with this slug exists, or the account owns as many projects as it may"
           },
           "422": {
             "content": {
@@ -5206,7 +5206,7 @@
             "bearerToken": []
           }
         ],
-        "summary": "Create a project (administrators only)",
+        "summary": "Create a project (administrators; any account where registration is open, up to the per-account cap)",
         "tags": [
           "projects"
         ]

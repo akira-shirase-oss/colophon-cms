@@ -41,7 +41,8 @@ fn bootstrap(args: &[&str]) -> (Option<i32>, Value, String) {
 #[tokio::test]
 #[ignore = "needs the stack and scripts/migrate.sh, which provisions dev-owner"]
 async fn only_the_bootstrapped_administrator_creates_projects_and_bootstrap_runs_once() {
-    let _server = Server::start().await;
+    // Invite-only: there, only administrators create projects (D-235; the dev stack runs open).
+    let _server = Server::start_with(&[("COLOPHON_REGISTRATION", "invite")]).await;
     let owner = sign_in("dev-owner").await;
     let editor = sign_in("dev-editor").await;
 

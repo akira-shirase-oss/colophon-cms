@@ -127,20 +127,42 @@ async fn two_bootstraps_at_once_make_one_administrator() {
 
 #[tokio::test]
 #[ignore = "needs the local stack: scripts/stack.sh up"]
-async fn only_administrators_create_projects_and_requests_make_no_administrators() {
+async fn a_project_is_created_for_its_own_account_only_and_requests_make_no_administrators() {
     let db = TestDb::new().await;
     let admin = db.administrator("admin").await;
     let member = db.person("member").await;
     projects::create(&db.app, admin, "alpha", "Alpha")
         .await
         .expect("an administrator creates a project");
+    // D-235: any account may create a project for itself (the server decides whether the
+    // installation allows it, and caps it)…
+    projects::create(&db.app, member, "beta", "Beta")
+        .await
+        .expect("an account creates a project for itself");
 
-    // Below the API: the database refuses a non-administrator's project.
-    let refused = projects::create(&db.app, member, "beta", "Beta").await;
+    // …but below the API, never one counted against another account.
+    let id = uuid::Uuid::now_v7();
+    let mut transaction = colophon_db::scope::begin(
+        &db.app,
+        colophon_db::scope::Scope {
+            identity: Some(member),
+            project: Some(id),
+        },
+    )
+    .await
+    .expect("a scoped transaction");
+    let refused = sqlx::query(
+        "INSERT INTO projects (id, slug, name, owner_account) VALUES ($1, 'gamma', 'Gamma', $2)",
+    )
+    .bind(id)
+    .bind(admin)
+    .execute(&mut *transaction)
+    .await;
     assert!(
         format!("{refused:?}").contains("row-level security"),
         "{refused:?}"
     );
+    drop(transaction);
 
     // The application login can't make anyone an administrator, or bootstrap.
     for statement in [

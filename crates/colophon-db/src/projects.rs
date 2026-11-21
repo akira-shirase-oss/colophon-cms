@@ -24,13 +24,33 @@ pub struct Project {
     pub role_name: String,
 }
 
-/// Creates a project with a `production` environment holding the built-in articles content type,
-/// and makes `owner` its owner, in one transaction. A taken slug is `DbError::Conflict`.
+/// [`create_capped`] with no cap: an administrator's create, and the tests'.
+///
+/// # Errors
+///
+/// As [`create_capped`].
 pub async fn create(
     pool: &PgPool,
     owner: Uuid,
     slug: &str,
     name: &str,
+) -> Result<Project, DbError> {
+    create_capped(pool, owner, slug, name, None).await
+}
+
+/// Creates a project with a `production` environment holding the built-in articles content type,
+/// and makes `owner` its owner and the account it counts against (`projects.owner_account`,
+/// D-235), in one transaction. A taken slug is `DbError::Conflict`.
+///
+/// With `cap`, `owner` may own at most that many projects: counted under a per-account
+/// advisory lock held to the end of this transaction, so two creates racing for the last place
+/// can't both pass (`DbError::ProjectLimit`). Without it (an administrator), no bound.
+pub async fn create_capped(
+    pool: &PgPool,
+    owner: Uuid,
+    slug: &str,
+    name: &str,
+    cap: Option<u32>,
 ) -> Result<Project, DbError> {
     let id = Uuid::now_v7();
     let mut transaction = scope::begin(
@@ -41,11 +61,30 @@ pub async fn create(
         },
     )
     .await?;
+    if let Some(limit) = cap {
+        sqlx::query!(
+            "SELECT pg_advisory_xact_lock(hashtext('colophon:project-cap'), hashtext($1::text))",
+            owner.to_string()
+        )
+        .execute(&mut *transaction)
+        .await
+        .map_err(DbError::from_query)?;
+        let projects_owned: i32 =
+            sqlx::query_scalar!(r#"SELECT colophon_projects_owned($1) AS "owned!""#, owner)
+                .fetch_one(&mut *transaction)
+                .await
+                .map_err(DbError::from_query)?;
+        let used = u32::try_from(projects_owned).unwrap_or(u32::MAX);
+        if used >= limit {
+            return Err(DbError::ProjectLimit { limit, used });
+        }
+    }
     sqlx::query!(
-        "INSERT INTO projects (id, slug, name) VALUES ($1, $2, $3)",
+        "INSERT INTO projects (id, slug, name, owner_account) VALUES ($1, $2, $3, $4)",
         id,
         slug,
-        name
+        name,
+        owner
     )
     .execute(&mut *transaction)
     .await
