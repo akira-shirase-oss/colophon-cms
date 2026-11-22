@@ -16,8 +16,8 @@ use std::{
     path::{Path, PathBuf},
 };
 
-/// What counts as a write: a set_config of a context setting, a `SET [LOCAL]` of one, a
-/// set_config whose setting name is computed (a parameter or a variable), and a call to the
+/// What counts as a write: a `set_config` of a context setting, a `SET [LOCAL]` of one, a
+/// `set_config` whose setting name is computed (a parameter or a variable), and a call to the
 /// scope primitives that set a context without proving membership.
 fn writes_context(code: &str) -> bool {
     let lower = code.to_ascii_lowercase();
@@ -32,17 +32,14 @@ fn writes_context(code: &str) -> bool {
     let computed = lower.match_indices("set_config(").any(|(at, _)| {
         let rest = lower[at + "set_config(".len()..].trim_start();
         rest.starts_with('$')
-            || rest
-                .split(|c: char| c == ',' || c == ')')
-                .next()
-                .is_some_and(|arg| {
-                    let arg = arg.trim();
-                    !arg.is_empty()
-                        && !arg.starts_with('\'')
-                        && arg
-                            .chars()
-                            .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '.')
-                })
+            || rest.split([',', ')']).next().is_some_and(|arg| {
+                let arg = arg.trim();
+                !arg.is_empty()
+                    && !arg.starts_with('\'')
+                    && arg
+                        .chars()
+                        .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '.')
+            })
     });
     let primitive = [
         "scope::begin(",
@@ -57,9 +54,9 @@ fn writes_context(code: &str) -> bool {
 
 /// The function a line belongs to: the nearest `fn name(` above it in Rust, `FUNCTION name(`
 /// in SQL; `<top>` before any.
-fn enclosing(line: &str, rust: bool, current: &mut String) {
+fn enclosing(line: &str, is_rust: bool, current: &mut String) {
     let lower = line.to_ascii_lowercase();
-    let marker = if rust { "fn " } else { "function " };
+    let marker = if is_rust { "fn " } else { "function " };
     for (at, _) in lower.match_indices(marker) {
         if at > 0 && lower.as_bytes()[at - 1].is_ascii_alphanumeric() {
             continue;
@@ -89,8 +86,13 @@ fn files(root: &Path) -> Vec<PathBuf> {
                 if !matches!(name, "tests" | "target" | "benches" | "examples" | "fuzz") {
                     stack.push(path);
                 }
-            } else if (name.ends_with(".rs") && path.components().any(|c| c.as_os_str() == "src"))
-                || (name.ends_with(".sql")
+            } else if (path
+                .extension()
+                .is_some_and(|e| e.eq_ignore_ascii_case("rs"))
+                && path.components().any(|c| c.as_os_str() == "src"))
+                || (path
+                    .extension()
+                    .is_some_and(|e| e.eq_ignore_ascii_case("sql"))
                     && path.parent().is_some_and(|p| {
                         p.file_name()
                             .and_then(|n| n.to_str())

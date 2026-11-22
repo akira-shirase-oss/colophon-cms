@@ -12,7 +12,6 @@ mod common;
 use colophon_db::{
     PgPool,
     entries::{self, NewRevision},
-    projects,
     scope::{self, ProjectTransaction},
 };
 use common::TestDb;
@@ -110,18 +109,67 @@ async fn seed(owner: &PgPool, author: Uuid, project: Uuid, title: &str, locale: 
     entry
 }
 
+/// A project with its production environment, the built-in articles content type, its roles
+/// and `owner` as its owner: what `projects::create` wrote before 0087 added `owner_account`.
+async fn old_schema_project(pool: &sqlx::PgPool, owner: Uuid) -> Uuid {
+    let project = Uuid::now_v7();
+    let environment = Uuid::now_v7();
+    for (sql, with_environment) in [
+        (
+            "INSERT INTO projects (id, slug, name) VALUES ($1, 'alpha', 'Alpha')",
+            false,
+        ),
+        (
+            "INSERT INTO environments (project_id, id, slug) VALUES ($1, $2, 'production')",
+            true,
+        ),
+        (
+            "INSERT INTO collections (project_id, environment_id, slug) VALUES ($1, $2, 'articles')",
+            true,
+        ),
+    ] {
+        let query = sqlx::query(sql).bind(project);
+        let query = if with_environment {
+            query.bind(environment)
+        } else {
+            query
+        };
+        query.execute(pool).await.expect(sql);
+    }
+    sqlx::query(
+        "INSERT INTO content_type_versions (project_id, environment_id, collection, version, definition, definition_hash)
+         VALUES ($1, $2, 'articles', 1, $3, sha256(convert_to($3, 'UTF8')))",
+    )
+    .bind(project)
+    .bind(environment)
+    .bind(colophon_db::content_types::ARTICLES_DEFINITION)
+    .execute(pool)
+    .await
+    .expect("the articles content type");
+    sqlx::query("SELECT 1 FROM colophon_seed_roles($1)")
+        .bind(project)
+        .execute(pool)
+        .await
+        .expect("the built-in roles");
+    sqlx::query("INSERT INTO memberships (project_id, identity_id, role) VALUES ($1, $2, 'owner')")
+        .bind(project)
+        .bind(owner)
+        .execute(pool)
+        .await
+        .expect("the owner's membership");
+    project
+}
+
 #[tokio::test]
 #[ignore = "needs the local stack: scripts/stack.sh up"]
 async fn case_only_duplicates_stop_the_migration_until_one_is_deleted() {
     let db = TestDb::before(77).await;
     let alice = db.administrator("alice").await;
-    let project = projects::create(&db.app, alice, "alpha", "Alpha")
-        .await
-        .expect("created")
-        .id;
-    // What an old binary wrote before 0077, in the old schema's shape: an entry and its draft revision
-    // each. Plain SQL, not today's Rust API: its begin needs a later schema (0079, D-227).
+    // What an old binary wrote before 0077, in the old schema's shape: the project as
+    // projects::create made it then (no owner_account before 0087, D-235), and an entry and its
+    // draft revision each. Plain SQL, not today's Rust API: it needs a later schema (0079, 0087).
     let owner = db.owner().await;
+    let project = old_schema_project(&owner, alice).await;
     let english = seed(&owner, alice, project, "Tides", "en").await;
     let french = seed(&owner, alice, project, "Marées", "fr").await;
     let shouting = seed(&owner, alice, project, "MARÉES", "FR").await;

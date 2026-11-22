@@ -80,7 +80,9 @@ async fn the_sign_in_page_asks_which_methods_this_server_offers() {
 #[tokio::test]
 #[ignore = "needs the local stack and migrations: scripts/stack.sh up && scripts/migrate.sh"]
 async fn an_email_account_signs_up_and_uses_its_session() {
-    let _server = Server::start().await;
+    // Invite-only: there, an account that isn't an administrator can't create projects (D-235;
+    // the development stack runs open).
+    let _server = Server::start_with(&[("COLOPHON_REGISTRATION", "invite")]).await;
     let email = an_email();
     let password = "a long enough password";
 
