@@ -156,6 +156,8 @@ jobs:
         run: deploy/droplet/test-neon-url.sh
       - name: The droplet's hostname is one setting, odd values refused (deploy/droplet/test-public-host.sh)
         run: deploy/droplet/test-public-host.sh
+      - name: The backups have their own R2 token, or share the media one only by the operator's choice (deploy/droplet/test-r2-keys.sh)
+        run: deploy/droplet/test-r2-keys.sh
       - name: The droplet's edge channel refuses what it can't prove (deploy/droplet/test-upgrade-edge.sh, D-211)
         run: deploy/droplet/test-upgrade-edge.sh
       - name: The droplet's release channel installs only what release.yml built for the tag (deploy/droplet/test-upgrade-release.sh)

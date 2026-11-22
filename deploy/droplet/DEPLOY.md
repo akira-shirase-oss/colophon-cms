@@ -470,4 +470,5 @@ certificate, and a test CA and client certificate for Authenticated Origin Pulls
 | Every visitor shares one rate limit | Caddy isn't telling the server `Cf-Connecting-Ip`: `/etc/caddy/cloudflare-trusted.caddy` lacks Cloudflare's ranges (rerun `cloudflare-ips.sh`), or `/etc/caddy/Caddyfile` predates `client_ip_headers` (rerun `install.sh`); `smoke.sh` says which |
 | Uploads refused 503 | the `COLOPHON_S3_*` settings and `credentials/s3_secret_key` |
 | A backup unit fails with "no COLOPHON_BACKUP_S3_ACCESS_KEY" | the backups' own R2 token (CREATE.md 6): its key id in `colophon.env`, its secret in `credentials/backup_s3_secret_key` |
+| install.sh refuses "the backups need their own R2 token" | give the backups their own token (CREATE.md 6), or accept one token on both buckets with `echo yes >/etc/colophon/install/r2_backup_shares_media` (it warns on every run) |
 | `upgrade.sh` refuses: "no provenance bundle" | a release published before `release.yml` shipped the bundle: upload one (`gh attestation download`, then `gh release upload`), or install a newer release |
