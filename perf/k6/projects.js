@@ -1,7 +1,9 @@
-// Load scenario for who may create projects (step 1.8, D-043). setup() signs in the bootstrapped
+// Load scenario for who may create projects (step 1.8, D-043; D-235). setup() signs in the bootstrapped
 // administrator (dev-owner) and makes someone who isn't (a fresh account). Nine requests in twenty are
-// a fresh account trying to create a project, each of which must be refused with 403 (the gate's
-// lookup and nothing written); nine are its /me, which must say "not an administrator";
+// a fresh account trying to create a project, each of which must be refused (the gate's lookup and
+// nothing written): with 403 when registration is invite or closed, and, when it is open, with 409
+// once setup() has filled the account's project cap (the cap's count under FOR UPDATE, nothing
+// written). Setup learns which from the first refusal; nine are its /me, which must say "not an administrator";
 // two are dev-owner's /me, which must say "administrator". teardown() checks that the account
 // owns no more projects than at the start. Same settings as health.js; scripts/load.sh gives
 // this endpoint RATE 2000 and P99_MS 100.
@@ -83,11 +85,23 @@ export function setup() {
   const other = freshPerson();
   const me = http.get(`${BASE_URL}/me`, { headers: other });
   if (me.json('data.administrator') !== false) fail('a fresh account must not be an administrator');
-  return { admin, other, before: owned(other) };
+  // Open registration lets the account create its own projects up to the cap: fill it, so every
+  // create in the run meets the cap's refusal. Invite or closed refuses the first one with 403.
+  const run = Date.now().toString(36);
+  let refusal = null;
+  for (let made = 0; made <= 50 && refusal === null; made += 1) {
+    const res = http.post(`${BASE_URL}/api/v1/projects`, JSON.stringify({ slug: `k6-cap-${run}-${made}`, name: 'Fills the cap' }),
+      { headers: other, redirects: 0, responseCallback: http.expectedStatuses(201, 403, 409) });
+    if (res.status === 403 && res.body.indexOf('only an administrator') !== -1) refusal = { status: 403, says: 'only an administrator' };
+    else if (res.status === 409 && res.body.indexOf('projects an account may own') !== -1) refusal = { status: 409, says: 'projects an account may own' };
+    else if (res.status !== 201) fail(`filling the project cap: HTTP ${res.status} ${res.body}`);
+  }
+  if (refusal === null) fail('a fresh account created more than 50 projects without meeting the cap');
+  return { admin, other, refusal, before: owned(other) };
 }
 
 // A refusal is the expected answer here, not a failed request.
-const refusedOk = http.expectedStatuses(403);
+const refusedOk = http.expectedStatuses(403, 409);
 
 export default function (data) {
   const slot = exec.scenario.iterationInTest % 20;
@@ -95,7 +109,7 @@ export default function (data) {
     const body = JSON.stringify({ slug: `k6-no-${__VU}-${__ITER}`, name: 'Never created' });
     const res = http.post(`${BASE_URL}/api/v1/projects`, body,
       { headers: data.other, redirects: 0, responseCallback: refusedOk, tags: { endpoint: 'refused' } });
-    check(res, { 'refused 403': (r) => r.status === 403 && r.body.indexOf('only an administrator') !== -1 });
+    check(res, { refused: (r) => r.status === data.refusal.status && r.body.indexOf(data.refusal.says) !== -1 });
   } else if (slot < 18) {
     const res = http.get(`${BASE_URL}/me`, { headers: data.other, redirects: 0, tags: { endpoint: 'me' } });
     check(res, { 'me: not an administrator': (r) => r.status === 200 && r.body.indexOf('"administrator":false') !== -1 });
