@@ -8,11 +8,16 @@
 #
 # COLOPHON_VERSION (default below) picks the release. For a rehearsal, COLOPHON_INSTALL_ANSWERS names
 # a directory holding the answers as files instead of prompts, named as their targets
-# (migration_database_url, s3_secret_key, origin.pem, origin.key) and the ids (r2_account_id,
-# r2_access_key_id, ssh_ip); COLOPHON_RELEASE_BASE a local release directory (upgrade.sh).
+# (migration_database_url, s3_secret_key, backup_s3_secret_key, origin.pem, origin.key) and the ids
+# (r2_account_id, r2_access_key_id, r2_backup_access_key_id, ssh_ip); COLOPHON_RELEASE_BASE a local
+# release directory (upgrade.sh; with COLOPHON_RELEASE_UNVERIFIED=rehearsal, as it says).
 set -euo pipefail
-export COLOPHON_VERSION="${COLOPHON_VERSION:-0.1.0-alpha.1}"
+export COLOPHON_VERSION="${COLOPHON_VERSION:-0.1.0-alpha.4}"
 here=$(cd "$(dirname "$0")" && pwd)
+# shellcheck source=deploy/droplet/public-host.sh
+. "$here/public-host.sh"
+# shellcheck source=deploy/droplet/r2-keys.sh
+. "$here/r2-keys.sh"
 CREDS=/etc/colophon/credentials
 ENV_FILE=/etc/colophon/colophon.env
 answers="${COLOPHON_INSTALL_ANSWERS:-}"
@@ -61,6 +66,23 @@ if ! command -v pg_dump >/dev/null || [[ "$(pg_dump --version | grep -oE '[0-9]+
   apt-get update -qq && DEBIAN_FRONTEND=noninteractive apt-get install -y -qq postgresql-client-18 >/dev/null
   say "installed pg_dump 18"
 fi
+# gh, for upgrade.sh's provenance checks (gh attestation verify, offline against the release's
+# bundle; no GitHub login). From GitHub's own repository: Ubuntu's gh is too old for attestations.
+# Its signing key is taken only if it is the one pinned here.
+GH_APT_KEY=7F38BBB59D064DBCB3D84D725612B36462313325
+if ! command -v gh >/dev/null || ! gh attestation verify --help >/dev/null 2>&1; then
+  keydir=$(mktemp -d)
+  curl -fsSLo "$keydir/keyring.gpg" https://cli.github.com/packages/githubcli-archive-keyring.gpg
+  gpg --no-default-keyring --keyring "$keydir/import.gpg" --import "$keydir/keyring.gpg" 2>/dev/null
+  gpg --no-default-keyring --keyring "$keydir/import.gpg" --list-keys --with-colons 2>/dev/null | grep -qx "fpr:::::::::$GH_APT_KEY:" \
+    || { rm -rf "$keydir"; echo "refusing: GitHub CLI's apt key isn't the pinned $GH_APT_KEY" >&2; exit 1; }
+  gpg --no-default-keyring --keyring "$keydir/import.gpg" --export "$GH_APT_KEY" >/usr/share/keyrings/githubcli-archive-keyring.gpg
+  rm -rf "$keydir"
+  chmod 0644 /usr/share/keyrings/githubcli-archive-keyring.gpg
+  echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" >/etc/apt/sources.list.d/github-cli.list
+  apt-get update -qq && DEBIAN_FRONTEND=noninteractive apt-get install -y -qq gh >/dev/null
+  say "installed gh $(gh --version | head -1 | awk '{print $3}') (provenance checks)"
+fi
 if ! command -v caddy >/dev/null; then
   curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/gpg.key' | gpg --dearmor --yes -o /usr/share/keyrings/caddy-stable-archive-keyring.gpg
   curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/debian.deb.txt' >/etc/apt/sources.list.d/caddy-stable.list
@@ -85,9 +107,22 @@ if [[ -z "$ssh_ip" && -n "$connected" ]]; then ssh_ip=$connected; printf '%s' "$
 ufw default deny incoming >/dev/null && ufw default allow outgoing >/dev/null
 ufw status | grep -q "22/tcp.*ALLOW.*$ssh_ip" || ufw allow from "$ssh_ip" to any port 22 proto tcp comment 'ssh: maintainer' >/dev/null
 ufw --force enable >/dev/null && say "ufw: 22 from $ssh_ip, nothing else yet"
-if [[ ! -f /etc/ssh/sshd_config.d/10-colophon.conf ]]; then
-  printf '%s\n' 'PasswordAuthentication no' 'KbdInteractiveAuthentication no' 'PermitRootLogin prohibit-password' >/etc/ssh/sshd_config.d/10-colophon.conf
-  sshd -t && systemctl reload ssh && say "ssh: keys only"
+# SSH: keys only, no forwarding of any kind, few tries. Written when it differs (an older install's
+# file is brought up to date), checked by sshd -t before the reload, and put back if it fails.
+sshd_conf=/etc/ssh/sshd_config.d/10-colophon.conf
+sshd_want=$(printf '%s\n' 'PasswordAuthentication no' 'KbdInteractiveAuthentication no' 'PermitRootLogin prohibit-password' \
+  'X11Forwarding no' 'AllowAgentForwarding no' 'AllowTcpForwarding no' 'MaxAuthTries 3' 'LoginGraceTime 30')
+if [[ "$(cat "$sshd_conf" 2>/dev/null)" != "$sshd_want" ]]; then
+  sshd_old=$(mktemp); cp -p "$sshd_conf" "$sshd_old" 2>/dev/null || : >"$sshd_old"
+  printf '%s\n' "$sshd_want" >"$sshd_conf"
+  if sshd -t; then
+    systemctl reload ssh && say "ssh: keys only, no forwarding, 3 tries"
+  else
+    if [[ -s "$sshd_old" ]]; then cp -p "$sshd_old" "$sshd_conf"; else rm -f "$sshd_conf"; fi
+    rm -f "$sshd_old"
+    echo "refusing: sshd -t rejected the new $sshd_conf; the old one is back, ssh untouched" >&2; exit 1
+  fi
+  rm -f "$sshd_old"
 fi
 echo 'Unattended-Upgrade::Automatic-Reboot "false";' >/etc/apt/apt.conf.d/52colophon-no-auto-reboot
 
@@ -111,7 +146,21 @@ if [[ "$fixed" != "$url" ]]; then
   for note in "${NEON_URL_NOTES[@]}"; do say "Neon URL: $note"; done
 fi
 [[ -s "$CREDS/app_password" ]] || { (umask 077; head -c 32 /dev/urandom | base64 | tr '+/' '-_' | tr -d '=\n' >"$CREDS/app_password"); chmod 0400 "$CREDS/app_password"; say "generated the application's password"; }
-colophon admin init-roles --database-url-file "$CREDS/migration_database_url" --app-password-file "$CREDS/app_password" >/dev/null && say "roles ready"
+# A failure stops here: `cmd && say` under set -e went on to migrate without the roles (2026-11-21).
+# On Neon (no superuser) init-roles gives the password as text and the owner its memberships (D-234).
+init_err=$(mktemp)
+if ! colophon admin init-roles --database-url-file "$CREDS/migration_database_url" --app-password-file "$CREDS/app_password" >/dev/null 2>"$init_err"; then
+  cat "$init_err" >&2
+  echo "refusing: the roles step failed (colophon admin init-roles; its error is above); nothing after it was run" >&2
+  # A failed statement that held the password as text may be in the database server's log.
+  if grep -q 'rotate the application' "$init_err"; then
+    echo "and ROTATE the application's password before running this again: rm $CREDS/app_password $CREDS/database_url (a new one is generated), and if colophon_app already exists, ALTER ROLE colophon_app PASSWORD to the new one as the owner" >&2
+  fi
+  rm -f "$init_err"
+  exit 1
+fi
+rm -f "$init_err"
+say "roles ready"
 if [[ ! -s "$CREDS/database_url" ]]; then
   read -r rest <<<"$(sed -E 's#^postgres(ql)?://[^@]+@##' "$CREDS/migration_database_url")"
   (umask 077; printf 'postgres://colophon_app:%s@%s' "$(cat "$CREDS/app_password")" "$rest" >"$CREDS/database_url"); chmod 0400 "$CREDS/database_url"
@@ -121,7 +170,8 @@ fi
 step "4. the cache, on loopback"
 if [[ ! -s "$CREDS/cache_url" ]]; then
   pass=$(head -c 32 /dev/urandom | base64 | tr '+/' '-_' | tr -d '=\n')
-  printf 'bind 127.0.0.1 -::1\nprotected-mode yes\nmaxmemory 128mb\nmaxmemory-policy allkeys-lru\nrequirepass %s\n' "$pass" >/etc/redis/conf.d-colophon.conf
+  # Created 0640 (umask 027), so the password is never in a world-readable file, not even briefly.
+  (umask 027; printf 'bind 127.0.0.1 -::1\nprotected-mode yes\nmaxmemory 128mb\nmaxmemory-policy allkeys-lru\nrequirepass %s\n' "$pass" >/etc/redis/conf.d-colophon.conf)
   chmod 0640 /etc/redis/conf.d-colophon.conf && chown root:redis /etc/redis/conf.d-colophon.conf
   grep -q 'conf.d-colophon.conf' /etc/redis/redis.conf || echo 'include /etc/redis/conf.d-colophon.conf' >>/etc/redis/redis.conf
   (umask 077; printf 'redis://:%s@127.0.0.1:6379' "$pass" >"$CREDS/cache_url"); chmod 0400 "$CREDS/cache_url"; unset pass
@@ -131,10 +181,37 @@ systemctl restart redis-server && systemctl enable redis-server >/dev/null 2>&1 
 
 step "5. settings and the R2 secret"
 [[ -f "$ENV_FILE" ]] || install -m 0644 "$here/colophon.env.template" "$ENV_FILE"
-account=$(value r2_account_id "Your Cloudflare account id (R2)")
-access=$(value r2_access_key_id "The R2 token's access key id")
-sed -i "s#<r2-account-id>#$account#; s#<r2-access-key-id>#$access#" "$ENV_FILE"
-ask "$CREDS/s3_secret_key" "The R2 token's secret access key"
+# Two R2 tokens (CREATE.md), each scoped to one bucket: the media token the server holds, and the
+# backups' own, which only the backup units load. The ids are checked before they go into the env
+# file: 32 hex characters each, nothing a sed expression could read as more.
+hex32() { [[ "$2" =~ ^[0-9a-f]{32}$ ]] || { rm -f "/etc/colophon/install/$1"; echo "refusing: $1 must be 32 lowercase hex characters (asked again on the next run)" >&2; exit 1; }; }
+account=$(value r2_account_id "Your Cloudflare account id (R2)"); hex32 r2_account_id "$account"
+access=$(value r2_access_key_id "The media R2 token's access key id (Object Read & Write on colophon-media only)"); hex32 r2_access_key_id "$access"
+if r2_backup_shared /etc/colophon/install; then
+  # One token on both buckets, by the operator's choice (r2-keys.sh): the backups' files hold the media token's,
+  # so the backup units read their usual files and a rotated media token reaches them on the next run.
+  backup_access=$access
+  printf '%s' "$access" >/etc/colophon/install/r2_backup_access_key_id
+else
+  backup_access=$(value r2_backup_access_key_id "The backups R2 token's access key id (Object Read & Write on colophon-backups only)"); hex32 r2_backup_access_key_id "$backup_access"
+fi
+grep -q '^COLOPHON_BACKUP_S3_ACCESS_KEY=' "$ENV_FILE" || echo 'COLOPHON_BACKUP_S3_ACCESS_KEY=<r2-backup-access-key-id>' >>"$ENV_FILE"
+sed -i "s#<r2-account-id>#$account#; s#<r2-access-key-id>#$access#; s#<r2-backup-access-key-id>#$backup_access#" "$ENV_FILE"
+ask "$CREDS/s3_secret_key" "The media R2 token's secret access key"
+if r2_backup_shared /etc/colophon/install; then
+  (umask 077; rm -f "$CREDS/backup_s3_secret_key"; cp "$CREDS/s3_secret_key" "$CREDS/backup_s3_secret_key"); chmod 0400 "$CREDS/backup_s3_secret_key"
+else
+  ask "$CREDS/backup_s3_secret_key" "The backups R2 token's secret access key"
+fi
+if ! r2_backup_check "$access" "$backup_access" "$CREDS/s3_secret_key" "$CREDS/backup_s3_secret_key" /etc/colophon/install; then
+  # Two tokens expected and the backups' id or secret is the media one: ask for them again on the next run.
+  r2_backup_shared /etc/colophon/install || rm -f /etc/colophon/install/r2_backup_access_key_id "$CREDS/backup_s3_secret_key"
+  exit 1
+fi
+# The hostname is one setting: COLOPHON_PUBLIC_URL. Caddy's site address and the links below follow it.
+public=$(public_url "$ENV_FILE") || { echo "refusing: fix COLOPHON_PUBLIC_URL in $ENV_FILE, then run this again" >&2; exit 1; }
+host=${public#https://}
+say "public address: $public"
 
 step "6. the service"
 install -m 0644 "$here/../production/colophon.service" /etc/systemd/system/colophon.service
@@ -144,17 +221,25 @@ step "7. Caddy: the origin certificate, Authenticated Origin Pulls, Cloudflare's
 ask /etc/caddy/origin.pem "Cloudflare's Origin Certificate (the PEM, -----BEGIN CERTIFICATE----- …)"
 ask /etc/caddy/origin.key "Its private key (-----BEGIN PRIVATE KEY----- …)"
 chown root:caddy /etc/caddy/origin.pem /etc/caddy/origin.key && chmod 0440 /etc/caddy/origin.pem /etc/caddy/origin.key
-install -m 0644 "$here/Caddyfile" /etc/caddy/Caddyfile
+rendered=$(mktemp)
+caddyfile_for_host "$here/Caddyfile" "$host" >"$rendered" || { rm -f "$rendered"; echo "refusing: no Caddyfile for $host" >&2; exit 1; }
+install -m 0644 "$rendered" /etc/caddy/Caddyfile && rm -f "$rendered" && say "Caddy's site address: $host (from COLOPHON_PUBLIC_URL)"
 "$here/origin-pull-ca.sh"
 "$here/cloudflare-ips.sh"
-caddy validate --config /etc/caddy/Caddyfile >/dev/null 2>&1 && systemctl reload-or-restart caddy && say "caddy serving 443"
+# A Caddyfile that doesn't validate stops the install (`validate && reload` under set -e went on).
+caddy validate --config /etc/caddy/Caddyfile >/dev/null 2>&1 \
+  || { caddy validate --config /etc/caddy/Caddyfile >&2 || true; echo "refusing: /etc/caddy/Caddyfile doesn't validate (above); Caddy left as it was" >&2; exit 1; }
+# The unit's reload asks the admin API at the NEW config's address, a socket a Caddy started with
+# an older config (admin on TCP 2019) hasn't opened: the first time, restart instead.
+if [[ -S /var/lib/caddy/admin.sock ]] && systemctl is-active --quiet caddy; then systemctl reload caddy; else systemctl restart caddy; fi
+say "caddy serving 443 (admin API: the 0600 socket /var/lib/caddy/admin.sock)"
 
 step "8. the switch: migrate, start, check (upgrade.sh)"
 "$here/upgrade.sh" "$COLOPHON_VERSION"
 
 step "9. the first administrator"
 code=$(journalctl -u colophon --no-pager 2>/dev/null | grep -o 'Setup code[^"]*' | tail -1 || true)
-if [[ -n "$code" ]]; then say "$code — open https://app.colophon.404human.dev/studio/ and enter it"; else say "no setup code in the log: the installation already has an administrator"; fi
+if [[ -n "$code" ]]; then say "$code — open $public/studio/ and enter it"; else say "no setup code in the log: the installation already has an administrator"; fi
 
 step "10. backups: the ledger export and the logical dump"
 if [[ ! -s /etc/colophon/backup-age-identity ]]; then

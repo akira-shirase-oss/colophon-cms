@@ -15,7 +15,7 @@
 
 /** This package's version — the workspace version every crate and npm package carries (module
  *  19, "Versions"); a test fails when it differs from `package.json` or `Cargo.toml`. */
-export const SDK_VERSION = '0.1.0-alpha.1';
+export const SDK_VERSION = '0.1.0-alpha.4';
 
 /** The API version this SDK speaks. */
 export const API = 'v1';

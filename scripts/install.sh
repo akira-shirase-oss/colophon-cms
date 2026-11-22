@@ -4,7 +4,7 @@
 # own. It never asks for sudo. (docs/modules/08-cli.md, "Install")
 #
 #   curl -fsSL https://raw.githubusercontent.com/akira-shirase-oss/colophon-cms/main/scripts/install.sh | sh
-#   curl -fsSL https://raw.githubusercontent.com/akira-shirase-oss/colophon-cms/main/scripts/install.sh | sh -s -- --version 0.1.0-alpha.1
+#   curl -fsSL https://raw.githubusercontent.com/akira-shirase-oss/colophon-cms/main/scripts/install.sh | sh -s -- --version 0.1.0-alpha.4
 #
 # Options, or the environment variable in brackets:
 #   --version V   the release to install [COLOPHON_VERSION]; default the newest, pre-releases included

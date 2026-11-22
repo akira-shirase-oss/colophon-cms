@@ -13,8 +13,10 @@
 #
 # Reads, as root or through systemd credentials:
 #   $CREDENTIALS_DIRECTORY/migration_database_url (or /etc/colophon/credentials/…)
-#   $CREDENTIALS_DIRECTORY/s3_secret_key, and COLOPHON_S3_ENDPOINT / COLOPHON_S3_ACCESS_KEY from
-#   /etc/colophon/colophon.env; BACKUP_BUCKET (default colophon-backups).
+#   $CREDENTIALS_DIRECTORY/backup_s3_secret_key, and COLOPHON_S3_ENDPOINT /
+#   COLOPHON_BACKUP_S3_ACCESS_KEY from /etc/colophon/colophon.env; BACKUP_BUCKET (default
+#   colophon-backups). That is the backups' own R2 token, scoped to the backups bucket (CREATE.md):
+#   the server's media token can't touch the backups, and this one can't touch the media.
 # Needs pg_dump 18 (postgresql-client-18), age and rclone.
 set -euo pipefail
 KEEP_DAILY="${KEEP_DAILY:-14}"
@@ -31,8 +33,8 @@ setting() { sed -n "s/^$1=//p" "$env_file" | tail -n 1; }
 r2() {
   RCLONE_CONFIG_R2_TYPE=s3 RCLONE_CONFIG_R2_PROVIDER=Cloudflare \
     RCLONE_CONFIG_R2_ENDPOINT="$(setting COLOPHON_S3_ENDPOINT)" \
-    RCLONE_CONFIG_R2_ACCESS_KEY_ID="$(setting COLOPHON_S3_ACCESS_KEY)" \
-    RCLONE_CONFIG_R2_SECRET_ACCESS_KEY="$(tr -d '\n' <"$creds/s3_secret_key")" \
+    RCLONE_CONFIG_R2_ACCESS_KEY_ID="$(setting COLOPHON_BACKUP_S3_ACCESS_KEY)" \
+    RCLONE_CONFIG_R2_SECRET_ACCESS_KEY="$(tr -d '\n' <"$creds/backup_s3_secret_key")" \
     RCLONE_CONFIG_R2_REGION=auto \
     RCLONE_CONFIG_R2_NO_CHECK_BUCKET=true \
     rclone "$@"
@@ -78,6 +80,12 @@ prune() {
 # stamp_epoch <name>: the dump's UTC stamp as seconds.
 stamp_epoch() { local stamp=${1%.dump.age}; jq -rn --arg s "$stamp" '$s | strptime("%Y-%m-%dT%H%M%SZ") | mktime'; }
 
+# The backups' own R2 key, or nothing runs (never the media key in its place).
+need_key() {
+  [[ -n "$(setting COLOPHON_BACKUP_S3_ACCESS_KEY)" ]] || { echo "error: no COLOPHON_BACKUP_S3_ACCESS_KEY in $env_file (the backups' own R2 token, CREATE.md)" >&2; exit 1; }
+  [[ -s "$creds/backup_s3_secret_key" ]] || { echo "error: no backup_s3_secret_key credential (the backups' own R2 token, CREATE.md)" >&2; exit 1; }
+}
+
 latest() {
   local name stamp epoch
   name=$(dumps | tail -n 1)
@@ -113,8 +121,8 @@ run() {
 }
 
 case "${1:-}" in
-  run) run ;;
-  prune) if [[ "${2:-}" == --dry ]]; then prune dry; else prune apply; fi ;;
-  latest) latest ;;
+  run) need_key; run ;;
+  prune) need_key; if [[ "${2:-}" == --dry ]]; then prune dry; else prune apply; fi ;;
+  latest) need_key; latest ;;
   *) echo "usage: backup-logical.sh run | prune [--dry] | latest" >&2; exit 2 ;;
 esac
