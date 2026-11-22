@@ -76,8 +76,6 @@ struct Loaded {
     keys: Arc<KeySet>,
     /// When `keys` last changed or was read for its age: what `KEYS_FRESH_FOR` counts from.
     fresh_at: Instant,
-    /// The read sequence number `keys` came from: a slower, older read never replaces a newer one.
-    sequence: u64,
 }
 
 /// The installation's live signing keys, read from the database and kept a minute (D-233): every server reads
@@ -85,8 +83,11 @@ struct Loaded {
 #[derive(Default)]
 pub struct Keys {
     loaded: Mutex<Option<Loaded>>,
-    /// The next read's sequence number.
-    reads: std::sync::atomic::AtomicU64,
+    /// Held across a read of the database: one read at a time per server. A read's snapshot is taken when its
+    /// query runs, not when it was asked for, so two reads in flight could land in the opposite order to their
+    /// snapshots and put back a key a rotation retired, fresh for another minute. One at a time, each read lands
+    /// in the order its snapshot was taken.
+    reading: tokio::sync::Mutex<()>,
     /// When an unknown key id last made this server read the keys.
     unknown_at: Mutex<Option<Instant>>,
 }
@@ -156,36 +157,30 @@ impl Keys {
         F: FnOnce() -> Fut,
         Fut: std::future::Future<Output = Result<Vec<(u32, Vec<u8>)>, ApiError>>,
     {
-        let sequence = self
-            .reads
-            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        // Bounded by the read in front: the pool's acquire timeout and the query's own deadline.
+        let _turn = self.reading.lock().await;
+        // A read that landed while this one waited serves it, as the minute's own read would.
+        if ages && let Some(keys) = self.fresh(Instant::now()) {
+            return Ok(keys);
+        }
         let read = KeySet::new(fetch().await?)
             .ok_or(ApiError::Unavailable("no media signing key is configured"))?;
-        Ok(self.store(Arc::new(read), sequence, ages, Instant::now()))
+        Ok(self.store(Arc::new(read), ages, Instant::now()))
     }
 
-    fn store(&self, read: Arc<KeySet>, sequence: u64, ages: bool, now: Instant) -> Arc<KeySet> {
+    /// Keeps a read, which (one at a time) is never older than the one it replaces.
+    fn store(&self, read: Arc<KeySet>, ages: bool, now: Instant) -> Arc<KeySet> {
         let mut loaded = lock(&self.loaded);
-        match loaded.as_mut() {
-            // A newer read already landed: keep it.
-            Some(newer) if newer.sequence > sequence => Arc::clone(&newer.keys),
-            Some(held) => {
-                if ages || held.keys.ids() != read.ids() {
-                    held.fresh_at = now;
-                }
-                held.keys = Arc::clone(&read);
-                held.sequence = sequence;
-                read
-            }
-            None => {
-                *loaded = Some(Loaded {
-                    keys: Arc::clone(&read),
-                    fresh_at: now,
-                    sequence,
-                });
-                read
-            }
-        }
+        // A read that finds the same keys restarts the minute only when asked to (`ages`); a change always does.
+        let fresh_at = match loaded.as_ref() {
+            Some(held) if !ages && held.keys.ids() == read.ids() => held.fresh_at,
+            _ => now,
+        };
+        *loaded = Some(Loaded {
+            keys: Arc::clone(&read),
+            fresh_at,
+        });
+        read
     }
 }
 
@@ -485,26 +480,17 @@ mod tests {
         assert!(cache.unknown_allowed(start + UNKNOWN_KID_EVERY));
     }
 
-    /// A read that started earlier never replaces one that started later; a read for an unknown id that finds
-    /// the same keys doesn't restart the minute, so forged ids can't keep a retired key verifying.
+    /// A read for an unknown id that finds the same keys doesn't restart the minute, so forged ids can't keep a
+    /// retired key verifying; one that finds a change does. (Reads in flight: the test below.)
     #[test]
-    fn the_cache_keeps_the_newest_read_and_ages_out_on_time() {
+    fn the_cache_ages_out_on_time() {
         let cache = Keys::default();
         let start = Instant::now();
-        let one = Arc::new(keys(&[(1, 1)]));
-        let two = Arc::new(keys(&[(1, 1), (2, 2)]));
-        cache.store(Arc::clone(&two), 5, true, start);
-        let kept = cache.store(Arc::clone(&one), 4, true, start);
-        assert_eq!(
-            kept.current().id,
-            2,
-            "an older read lost the race and was dropped"
-        );
+        cache.store(Arc::new(keys(&[(1, 1), (2, 2)])), true, start);
         assert_eq!(cache.fresh(start).map(|set| set.current().id), Some(2));
         // An unknown id's read finding the same keys: the clock still runs from `start`.
         cache.store(
             Arc::new(keys(&[(1, 1), (2, 2)])),
-            6,
             false,
             start + Duration::from_secs(59),
         );
@@ -515,7 +501,6 @@ mod tests {
         // A read that finds a change counts as fresh, whatever asked for it.
         cache.store(
             Arc::new(keys(&[(2, 2), (3, 3)])),
-            7,
             false,
             start + Duration::from_secs(61),
         );
