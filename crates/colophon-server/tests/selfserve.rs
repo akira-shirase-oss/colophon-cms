@@ -409,7 +409,7 @@ async fn upload_bytes(session: &Session, project: &str, bytes: usize) -> common:
 /// D-235's quotas over HTTP: the entry past the account's limit is 409 `quota_exceeded` with
 /// the quota, its limit and the count; an upload past the storage limit is refused before a
 /// byte of it reaches the object store (nothing new under the project's quarantine prefix),
-/// while one that fits lands there.
+/// while one that fits is accepted, verified and held.
 #[tokio::test]
 #[ignore = "needs the stack and scripts/migrate.sh"]
 async fn an_account_past_its_quotas_is_refused_and_an_upload_before_its_bytes_are_stored() {
@@ -444,18 +444,46 @@ async fn an_account_past_its_quotas_is_refused_and_an_upload_before_its_bytes_ar
         (Some(2), Some(2))
     );
 
-    // A fitting upload lands in quarantine (the store is reachable and counted)...
-    let fits = upload_bytes(&alice, &project, 600).await;
+    // A fitting upload (a PNG the worker verifies and keeps) is accepted and, once verified,
+    // held against the account. Waiting for the verdict keeps the next step independent of
+    // the worker: an upload it rejected would hand its bytes back.
+    let fits = send_image(
+        &alice,
+        &format!("/api/v1/projects/{project}/environments/production/assets"),
+        PNG,
+    )
+    .await;
     assert_eq!(fits.status, StatusCode::ACCEPTED, "{}", fits.body);
-    assert_eq!(quarantined(&project).await, 1);
-    // ...and one past the limit (600 held + 600 > 1000) is refused before its body is read.
-    let over = upload_bytes(&alice, &project, 600).await;
+    let db = owner_database().await;
+    let asset = fits.body["data"]["id"].as_str().expect("id").to_owned();
+    assert_eq!(
+        verified(&db, &asset).await,
+        0,
+        "no reservation outlives the upload"
+    );
+    let stored: i64 = sqlx::query_scalar(
+        "SELECT stored_bytes + pending_bytes FROM account_usage u
+         JOIN projects p ON p.owner_account = u.account WHERE p.id = $1::uuid",
+    )
+    .bind(&project)
+    .fetch_one(&db)
+    .await
+    .expect("usage");
+    assert_eq!(
+        stored,
+        i64::try_from(PNG.len()).expect("small"),
+        "the PNG is held"
+    );
+    // ...and one byte past the limit (held + this > 1000) is refused before its body is read:
+    // nothing new under the project's quarantine prefix.
+    let before = quarantined(&project).await;
+    let over = upload_bytes(&alice, &project, 1000 - PNG.len() + 1).await;
     assert_eq!(over.status, StatusCode::CONFLICT, "{}", over.body);
     assert_eq!(over.body["error"]["details"]["reason"], "quota_exceeded");
     assert_eq!(over.body["error"]["details"]["quota"], "storage_bytes");
     assert_eq!(
         quarantined(&project).await,
-        1,
+        before,
         "the refused upload put nothing in the object store"
     );
 }
