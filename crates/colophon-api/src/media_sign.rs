@@ -138,18 +138,29 @@ impl Keys {
     /// Reads the keys; `ages` says the read restarts the freshness clock even when nothing changed (the minute's
     /// own read does, an unknown id's doesn't).
     async fn read(&self, pool: &PgPool, ages: bool) -> Result<Arc<KeySet>, ApiError> {
+        self.read_with(ages, || async {
+            let rows = colophon_db::delivery::media_signing_keys(pool)
+                .await
+                .map_err(ApiError::from_db)?;
+            Ok(rows
+                .into_iter()
+                .filter_map(|row| Some((u32::try_from(row.id).ok()?, row.key)))
+                .collect())
+        })
+        .await
+    }
+
+    /// [`Self::read`] with the database read passed in (tests stand in for it).
+    async fn read_with<F, Fut>(&self, ages: bool, fetch: F) -> Result<Arc<KeySet>, ApiError>
+    where
+        F: FnOnce() -> Fut,
+        Fut: std::future::Future<Output = Result<Vec<(u32, Vec<u8>)>, ApiError>>,
+    {
         let sequence = self
             .reads
             .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-        let rows = colophon_db::delivery::media_signing_keys(pool)
-            .await
-            .map_err(ApiError::from_db)?;
-        let read = KeySet::new(
-            rows.into_iter()
-                .filter_map(|row| Some((u32::try_from(row.id).ok()?, row.key)))
-                .collect(),
-        )
-        .ok_or(ApiError::Unavailable("no media signing key is configured"))?;
+        let read = KeySet::new(fetch().await?)
+            .ok_or(ApiError::Unavailable("no media signing key is configured"))?;
         Ok(self.store(Arc::new(read), sequence, ages, Instant::now()))
     }
 
@@ -514,6 +525,70 @@ mod tests {
                 .map(|set| set.current().id),
             Some(3)
         );
+    }
+
+    /// White-hat (D-233): a read's snapshot is taken when its query runs, not when it was asked for. Read A, asked
+    /// first, waits for a connection; read B, asked second, runs at once (before a `--retire-previous` rotation)
+    /// and returns last. B must not put the retired keys back, fresh for another minute, over A's newer read.
+    #[tokio::test]
+    async fn a_read_never_puts_back_keys_an_earlier_snapshot_held() {
+        use tokio::sync::Notify;
+
+        let cache = Arc::new(Keys::default());
+        let database = Arc::new(Mutex::new(vec![(1_u32, vec![1_u8; 32]), (2, vec![2; 32])]));
+        let a_runs = Arc::new(Notify::new());
+        let b_returns = Arc::new(Notify::new());
+        let settle = || async {
+            for _ in 0..16 {
+                tokio::task::yield_now().await;
+            }
+        };
+
+        let a = tokio::spawn({
+            let (cache, database, a_runs) = (
+                Arc::clone(&cache),
+                Arc::clone(&database),
+                Arc::clone(&a_runs),
+            );
+            async move {
+                cache
+                    .read_with(true, || async move {
+                        a_runs.notified().await;
+                        let rows = lock(&database).clone();
+                        Ok(rows)
+                    })
+                    .await
+            }
+        });
+        settle().await;
+        let b = tokio::spawn({
+            let (cache, database, b_returns) = (
+                Arc::clone(&cache),
+                Arc::clone(&database),
+                Arc::clone(&b_returns),
+            );
+            async move {
+                cache
+                    .read_with(true, || async move {
+                        let rows = lock(&database).clone();
+                        b_returns.notified().await;
+                        Ok(rows)
+                    })
+                    .await
+            }
+        });
+        settle().await;
+        // `colophon admin media-key rotate --retire-previous`: keys 1 and 2 are gone.
+        *lock(&database) = vec![(3, vec![3; 32])];
+        a_runs.notify_one();
+        settle().await;
+        b_returns.notify_one();
+        a.await.expect("a joined").expect("a read");
+        b.await.expect("b joined").expect("b read");
+
+        let held = cache.fresh(Instant::now()).expect("fresh keys");
+        assert_eq!(held.ids(), [3], "a retired key came back");
+        assert!(held.by_id(2).is_none() && held.by_id(1).is_none());
     }
 
     proptest! {
