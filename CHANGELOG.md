@@ -8,8 +8,16 @@ through `--version` and `GET /version`.
 
 ## [Unreleased]
 
+## [0.1.0-alpha.4] — 2026-11-22
+
 ### Security
 
+- **A nested `blob:` origin no longer stops the server** (RUSTSEC-2026-0592). `url` 2.5.8 and earlier took a
+  `blob:` URL's origin by recursing into its inner URL without bound, a stack overflow that aborts the whole process.
+  `PUT {P}/audience/origins` took each listed origin's `origin()` before checking its scheme, and before checking
+  the caller's permission, so any signed-in account could stop the server with one request (about 100 KB of nested
+  `blob:` prefixes). `url` is now 2.5.9, which follows the URL Standard, and the origin check refuses anything but
+  http(s) with a host before it takes an origin. Every other `origin()` call already checked the scheme first.
 - **One R2 token on both buckets is an explicit operator choice, not a refusal** (`deploy/droplet/r2-keys.sh`). The
   backups still get their own token by default; `r2_backup_shares_media=yes` in `/etc/colophon/install/` lets an
   operator who has one token use it for the backups too, with a warning on every install run, because a server
