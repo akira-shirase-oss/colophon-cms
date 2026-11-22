@@ -10,6 +10,10 @@ through `--version` and `GET /version`.
 
 ### Security
 
+- **One R2 token on both buckets is an explicit operator choice, not a refusal** (`deploy/droplet/r2-keys.sh`). The
+  backups still get their own token by default; `r2_backup_shares_media=yes` in `/etc/colophon/install/` lets an
+  operator who has one token use it for the backups too, with a warning on every install run, because a server
+  compromise could then delete backups older than the bucket lock.
 - **The droplet's rate limits key by the real visitor** (white-hat review of S0, 2026-11-21). Caddy now takes the
   client from `Cf-Connecting-Ip` when the peer is Cloudflare and tells the server that one address, replacing any
   `X-Forwarded-For`; the server trusts loopback alone. Trusting all of Cloudflare's ranges in the server let a
