@@ -8,6 +8,22 @@ through `--version` and `GET /version`.
 
 ## [Unreleased]
 
+### Added
+
+- **Self-serve projects and per-account quotas** (D-235). `COLOPHON_REGISTRATION=open` lets any signed-in account
+  create up to `COLOPHON_PROJECTS_PER_ACCOUNT` (3) projects it owns; `invite` (the default) and `closed` keep project
+  creation to administrators. Each account's entries, assets and stored bytes are counted in the database by
+  triggers, so every write path is bounded the same way (`COLOPHON_ACCOUNT_MAX_ENTRIES`, `_ASSETS`,
+  `_STORAGE_BYTES`; 409 `quota_exceeded`), and an upload past the storage quota is refused before any of its bytes
+  reach the object store. Administrators are exempt. `colophon admin usage-reconcile [--check]` recounts usage;
+  the droplet's smoke check runs it.
+
+### Security
+
+- **Row security no longer lets an account create a project for another** (D-235): a new project's owner is the
+  account creating it, enforced by a row policy and immutable afterwards. Only listed code may set the project
+  context (`crates/colophon-db/context-writers.allow`, checked by a test), and SECURITY.md describes the threat model.
+
 ## [0.1.0-alpha.4] — 2026-11-22
 
 ### Security

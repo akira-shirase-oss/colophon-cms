@@ -104,6 +104,13 @@ on clean infrastructure and an independent install, so operations are a module w
   counts alone, so a cluster of N admits up to N times the rate until it is back. `scripts/load.sh` and
   `scripts/cluster.sh` raise the limits so far that they never refuse (one machine sends everything), and still
   pay for every check.
+- Self-serve accounts (D-235): `COLOPHON_REGISTRATION` = `open`, `invite` (default) or `closed`; on `open`, any
+  account creates up to `COLOPHON_PROJECTS_PER_ACCOUNT` projects (default 3). Per-account quotas
+  `COLOPHON_ACCOUNT_MAX_ENTRIES` (10000), `COLOPHON_ACCOUNT_MAX_ASSETS` (2000) and `COLOPHON_ACCOUNT_MAX_STORAGE_BYTES`
+  (1 GiB; uploads in flight and quarantined count), each 0 for no bound, are enforced by the database for every write
+  path; administrators are exempt. Each server writes its limits to the database at boot and logs them, so every
+  server of an installation must be given the same values (the last one started wins). `colophon admin
+  usage-reconcile --check` (smoke runs it) compares the kept totals with a recount.
 - Secrets from files (D-173): `COLOPHON_DATABASE_URL`, `COLOPHON_CACHE_URL`, `COLOPHON_S3_SECRET_KEY`,
   `COLOPHON_OIDC_CLIENT_SECRET` and `COLOPHON_RESEND_API_KEY` each also take `<KEY>_FILE`, a path to a mounted secret
   (trimmed, at most 16 KiB, never quoted in a problem); setting both stops the server at start-up. Outside the local

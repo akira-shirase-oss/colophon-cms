@@ -166,7 +166,11 @@ async fn invite_and_closed_installations_leave_project_creation_to_administrator
 
 #[tokio::test]
 #[ignore = "needs the stack and scripts/migrate.sh"]
-async fn colophon_accounts_reads_projects_id_and_owner_and_holds_nothing_else() {
+#[expect(
+    clippy::too_many_lines,
+    reason = "one catalog snapshot: the column grants, the whole-table grants, the API role, the role itself"
+)]
+async fn colophon_accounts_holds_exactly_the_grants_it_counts_with() {
     let db = owner_database().await;
     let check = |sql: &'static str| {
         let db = db.clone();
@@ -191,15 +195,55 @@ async fn colophon_accounts_reads_projects_id_and_owner_and_holds_nothing_else() 
         .expect("privilege");
         assert!(!can, "colophon_accounts may read projects.{column}");
     }
-    // No privilege on any other table, nor any write on projects.
+    // Exactly the grants it counts and reconciles with (0087, 0088), table and column, and no
+    // privilege on any other table by any route (PUBLIC included).
+    let granted: Vec<String> = sqlx::query_scalar(
+        "SELECT c.relname || ':' || a.privilege_type
+         FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace,
+              LATERAL aclexplode(c.relacl) a
+         WHERE n.nspname = 'public' AND a.grantee = 'colophon_accounts'::regrole
+         UNION ALL
+         SELECT c.relname || '.' || att.attname || ':' || a.privilege_type
+         FROM pg_attribute att JOIN pg_class c ON c.oid = att.attrelid
+              JOIN pg_namespace n ON n.oid = c.relnamespace,
+              LATERAL aclexplode(att.attacl) a
+         WHERE n.nspname = 'public' AND a.grantee = 'colophon_accounts'::regrole
+         ORDER BY 1",
+    )
+    .fetch_all(&db)
+    .await
+    .expect("grants");
+    assert_eq!(
+        granted,
+        [
+            "account_quotas:SELECT",
+            "account_quotas:UPDATE",
+            "account_upload_reservations:DELETE",
+            "account_upload_reservations:INSERT",
+            "account_upload_reservations:SELECT",
+            "account_usage:INSERT",
+            "account_usage:SELECT",
+            "account_usage:UPDATE",
+            "administrators.identity_id:SELECT",
+            "asset_versions.project_id:SELECT",
+            "asset_versions.size_bytes:SELECT",
+            "assets.project_id:SELECT",
+            "assets.size_bytes:SELECT",
+            "assets.state:SELECT",
+            "entries.project_id:SELECT",
+            "projects.id:SELECT",
+            "projects.owner_account:SELECT",
+        ]
+    );
     let others: Vec<String> = sqlx::query_scalar(
         "SELECT c.relname::text FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
          WHERE n.nspname = 'public' AND c.relkind IN ('r', 'p', 'v')
-           AND c.relname NOT IN ('projects', 'account_usage')
+           AND c.relname NOT IN ('account_quotas', 'account_upload_reservations', 'account_usage')
            AND (has_table_privilege('colophon_accounts', c.oid, 'SELECT')
              OR has_table_privilege('colophon_accounts', c.oid, 'INSERT')
              OR has_table_privilege('colophon_accounts', c.oid, 'UPDATE')
-             OR has_table_privilege('colophon_accounts', c.oid, 'DELETE'))
+             OR has_table_privilege('colophon_accounts', c.oid, 'DELETE')
+             OR has_table_privilege('colophon_accounts', c.oid, 'TRUNCATE'))
          ORDER BY 1",
     )
     .fetch_all(&db)
@@ -207,8 +251,19 @@ async fn colophon_accounts_reads_projects_id_and_owner_and_holds_nothing_else() 
     .expect("tables");
     assert!(
         others.is_empty(),
-        "colophon_accounts holds privileges on {others:?}"
+        "colophon_accounts holds whole-table privileges on {others:?}"
     );
+    // The usage tables are written only through the definer functions: the API role holds
+    // nothing on them.
+    let api: Vec<String> = sqlx::query_scalar(
+        "SELECT t FROM unnest(ARRAY['account_quotas', 'account_upload_reservations', 'account_usage']) t
+         WHERE has_table_privilege('colophon_api', t, 'SELECT') OR has_table_privilege('colophon_api', t, 'INSERT')
+            OR has_table_privilege('colophon_api', t, 'UPDATE') OR has_table_privilege('colophon_api', t, 'DELETE')",
+    )
+    .fetch_all(&db)
+    .await
+    .expect("api");
+    assert!(api.is_empty(), "colophon_api holds privileges on {api:?}");
     for privilege in ["INSERT", "UPDATE", "DELETE", "TRUNCATE"] {
         let can: bool =
             sqlx::query_scalar("SELECT has_table_privilege('colophon_accounts', 'projects', $1)")
@@ -284,4 +339,240 @@ async fn no_application_role_may_update_a_project_s_owner_account() {
             "{role} may UPDATE projects (column {column}, table {table})"
         );
     }
+}
+
+/// The local stack's object store (the test env's own), for counting what reached it.
+fn store() -> object_store::aws::AmazonS3 {
+    let env = common::local_env();
+    let value = |name: &str| {
+        env.iter()
+            .find_map(|(key, value)| (key == name).then(|| value.clone()))
+            .expect(name)
+    };
+    object_store::aws::AmazonS3Builder::new()
+        .with_endpoint(value("COLOPHON_S3_ENDPOINT"))
+        .with_region(value("COLOPHON_S3_REGION"))
+        .with_bucket_name(value("COLOPHON_S3_BUCKET"))
+        .with_access_key_id(value("COLOPHON_S3_ACCESS_KEY"))
+        .with_secret_access_key(value("COLOPHON_S3_SECRET_KEY"))
+        .with_allow_http(true)
+        .build()
+        .expect("object store")
+}
+
+/// Objects under a project's quarantine prefix (`quarantine/{project}/{environment}/{name}`).
+async fn quarantined(project: &str) -> usize {
+    use object_store::ObjectStore as _;
+    let store = store();
+    let prefix = object_store::path::Path::from(format!("quarantine/{project}"));
+    let environments = store
+        .list_with_delimiter(Some(&prefix))
+        .await
+        .expect("listed");
+    let mut objects = environments.objects.len();
+    for environment in &environments.common_prefixes {
+        objects += store
+            .list_with_delimiter(Some(environment))
+            .await
+            .expect("listed")
+            .objects
+            .len();
+    }
+    objects
+}
+
+async fn upload_bytes(session: &Session, project: &str, bytes: usize) -> common::Reply {
+    let response = common::app()
+        .post(format!(
+            "{}/api/v1/projects/{project}/environments/production/assets",
+            common::ORIGIN
+        ))
+        .header(reqwest::header::COOKIE, &session.cookie)
+        .header("x-csrf-token", &session.csrf)
+        .header(reqwest::header::ORIGIN, common::ORIGIN)
+        .header("idempotency-key", common::key())
+        .header("x-colophon-file-name", "a.png")
+        .header(reqwest::header::CONTENT_TYPE, "image/png")
+        .body(vec![b'x'; bytes])
+        .send()
+        .await
+        .expect("request");
+    let status = response.status();
+    let headers = response.headers().clone();
+    common::Reply {
+        status,
+        headers,
+        body: response.json().await.unwrap_or_default(),
+    }
+}
+
+/// D-235's quotas over HTTP: the entry past the account's limit is 409 `quota_exceeded` with
+/// the quota, its limit and the count; an upload past the storage limit is refused before a
+/// byte of it reaches the object store (nothing new under the project's quarantine prefix),
+/// while one that fits lands there.
+#[tokio::test]
+#[ignore = "needs the stack and scripts/migrate.sh"]
+async fn an_account_past_its_quotas_is_refused_and_an_upload_before_its_bytes_are_stored() {
+    let _server = Server::start_with(&[
+        ("COLOPHON_REGISTRATION", "open"),
+        ("COLOPHON_ACCOUNT_MAX_ENTRIES", "2"),
+        ("COLOPHON_ACCOUNT_MAX_STORAGE_BYTES", "1000"),
+    ])
+    .await;
+    let alice = account().await;
+    let made = create(&alice).await;
+    assert_eq!(made.status, StatusCode::CREATED, "{}", made.body);
+    let project = made.body["data"]["id"].as_str().expect("id").to_owned();
+    common::create_article(&alice, &project, "one").await;
+    common::create_article(&alice, &project, "two").await;
+    let third = call(
+        &alice,
+        Method::POST,
+        &common::entries(&project),
+        Some(&common::article("three", "text")),
+        &[("idempotency-key", &common::key())],
+    )
+    .await
+    .expect("request");
+    assert_eq!(third.status, StatusCode::CONFLICT, "{}", third.body);
+    let details = &third.body["error"]["details"];
+    assert_eq!(third.body["error"]["code"], "conflict", "{}", third.body);
+    assert_eq!(details["reason"], "quota_exceeded", "{}", third.body);
+    assert_eq!(details["quota"], "entries", "{}", third.body);
+    assert_eq!(
+        (details["limit"].as_u64(), details["used"].as_u64()),
+        (Some(2), Some(2))
+    );
+
+    // A fitting upload lands in quarantine (the store is reachable and counted)...
+    let fits = upload_bytes(&alice, &project, 600).await;
+    assert_eq!(fits.status, StatusCode::ACCEPTED, "{}", fits.body);
+    assert_eq!(quarantined(&project).await, 1);
+    // ...and one past the limit (600 held + 600 > 1000) is refused before its body is read.
+    let over = upload_bytes(&alice, &project, 600).await;
+    assert_eq!(over.status, StatusCode::CONFLICT, "{}", over.body);
+    assert_eq!(over.body["error"]["details"]["reason"], "quota_exceeded");
+    assert_eq!(over.body["error"]["details"]["quota"], "storage_bytes");
+    assert_eq!(
+        quarantined(&project).await,
+        1,
+        "the refused upload put nothing in the object store"
+    );
+}
+
+/// A 1×1 PNG the worker verifies as usable (the asset tests' own).
+const PNG: &[u8] = &[
+    137, 80, 78, 71, 13, 10, 26, 10, 0, 0, 0, 13, 73, 72, 68, 82, 0, 0, 0, 1, 0, 0, 0, 1, 8, 2, 0,
+    0, 0, 144, 119, 83, 222, 0, 0, 0, 12, 73, 68, 65, 84, 120, 156, 99, 248, 207, 192, 0, 0, 3, 1,
+    1, 0, 201, 254, 146, 239, 0, 0, 0, 0, 73, 69, 78, 68, 174, 66, 96, 130,
+];
+
+/// Sends `bytes` to `path` as an upload (POST, the asset headers).
+async fn send_image(session: &Session, path: &str, bytes: &[u8]) -> common::Reply {
+    let response = common::app()
+        .post(format!("{}{path}", common::ORIGIN))
+        .header(reqwest::header::COOKIE, &session.cookie)
+        .header("x-csrf-token", &session.csrf)
+        .header(reqwest::header::ORIGIN, common::ORIGIN)
+        .header("idempotency-key", common::key())
+        .header("x-colophon-file-name", "a.png")
+        .header(reqwest::header::CONTENT_TYPE, "image/png")
+        .body(bytes.to_vec())
+        .send()
+        .await
+        .expect("request");
+    let status = response.status();
+    let headers = response.headers().clone();
+    common::Reply {
+        status,
+        headers,
+        body: response.json().await.unwrap_or_default(),
+    }
+}
+
+/// Waits (up to 60 s) until every verify job of `asset` has its verdict; then how many intake
+/// reservations remain anywhere.
+async fn verified(db: &sqlx::PgPool, asset: &str) -> i64 {
+    let asset = uuid::Uuid::parse_str(asset).expect("an asset id");
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(60);
+    loop {
+        let open: i64 = sqlx::query_scalar(
+            "SELECT count(*) FROM asset_jobs WHERE asset_id = $1
+               AND status NOT IN ('succeeded', 'failed', 'superseded')",
+        )
+        .bind(asset)
+        .fetch_one(db)
+        .await
+        .expect("jobs");
+        if open == 0 {
+            break;
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "verification never finished"
+        );
+        tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+    }
+    sqlx::query_scalar("SELECT count(*) FROM account_upload_reservations")
+        .fetch_one(db)
+        .await
+        .expect("reservations")
+}
+
+/// A replacement's reservation ends with its verify job (0088's `asset_jobs` trigger), never at its
+/// expiry: an asset replaced again and again, each fitting, is never refused by a stale
+/// reservation, and no reservation is left once each verdict is in. The limit holds every
+/// version even if all are kept, plus one replacement in flight; a stale reservation per
+/// replacement would pass it by the fourth.
+#[tokio::test]
+#[ignore = "needs the stack and scripts/migrate.sh"]
+async fn an_asset_replaced_again_and_again_is_never_refused_by_a_stale_reservation() {
+    let limit = (PNG.len() * 7).to_string();
+    let _server = Server::start_with(&[
+        ("COLOPHON_REGISTRATION", "open"),
+        ("COLOPHON_ACCOUNT_MAX_STORAGE_BYTES", &limit),
+    ])
+    .await;
+    let db = owner_database().await;
+    let alice = account().await;
+    let made = create(&alice).await;
+    assert_eq!(made.status, StatusCode::CREATED, "{}", made.body);
+    let project = made.body["data"]["id"].as_str().expect("id").to_owned();
+    let assets = format!("/api/v1/projects/{project}/environments/production/assets");
+    let first = send_image(&alice, &assets, PNG).await;
+    assert_eq!(first.status, StatusCode::ACCEPTED, "{}", first.body);
+    let asset = first.body["data"]["id"].as_str().expect("id").to_owned();
+    assert_eq!(
+        verified(&db, &asset).await,
+        0,
+        "the upload's reservation ended"
+    );
+    for round in 1..=5 {
+        let replaced = send_image(&alice, &format!("{assets}/{asset}/replace"), PNG).await;
+        assert_eq!(
+            replaced.status,
+            StatusCode::ACCEPTED,
+            "replacement {round}: {}",
+            replaced.body
+        );
+        assert_eq!(
+            verified(&db, &asset).await,
+            0,
+            "replacement {round}: its reservation outlived its verdict"
+        );
+    }
+    // A request that queues no job (here, an asset that doesn't exist: refused after its bytes
+    // were reserved and stored) releases its reservation before it answers.
+    let unknown = send_image(
+        &alice,
+        &format!("{assets}/{}/replace", uuid::Uuid::now_v7()),
+        PNG,
+    )
+    .await;
+    assert_eq!(unknown.status, StatusCode::NOT_FOUND, "{}", unknown.body);
+    let left: i64 = sqlx::query_scalar("SELECT count(*) FROM account_upload_reservations")
+        .fetch_one(&db)
+        .await
+        .expect("reservations");
+    assert_eq!(left, 0, "a refused replacement left its reservation behind");
 }

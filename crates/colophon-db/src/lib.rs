@@ -44,6 +44,7 @@ pub mod throttle;
 pub mod tokens;
 pub mod transactions;
 pub mod undo;
+pub mod usage;
 pub mod work;
 
 use std::{str::FromStr, time::Duration};
@@ -132,6 +133,17 @@ pub enum DbError {
         limit: u32,
         /// Projects the account owns.
         used: u32,
+    },
+    /// The write would take the owning account past one of its quotas (D-235; 0088's
+    /// `CQ001`): the statement was refused and nothing it wrote remains.
+    #[error("the account holds {used} of the {limit} its {quota} quota allows")]
+    QuotaExceeded {
+        /// Which quota.
+        quota: Quota,
+        /// The limit.
+        limit: u64,
+        /// What the account held before this write.
+        used: u64,
     },
     /// Another non-superuser migration run held the run lock for the whole wait (D-234):
     /// nothing was changed. Is another `admin migrate` (an upgrade) still running?
@@ -228,10 +240,71 @@ pub enum DbError {
     Corrupt(&'static str),
 }
 
+/// The per-account quotas (D-235, `COLOPHON_ACCOUNT_MAX_*`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Quota {
+    /// Entries across the account's projects.
+    Entries,
+    /// Assets across the account's projects.
+    Assets,
+    /// Bytes stored, quarantined and being uploaded.
+    StorageBytes,
+}
+
+impl Quota {
+    /// The name in an error's `details.quota`.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Entries => "entries",
+            Self::Assets => "assets",
+            Self::StorageBytes => "storage_bytes",
+        }
+    }
+}
+
+impl std::fmt::Display for Quota {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
 impl DbError {
-    /// A query's error: an exhausted pool becomes `Busy`, a deadlock or serialization abort
-    /// `Contended`, everything else `Query`.
+    /// The quota refusal an error carries, if it is one: 0088's `CQ001`, whose detail is
+    /// `{"quota": …, "limit": …, "used": …}`. Raised inside a statement trigger, so it can
+    /// reach the caller through any write path, including those that wrap errors as
+    /// [`Self::Query`] directly.
+    #[must_use]
+    pub fn quota_exceeded(error: &sqlx::Error) -> Option<Self> {
+        let sqlx::Error::Database(database) = error else {
+            return None;
+        };
+        if database.code().as_deref() != Some("CQ001") {
+            return None;
+        }
+        let detail = database
+            .try_downcast_ref::<sqlx::postgres::PgDatabaseError>()
+            .and_then(|pg| pg.detail())
+            .and_then(|detail| serde_json::from_str::<serde_json::Value>(detail).ok())?;
+        let quota = match detail.get("quota")?.as_str()? {
+            "entries" => Quota::Entries,
+            "assets" => Quota::Assets,
+            "storage_bytes" => Quota::StorageBytes,
+            _ => return None,
+        };
+        Some(Self::QuotaExceeded {
+            quota,
+            limit: detail.get("limit")?.as_u64()?,
+            used: detail.get("used")?.as_u64()?,
+        })
+    }
+
+    /// A query's error: a quota refusal becomes `QuotaExceeded`, an exhausted pool `Busy`, a
+    /// deadlock or serialization abort `Contended`, everything else `Query`.
     pub(crate) fn from_query(error: sqlx::Error) -> Self {
+        if let Some(refused) = Self::quota_exceeded(&error) {
+            return refused;
+        }
         match error {
             sqlx::Error::PoolTimedOut => Self::Busy,
             sqlx::Error::Database(database)

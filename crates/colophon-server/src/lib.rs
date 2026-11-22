@@ -321,6 +321,48 @@ fn api_services(
 /// Open registration without a bot check (D-235): loud where the public can reach the sign-up
 /// form, a note on a localhost stack (whose tests and load runs sign up freely, and treat any
 /// WARN as a defect).
+/// Writes the per-account quotas this server was configured with (D-235) into the database,
+/// where the usage triggers read them, and logs what it applied. Every server writes its own at
+/// boot, so on several servers with different settings the last one to start wins. In the
+/// background, never holding up start-up (a server may start before its database): tried at
+/// once, then every 5 s until the database takes it.
+fn apply_account_quotas(
+    pool: &colophon_db::PgPool,
+    quotas: colophon_api::selfserve::Quotas,
+    cancel: CancellationToken,
+) {
+    let limits = colophon_db::usage::Limits {
+        entries: quotas.entries,
+        assets: quotas.assets,
+        storage_bytes: quotas.storage_bytes,
+    };
+    let pool = pool.clone();
+    tokio::spawn(async move {
+        loop {
+            match colophon_db::usage::set_limits(&pool, limits).await {
+                Ok(()) => {
+                    quotas_applied(limits);
+                    return;
+                }
+                Err(error) => tracing::debug!(%error, "account quotas not applied yet; retrying"),
+            }
+            tokio::select! {
+                () = cancel.cancelled() => return,
+                () = tokio::time::sleep(Duration::from_secs(5)) => {}
+            }
+        }
+    });
+}
+
+fn quotas_applied(limits: colophon_db::usage::Limits) {
+    tracing::info!(
+        entries = limits.entries,
+        assets = limits.assets,
+        storage_bytes = limits.storage_bytes,
+        "account quotas applied (0 = no bound; the last server to start sets them)"
+    );
+}
+
 fn announce_registration(config: &Config) {
     if config.selfserve.registration != colophon_api::selfserve::Registration::Open
         || config.selfserve.turnstile_site_key.is_some()
@@ -428,6 +470,7 @@ pub async fn run(
         );
     }
     announce_registration(&config);
+    apply_account_quotas(&pool, config.selfserve.quotas, cancel.child_token());
     let local_addr = listener.local_addr().context("reading the bound address")?;
     let build = colophon_version::build_info!();
     tracing::info!(

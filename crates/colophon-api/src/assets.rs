@@ -95,7 +95,8 @@ pub(crate) async fn upload(
         .ok_or(ApiError::Unavailable(
             "uploads are not configured on this server",
         ))?;
-    let key = idempotency_key(&headers)?;
+    // A malformed key is refused before anything is reserved or read.
+    idempotency_key(&headers)?;
     // Who may upload and what the object's key is are reads: done and closed before the store
     // sees a byte, so a refused call never leaves an object (and no transaction spans the
     // write). Keys name the environment by id, as the public key does.
@@ -108,13 +109,63 @@ pub(crate) async fn upload(
         "your role can't add assets to this project",
     )?;
     let environment = seen.environment;
+    // The account's storage quota (D-235) is checked before a byte is read or stored: the most
+    // this upload may carry (its declared length, or the body limit when it declares none) is
+    // reserved against the account, under its usage lock, and the reservation becomes the
+    // asset's quarantined bytes when the upload is recorded below.
+    let asset = Uuid::now_v7();
+    let mut seen = seen;
+    colophon_db::usage::reserve(&mut seen, asset, most_bytes(&state, &headers)?)
+        .await
+        .map_err(ApiError::from_db)?;
     seen.commit().await.map_err(ApiError::from_db)?;
     // Only now, signed in and allowed, are the bytes read (D-215): within the upload bounds, paced
     // by the body's own arrival; then the request deadline covers the server's work on them.
-    let (_permit, body) = receive(&state, caller, &headers, body).await?;
-    let intent = read_intent(&headers, body.len() as u64)?;
+    let recorded = async {
+        let (_permit, body) = receive(&state, caller, &headers, body).await?;
+        let intent = read_intent(&headers, body.len() as u64)?;
+        record_upload(
+            &state,
+            caller,
+            &path,
+            deadline,
+            store,
+            &headers,
+            asset,
+            environment,
+            body,
+            intent,
+        )
+        .await
+    }
+    .await;
+    // Recorded, the asset row now counts the bytes and its transaction removed the reservation;
+    // on any other way out (a body that never came, a store that refused, a replayed or
+    // refused request) nothing will, so it goes now — expiry is only the fallback for a crash.
+    release_quietly(&state, caller, &path.project, &path.environment, asset).await;
+    recorded
+}
+
+/// `upload`'s second half: the bytes to quarantine, then the asset recorded under the
+/// idempotency claim (which also takes over the intake reservation).
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the upload's own state, threaded through once"
+)]
+async fn record_upload(
+    state: &AppState,
+    caller: SignedIn,
+    path: &ListPath,
+    deadline: Option<Extension<UploadDeadline>>,
+    store: colophon_media::Shared,
+    headers: &HeaderMap,
+    asset: Uuid,
+    environment: Uuid,
+    body: Bytes,
+    intent: Intent,
+) -> Result<Response, ApiError> {
+    let key = idempotency_key(headers)?;
     within(deadline, async move {
-        let asset = Uuid::now_v7();
         let storage_name = format!("{asset}-{}", &Uuid::now_v7().simple().to_string()[..8]);
         let quarantine_key = quarantine_key(&path.project, &environment.to_string(), &storage_name);
         store
@@ -133,7 +184,7 @@ pub(crate) async fn upload(
             intent.declared_type.as_str(),
             &intent.size.to_string(),
         ]);
-        let mut tx = open(&state, caller, &path.project, &path.environment).await?;
+        let mut tx = open(state, caller, &path.project, &path.environment).await?;
         match idempotency::claim(&mut tx, UPLOAD, key, &hash)
             .await
             .map_err(ApiError::from_db)?
@@ -152,6 +203,9 @@ pub(crate) async fn upload(
         let job = Uuid::now_v7();
         let deadline = time::OffsetDateTime::now_utc()
             + time::Duration::seconds(colophon_domain::job::LIFETIME_SECS);
+        colophon_db::usage::release(&mut tx, asset)
+            .await
+            .map_err(ApiError::from_db)?;
         assets::insert(
             &mut tx,
             asset,
@@ -181,6 +235,48 @@ pub(crate) async fn upload(
         Ok(json(StatusCode::ACCEPTED, response, None, false))
     })
     .await
+}
+
+/// Releases an upload's intake reservation (D-235) on a way out that didn't hand it on, in a
+/// transaction of its own (not counted against a token's request quota: the request already
+/// was). A failure only logs: the reservation then lapses at its expiry.
+async fn release_quietly(
+    state: &AppState,
+    caller: SignedIn,
+    project: &str,
+    environment: &str,
+    reservation: Uuid,
+) {
+    let released = async {
+        let mut tx = crate::entries::begin(
+            state,
+            caller,
+            project,
+            environment,
+            colophon_db::scope::Isolation::PerStatement,
+        )
+        .await?;
+        colophon_db::usage::release(&mut tx, reservation)
+            .await
+            .map_err(ApiError::from_db)?;
+        tx.commit().await.map_err(ApiError::from_db)
+    }
+    .await;
+    if let Err(error) = released {
+        tracing::warn!(%error, "an upload reservation wasn't released; it lapses at its expiry");
+    }
+}
+
+/// The most bytes an upload may carry: its declared `Content-Length`, or the body limit when it
+/// declares none (a chunked body is cut off there). A declared length past the limit is refused
+/// later, in [`receive`], before any byte is read.
+fn most_bytes(state: &AppState, headers: &HeaderMap) -> Result<u64, ApiError> {
+    let limit = services(state)?.uploads.body_limit() as u64;
+    Ok(headers
+        .get(header::CONTENT_LENGTH)
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| value.parse::<u64>().ok())
+        .map_or(limit, |declared| declared.min(limit)))
 }
 
 /// Admits an upload into the bounds (D-215) and reads its body: never idle for longer than
@@ -239,12 +335,9 @@ async fn receive(
 
 /// The request deadline (handed over by the deadline layer, or the default without it) around the
 /// server's own work on an upload whose body has arrived.
-async fn within<F>(
-    deadline: Option<Extension<UploadDeadline>>,
-    work: F,
-) -> Result<Response, ApiError>
+async fn within<F, T>(deadline: Option<Extension<UploadDeadline>>, work: F) -> Result<T, ApiError>
 where
-    F: std::future::Future<Output = Result<Response, ApiError>>,
+    F: std::future::Future<Output = Result<T, ApiError>>,
 {
     let limit = deadline.map_or_else(
         || crate::middleware::HttpLimits::default().request_timeout,
@@ -305,9 +398,63 @@ pub(crate) async fn replace(
         "your role can't replace assets in this project",
     )?;
     let environment = seen.environment;
+    // The storage quota (D-235), before a byte is read, as for an upload. A replacement's bytes
+    // are counted when its version is recorded at verification, so its reservation carries the
+    // verify job's id and ends with that job, in the transaction that records the verdict (0088's
+    // asset_jobs trigger). If no job is queued, nothing will end it, so it goes here.
+    let job = Uuid::now_v7();
+    let mut seen = seen;
+    colophon_db::usage::reserve(&mut seen, job, most_bytes(&state, &headers)?)
+        .await
+        .map_err(ApiError::from_db)?;
     seen.commit().await.map_err(ApiError::from_db)?;
-    let (_permit, body) = receive(&state, caller, &headers, body).await?;
-    let intent = read_intent(&headers, body.len() as u64)?;
+    let outcome = async {
+        let (_permit, body) = receive(&state, caller, &headers, body).await?;
+        let intent = read_intent(&headers, body.len() as u64)?;
+        record_replace(
+            &state,
+            caller,
+            &path,
+            deadline,
+            store,
+            key,
+            asset,
+            environment,
+            job,
+            body,
+            intent,
+        )
+        .await
+    }
+    .await;
+    match outcome {
+        Ok((response, true)) => Ok(response),
+        other => {
+            release_quietly(&state, caller, &path.project, &path.environment, job).await;
+            other.map(|(response, _)| response)
+        }
+    }
+}
+
+/// `replace`'s second half: the bytes to quarantine, then the verify job queued under the
+/// idempotency claim. `true` when this request queued the job (which now owns the reservation).
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the replacement's own state, threaded through once"
+)]
+async fn record_replace(
+    state: &AppState,
+    caller: SignedIn,
+    path: &OnePath,
+    deadline: Option<Extension<UploadDeadline>>,
+    store: colophon_media::Shared,
+    key: &str,
+    asset: Uuid,
+    environment: Uuid,
+    job: Uuid,
+    body: Bytes,
+    intent: Intent,
+) -> Result<(Response, bool), ApiError> {
     within(deadline, async move {
         // The replacement's quarantine key names the asset it replaces: the object's prefix lists
         // what to remove if the asset goes first, and the job's row — not the asset's — holds the
@@ -331,7 +478,7 @@ pub(crate) async fn replace(
             intent.declared_type.as_str(),
             &intent.size.to_string(),
         ]);
-        let mut tx = open(&state, caller, &path.project, &path.environment).await?;
+        let mut tx = open(state, caller, &path.project, &path.environment).await?;
         match idempotency::claim(&mut tx, REPLACE, key, &hash)
             .await
             .map_err(ApiError::from_db)?
@@ -339,15 +486,20 @@ pub(crate) async fn replace(
             idempotency::Claim::Fresh => {}
             idempotency::Claim::Mismatch => return Err(ApiError::IdempotencyKeyReused),
             idempotency::Claim::Replay { status, response } => {
-                return Ok(json(
-                    StatusCode::from_u16(status).map_err(ApiError::internal)?,
-                    response,
-                    None,
-                    true,
+                return Ok((
+                    json(
+                        StatusCode::from_u16(status).map_err(ApiError::internal)?,
+                        response,
+                        None,
+                        true,
+                    ),
+                    false,
                 ));
             }
         }
-        queue_replace(tx, key, asset, &intent, &quarantine_key).await
+        queue_replace(tx, key, asset, job, &intent, &quarantine_key)
+            .await
+            .map(|response| (response, true))
     })
     .await
 }
@@ -359,10 +511,10 @@ async fn queue_replace(
     mut tx: ProjectTransaction,
     key: &str,
     asset: Uuid,
+    job: Uuid,
     intent: &Intent,
     quarantine_key: &str,
 ) -> Result<Response, ApiError> {
-    let job = Uuid::now_v7();
     let deadline = time::OffsetDateTime::now_utc()
         + time::Duration::seconds(colophon_domain::job::LIFETIME_SECS);
     match assets::request_replace(

@@ -59,7 +59,7 @@ printf 'COLOPHON_PUBLIC_URL=https://localhost\nCOLOPHON_TRUSTED_PROXIES=127.0.0.
 # A clean environment, as root's on the droplet: no PG* of the caller's.
 out=$(env -i PATH="$work/bin:$PATH" HOME="$work" SMOKE_SCOPE=local SMOKE_DOMAIN=localhost SMOKE_CREDENTIALS="$creds" \
   SMOKE_ENV_FILE="$work/colophon.env" bash ./smoke.sh 2>&1 || true)
-echo "$out" | grep -E 'database role|round trip|migration grant' || true
+echo "$out" | grep -E 'database role|round trip|migration grant|account usage' || true
 grep -q "ok    the server's database role (colophon_app) has neither BYPASSRLS nor superuser" <<<"$out" \
   || fail "smoke's role check didn't pass over verify-full with system roots: $(grep -E 'database role' <<<"$out")"
 echo "  ok    smoke's role check passes: psql verified the server against the system store (sslrootcert=system)"
@@ -69,5 +69,10 @@ if grep -q 'no migration grant left behind' ./smoke.sh; then
   grep -q 'ok    no migration grant left behind' <<<"$out" \
     || fail "smoke's grants check (the colophon CLI, same run) failed: $(grep -E 'migration grant' <<<"$out")"
   echo "  ok    the CLI's grants check passed in the same run: it wasn't handed PGSSLROOTCERT"
+fi
+if grep -q 'account usage agrees with a recount' ./smoke.sh; then
+  grep -q 'ok    account usage agrees with a recount of the rows' <<<"$out" \
+    || fail "smoke's usage check (colophon admin usage-reconcile --check, same run) failed: $(grep -E 'account usage' <<<"$out")"
+  echo "  ok    the CLI's usage recount agreed in the same run (D-235)"
 fi
 echo "smoke db: the role and grants checks pass in one run, psql on system roots, the CLI untouched"

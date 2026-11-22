@@ -86,6 +86,14 @@ impl Server {
             // is tested where a test sets its own, which `extra` then overrides.
             .env("COLOPHON_RATE_LIMIT_PASSWORD", "1000/2000")
             .envs(extra.iter().copied());
+        // The account quotas this server writes at boot (D-235), in the background: a test's
+        // first request must see them, never a previous server's.
+        let db = owner_database().await;
+        let since: i64 =
+            sqlx::query_scalar("SELECT (extract(epoch FROM clock_timestamp()) * 1e6)::bigint")
+                .fetch_one(&db)
+                .await
+                .expect("the database clock");
         let server = Self(command.spawn().expect("the server starts"));
         let deadline = Instant::now() + Duration::from_secs(10);
         while reqwest::get(format!("http://127.0.0.1:{port}/livez"))
@@ -95,6 +103,24 @@ impl Server {
             assert!(Instant::now() < deadline, "the server never answered");
             tokio::time::sleep(Duration::from_millis(50)).await;
         }
+        loop {
+            let applied: bool = sqlx::query_scalar(
+                "SELECT (extract(epoch FROM updated_at) * 1e6)::bigint >= $1 FROM account_quotas",
+            )
+            .bind(since)
+            .fetch_one(&db)
+            .await
+            .expect("account quotas");
+            if applied {
+                break;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "the server never applied its account quotas"
+            );
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+        db.close().await;
         server
     }
 

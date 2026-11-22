@@ -495,6 +495,20 @@ pub enum ApiError {
         /// Projects the account owns.
         used: u32,
     },
+    /// The write would take the owning account past a quota (D-235, `COLOPHON_ACCOUNT_MAX_*`).
+    /// 409; `details.reason` is `quota_exceeded`, with `details.quota` (`entries`, `assets` or
+    /// `storage_bytes`), `details.limit` and `details.used` (what the account held before it).
+    #[error(
+        "this account holds {used} of the {limit} its {quota} quota allows; delete something, or ask an administrator"
+    )]
+    QuotaExceeded {
+        /// Which quota.
+        quota: &'static str,
+        /// The limit.
+        limit: u64,
+        /// What the account held.
+        used: u64,
+    },
     /// The project already retains all the unfinished work its bound allows (spec §33,
     /// D-131): the job this request asked to store is refused before acceptance. 503 with
     /// `Retry-After` — open work drains as workers finish it, so trying again then is the
@@ -594,6 +608,14 @@ impl ApiError {
     /// [`Self::Taken`]; anything else is internal. Callers that expect a particular error,
     /// such as a conflict, match it first.
     pub fn from_db(error: DbError) -> Self {
+        // A quota refusal raised by a statement trigger reaches here as a plain query error from
+        // the paths that wrap errors directly: the same 409 as everywhere else.
+        let error = match error {
+            DbError::Query(query) => {
+                DbError::quota_exceeded(&query).unwrap_or(DbError::Query(query))
+            }
+            error => error,
+        };
         match error {
             // A transaction Postgres aborted for a deadlock or a serialization conflict rolled back
             // whole: the same retryable answer as a saturated pool, never a 500.
@@ -644,6 +666,11 @@ impl ApiError {
             // installation's payload bound answers the same way (D-135).
             DbError::WorkFull { open, limit } => Self::WorkFull { open, limit },
             DbError::ProjectLimit { limit, used } => Self::ProjectLimit { limit, used },
+            DbError::QuotaExceeded { quota, limit, used } => Self::QuotaExceeded {
+                quota: quota.as_str(),
+                limit,
+                used,
+            },
             DbError::PayloadFull { pending, limit } => Self::PayloadFull { pending, limit },
             // 422, at the very place in the content (media M1): an asset field's value, or the
             // `assetId` of the rich-text image naming it (D-177).
@@ -737,6 +764,7 @@ impl ApiError {
             Self::Forbidden { .. } => StatusCode::FORBIDDEN,
             Self::Conflict { .. }
             | Self::ProjectLimit { .. }
+            | Self::QuotaExceeded { .. }
             | Self::StaleRevision { .. }
             | Self::StaleVersion { .. }
             | Self::StaleChangeset { .. }
@@ -784,6 +812,7 @@ impl ApiError {
             Self::Gone => ErrorCode::Gone,
             Self::Conflict { .. }
             | Self::ProjectLimit { .. }
+            | Self::QuotaExceeded { .. }
             | Self::StaleRevision { .. }
             | Self::StaleVersion { .. }
             | Self::StaleChangeset { .. }
@@ -852,6 +881,12 @@ impl ApiError {
                 limit: Some(u64::from(*limit)),
                 used: Some(u64::from(*used)),
                 ..ErrorDetails::new("project_limit", "")
+            }),
+            Self::QuotaExceeded { quota, limit, used } => Some(ErrorDetails {
+                quota: Some(quota),
+                limit: Some(*limit),
+                used: Some(*used),
+                ..ErrorDetails::new("quota_exceeded", "")
             }),
             Self::PayloadFull { .. } => Some(ErrorDetails::new("payload_full", "")),
             Self::TooManyRequests { .. } => Some(ErrorDetails::new("rate_limited", "")),

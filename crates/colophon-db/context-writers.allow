@@ -39,6 +39,7 @@ crates/colophon-db/src/identity.rs profile   # the signed-in person's own profil
 crates/colophon-db/src/projects.rs list   # the caller's own projects, through memberships
 crates/colophon-db/src/projects.rs page   # the same, a page at a time
 crates/colophon-db/src/projects.rs get   # one project, through the caller's membership
+crates/colophon-db/src/usage.rs of_identity   # the signed-in account's own usage (colophon_account_usage reads app.identity_id's row only)
 
 # A project that doesn't exist yet.
 crates/colophon-db/src/projects.rs create_capped   # the new project's own id, for the rows that make it; owner_account is the caller (0087's policy)
