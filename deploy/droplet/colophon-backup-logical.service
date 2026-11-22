@@ -8,7 +8,8 @@ After=network-online.target
 [Service]
 Type=oneshot
 LoadCredential=migration_database_url:/etc/colophon/credentials/migration_database_url
-LoadCredential=s3_secret_key:/etc/colophon/credentials/s3_secret_key
+# The backups' own R2 token (CREATE.md), never the media one the server holds.
+LoadCredential=backup_s3_secret_key:/etc/colophon/credentials/backup_s3_secret_key
 ExecStart=/usr/local/bin/colophon-backup-logical run
 NoNewPrivileges=yes
 ProtectSystem=strict

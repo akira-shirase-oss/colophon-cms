@@ -154,8 +154,22 @@ jobs:
         run: deploy/droplet/test-backup-logical.sh
       - name: The droplet's Neon URL fix (deploy/droplet/test-neon-url.sh)
         run: deploy/droplet/test-neon-url.sh
+      - name: The droplet's hostname is one setting, odd values refused (deploy/droplet/test-public-host.sh)
+        run: deploy/droplet/test-public-host.sh
+      - name: The backups have their own R2 token, or share the media one only by the operator's choice (deploy/droplet/test-r2-keys.sh)
+        run: deploy/droplet/test-r2-keys.sh
       - name: The droplet's edge channel refuses what it can't prove (deploy/droplet/test-upgrade-edge.sh, D-211)
         run: deploy/droplet/test-upgrade-edge.sh
+      - name: The droplet's release channel installs only what release.yml built for the tag (deploy/droplet/test-upgrade-release.sh)
+        run: deploy/droplet/test-upgrade-release.sh
+      - name: The droplet's Caddy tells the server Cf-Connecting-Ip alone, admin on a 0600 socket (deploy/droplet/test-caddy.sh)
+        run: deploy/droplet/test-caddy.sh
+      - name: Our own origin-pull certificate, the token and key off every command line (deploy/droplet/test-custom-origin-pull.sh)
+        run: deploy/droplet/test-custom-origin-pull.sh
+      - name: Cloudflare's ranges go to Caddy and ufw, the server trusts loopback alone (deploy/droplet/test-cloudflare-ips.sh)
+        run: deploy/droplet/test-cloudflare-ips.sh
+      - name: smoke.sh's database password reaches psql through its environment only (deploy/droplet/test-pg-env.sh)
+        run: deploy/droplet/test-pg-env.sh
       - name: The leftover test database sweep (scripts/test-sweep-test-databases.sh, D-195)
         run: scripts/test-sweep-test-databases.sh
       - name: The shared-stack guard (scripts/test-stack-guard.sh, D-187)
@@ -218,6 +232,12 @@ jobs:
       # text fail; require, verify-ca and channel_binding=require are refused before connecting).
       - name: Database TLS against a private CA (scripts/db-tls-check.sh)
         run: scripts/db-tls-check.sh
+      # D-234: Neon's database owner is not a superuser. A fresh postgres of the script's own whose
+      # owner has CREATEROLE and CREATEDB only, and the real CLI as that owner: init-roles, migrate and
+      # migrate-status, twice; the run's grants undone; the four substituted migrations' functions keep
+      # the caller's context after a call and after an error caught by a savepoint.
+      - name: Installed by a non-superuser owner, as on Neon (scripts/db-nonsuperuser-check.sh)
+        run: scripts/db-nonsuperuser-check.sh
       # Before the stack tests: the site test runs the reference site's runner (apps/web) with Node.
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
@@ -723,9 +743,10 @@ jobs:
             deploy/droplet/colophon-backup-logical.service deploy/droplet/colophon-backup-logical.timer
           caddy_dir=$(mktemp -d)
           cp deploy/droplet/Caddyfile deploy/droplet/cloudflare-origin-pull-ca.pem "$caddy_dir/"
-          openssl req -x509 -newkey rsa:2048 -nodes -subj /CN=app.colophon.404human.dev -days 1 \
+          openssl req -x509 -newkey rsa:2048 -nodes -subj /CN=colophonapp.404human.dev -days 1 \
             -keyout "$caddy_dir/origin.key" -out "$caddy_dir/origin.pem" 2>/dev/null
           echo 'trusted_proxies static 173.245.48.0/20 2400:cb00::/32' >"$caddy_dir/cloudflare-trusted.caddy"
+          ORIGIN_PULL_CADDY_DIR=$caddy_dir deploy/droplet/origin-pull-ca.sh >/dev/null
           docker run --rm -v "$caddy_dir:/etc/caddy:ro" \
             caddy:2.10.2@sha256:c3d7ee5d2b11f9dc54f947f68a734c84e9c9666c92c88a7f30b9cba5da182adb \
             caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile
@@ -747,6 +768,17 @@ jobs:
           docker cp "$id:/usr/local/bin/colophon" "$out/colophon"
           docker rm "$id" >/dev/null
           deploy/droplet/test-unit-commands.sh "$out/colophon"
+      # Last of the unit checks: it puts stand-ins at /usr/local/bin/colophon and a colophon.env of its own.
+      - name: The backup units get the backups' own R2 key and bucket, never the media ones (deploy/droplet/test-unit-backup-env.sh)
+        run: sudo CI=true deploy/droplet/test-unit-backup-env.sh
+      - name: smoke.sh's database checks over verify-full with system roots, the CLI in the same run (deploy/droplet/test-smoke-db.sh)
+        run: |
+          set -euo pipefail
+          out=$(mktemp -d)
+          id=$(docker create colophon:local)
+          docker cp "$id:/usr/local/bin/colophon" "$out/colophon"
+          docker rm "$id" >/dev/null
+          sudo CI=true deploy/droplet/test-smoke-db.sh "$out/colophon"
       - name: Timings and sizes
         if: always()
         run: |
