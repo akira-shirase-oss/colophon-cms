@@ -538,7 +538,7 @@ checksum = "0c9ea0ac24bc397ab3c98583a3c9ba74fa56b09a4449bbe172b9b1ddb016027a"
 
 [[package]]
 name = "colophon-api"
-version = "0.1.0-alpha.3"
+version = "0.1.0-alpha.4"
 dependencies = [
  "async-graphql",
  "aws-lc-rs",
@@ -571,7 +571,7 @@ dependencies = [
 
 [[package]]
 name = "colophon-auth"
-version = "0.1.0-alpha.3"
+version = "0.1.0-alpha.4"
 dependencies = [
  "aws-lc-rs",
  "base64 0.22.1",
@@ -586,7 +586,7 @@ dependencies = [
 
 [[package]]
 name = "colophon-bench"
-version = "0.1.0-alpha.3"
+version = "0.1.0-alpha.4"
 dependencies = [
  "colophon-api",
  "colophon-auth",
@@ -597,7 +597,7 @@ dependencies = [
 
 [[package]]
 name = "colophon-cli"
-version = "0.1.0-alpha.3"
+version = "0.1.0-alpha.4"
 dependencies = [
  "clap",
  "colophon-db",
@@ -616,7 +616,7 @@ dependencies = [
 
 [[package]]
 name = "colophon-db"
-version = "0.1.0-alpha.3"
+version = "0.1.0-alpha.4"
 dependencies = [
  "argon2",
  "aws-lc-rs",
@@ -636,7 +636,7 @@ dependencies = [
 
 [[package]]
 name = "colophon-domain"
-version = "0.1.0-alpha.3"
+version = "0.1.0-alpha.4"
 dependencies = [
  "base64 0.22.1",
  "jiff",
@@ -650,7 +650,7 @@ dependencies = [
 
 [[package]]
 name = "colophon-mcp"
-version = "0.1.0-alpha.3"
+version = "0.1.0-alpha.4"
 dependencies = [
  "proptest",
  "reqwest",
@@ -665,7 +665,7 @@ dependencies = [
 
 [[package]]
 name = "colophon-media"
-version = "0.1.0-alpha.3"
+version = "0.1.0-alpha.4"
 dependencies = [
  "image",
  "object_store",
@@ -676,7 +676,7 @@ dependencies = [
 
 [[package]]
 name = "colophon-server"
-version = "0.1.0-alpha.3"
+version = "0.1.0-alpha.4"
 dependencies = [
  "anyhow",
  "aws-lc-rs",
@@ -712,18 +712,18 @@ dependencies = [
 
 [[package]]
 name = "colophon-sim"
-version = "0.1.0-alpha.3"
+version = "0.1.0-alpha.4"
 dependencies = [
  "colophon-domain",
 ]
 
 [[package]]
 name = "colophon-version"
-version = "0.1.0-alpha.3"
+version = "0.1.0-alpha.4"
 
 [[package]]
 name = "colophon-worker"
-version = "0.1.0-alpha.3"
+version = "0.1.0-alpha.4"
 dependencies = [
  "aws-lc-rs",
  "bytes",
