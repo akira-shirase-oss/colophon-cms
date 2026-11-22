@@ -1075,6 +1075,53 @@ mod tests {
         assert_eq!(admission.client(None, &headers), None);
     }
 
+    /// The S0 droplet (deploy/droplet): Caddy tells the server one address, the visitor's
+    /// Cf-Connecting-Ip, replacing any X-Forwarded-For that came in, and the server trusts loopback
+    /// alone. Trusting Cloudflare's ranges here too (as S0 first did) let a request from a
+    /// Cloudflare address, such as another account's Worker, have its own address skipped as "a
+    /// proxy" and a forged one believed: a fresh address for every password attempt.
+    #[test]
+    fn behind_caddy_the_server_believes_caddys_one_address_and_no_forged_left_part() {
+        let settings = |proxies: &[&str]| AdmissionSettings {
+            trusted_proxies: proxies
+                .iter()
+                .map(|prefix| IpPrefix::parse(prefix).expect("valid"))
+                .collect(),
+            ..AdmissionSettings::default()
+        };
+        let caddy: IpAddr = "127.0.0.1".parse().expect("an address");
+        let worker: IpAddr = "2a06:98c0:3600::103".parse().expect("an address");
+        let droplet = Admission::new(settings(&["127.0.0.1/32"]), None).expect("no URL");
+
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            "x-forwarded-for",
+            HeaderValue::from_static("2a06:98c0:3600::103"),
+        );
+        assert_eq!(
+            droplet.client(Some(caddy), &headers),
+            Some(worker),
+            "Caddy's one address is the client, a Cloudflare address included"
+        );
+        // Were a forged left part to reach the server anyway, it still isn't believed.
+        headers.insert(
+            "x-forwarded-for",
+            HeaderValue::from_static("6.6.6.6, 2a06:98c0:3600::103"),
+        );
+        assert_eq!(droplet.client(Some(caddy), &headers), Some(worker));
+        // A request that doesn't come through Caddy is its own peer, whatever it says.
+        assert_eq!(droplet.client(Some(worker), &headers), Some(worker));
+
+        // What trusting Cloudflare's ranges here did: the forged address was believed.
+        let trusting_cloudflare =
+            Admission::new(settings(&["127.0.0.1/32", "2a06:98c0::/29"]), None).expect("no URL");
+        assert_eq!(
+            trusting_cloudflare.client(Some(caddy), &headers),
+            Some("6.6.6.6".parse().expect("an address")),
+            "the reason the droplet's server trusts loopback alone"
+        );
+    }
+
     #[test]
     fn an_ipv6_client_is_limited_by_its_slash_64_like_a_sign_in_key() {
         // One subscriber is handed a /64; rotating inside it must not reset the address limit

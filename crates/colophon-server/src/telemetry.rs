@@ -265,6 +265,75 @@ mod tests {
         assert_eq!(levels(&lines), [("INFO", 0.217), ("WARN", 1.4)]);
     }
 
+    /// The delivery cache's refills (D-232), as the server writes them: counted inside the request that
+    /// refilled (whose span's path names the project and entry), said once a window by the summary task,
+    /// outside any request. Through the server's own JSON subscriber, which writes the current span.
+    #[test]
+    fn a_refill_is_said_once_a_window_and_never_with_the_request_that_caused_it() {
+        let project = "0199aaaa-0000-7000-8000-000000000001";
+        let entry = "0199bbbb-0000-7000-8000-000000000002";
+        let captured = Captured::default();
+        let subscriber = subscriber(
+            LogFormat::Json,
+            "info,colophon_api::cache_refill=debug",
+            captured.clone(),
+        )
+        .expect("the server's subscriber");
+        let refills = colophon_api::Refills::default();
+        tracing::subscriber::with_default(subscriber, || {
+            let request = tracing::info_span!(
+                "request",
+                method = "GET",
+                path = format!("/content/v1/{project}/production/articles/{entry}")
+            );
+            {
+                let _inside = request.enter();
+                refills.note(&format!(
+                    "colophon:delivery:r1:m0:p{project}:e0:x0:g3:u0:entry:{entry}:articles"
+                ));
+            }
+            // The summary task's ticks: a window with the refill, then a quiet one.
+            refills.close_window();
+            refills.close_window();
+        });
+        let bytes = captured
+            .0
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone();
+        let text = String::from_utf8_lossy(&bytes);
+        let lines: Vec<serde_json::Value> = text
+            .lines()
+            .filter_map(|line| serde_json::from_str(line).ok())
+            .filter(|line: &serde_json::Value| line["target"] == "colophon_api::cache_refill")
+            .collect();
+        assert_eq!(
+            lines.len(),
+            2,
+            "one line per window, none per refill: {text}"
+        );
+        assert_eq!(lines[0]["level"], "INFO");
+        assert_eq!(
+            (lines[0]["entry"].as_u64(), lines[0]["total"].as_u64()),
+            (Some(1), Some(1))
+        );
+        assert_eq!(
+            lines[1]["level"], "DEBUG",
+            "a quiet window is said at DEBUG: the count was taken"
+        );
+        assert_eq!(lines[1]["total"].as_u64(), Some(0));
+        for line in &lines {
+            assert!(
+                line.get("span").is_none() && line.get("path").is_none(),
+                "no request rides on it: {line}"
+            );
+        }
+        assert!(
+            !text.contains(project) && !text.contains(entry),
+            "no project or entry id anywhere: {text}"
+        );
+    }
+
     #[test]
     fn accepts_typical_filters() {
         for directives in [
