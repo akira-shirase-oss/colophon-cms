@@ -25,7 +25,7 @@ crates/colophon-db/migrations-nonsuperuser/0082_private_media.sql media_object  
 # Paths that are not a staff member's, each with its own proof of the project.
 crates/colophon-db/src/delivery.rs begin   # public delivery as colophon_delivery: published rows only, by its own policies
 crates/colophon-db/src/content_types.rs current_definition   # a content type's current definition for delivery and populate: public schema metadata
-crates/colophon-db/src/audience.rs project_tx   # a site's audience routes (sign-up, sign-in, magic links): audience tables only, project from the site's URL
+crates/colophon-db/src/audience.rs project_tx   # DB-enforced: colophon_audience (a site's audience routes take the project from its public URL; the role reaches only the audience tables, migration 0089)
 crates/colophon-db/src/previews.rs in_project   # a preview token's reads: the project its verified grant names
 crates/colophon-db/src/members.rs offer   # an invitation looked up by its secret: the project the invitation row names
 crates/colophon-db/src/members.rs accept   # accepting it: the same, then the membership it grants

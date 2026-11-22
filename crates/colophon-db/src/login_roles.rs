@@ -20,7 +20,7 @@ use crate::DbError;
 
 /// Every role, with the attributes `CREATE ROLE` gives it (passwords aside). Order matters:
 /// `colophon_app` is created `IN ROLE colophon_api`.
-pub const ROLES: [(&str, &str); 8] = [
+pub const ROLES: [(&str, &str); 9] = [
     ("colophon_api", "NOLOGIN NOSUPERUSER NOBYPASSRLS"),
     (
         "colophon_app",
@@ -35,14 +35,16 @@ pub const ROLES: [(&str, &str); 8] = [
     ),
     ("colophon_retention", "NOLOGIN NOSUPERUSER NOBYPASSRLS"),
     ("colophon_accounts", "NOLOGIN NOSUPERUSER NOBYPASSRLS"),
+    ("colophon_audience", "NOLOGIN NOSUPERUSER NOBYPASSRLS"),
 ];
 
 /// The memberships between them; each is idempotent.
-pub const GRANTS: [&str; 3] = [
+pub const GRANTS: [&str; 4] = [
     "GRANT colophon_api TO colophon_deleter WITH INHERIT TRUE",
     // Not inherited: colophon_app holds these privileges only after SET ROLE.
     "GRANT colophon_delivery TO colophon_app WITH INHERIT FALSE, SET TRUE",
     "GRANT colophon_worker TO colophon_app WITH INHERIT FALSE, SET TRUE",
+    "GRANT colophon_audience TO colophon_app WITH INHERIT FALSE, SET TRUE",
 ];
 
 /// The shortest password a login role takes: a generated one is far longer.

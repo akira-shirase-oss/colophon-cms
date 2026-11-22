@@ -3,8 +3,8 @@
 //! opaque sessions and the audience roles that gate published content. Members and site users
 //! never meet: a member manages the project; a visitor only reads what it delivers.
 //!
-//! Account functions here take the project explicitly and run inside
-//! [`scope::begin`] with no identity: RLS confines them; sign-in attempts are counted per
+//! Account functions here take the project explicitly and run inside [`project_tx`], as
+//! `colophon_audience` with no identity: its grants and RLS confine them; sign-in attempts are counted per
 //! (account, client address) in `sign_in_throttle` like [`crate::identity::password_sign_in`]'s,
 //! before the verify that runs with nothing held (D-150, D-154). Session lookups go
 //! through `colophon_audience_session` (migration 0052), the SECURITY DEFINER function that
@@ -18,7 +18,7 @@ use uuid::Uuid;
 
 use crate::{
     DbError,
-    scope::{self, MemberTransaction, Scope},
+    scope::{self, MemberTransaction},
 };
 
 /// How stale `last_seen_at` may get before a lookup records the session's use — the same
@@ -44,28 +44,35 @@ pub const MAX_SITE_USERS: i64 = 100_000;
 /// (D-154): the counts live in `sign_in_throttle`, see [`crate::throttle`].
 pub use crate::throttle::{LOCK_AFTER, LOCK_FOR};
 
+/// The shared `('urn:colophon:system','audience-auth')` identity (migration 0054) that visitor
+/// auth events are recorded as; `colophon_audience` may append audit rows only as it (0089).
+pub const AUDIENCE_ACTOR: Uuid = Uuid::from_u128(0xa1b2c3d4_0000_4000_8000_0000000000a1);
+
 /// A project-scoped transaction with no person in it: what the public audience endpoints
-/// open. Row-level security still confines every statement to the project.
-///
-/// CONDITION (D-235 review; `context-writers.allow`): the project comes from the site's public
-/// URL, so any visitor opens this for any project, and as plain `colophon_api` with the project
-/// set, the data tables' policies would admit that project's entries, revisions and tokens. It
-/// is safe only because every statement run in it touches the audience's own tables (site
-/// users, their sessions, magic links, audience roles and origins, the throttle, the audience
-/// actor's audit rows). That is enforced by review today, not by the database; a dedicated
-/// role that can reach only those tables is the planned fix.
-async fn project_tx(
+/// open. The project comes from the site's public URL, so any visitor opens one for any
+/// project: it switches to `colophon_audience` first (D-235, migration 0089), which drops
+/// every `colophon_api` privilege until the transaction ends and holds only the audience's own
+/// tables (site users, their sessions, magic links, audience roles and origins, the project's
+/// throttle keys, and appending the audience actor's audit rows), each confined to the project
+/// by row-level security. Anything else is refused by the database, not by review. Public so
+/// the role's tests open exactly this transaction.
+pub async fn project_tx(
     pool: &PgPool,
     project: Uuid,
 ) -> Result<Transaction<'static, Postgres>, DbError> {
-    scope::begin(
-        pool,
-        Scope {
-            identity: None,
-            project: Some(project),
-        },
+    let mut transaction = crate::begin_tx(pool).await.map_err(DbError::from_query)?;
+    sqlx::query("SET LOCAL ROLE colophon_audience")
+        .execute(&mut *transaction)
+        .await
+        .map_err(DbError::from_query)?;
+    sqlx::query(
+        "SELECT set_config('app.identity_id', '', true), set_config('app.project_id', $1, true)",
     )
+    .bind(project.to_string())
+    .execute(&mut *transaction)
     .await
+    .map_err(DbError::from_query)?;
+    Ok(transaction)
 }
 
 /// Records a visitor auth event in the project's audit log (D-142): the actor is the shared
@@ -81,13 +88,7 @@ pub async fn record_auth(
     detail: &str,
 ) -> Result<(), DbError> {
     let mut tx = project_tx(pool, project).await?;
-    let actor = sqlx::query_scalar!(
-        "SELECT id FROM identities WHERE issuer = 'urn:colophon:system' AND subject = 'audience-auth'"
-    )
-    .fetch_one(&mut *tx)
-    .await
-    .map_err(DbError::from_query)?;
-    crate::audit::record_in(&mut tx, project, actor, action, subject, detail).await?;
+    crate::audit::record_in(&mut tx, project, AUDIENCE_ACTOR, action, subject, detail).await?;
     tx.commit().await.map_err(DbError::from_query)
 }
 

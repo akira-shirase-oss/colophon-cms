@@ -23,6 +23,10 @@ through `--version` and `GET /version`.
 - **Row security no longer lets an account create a project for another** (D-235): a new project's owner is the
   account creating it, enforced by a row policy and immutable afterwards. Only listed code may set the project
   context (`crates/colophon-db/context-writers.allow`, checked by a test), and SECURITY.md describes the threat model.
+- **A site's public audience routes run as their own database role** (D-235, migration 0089). Sign-up, sign-in,
+  magic links and sign-out take the project from the site's URL; they now switch to `colophon_audience`, which can
+  reach only the audience's own tables, so the database itself refuses them any project's entries, revisions,
+  assets, tokens, members or environments. Before, only review kept those statements to the audience tables.
 
 ## [0.1.0-alpha.4] — 2026-11-22
 

@@ -25,6 +25,10 @@
 --   colophon_accounts  owns the per-account counting functions (migrations 0087-0088, D-235):
 --                 SELECT on every project's id and owner_account, and nothing else; no login,
 --                 and nothing logs in as it. Migration 0087 also creates it if it is missing
+--   colophon_audience  what the public audience routes may touch (migration 0089, D-235): the
+--                 audience's own tables in the entered project, and nothing else; no login.
+--                 colophon_app switches to it (SET LOCAL ROLE) like colophon_delivery. Migration
+--                 0089 also creates it, and grants colophon_app the switch, if missing
 DO $$
 BEGIN
     IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'colophon_api') THEN
@@ -51,9 +55,13 @@ BEGIN
     IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'colophon_accounts') THEN
         CREATE ROLE colophon_accounts NOLOGIN NOSUPERUSER NOBYPASSRLS;
     END IF;
+    IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'colophon_audience') THEN
+        CREATE ROLE colophon_audience NOLOGIN NOSUPERUSER NOBYPASSRLS;
+    END IF;
 END
 $$;
 GRANT colophon_api TO colophon_deleter WITH INHERIT TRUE;
 -- Not inherited: colophon_app holds these privileges only after SET ROLE.
 GRANT colophon_delivery TO colophon_app WITH INHERIT FALSE, SET TRUE;
 GRANT colophon_worker TO colophon_app WITH INHERIT FALSE, SET TRUE;
+GRANT colophon_audience TO colophon_app WITH INHERIT FALSE, SET TRUE;

@@ -69,7 +69,10 @@ Tenant isolation rests on PostgreSQL row-level security, keyed on a transaction-
   (public delivery, a site's audience routes, invitations and preview grants found by their secret,
   the worker's and the scheduler's job rows). Every writer is listed, with its reason, in
   `crates/colophon-db/context-writers.allow`, and a test (`tests/context_writers.rs`) fails on
-  any other.
+  any other. The paths anyone can reach without a secret also drop the application's privileges:
+  public delivery runs as `colophon_delivery` and a site's audience routes as `colophon_audience`,
+  roles that can reach only published projections and the audience's own tables respectively, so
+  the project those paths set gains nothing beyond them.
 - **Row security enforces "within the entered project", not membership.** With no project entered,
   an identity alone sees nothing of a project it isn't a member of (`tests/rls_layer.rs`). Once a
   project is set, the data tables' policies trust it.
