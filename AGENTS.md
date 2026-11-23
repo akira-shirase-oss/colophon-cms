@@ -152,8 +152,12 @@ Every feature ships with all three, in the same branch:
 frontend or docs changes) checks only what the staged files touch: the identity and the leak check (no home
 directory, host or real name in the staged lines), rustfmt, clippy and the unit tests of the changed crates, the
 type check and unit tests of the changed frontend packages, ShellCheck on changed scripts; a docs-only commit runs the
-identity and leak checks alone. The pre-push hook warns when the branch doesn't contain `origin/main` and runs
-`QUICK=1 scripts/check.sh` (a docs-only push runs the leak check alone). Escape hatch, for a work-in-progress commit
+identity and leak checks alone. The pre-push hook warns when the branch doesn't contain `origin/main`, refuses any
+pushed commit `origin/main` doesn't already have whose author or committer isn't the required identity, and runs
+`QUICK=1 scripts/check.sh` (a docs-only push runs the identity and leak checks alone). A test that makes its own git
+repository clears `GIT_DIR` and the other repository variables a hook exports, and asserts the scratch repository is its
+own top level before writing to it (`colophon-version`'s stamp test): inside a hook, git would otherwise write to this
+checkout. Escape hatch, for a work-in-progress commit
 during a mutation proof only: `COLOPHON_SKIP_HOOKS=1 COLOPHON_SKIP_REASON="<why>" git commit ...`, logged to
 `.git/colophon-hooks-skipped.log`; `--no-verify` also skips them but leaves no record, so don't use it. Per push, CI
 runs the tests (rust, integration in five shards, frontend), cargo-deny and the docs check; fuzz, the load smokes,
