@@ -22,6 +22,7 @@ mod destinations;
 mod device;
 mod entries;
 pub mod error;
+mod etag_encoding;
 pub mod events;
 mod fault;
 mod graphql;
@@ -112,6 +113,8 @@ pub fn routes(state: AppState) -> Router {
         .layer(preview_cors)
         .layer(legacy_cookie)
         .layer(hint)
+        // A compressing proxy's ETag suffix (D-243): stripped before any handler compares a tag.
+        .layer(axum::middleware::from_fn(etag_encoding::strip))
         // Rate limits (D-076): inside the error envelope, before any handler or lookup does work.
         .layer(admission)
         .with_state(state)
