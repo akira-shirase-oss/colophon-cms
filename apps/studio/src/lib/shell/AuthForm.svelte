@@ -8,7 +8,7 @@
 	import { goto } from '$app/navigation';
 	import { createQuery } from '@tanstack/svelte-query';
 	import { Button } from '@colophon/ui/ui/button';
-	import { signInUrl, type JoinedBySignUp } from '#lib/api.ts';
+	import { sameOrigin, signInUrl, type JoinedBySignUp } from '#lib/api.ts';
 	import { providersQuery } from '#lib/queries.ts';
 	import SignInForm from './SignInForm.svelte';
 	import SignUpForm from './SignUpForm.svelte';
@@ -42,7 +42,7 @@
 
 	async function onward() {
 		// Only same-site paths, ever (the server's safe_return_path makes the same rule).
-		if (navigateAfter && returnTo.startsWith('/') && !returnTo.startsWith('//')) await goto(returnTo);
+		if (navigateAfter && sameOrigin(returnTo)) await goto(returnTo);
 	}
 
 	async function signedUp(joined: JoinedBySignUp | null) {

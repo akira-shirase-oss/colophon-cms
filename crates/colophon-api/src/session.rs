@@ -200,7 +200,11 @@ async fn bearer(
 /// An OAuth access token (D-246). Its audience is the MCP endpoint alone: `/mcp` itself, and the
 /// requests `/mcp`'s tools make in-process ([`crate::mcp::InProcess`], which no network request
 /// carries) to the grant's own project. Anywhere else it is refused like no credential at all.
-async fn oauth_access(services: &Services, token: &str, parts: &Parts) -> Result<SignedIn, ApiError> {
+async fn oauth_access(
+    services: &Services,
+    token: &str,
+    parts: &Parts,
+) -> Result<SignedIn, ApiError> {
     let grant = colophon_db::oauth::access(&services.pool, &tokens::hash(token))
         .await
         .map_err(ApiError::from_db)?
@@ -209,7 +213,11 @@ async fn oauth_access(services: &Services, token: &str, parts: &Parts) -> Result
     let in_process = parts.extensions.get::<crate::mcp::InProcess>().is_some();
     let own = format!("/api/v1/projects/{}", grant.project);
     let allowed = path == "/mcp"
-        || (in_process && (path == own || path.strip_prefix(&own).is_some_and(|rest| rest.starts_with('/'))));
+        || (in_process
+            && (path == own
+                || path
+                    .strip_prefix(&own)
+                    .is_some_and(|rest| rest.starts_with('/'))));
     if !allowed {
         return Err(ApiError::Unauthorized);
     }

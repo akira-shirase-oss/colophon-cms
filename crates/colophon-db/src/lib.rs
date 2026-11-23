@@ -6,7 +6,6 @@
 //! binary ([`MIGRATOR`]); queries are checked against the schema at compile time (D-026).
 
 pub mod access;
-pub mod oauth;
 pub mod administrators;
 pub mod assets;
 pub mod audience;
@@ -29,6 +28,7 @@ pub mod login_roles;
 pub mod members;
 pub mod migrations;
 pub mod nonsuperuser;
+pub mod oauth;
 pub mod passwords;
 pub mod previews;
 pub mod projects;

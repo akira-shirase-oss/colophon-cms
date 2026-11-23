@@ -9,14 +9,14 @@
 	import { createQuery } from '@tanstack/svelte-query';
 	import { Button } from '@colophon/ui/ui/button';
 	import { Skeleton } from '@colophon/ui/ui/skeleton';
-	import { me, signInUrl } from '#lib/api.ts';
+	import { me, sameOrigin, signInUrl } from '#lib/api.ts';
 	import { providersQuery } from '#lib/queries.ts';
 	import SignInForm from '#lib/shell/SignInForm.svelte';
 
 	const who = createQuery(() => ({ queryKey: ['me'], queryFn: me }));
 	const providers = createQuery(providersQuery);
 	const asked = page.url.searchParams.get('return_to');
-	const returnTo = asked !== null && asked.startsWith('/') && !asked.startsWith('//') ? asked : resolve('/');
+	const returnTo = asked !== null && sameOrigin(asked) ? asked : resolve('/');
 
 	$effect(() => {
 		if (who.data) void goto(returnTo, { replaceState: true });

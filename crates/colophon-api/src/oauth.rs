@@ -41,9 +41,18 @@ const ACCESS_SECONDS: u64 = 3600;
 /// The OAuth routes, for `routes()` to mount beside the API's table.
 pub(crate) fn router() -> Router<AppState> {
     Router::new()
-        .route("/.well-known/oauth-protected-resource", get(protected_resource))
-        .route("/.well-known/oauth-protected-resource/mcp", get(protected_resource))
-        .route("/.well-known/oauth-authorization-server", get(authorization_server))
+        .route(
+            "/.well-known/oauth-protected-resource",
+            get(protected_resource),
+        )
+        .route(
+            "/.well-known/oauth-protected-resource/mcp",
+            get(protected_resource),
+        )
+        .route(
+            "/.well-known/oauth-authorization-server",
+            get(authorization_server),
+        )
         .route("/oauth/register", post(register))
         .route("/oauth/authorize", get(authorize))
         .route("/oauth/requests/{id}", get(request).post(answer))
@@ -149,7 +158,16 @@ pub(crate) fn redirect_allowed(uri: &str) -> bool {
         "http" => matches!(url.host_str(), Some("localhost" | "127.0.0.1" | "[::1]")),
         scheme => !matches!(
             scheme,
-            "javascript" | "data" | "file" | "vbscript" | "blob" | "about" | "filesystem" | "ftp" | "ws" | "wss"
+            "javascript"
+                | "data"
+                | "file"
+                | "vbscript"
+                | "blob"
+                | "about"
+                | "filesystem"
+                | "ftp"
+                | "ws"
+                | "wss"
         ),
     }
 }
@@ -177,30 +195,60 @@ async fn register(
 ) -> Result<Response, ApiError> {
     let services = services(&state)?;
     let Ok(Json(body)) = body else {
-        return Ok(oauth_error(StatusCode::BAD_REQUEST, "invalid_client_metadata", "the body is not a JSON registration"));
+        return Ok(oauth_error(
+            StatusCode::BAD_REQUEST,
+            "invalid_client_metadata",
+            "the body is not a JSON registration",
+        ));
     };
     if body.redirect_uris.is_empty() || body.redirect_uris.len() > 5 {
-        return Ok(oauth_error(StatusCode::BAD_REQUEST, "invalid_redirect_uri", "give one to five redirect_uris"));
+        return Ok(oauth_error(
+            StatusCode::BAD_REQUEST,
+            "invalid_redirect_uri",
+            "give one to five redirect_uris",
+        ));
     }
     if let Some(bad) = body.redirect_uris.iter().find(|uri| !redirect_allowed(uri)) {
         return Ok(oauth_error(
             StatusCode::BAD_REQUEST,
             "invalid_redirect_uri",
-            &format!("not an allowed redirect URI (https, http on a loopback host, or a native app's scheme): {bad}"),
+            &format!(
+                "not an allowed redirect URI (https, http on a loopback host, or a native app's scheme): {bad}"
+            ),
         ));
     }
-    if body.token_endpoint_auth_method.as_deref().is_some_and(|method| method != "none") {
-        return Ok(oauth_error(StatusCode::BAD_REQUEST, "invalid_client_metadata", "only public clients (token_endpoint_auth_method \"none\") are supported"));
+    if body
+        .token_endpoint_auth_method
+        .as_deref()
+        .is_some_and(|method| method != "none")
+    {
+        return Ok(oauth_error(
+            StatusCode::BAD_REQUEST,
+            "invalid_client_metadata",
+            "only public clients (token_endpoint_auth_method \"none\") are supported",
+        ));
+    }
+    if body.grant_types.as_ref().is_some_and(|types| {
+        types
+            .iter()
+            .any(|t| t != "authorization_code" && t != "refresh_token")
+    }) {
+        return Ok(oauth_error(
+            StatusCode::BAD_REQUEST,
+            "invalid_client_metadata",
+            "grant_types may be authorization_code and refresh_token",
+        ));
     }
     if body
-        .grant_types
+        .response_types
         .as_ref()
-        .is_some_and(|types| types.iter().any(|t| t != "authorization_code" && t != "refresh_token"))
+        .is_some_and(|types| types.iter().any(|t| t != "code"))
     {
-        return Ok(oauth_error(StatusCode::BAD_REQUEST, "invalid_client_metadata", "grant_types may be authorization_code and refresh_token"));
-    }
-    if body.response_types.as_ref().is_some_and(|types| types.iter().any(|t| t != "code")) {
-        return Ok(oauth_error(StatusCode::BAD_REQUEST, "invalid_client_metadata", "response_types may be code"));
+        return Ok(oauth_error(
+            StatusCode::BAD_REQUEST,
+            "invalid_client_metadata",
+            "response_types may be code",
+        ));
     }
     // The name is the client's own claim, shown as unverified: plain text, one line, bounded.
     let name: String = body
@@ -212,13 +260,19 @@ async fn register(
         .collect::<String>()
         .trim()
         .to_owned();
-    let name = if name.is_empty() { "Unnamed app".to_owned() } else { name };
+    let name = if name.is_empty() {
+        "Unnamed app".to_owned()
+    } else {
+        name
+    };
     let id = Uuid::now_v7();
     if !store::register_client(&services.pool, id, &name, &body.redirect_uris)
         .await
         .map_err(ApiError::from_db)?
     {
-        return Err(ApiError::Unavailable("this server holds as many OAuth clients as it can; try again later"));
+        return Err(ApiError::Unavailable(
+            "this server holds as many OAuth clients as it can; try again later",
+        ));
     }
     tracing::info!(client = %id, "OAuth client registered");
     let mut response = (
@@ -253,7 +307,10 @@ struct AuthorizeQuery {
 /// A page that says what is wrong with an authorization request whose client or redirect URI
 /// can't be trusted: never a redirect to an address nobody registered (RFC 6749 §4.1.2.1).
 fn refused_page(why: &str) -> Response {
-    let why = why.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;");
+    let why = why
+        .replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;");
     let mut response = (
         StatusCode::BAD_REQUEST,
         Html(format!(
@@ -291,21 +348,40 @@ async fn authorize(
 ) -> Result<Response, ApiError> {
     let services = services(&state)?;
     let origin = origin(&state)?;
-    let Some(client_id) = query.client_id.as_deref().and_then(|id| Uuid::parse_str(id).ok()) else {
-        return Ok(refused_page("The request names no app this server knows (client_id)."));
+    let Some(client_id) = query
+        .client_id
+        .as_deref()
+        .and_then(|id| Uuid::parse_str(id).ok())
+    else {
+        return Ok(refused_page(
+            "The request names no app this server knows (client_id).",
+        ));
     };
-    let Some(client) = store::client(&services.pool, client_id).await.map_err(ApiError::from_db)? else {
-        return Ok(refused_page("The request names no app this server knows (client_id)."));
+    let Some(client) = store::client(&services.pool, client_id)
+        .await
+        .map_err(ApiError::from_db)?
+    else {
+        return Ok(refused_page(
+            "The request names no app this server knows (client_id).",
+        ));
     };
     let redirect_uri = match query.redirect_uri.as_deref() {
         Some(uri) if client.redirect_uris.iter().any(|known| known == uri) => uri.to_owned(),
         None if client.redirect_uris.len() == 1 => client.redirect_uris[0].clone(),
-        _ => return Ok(refused_page("The app asked to be answered at an address it didn't register (redirect_uri).")),
+        _ => {
+            return Ok(refused_page(
+                "The app asked to be answered at an address it didn't register (redirect_uri).",
+            ));
+        }
     };
     // From here the client is known and the address is its own: errors go back to it.
     let state_param = query.state.clone();
     let fail = |error: &str, description: &str| -> Result<Response, ApiError> {
-        let mut pairs = vec![("error", error), ("error_description", description), ("iss", origin.as_str())];
+        let mut pairs = vec![
+            ("error", error),
+            ("error_description", description),
+            ("iss", origin.as_str()),
+        ];
         if let Some(state) = state_param.as_deref() {
             pairs.push(("state", state));
         }
@@ -314,19 +390,37 @@ async fn authorize(
     if query.response_type.as_deref() != Some("code") {
         return fail("unsupported_response_type", "response_type must be code");
     }
-    let challenge = match (query.code_challenge.as_deref(), query.code_challenge_method.as_deref()) {
+    let challenge = match (
+        query.code_challenge.as_deref(),
+        query.code_challenge_method.as_deref(),
+    ) {
         (Some(challenge), Some("S256"))
             if challenge.len() == 43
-                && challenge.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_') =>
+                && challenge
+                    .bytes()
+                    .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_') =>
         {
             challenge.to_owned()
         }
-        _ => return fail("invalid_request", "PKCE is required: code_challenge with code_challenge_method S256"),
+        _ => {
+            return fail(
+                "invalid_request",
+                "PKCE is required: code_challenge with code_challenge_method S256",
+            );
+        }
     };
-    if query.resource.as_deref().is_some_and(|asked| asked.trim_end_matches('/') != resource(&origin)) {
+    if query
+        .resource
+        .as_deref()
+        .is_some_and(|asked| asked.trim_end_matches('/') != resource(&origin))
+    {
         return fail("invalid_target", "resource must be this server's /mcp");
     }
-    if query.state.as_deref().is_some_and(|state| state.len() > 500) {
+    if query
+        .state
+        .as_deref()
+        .is_some_and(|state| state.len() > 500)
+    {
         return fail("invalid_request", "state is too long");
     }
     match caller {
@@ -391,7 +485,10 @@ async fn request(
         .ok_or(ApiError::NotFound)?;
     let host = url::Url::parse(&pending.redirect_uri)
         .ok()
-        .map(|url| url.host_str().map_or_else(|| url.scheme().to_owned(), str::to_owned))
+        .map(|url| {
+            url.host_str()
+                .map_or_else(|| url.scheme().to_owned(), str::to_owned)
+        })
         .unwrap_or_default();
     Ok(Json(Data {
         data: RequestView {
@@ -453,7 +550,8 @@ async fn answer(
             .await
             .map_err(ApiError::from_db)?
             .ok_or(ApiError::NotFound)?;
-        let code = tokens::random_token().map_err(|_| ApiError::internal(std::io::Error::other("no randomness")))?;
+        let code = tokens::random_token()
+            .map_err(|_| ApiError::internal(std::io::Error::other("no randomness")))?;
         Some((project, code))
     } else {
         None
@@ -463,7 +561,9 @@ async fn answer(
         &services.pool,
         id,
         caller.identity,
-        code.as_ref().zip(hash.as_ref()).map(|((project, _), hash)| (*project, hash)),
+        code.as_ref()
+            .zip(hash.as_ref())
+            .map(|((project, _), hash)| (*project, hash)),
     )
     .await
     .map_err(ApiError::from_db)?
@@ -474,7 +574,10 @@ async fn answer(
             tracing::info!(identity = %caller.identity, client = %answered.client.id, project = %project, "OAuth client approved");
             pairs.push(("code", code));
         }
-        None => pairs.extend([("error", "access_denied"), ("error_description", "the person declined")]),
+        None => pairs.extend([
+            ("error", "access_denied"),
+            ("error_description", "the person declined"),
+        ]),
     }
     if let Some(state) = answered.state.as_deref() {
         pairs.push(("state", state));
@@ -499,7 +602,10 @@ struct TokenForm {
 
 /// A fresh access and refresh token for `grant`, in RFC 6749 §5.1's answer.
 async fn issue(pool: &colophon_db::PgPool, grant: Uuid) -> Result<Response, ApiError> {
-    let random = || tokens::random_token().map_err(|_| ApiError::internal(std::io::Error::other("no randomness")));
+    let random = || {
+        tokens::random_token()
+            .map_err(|_| ApiError::internal(std::io::Error::other("no randomness")))
+    };
     let access = format!("{ACCESS_PREFIX}{}", random()?);
     let refresh = format!("{REFRESH_PREFIX}{}", random()?);
     store::issue(pool, grant, &tokens::hash(&access), &tokens::hash(&refresh))
@@ -522,7 +628,10 @@ fn verifier_matches(verifier: &str, challenge: &str) -> bool {
         && verifier
             .bytes()
             .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'-' | b'.' | b'_' | b'~'))
-        && tokens::same_secret(tokens::pkce_challenge(verifier).as_bytes(), challenge.as_bytes())
+        && tokens::same_secret(
+            tokens::pkce_challenge(verifier).as_bytes(),
+            challenge.as_bytes(),
+        )
 }
 
 /// `POST /oauth/token`: a code for tokens, or a refresh token for new ones.
@@ -532,16 +641,32 @@ async fn token(
 ) -> Result<Response, ApiError> {
     let services = services(&state)?;
     let Ok(axum::Form(form)) = form else {
-        return Ok(oauth_error(StatusCode::BAD_REQUEST, "invalid_request", "send the token request as a form"));
+        return Ok(oauth_error(
+            StatusCode::BAD_REQUEST,
+            "invalid_request",
+            "send the token request as a form",
+        ));
     };
-    let Some(client) = form.client_id.as_deref().and_then(|id| Uuid::parse_str(id).ok()) else {
-        return Ok(oauth_error(StatusCode::UNAUTHORIZED, "invalid_client", "client_id is required"));
+    let Some(client) = form
+        .client_id
+        .as_deref()
+        .and_then(|id| Uuid::parse_str(id).ok())
+    else {
+        return Ok(oauth_error(
+            StatusCode::UNAUTHORIZED,
+            "invalid_client",
+            "client_id is required",
+        ));
     };
     let invalid = |why: &str| Ok(oauth_error(StatusCode::BAD_REQUEST, "invalid_grant", why));
     match form.grant_type.as_deref() {
         Some("authorization_code") => {
             let Some(code) = form.code.as_deref() else {
-                return Ok(oauth_error(StatusCode::BAD_REQUEST, "invalid_request", "code is required"));
+                return Ok(oauth_error(
+                    StatusCode::BAD_REQUEST,
+                    "invalid_request",
+                    "code is required",
+                ));
             };
             let redeemed = match store::redeem_code(&services.pool, &tokens::hash(code))
                 .await
@@ -566,13 +691,19 @@ async fn token(
                 store::revoke_grant(&services.pool, redeemed.grant.identity, redeemed.grant.id)
                     .await
                     .map_err(ApiError::from_db)?;
-                return invalid("the code was issued to another client, redirect URI or code verifier");
+                return invalid(
+                    "the code was issued to another client, redirect URI or code verifier",
+                );
             }
             issue(&services.pool, redeemed.grant.id).await
         }
         Some("refresh_token") => {
             let Some(refresh) = form.refresh_token.as_deref() else {
-                return Ok(oauth_error(StatusCode::BAD_REQUEST, "invalid_request", "refresh_token is required"));
+                return Ok(oauth_error(
+                    StatusCode::BAD_REQUEST,
+                    "invalid_request",
+                    "refresh_token is required",
+                ));
             };
             match store::redeem_refresh(&services.pool, &tokens::hash(refresh), client)
                 .await
@@ -583,10 +714,16 @@ async fn token(
                     tracing::warn!(client = %client, "an OAuth refresh token was used twice: its grant is revoked");
                     invalid("the refresh token was already used; the connection is revoked")
                 }
-                store::Presented::Invalid => invalid("the refresh token is unknown, expired or revoked"),
+                store::Presented::Invalid => {
+                    invalid("the refresh token is unknown, expired or revoked")
+                }
             }
         }
-        _ => Ok(oauth_error(StatusCode::BAD_REQUEST, "unsupported_grant_type", "grant_type is authorization_code or refresh_token")),
+        _ => Ok(oauth_error(
+            StatusCode::BAD_REQUEST,
+            "unsupported_grant_type",
+            "grant_type is authorization_code or refresh_token",
+        )),
     }
 }
 

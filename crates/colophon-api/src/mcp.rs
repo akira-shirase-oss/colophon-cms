@@ -322,7 +322,10 @@ pub(crate) async fn post_public(
         Err(refused) => return Ok(challenged(&state, refused)),
     };
     let id = admitted(services(&state)?, &caller, &headers, false)?;
-    let project = caller.project.or(caller.oauth_project).ok_or(ApiError::NotFound)?;
+    let project = caller
+        .project
+        .or(caller.oauth_project)
+        .ok_or(ApiError::NotFound)?;
     post_on(
         &state,
         &caller,
@@ -343,7 +346,9 @@ fn challenged(state: &AppState, refused: ApiError) -> Response {
     if response.status() == StatusCode::UNAUTHORIZED
         && let Some(value) = crate::oauth::challenge(state)
     {
-        response.headers_mut().insert(header::WWW_AUTHENTICATE, value);
+        response
+            .headers_mut()
+            .insert(header::WWW_AUTHENTICATE, value);
     }
     response
 }
@@ -421,7 +426,10 @@ pub(crate) async fn delete_public(
         Err(refused) => return Ok(challenged(&state, refused)),
     };
     let id = admitted(services(&state)?, &caller, &headers, true)?;
-    let project = caller.project.or(caller.oauth_project).ok_or(ApiError::NotFound)?;
+    let project = caller
+        .project
+        .or(caller.oauth_project)
+        .ok_or(ApiError::NotFound)?;
     delete_on(&state, &caller, id, project, "production")
 }
 

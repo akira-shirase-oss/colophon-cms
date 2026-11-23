@@ -17,7 +17,14 @@ pub const MAX_CLIENTS: i64 = 10_000;
 type PendingRow = (Uuid, String, Vec<String>, String, Option<String>, String);
 type RedeemedRow = (Uuid, Uuid, Uuid, Uuid, String, String);
 type AccessRow = (Uuid, Uuid, Uuid, Uuid, Option<OffsetDateTime>);
-type ConnectedRow = (Uuid, String, Uuid, String, OffsetDateTime, Option<OffsetDateTime>);
+type ConnectedRow = (
+    Uuid,
+    String,
+    Uuid,
+    String,
+    OffsetDateTime,
+    Option<OffsetDateTime>,
+);
 
 /// A registered client.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -184,16 +191,18 @@ pub async fn pending(pool: &PgPool, id: Uuid, identity: Uuid) -> Result<Option<P
     .fetch_optional(pool)
     .await
     .map_err(DbError::from_query)?;
-    Ok(row.map(|(client, name, redirect_uris, redirect_uri, state, code_challenge)| Pending {
-        client: Client {
-            id: client,
-            name,
-            redirect_uris,
+    Ok(row.map(
+        |(client, name, redirect_uris, redirect_uri, state, code_challenge)| Pending {
+            client: Client {
+                id: client,
+                name,
+                redirect_uris,
+            },
+            redirect_uri,
+            state,
+            code_challenge,
         },
-        redirect_uri,
-        state,
-        code_challenge,
-    }))
+    ))
 }
 
 /// Ends the authorization `id` (`identity`'s, unexpired), and with `project` approves it: one
@@ -266,7 +275,10 @@ async fn revoke(executor: impl sqlx::PgExecutor<'_>, grant: Uuid) -> Result<(), 
 
 /// Uses up the code with this hash. A code presented a second time revokes its grant: the first
 /// use may have been an attacker's (RFC 6749 §4.1.2).
-pub async fn redeem_code(pool: &PgPool, code_hash: &[u8; 32]) -> Result<Presented<Redeemed>, DbError> {
+pub async fn redeem_code(
+    pool: &PgPool,
+    code_hash: &[u8; 32],
+) -> Result<Presented<Redeemed>, DbError> {
     let taken: Option<RedeemedRow> = sqlx::query_as(
         "UPDATE oauth_codes c SET used_at = now()
          FROM oauth_grants g
@@ -290,12 +302,13 @@ pub async fn redeem_code(pool: &PgPool, code_hash: &[u8; 32]) -> Result<Presente
             code_challenge,
         }));
     }
-    let used: Option<(Uuid,)> =
-        sqlx::query_as("SELECT grant_id FROM oauth_codes WHERE code_hash = $1 AND used_at IS NOT NULL")
-            .bind(&code_hash[..])
-            .fetch_optional(pool)
-            .await
-            .map_err(DbError::from_query)?;
+    let used: Option<(Uuid,)> = sqlx::query_as(
+        "SELECT grant_id FROM oauth_codes WHERE code_hash = $1 AND used_at IS NOT NULL",
+    )
+    .bind(&code_hash[..])
+    .fetch_optional(pool)
+    .await
+    .map_err(DbError::from_query)?;
     if let Some((grant,)) = used {
         revoke(pool, grant).await?;
         return Ok(Presented::Replayed);
@@ -410,31 +423,43 @@ pub async fn access(pool: &PgPool, access_hash: &[u8; 32]) -> Result<Option<Gran
 /// Revokes the grant of the token with this hash, access or refresh (RFC 7009): the client's
 /// whole connection ends. Unknown tokens are not an error.
 pub async fn revoke_token(pool: &PgPool, token_hash: &[u8; 32]) -> Result<(), DbError> {
-    let grant: Option<(Uuid,)> = sqlx::query_as("SELECT grant_id FROM oauth_tokens WHERE token_hash = $1")
-        .bind(&token_hash[..])
-        .fetch_optional(pool)
-        .await
-        .map_err(DbError::from_query)?;
+    let grant: Option<(Uuid,)> =
+        sqlx::query_as("SELECT grant_id FROM oauth_tokens WHERE token_hash = $1")
+            .bind(&token_hash[..])
+            .fetch_optional(pool)
+            .await
+            .map_err(DbError::from_query)?;
     if let Some((grant,)) = grant {
         revoke(pool, grant).await?;
     }
     Ok(())
 }
 
-/// `identity`'s grants that still stand, newest first.
+/// `identity`'s grants that still stand, newest first. Read as that person (row security shows
+/// them the projects they are in); a grant in a project they have since left keeps its row, named
+/// "a project you left", so it can still be revoked.
 pub async fn connected(pool: &PgPool, identity: Uuid) -> Result<Vec<Connected>, DbError> {
+    let mut transaction = crate::scope::begin(
+        pool,
+        crate::scope::Scope {
+            identity: Some(identity),
+            project: None,
+        },
+    )
+    .await?;
     let rows: Vec<ConnectedRow> = sqlx::query_as(
-        "SELECT g.id, c.name, g.project_id, p.name, g.created_at, g.last_used_at
+        "SELECT g.id, c.name, g.project_id, coalesce(p.name, 'a project you left'), g.created_at, g.last_used_at
          FROM oauth_grants g
          JOIN oauth_clients c ON c.id = g.client_id
-         JOIN projects p ON p.id = g.project_id
+         LEFT JOIN projects p ON p.id = g.project_id
          WHERE g.identity_id = $1 AND g.revoked_at IS NULL
          ORDER BY g.created_at DESC",
     )
     .bind(identity)
-    .fetch_all(pool)
+    .fetch_all(&mut *transaction)
     .await
     .map_err(DbError::from_query)?;
+    transaction.commit().await.map_err(DbError::from_query)?;
     Ok(rows
         .into_iter()
         .map(|(id, client_name, project, project_name, created_at, last_used_at)| Connected {
@@ -462,11 +487,16 @@ pub async fn revoke_grant(pool: &PgPool, identity: Uuid, grant: Uuid) -> Result<
 }
 
 /// Revokes every grant of `identity` (a changed password: whoever held a connection loses it).
-pub async fn revoke_all(executor: impl sqlx::PgExecutor<'_>, identity: Uuid) -> Result<u64, DbError> {
-    let done = sqlx::query("UPDATE oauth_grants SET revoked_at = now() WHERE identity_id = $1 AND revoked_at IS NULL")
-        .bind(identity)
-        .execute(executor)
-        .await
-        .map_err(DbError::from_query)?;
+pub async fn revoke_all(
+    executor: impl sqlx::PgExecutor<'_>,
+    identity: Uuid,
+) -> Result<u64, DbError> {
+    let done = sqlx::query(
+        "UPDATE oauth_grants SET revoked_at = now() WHERE identity_id = $1 AND revoked_at IS NULL",
+    )
+    .bind(identity)
+    .execute(executor)
+    .await
+    .map_err(DbError::from_query)?;
     Ok(done.rows_affected())
 }
