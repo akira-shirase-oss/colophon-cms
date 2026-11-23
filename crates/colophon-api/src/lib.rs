@@ -36,6 +36,7 @@ pub mod media_sign;
 mod members;
 pub mod middleware;
 mod migrations;
+mod oauth;
 mod openapi;
 pub mod outages;
 mod populate;
@@ -106,6 +107,8 @@ pub fn routes(state: AppState) -> Router {
                 async move { served.respond(&headers) }
             }),
         )
+        // OAuth for the MCP endpoint (D-246): a protocol surface beside the documented table.
+        .merge(oauth::router())
         .fallback(fallback)
         // The preview CORS layer reads Postgres for a preflight's origin (D-172), so it sits inside
         // the rate limits like every other read: a flood of preflights is limited per address

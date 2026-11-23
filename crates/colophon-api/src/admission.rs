@@ -235,9 +235,10 @@ impl Class {
 
 /// The routes that reach the password gate (D-150), as a `POST`: staff sign-in and sign-up, a
 /// site's sign-up, sign-in and magic-link sign-in (which hashes when it makes the account),
-/// and staff creating a site user.
+/// staff creating a site user, and an OAuth client registering itself (D-246: anyone may, so a
+/// flood of registrations is held to the same per-address rate).
 fn is_password_work(path: &str) -> bool {
-    if path == "/auth/signin" || path == "/auth/signup" {
+    if path == "/auth/signin" || path == "/auth/signup" || path == "/oauth/register" {
         return true;
     }
     let mut parts = path.trim_start_matches('/').split('/');
@@ -1664,6 +1665,7 @@ mod tests {
             "/audience/v1/p/signin",
             "/audience/v1/p/magic-link/t0ken",
             "/api/v1/projects/p/audience/users",
+            "/oauth/register",
         ] {
             assert_eq!(
                 Class::of(&Method::POST, path),

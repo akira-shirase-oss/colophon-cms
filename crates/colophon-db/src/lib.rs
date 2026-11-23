@@ -28,6 +28,7 @@ pub mod login_roles;
 pub mod members;
 pub mod migrations;
 pub mod nonsuperuser;
+pub mod oauth;
 pub mod passwords;
 pub mod previews;
 pub mod projects;
