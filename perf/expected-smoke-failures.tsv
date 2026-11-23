@@ -8,16 +8,23 @@
 #             regression can't hide here. It leaves this list when D-209's normalised gate judges it by margin over the
 #             runner's measured baseline.
 # A smoke that fails and isn't listed fails the job.
+# Each job judges only its own entries (SMOKE_SCOPE): the smokes job's are plain names; the integration job's load
+# smokes are `integration/<endpoint>-<scenario>`. Runner speed needs no entry (D-221): each job measures its runner
+# (scripts/runner-speed.sh) and scales fixed rates down, and back-to-back limits up, to it; under half the reference
+# speed latency isn't judged. Hard failures (a failed check, a real request error, assets' uploads refused) are never
+# tolerated, listed or not.
 #
 # Columns, tab-separated: smoke, kind, decision, owner, ceiling, measured (CI 44543394086 → 44551888337, the 4-core
 # runner), what is owed. A ceiling is `p99<=MS` (the run's overall p99) or `l08<=RATIO` (L08's worst noise/baseline ratio).
 # A ceiling marked `EXPIRES-WITH D-NNN` is a temporary tolerance for a known, owned defect: the verdict refuses it once
 # docs/DECISIONS.md has D-NNN's row (its fix merged), and that fix removes the entry or restores the ordinary 2x ceiling.
-# noisy-agent's 8 (its measured worst, 6.56, plus about 25%) is the D-214 defect itself, pool-acquire queueing; at 2x it
-# would be 4.
-assets	flapping	D-218	learning-95	p99<=1000	upload p99 836 ms (main 1e3eabad, CI 44585299397, EPYC 9V74) → 307 ms with D-216 (CI 44585574138, EPYC 9V45); runner types differ	remove once perf-compare on one runner confirms; then what D-218 still owes (upload-to-usable time, claim rate, verify time)
-bulk	flapping	D-216	learning-a4	p99<=1000	p99 2486 ms (main 1e3eabad, CI 44585299397, EPYC 9V74) → 188 ms with D-216 (CI 44585574138, EPYC 9V45); runner types differ	remove once perf-compare on one runner confirms D-216 holds bulk under 500 on both runner types
+# noisy-agent's ceiling was a temporary 8 (its measured worst, 6.56, plus about 25%) until D-214 took refused requests off
+# the pool; it is back at the ordinary 4 (2x its limit).
 audience	flapping	D-209	learning-95	p99<=1400	p99 748 ms → 581 ms (limit 700); server CPU avg 124% of 400%	password hashing on the runner's CPU: judge by margin over the runner's measured hash cost (D-209 normalised gate)
 migrations	flapping	D-209	learning-95	p99<=1000	p99 681 ms → 408 ms (limit 500)	judge by margin over the runner's measured commit latency (D-209 normalised gate)
-noisy-agent	flapping	D-214	learning-a4	l08<=8 EXPIRES-WITH D-214	L08 editorial 5.79x, project B 6.56x (limit 2x) → held; overall p99 104 → 18 ms	pool-acquire queueing behind the noisy token (D-214 (a))
+noisy-agent	flapping	D-214	learning-a4	l08<=4	L08 editorial 5.79x, project B 6.56x (limit 2x) → held; overall p99 104 → 18 ms	L08's ordinary noise at 2x its limit: D-214 took refused requests off the pool; this entry leaves when D-209's normalised gate judges L08 by margin
 stages	flapping	D-209	learning-95	p99<=400	p99 254 ms → 128 ms (limit 200)	judge by margin over the runner's measured baseline (D-209 normalised gate)
+integration/members-steady	flapping	D-223	learning-95	p99<=1500 EXPIRES-WITH D-223	p99 50 ms (469577c) → 221 ms (34e82a6, scale 0.69) → 1314 ms in CI 44673105548 (scale 0.994, limit 200; 226 dropped), no server change between: 236 slow lock_involved SELECT … FOR UPDATE on memberships (≤148 ms), 218 in one 3 s burst, io full 0 → 2.5%: the per-project member queue turning into a convoy behind a slow COMMIT	D-223: commit latency on the write path; the member-change queue is pre-existing (R.2) and leaves this list with its fix
+integration/tokens-steady	flapping	D-223	learning-95	p99<=700 EXPIRES-WITH D-223	p99 529 ms in CI 44694257974 (EPYC 9V74, scale 0.713; limit 200, not scaled in this job) → 3.65 ms in its rerun (Xeon 6975P-C, 0.950), same tree, 0 hard failures	D-223 phase 2: write smokes run at 0.5 x write_rps / k, under their path's capacity on every class (write saturation, not speed); ceiling = measured worst + ~25%
+integration/schedules-steady	flapping	D-223	learning-95	p99<=700 EXPIRES-WITH D-223	p99 506 ms in CI 44694257974 (EPYC 9V74, 0.713; limit 200) → 5.19 ms in its rerun (Xeon 6975P-C, 0.950), 0 hard failures	D-223 phase 2 (as tokens-steady)
+integration/publishing-steady	flapping	D-223	learning-95	p99<=1000 EXPIRES-WITH D-223	p99 781 ms in CI 44694257974 (EPYC 9V74, 0.713; limit 500) → 17.3 ms in its rerun (6975P-C, 0.950) → 556 ms in CI 44703300242 (9V74, 0.665), 0 hard failures	D-223 phase 2 (as tokens-steady); 2x its limit covers the worst + ~25%

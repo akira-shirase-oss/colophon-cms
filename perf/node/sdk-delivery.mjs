@@ -10,6 +10,11 @@
 //   ORIGIN=http://127.0.0.1:58000 PROJECT=p COLLECTION=articles ENTRY=<id> \
 //     node --expose-gc perf/node/sdk-delivery.mjs                  # a real server's published content
 //
+// OVERHEAD_GATE=record keeps the overhead as evidence without failing on it: a smoke on a shared machine
+// measures the difference of two tails, which at a load average near 50 was 25 ms one run and 0.4 ms the
+// next, so a bound on it says how busy the machine was, not what the SDK costs. Failed calls and heap
+// growth stay gates either way. The full run (a quiet machine, or the evidence runner) gates all three.
+//
 // TOTAL (default 1,000,000 — the testing rule's full run; a smoke passes TOTAL=20000), CONCURRENCY
 // (default 8), PORT (the stub's; default any free one), KEEP=0 (don't write a result file), and
 // SDK_TARBALL (a packed SDK; by default this script packs packages/sdk itself). The result goes in
@@ -24,10 +29,14 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 const repository = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
 const TOTAL = Number(process.env.TOTAL ?? 1_000_000);
 const CONCURRENCY = Number(process.env.CONCURRENCY ?? 8);
-// The budgets (module 13). A smoke on a busy laptop may loosen the overhead one through
-// OVERHEAD_P99_MS; the result file records the budget the run was held to.
+// The budgets (module 13). The result file records the budget and whether the run was held to it.
 const OVERHEAD_P99_BUDGET_MS = Number(process.env.OVERHEAD_P99_MS ?? 1);
+const OVERHEAD_GATE = process.env.OVERHEAD_GATE ?? 'gate';
 const HEAP_BUDGET_MB = 20;
+if (OVERHEAD_GATE !== 'gate' && OVERHEAD_GATE !== 'record') {
+	console.error('OVERHEAD_GATE must be gate or record');
+	process.exit(2);
+}
 if (!Number.isInteger(TOTAL) || TOTAL < 2 || !Number.isInteger(CONCURRENCY) || CONCURRENCY < 1) {
 	console.error('TOTAL must be an integer of at least 2 and CONCURRENCY at least 1');
 	process.exit(2);
@@ -155,7 +164,7 @@ const bareP99 = (bareBefore.latency_ms.p99 + bareAfter.latency_ms.p99) / 2;
 const overhead = { p50_ms: viaSdkResult.latency_ms.p50 - bareP50, p99_ms: viaSdkResult.latency_ms.p99 - bareP99 };
 const heapGrowthMb = (heapAfter - heapBefore) / 1024 / 1024;
 const failed = bareBefore.failed + viaSdkResult.failed + bareAfter.failed;
-console.log(`overhead: p50 ${overhead.p50_ms.toFixed(3)} ms, p99 ${overhead.p99_ms.toFixed(3)} ms (budget ${OVERHEAD_P99_BUDGET_MS} ms); heap growth ${heapGrowthMb.toFixed(2)} MB (budget ${HEAP_BUDGET_MB} MB)`);
+console.log(`overhead: p50 ${overhead.p50_ms.toFixed(3)} ms, p99 ${overhead.p99_ms.toFixed(3)} ms (budget ${OVERHEAD_P99_BUDGET_MS} ms${OVERHEAD_GATE === 'record' ? ', recorded, not gated' : ''}); heap growth ${heapGrowthMb.toFixed(2)} MB (budget ${HEAP_BUDGET_MB} MB)`);
 
 /* ---------------------------------------------------------------- the record */
 
@@ -186,7 +195,7 @@ const record = {
 	bare: { before: bareBefore, after: bareAfter },
 	overhead_ms: overhead,
 	heap_growth_mb: Number(heapGrowthMb.toFixed(2)),
-	budgets: { overhead_p99_ms: OVERHEAD_P99_BUDGET_MS, heap_growth_mb: HEAP_BUDGET_MB }
+	budgets: { overhead_p99_ms: OVERHEAD_P99_BUDGET_MS, overhead_gated: OVERHEAD_GATE === 'gate', heap_growth_mb: HEAP_BUDGET_MB }
 };
 if (process.env.KEEP !== '0') {
 	const file = path.join(repository, 'perf/results', `${date.replaceAll(':', '')}-sdk-delivery-throughput-${machine}.json`);
@@ -195,7 +204,7 @@ if (process.env.KEEP !== '0') {
 }
 const misses = [];
 if (failed > 0) misses.push(`${failed} calls failed`);
-if (overhead.p99_ms > OVERHEAD_P99_BUDGET_MS) misses.push(`p99 overhead ${overhead.p99_ms.toFixed(3)} ms over ${OVERHEAD_P99_BUDGET_MS} ms`);
+if (OVERHEAD_GATE === 'gate' && overhead.p99_ms > OVERHEAD_P99_BUDGET_MS) misses.push(`p99 overhead ${overhead.p99_ms.toFixed(3)} ms over ${OVERHEAD_P99_BUDGET_MS} ms`);
 if (heapGrowthMb > HEAP_BUDGET_MB) misses.push(`heap grew ${heapGrowthMb.toFixed(2)} MB, over ${HEAP_BUDGET_MB} MB`);
 if (misses.length > 0) {
 	console.error(`sdk-delivery: ${misses.join('; ')}`);

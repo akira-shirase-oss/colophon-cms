@@ -209,24 +209,25 @@ async fn versions_of(session: &Session, project: &str, id: &str) -> Vec<Value> {
 }
 
 /// The media origin's bytes for `path`, asserting 200.
-async fn media_bytes(path: &str) -> Vec<u8> {
-    let response = app()
-        .get(format!("{}{}", common::ORIGIN, path))
-        .send()
-        .await
-        .expect("request");
+async fn media_bytes(viewer: Option<&Session>, path: &str) -> Vec<u8> {
+    let response = media_get(viewer, path).await;
     assert_eq!(response.status(), StatusCode::OK, "{path}");
     response.bytes().await.expect("bytes").to_vec()
 }
 
 /// The media origin's status for `path`, following nothing.
-async fn media_status(path: &str) -> StatusCode {
-    app()
-        .get(format!("{}{}", common::ORIGIN, path))
-        .send()
-        .await
-        .expect("request")
-        .status()
+async fn media_status(viewer: Option<&Session>, path: &str) -> StatusCode {
+    media_get(viewer, path).await.status()
+}
+
+/// `GET path` on the media origin: as the public (`None`), or as a signed-in member, who also
+/// sees what isn't published yet (D-229).
+async fn media_get(viewer: Option<&Session>, path: &str) -> reqwest::Response {
+    let mut request = app().get(format!("{}{}", common::ORIGIN, path));
+    if let Some(viewer) = viewer {
+        request = request.header(header::COOKIE, &viewer.cookie);
+    }
+    request.send().await.expect("request")
 }
 
 #[tokio::test]
@@ -271,6 +272,155 @@ async fn a_valid_upload_is_verified_and_becomes_usable() {
     // The same key with a different upload is a replay mismatch, refused.
     let (status, body) = upload(&owner, &project, PNG, "other.png", "image/png", &key).await;
     assert_eq!(status, StatusCode::CONFLICT, "{body}");
+}
+
+/// An upload wakes the asset worker (D-218): with the poll at 10 s, a verify still finishes within about a change
+/// hint's pump (100 ms) and a claim, not the poll — the worker listens for `assets` hints instead of only polling.
+/// The upload waits until the worker's first look found nothing and it is asleep, so only a wake explains a fast finish.
+#[tokio::test]
+#[ignore = "needs the stack and scripts/migrate.sh"]
+async fn an_upload_wakes_the_asset_worker_instead_of_waiting_for_its_poll() {
+    let _server = common::Server::start_with(&[("COLOPHON_WORKER_POLL_MS", "10000")]).await;
+    let owner = sign_in("dev-owner").await;
+    let project = project(&owner).await;
+    tokio::time::sleep(Duration::from_millis(500)).await;
+
+    let key = Uuid::now_v7().to_string();
+    let started = Instant::now();
+    let (status, body) = upload(&owner, &project, PNG, "dot.png", "image/png", &key).await;
+    assert_eq!(status, StatusCode::ACCEPTED, "{body}");
+    let id = body["data"]["id"].as_str().expect("id").to_owned();
+    let asset = settled(&owner, &project, &id, 15).await;
+    let took = started.elapsed();
+    assert_eq!(asset["state"], "usable", "{asset}");
+    assert!(
+        took < Duration::from_secs(2),
+        "the upload waited {took:?} for a verify the worker should have been woken for (poll 10 s)"
+    );
+}
+
+/// The asset worker's listener comes back after losing its connection (D-218): its backend, named
+/// `colophon-asset-wake`, is terminated; a new one appears, and an upload is still woken for (poll at 10 s).
+///
+/// CI only (like the outage tests, D-187): it terminates a Postgres backend, and the local stack's Postgres is shared
+/// with other databases. It refuses to run on a stack it doesn't own, and checks the backend it terminates in Rust
+/// first: the listener's name, in this test's own database.
+#[tokio::test]
+#[ignore = "CI only: terminates a Postgres backend, refused on a shared stack (D-187)"]
+async fn the_asset_worker_listens_again_after_losing_its_listener() {
+    if let Err(reason) = common::stack_guard(|key| std::env::var(key).ok()) {
+        panic!("{reason}");
+    }
+    let _server = common::Server::start_with(&[("COLOPHON_WORKER_POLL_MS", "10000")]).await;
+    let owner = sign_in("dev-owner").await;
+    let project = project(&owner).await;
+    let database = common::owner_database().await;
+    let listeners = async || -> i64 {
+        sqlx::query_scalar(
+            "SELECT count(*) FROM pg_stat_activity
+             WHERE application_name = 'colophon-asset-wake' AND datname = current_database()",
+        )
+        .fetch_one(&database)
+        .await
+        .expect("pg_stat_activity")
+    };
+    assert!(
+        common::until(5, async || listeners().await == 1).await,
+        "one asset listener per process"
+    );
+    // The pid first, then a terminate of exactly that pid: a terminate inside the filtering WHERE runs in whatever
+    // order the planner picks, and once took this database's other backends with it.
+    let (pid, application, database_name, ours): (i32, String, String, String) = sqlx::query_as(
+        "SELECT pid, application_name, datname::text, current_database()::text FROM pg_stat_activity
+         WHERE application_name = 'colophon-asset-wake' AND datname = current_database()",
+    )
+    .fetch_one(&database)
+    .await
+    .expect("the listener's backend");
+    // Checked here, in Rust, before anything is terminated: exactly the listener, in this test's own database.
+    assert_eq!(
+        application,
+        colophon_worker::ASSET_LISTENER,
+        "not the asset listener: pid {pid}"
+    );
+    assert_eq!(database_name, ours, "pid {pid} is in another database");
+    let killed: bool = sqlx::query_scalar("SELECT pg_terminate_backend($1)")
+        .bind(pid)
+        .fetch_one(&database)
+        .await
+        .expect("terminate");
+    assert!(killed, "the listener's backend was terminated");
+    assert!(
+        common::until(10, async || listeners().await == 1).await,
+        "the listener came back"
+    );
+    tokio::time::sleep(Duration::from_millis(500)).await;
+
+    let started = Instant::now();
+    let (status, body) = upload(
+        &owner,
+        &project,
+        PNG,
+        "dot.png",
+        "image/png",
+        &Uuid::now_v7().to_string(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::ACCEPTED, "{body}");
+    let id = body["data"]["id"].as_str().expect("id").to_owned();
+    let asset = settled(&owner, &project, &id, 15).await;
+    assert_eq!(asset["state"], "usable", "{asset}");
+    assert!(
+        started.elapsed() < Duration::from_secs(2),
+        "after the listener came back the upload waited {:?} (poll 10 s)",
+        started.elapsed()
+    );
+}
+
+/// Two processes woken by the same hints still verify each upload once (D-218): the hint only wakes, and the
+/// claim is the usual `SKIP LOCKED` one. Twenty uploads against two servers, each job finished in one attempt.
+#[tokio::test]
+#[ignore = "needs the stack and scripts/migrate.sh"]
+async fn two_woken_workers_verify_each_upload_once() {
+    let _first = common::Server::start_with(&[("COLOPHON_WORKER_POLL_MS", "10000")]).await;
+    let _second =
+        common::Server::start_on(common::PORT + 1, &[("COLOPHON_WORKER_POLL_MS", "10000")]).await;
+    let owner = sign_in("dev-owner").await;
+    let project = project(&owner).await;
+    tokio::time::sleep(Duration::from_millis(500)).await;
+
+    let mut ids = Vec::new();
+    for n in 0..20 {
+        let (status, body) = upload(
+            &owner,
+            &project,
+            PNG,
+            &format!("dot{n}.png"),
+            "image/png",
+            &Uuid::now_v7().to_string(),
+        )
+        .await;
+        assert_eq!(status, StatusCode::ACCEPTED, "{body}");
+        ids.push(body["data"]["id"].as_str().expect("id").to_owned());
+    }
+    for id in &ids {
+        assert_eq!(settled(&owner, &project, id, 15).await["state"], "usable");
+    }
+    let database = common::owner_database().await;
+    let attempts: Vec<(String, i32)> = sqlx::query_as(
+        "SELECT status, attempts FROM asset_jobs WHERE project_id = $1::uuid AND kind = 'verify' ORDER BY created_at",
+    )
+    .bind(&project)
+    .fetch_all(&database)
+    .await
+    .expect("asset_jobs");
+    assert_eq!(attempts.len(), 20, "{attempts:?}");
+    assert!(
+        attempts
+            .iter()
+            .all(|(status, attempts)| status == "succeeded" && *attempts == 1),
+        "every verify succeeded on its one attempt: {attempts:?}"
+    );
 }
 
 #[tokio::test]
@@ -621,21 +771,20 @@ async fn renditions_are_served_under_their_names() {
     assert_eq!(settled["state"], "usable", "{settled}");
     assert_eq!(settled["derivatives"], json!(["w320"]), "{settled}");
 
-    // The original, its rendition, and nothing else answers.
+    // The original, its rendition, and nothing else answers: to a member, privately, while
+    // nothing published names it (D-229); to the public, not at all.
     for path in [
         media(&project, &asset),
         format!("{}/w320", media(&project, &asset)),
     ] {
-        let response = app()
-            .get(format!("{}{}", common::ORIGIN, path))
-            .send()
-            .await
-            .expect("request");
+        let response = media_get(Some(&owner), &path).await;
         assert_eq!(response.status(), StatusCode::OK, "{path}");
         assert_eq!(response.headers()["content-type"], "image/png");
+        assert_eq!(response.headers()["cache-control"], "private, no-store");
         assert_eq!(
-            response.headers()["cache-control"],
-            "public, max-age=60, must-revalidate"
+            media_status(None, &path).await,
+            StatusCode::NOT_FOUND,
+            "{path}"
         );
     }
     for name in ["w1280", "nope", "W320", "../../quarantine"] {
@@ -680,7 +829,11 @@ async fn a_usable_asset_is_deleted_and_its_objects_go() {
         media(&project, &asset),
         format!("{}/w320", media(&project, &asset)),
     ] {
-        assert_eq!(media_status(&path).await, StatusCode::OK, "{path}");
+        assert_eq!(
+            media_status(Some(&owner), &path).await,
+            StatusCode::OK,
+            "{path}"
+        );
     }
     covers(&owner, &project).await;
 
@@ -720,7 +873,11 @@ async fn a_usable_asset_is_deleted_and_its_objects_go() {
         media(&project, &asset),
         format!("{}/w320", media(&project, &asset)),
     ] {
-        assert_eq!(media_status(&path).await, StatusCode::NOT_FOUND, "{path}");
+        assert_eq!(
+            media_status(Some(&owner), &path).await,
+            StatusCode::NOT_FOUND,
+            "{path}"
+        );
     }
 
     // Gone means gone: another request under a new key gets `already_deleted`.
@@ -991,7 +1148,10 @@ async fn an_old_unreferenced_asset_expires_and_its_objects_go() {
         settled(&owner, &project, &asset, 15).await["state"],
         "usable"
     );
-    assert_eq!(media_status(&media(&project, &asset)).await, StatusCode::OK);
+    assert_eq!(
+        media_status(Some(&owner), &media(&project, &asset)).await,
+        StatusCode::OK
+    );
 
     // Nothing ever names it: two days on, the sweep expires it through the same attempt a
     // delete request would ride — the tombstone lands, the object goes.
@@ -1000,7 +1160,7 @@ async fn an_old_unreferenced_asset_expires_and_its_objects_go() {
     let tombstone = reached(&owner, &project, &asset, "deleted", 15).await;
     assert_eq!(tombstone["state"], "deleted", "{tombstone}");
     assert_eq!(
-        media_status(&media(&project, &asset)).await,
+        media_status(Some(&owner), &media(&project, &asset)).await,
         StatusCode::NOT_FOUND
     );
     database.close().await;
@@ -1215,7 +1375,7 @@ async fn usable_asset() -> (common::Server, Session, String, String, String, Vec
     assert_eq!(one.len(), 1, "{one:?}");
     assert_eq!(one[0]["seq"], 1, "{one:?}");
     assert_eq!(one[0]["sha256"], sha1, "{one:?}");
-    let v1_bytes = media_bytes(&media(&project, &asset)).await;
+    let v1_bytes = media_bytes(Some(&owner), &media(&project, &asset)).await;
     (server, owner, project, asset, sha1, v1_bytes)
 }
 
@@ -1259,31 +1419,43 @@ async fn a_replace_lands_a_new_version_and_the_old_keeps_serving() {
 
     // The bare path serves the current version — different bytes than version 1's, with its
     // rendition under it — and the pinned path serves version 1's exact bytes forever.
-    let current = media_bytes(&media(&project, &asset)).await;
+    let current = media_bytes(Some(&owner), &media(&project, &asset)).await;
     assert_ne!(current, v1_bytes, "the current version moved on");
     assert_eq!(
-        media_status(&format!("{}/w320", media(&project, &asset))).await,
+        media_status(Some(&owner), &format!("{}/w320", media(&project, &asset))).await,
         StatusCode::OK
     );
     assert_eq!(
-        media_bytes(&format!("{}/{sha1}", media(&project, &asset))).await,
+        media_bytes(Some(&owner), &format!("{}/{sha1}", media(&project, &asset))).await,
         v1_bytes,
         "the pinned version serves the bytes the first upload verified"
     );
     // A rendition of a pinned version answers under its own address — and only when the
     // version actually wrote one (the 1x1 first upload made no `w320`).
     assert_eq!(
-        media_status(&format!("{}/{sha2}/w320", media(&project, &asset))).await,
+        media_status(
+            Some(&owner),
+            &format!("{}/{sha2}/w320", media(&project, &asset))
+        )
+        .await,
         StatusCode::OK
     );
     assert_eq!(
-        media_status(&format!("{}/{sha1}/w320", media(&project, &asset))).await,
+        media_status(
+            Some(&owner),
+            &format!("{}/{sha1}/w320", media(&project, &asset))
+        )
+        .await,
         StatusCode::NOT_FOUND
     );
     // A 64-hex segment that names no version of this asset is a 404, like anything that
     // never was.
     assert_eq!(
-        media_status(&format!("{}/{:0>64}", media(&project, &asset), "deadbeef")).await,
+        media_status(
+            Some(&owner),
+            &format!("{}/{:0>64}", media(&project, &asset), "deadbeef")
+        )
+        .await,
         StatusCode::NOT_FOUND
     );
 }
@@ -1392,7 +1564,7 @@ async fn a_replaced_asset_a_release_names_keeps_every_version_serving() {
     let asset = body["data"]["id"].as_str().expect("id").to_owned();
     let first = settled(&owner, &project, &asset, 15).await;
     let sha1 = first["sha256"].as_str().expect("a sha256").to_owned();
-    let v1_bytes = media_bytes(&media(&project, &asset)).await;
+    let v1_bytes = media_bytes(Some(&owner), &media(&project, &asset)).await;
     let entry = cover(&editor, &project, "Released cover", &asset).await;
     let (path, hash) = approved(&owner, &editor, &project, &entry).await;
     let published = publish(&owner, &path, &hash, 0).await;
@@ -1416,14 +1588,21 @@ async fn a_replaced_asset_a_release_names_keeps_every_version_serving() {
 
     // What the release named still serves, byte for byte, at its pinned address.
     assert_eq!(
-        media_bytes(&format!("{}/{sha1}", media(&project, &asset))).await,
+        media_bytes(None, &format!("{}/{sha1}", media(&project, &asset))).await,
         v1_bytes,
-        "the version release 1 saw is still there and still served"
+        "the version release 1 saw is still there and still served, publicly"
     );
+    // The replacement no release has named yet: a member's, not the public's (D-229).
     assert_eq!(
-        media_status(&format!("{}/{sha2}", media(&project, &asset))).await,
+        media_status(Some(&owner), &format!("{}/{sha2}", media(&project, &asset))).await,
         StatusCode::OK
     );
+    assert_eq!(
+        media_status(None, &format!("{}/{sha2}", media(&project, &asset))).await,
+        StatusCode::NOT_FOUND
+    );
+    // The public's bare address keeps showing the published version until the next publish.
+    assert_eq!(media_bytes(None, &media(&project, &asset)).await, v1_bytes);
 
     // And the delete request's keep-rule never let go: a publication still naming the asset
     // refuses the delete outright, so neither version's objects can be collected.
@@ -1514,19 +1693,35 @@ async fn a_deleted_asset_collects_every_version_and_rendition() {
         format!("{}/{sha1}", media(&project, &asset)),
         format!("{}/{sha2}", media(&project, &asset)),
     ] {
-        assert_eq!(media_status(&path).await, StatusCode::NOT_FOUND, "{path}");
+        assert_eq!(
+            media_status(Some(&owner), &path).await,
+            StatusCode::NOT_FOUND,
+            "{path}"
+        );
     }
     database.close().await;
 }
 
 /// Media caching follows what an address names (D-157): the bare address is the asset's
-/// current version, which a replace moves and a delete ends, so caches keep it a minute and
-/// then revalidate — `304` while the version stands, the new bytes once it moved — while a
-/// version's own sha address never changes and is `immutable` for a year.
+/// newest published version, which a publish moves and a delete ends, so caches keep it a minute
+/// and then revalidate — `304` while the version stands, the new bytes once a release names the
+/// replacement (D-229: until then the replacement is a member's, privately) — while a version's
+/// own sha address never changes and is `immutable` for a year.
 #[tokio::test]
 #[ignore = "needs the stack and scripts/migrate.sh"]
 async fn a_bare_media_address_revalidates_and_a_versioned_one_is_immutable() {
     let (_server, owner, project, asset, sha1, v1_bytes) = usable_asset().await;
+    let editor = sign_in("dev-editor").await;
+    join(&owner, &editor, &project, "editor").await;
+    covers(&owner, &project).await;
+    let entry = cover(&editor, &project, "Cover", &asset).await;
+    let (path, hash) = approved(&owner, &editor, &project, &entry).await;
+    let published = publish(&owner, &path, &hash, 0).await;
+    assert_eq!(published.status, StatusCode::CREATED, "{}", published.body);
+    let generation = published.body["data"]["generation"]
+        .as_i64()
+        .expect("generation");
+
     let bare = format!("{}{}", common::ORIGIN, media(&project, &asset));
     let first = app().get(&bare).send().await.expect("request");
     assert_eq!(first.status(), StatusCode::OK);
@@ -1562,7 +1757,8 @@ async fn a_bare_media_address_revalidates_and_a_versioned_one_is_immutable() {
         "public, max-age=31536000, immutable"
     );
 
-    // A replace moves the bare address: the same revalidation now gets the new bytes.
+    // A replace no release names yet: the public still revalidates to the published version, and
+    // a member sees the replacement, privately.
     let asked = replace(
         &owner,
         &project,
@@ -1575,6 +1771,26 @@ async fn a_bare_media_address_revalidates_and_a_versioned_one_is_immutable() {
     .await;
     assert_eq!(asked.status, StatusCode::ACCEPTED, "{}", asked.body);
     swung(&owner, &project, &asset, &sha1, 15).await;
+    let still = app()
+        .get(&bare)
+        .header("if-none-match", &etag)
+        .send()
+        .await
+        .expect("request");
+    assert_eq!(
+        still.status(),
+        StatusCode::NOT_MODIFIED,
+        "the public's version stands"
+    );
+    let draft = media_get(Some(&owner), &media(&project, &asset)).await;
+    assert_eq!(draft.status(), StatusCode::OK);
+    assert_eq!(draft.headers()["cache-control"], "private, no-store");
+    assert_ne!(draft.bytes().await.expect("body").to_vec(), v1_bytes);
+
+    // Publishing the entry again names the replacement: the stale ETag gets the new bytes.
+    let (path, hash) = approved(&owner, &editor, &project, &entry).await;
+    let again = publish(&owner, &path, &hash, generation).await;
+    assert_eq!(again.status, StatusCode::CREATED, "{}", again.body);
     let moved = app()
         .get(&bare)
         .header("if-none-match", &etag)
@@ -1584,7 +1800,191 @@ async fn a_bare_media_address_revalidates_and_a_versioned_one_is_immutable() {
     assert_eq!(
         moved.status(),
         StatusCode::OK,
-        "a stale ETag gets the new version"
+        "a stale ETag gets the newly published version"
     );
     assert_ne!(moved.bytes().await.expect("body").to_vec(), v1_bytes);
+}
+
+/// An upload opened on a raw socket (D-215): its headers, declaring `length` bytes, then `first`.
+/// Raw so the body can be paced, held open or cut short: a 10 MB image on a 2 Mbit/s line takes
+/// about 40 s. `session` `None` sends no credentials.
+async fn open_upload(
+    session: Option<&Session>,
+    project: &str,
+    length: usize,
+    first: &[u8],
+) -> tokio::net::TcpStream {
+    use tokio::io::AsyncWriteExt;
+    let address = common::ORIGIN
+        .strip_prefix("http://")
+        .expect("an http origin");
+    let mut socket = tokio::net::TcpStream::connect(address)
+        .await
+        .expect("connect");
+    let credentials = session.map_or_else(String::new, |session| {
+        format!(
+            "Cookie: {}\r\nX-CSRF-Token: {}\r\n",
+            session.cookie, session.csrf
+        )
+    });
+    let head = format!(
+        "POST {path} HTTP/1.1\r\nHost: {address}\r\nOrigin: {origin}\r\n{credentials}\
+         Idempotency-Key: {key}\r\nX-Colophon-File-Name: slow.png\r\nContent-Type: image/png\r\n\
+         Content-Length: {length}\r\nConnection: close\r\n\r\n",
+        path = assets(project),
+        origin = common::ORIGIN,
+        key = key(),
+    );
+    socket.write_all(head.as_bytes()).await.expect("head");
+    socket.write_all(first).await.expect("first bytes");
+    socket.flush().await.expect("flush");
+    socket
+}
+
+/// The status line's code and the whole answer of `socket`, read within `seconds`.
+async fn answer(socket: &mut tokio::net::TcpStream, seconds: u64) -> (String, String) {
+    use tokio::io::AsyncReadExt;
+    let mut bytes = Vec::new();
+    // An answer can come before the body is all sent: read what arrives until the server closes.
+    let _ =
+        tokio::time::timeout(Duration::from_secs(seconds), socket.read_to_end(&mut bytes)).await;
+    let text = String::from_utf8_lossy(&bytes).into_owned();
+    (
+        text.split_whitespace().nth(1).unwrap_or("").to_owned(),
+        text,
+    )
+}
+
+/// A body still arriving isn't the server's slowness (D-215): an upload whose bytes trickle in for
+/// longer than the request deadline, never idle for long, is stored, not cut off with a 504. The
+/// deadline (here 1.5 s) covers the server's own work once the body has arrived.
+#[tokio::test]
+#[ignore = "needs the stack (Garage) and scripts/migrate.sh"]
+async fn a_slow_upload_is_stored_not_timed_out() {
+    use tokio::io::AsyncWriteExt;
+    let _server = common::Server::start_with(&[("COLOPHON_REQUEST_TIMEOUT_MS", "1500")]).await;
+    let owner = sign_in("dev-owner").await;
+    let project = project(&owner).await;
+    let mut socket = open_upload(Some(&owner), &project, WIDE_PNG.len(), &[]).await;
+    let started = Instant::now();
+    // About 3 s for 99 bytes: twice the deadline, a byte every 30 ms (never idle for long).
+    for byte in WIDE_PNG {
+        socket.write_all(&[*byte]).await.expect("a byte");
+        socket.flush().await.expect("flush");
+        tokio::time::sleep(Duration::from_millis(30)).await;
+    }
+    let (status, text) = answer(&mut socket, 15).await;
+    assert!(
+        started.elapsed() > Duration::from_millis(2_500),
+        "the body took longer than the deadline"
+    );
+    assert_eq!(status, "202", "{text}");
+    assert!(
+        text.contains("\"quarantined\"") || text.contains("\"usable\""),
+        "{text}"
+    );
+}
+
+/// A body that stops arriving is given up after the idle timeout (15 s), `408 body_stalled`: it
+/// can't hold its share of the upload budget open for the whole read bound.
+#[tokio::test]
+#[ignore = "needs the stack (Garage) and scripts/migrate.sh"]
+async fn a_stalled_upload_is_given_up_after_its_idle_timeout() {
+    let _server = common::Server::start().await;
+    let owner = sign_in("dev-owner").await;
+    let project = project(&owner).await;
+    let mut socket = open_upload(Some(&owner), &project, 4096, &WIDE_PNG[..20]).await;
+    let started = Instant::now();
+    let (status, text) = answer(&mut socket, 25).await;
+    assert_eq!(status, "408", "{text}");
+    assert!(text.contains("body_stalled"), "{text}");
+    assert!(
+        started.elapsed() >= Duration::from_secs(14),
+        "{:?}",
+        started.elapsed()
+    );
+}
+
+/// Nobody's bytes are read before they are known (D-215): an upload without a session is refused
+/// at once, its body never awaited.
+#[tokio::test]
+#[ignore = "needs the stack (Garage) and scripts/migrate.sh"]
+async fn an_anonymous_upload_is_refused_before_its_body_is_read() {
+    let _server = common::Server::start().await;
+    let owner = sign_in("dev-owner").await;
+    let project = project(&owner).await;
+    let mut socket = open_upload(None, &project, 1024 * 1024, b"").await;
+    let started = Instant::now();
+    let (status, text) = answer(&mut socket, 10).await;
+    assert_eq!(status, "401", "{text}");
+    assert!(
+        started.elapsed() < Duration::from_secs(3),
+        "answered without waiting for the body"
+    );
+}
+
+/// The memory bound (D-215): twelve uploads declaring the 21 MiB limit fill the default 256 MiB
+/// budget, the thirteenth is refused `503 uploads_busy` after a short wait; one session or token has
+/// at most four in flight (`429 too_many_uploads`) while another still uploads; and a body declared
+/// over the limit is refused `413` before a byte is read.
+#[tokio::test]
+#[ignore = "needs the stack (Garage) and scripts/migrate.sh"]
+async fn uploads_in_flight_are_bounded_by_memory_and_by_credential() {
+    const LIMIT: usize = 21 * 1024 * 1024;
+    let _server = common::Server::start().await;
+    let owner = sign_in("dev-owner").await;
+    let project = project(&owner).await;
+    // Three sessions of the same person: each its own credential.
+    let sessions = [
+        owner.clone(),
+        sign_in("dev-owner").await,
+        sign_in("dev-owner").await,
+    ];
+    // Four uploads from each of the three sessions hold twelve shares of the budget, open, slow.
+    let mut held = Vec::new();
+    for session in &sessions {
+        for _ in 0..4 {
+            held.push(open_upload(Some(session), &project, LIMIT, &WIDE_PNG[..8]).await);
+        }
+    }
+    tokio::time::sleep(Duration::from_millis(500)).await;
+    // A fifth from the first session: its own cap, at once, whatever the budget.
+    let mut fifth = open_upload(Some(&sessions[0]), &project, 1024, &[]).await;
+    let (status, text) = answer(&mut fifth, 5).await;
+    assert_eq!(status, "429", "{text}");
+    assert!(
+        text.contains("too_many_uploads") && text.to_ascii_lowercase().contains("retry-after"),
+        "{text}"
+    );
+    // The thirteenth at the limit, from a fourth session: the budget is full, refused after its wait.
+    let fourth = sign_in("dev-owner").await;
+    let mut thirteenth = open_upload(Some(&fourth), &project, LIMIT, &WIDE_PNG[..8]).await;
+    let started = Instant::now();
+    let (status, text) = answer(&mut thirteenth, 10).await;
+    assert_eq!(status, "503", "{text}");
+    assert!(
+        text.contains("uploads_busy") && text.to_ascii_lowercase().contains("retry-after"),
+        "{text}"
+    );
+    assert!(
+        started.elapsed() >= Duration::from_millis(1_800),
+        "it waited for room first"
+    );
+    // Room again once the held uploads go: the fourth session's small upload is stored.
+    drop(held);
+    tokio::time::sleep(Duration::from_millis(500)).await;
+    let (status, body) = upload(
+        &fourth,
+        &project,
+        WIDE_PNG,
+        "after.png",
+        "image/png",
+        &key(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::ACCEPTED, "{body}");
+    // Declared over the limit: refused before any byte is read.
+    let mut over = open_upload(Some(&fourth), &project, LIMIT + 1, &[]).await;
+    let (status, text) = answer(&mut over, 5).await;
+    assert_eq!(status, "413", "{text}");
 }

@@ -7,10 +7,10 @@
 	import ChevronRightIcon from '@lucide/svelte/icons/chevron-right';
 	import type { Snippet } from 'svelte';
 
-	let { children, class: className = '' }: { children: Snippet; class?: string } = $props();
+	let { children, class: className = '', open = $bindable(false) }: { children: Snippet; class?: string; open?: boolean } = $props();
 </script>
 
-<details class="group text-sm {className}" data-technical data-testid="technical-details">
+<details class="group text-sm {className}" bind:open data-technical data-testid="technical-details">
 	<summary
 		class="inline-flex cursor-pointer list-none items-center gap-1 rounded-md text-xs text-muted-foreground outline-none select-none hover:text-foreground focus-visible:ring-[3px] focus-visible:ring-ring/40 [&::-webkit-details-marker]:hidden"
 	>

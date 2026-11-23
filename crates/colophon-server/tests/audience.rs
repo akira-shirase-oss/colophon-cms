@@ -1106,6 +1106,47 @@ async fn ask_link(project: &str, email: &str, return_to: &str) -> (StatusCode, V
     )
 }
 
+/// RUSTSEC-2026-0592: a nested `blob:` URL as an origin is refused with 422, and the server
+/// lives on. On url ≤ 2.5.8, `Url::origin()` recursed into it until the stack overflowed and
+/// the process aborted, so any signed-in caller could stop the server with one request.
+#[tokio::test]
+#[ignore = "needs the stack and scripts/migrate.sh"]
+async fn a_nested_blob_origin_is_refused_and_the_server_lives_on() {
+    let _server = Server::start().await;
+    let owner = sign_in("dev-owner").await;
+    let project = project(&owner).await;
+    let path = format!("/api/v1/projects/{project}/audience/origins");
+    // 20,000 levels (100 KB): on url 2.5.8 this aborted the server within about a minute.
+    let nested = format!("{}https://site.test", "blob:".repeat(20_000));
+    let refused = call(
+        &owner,
+        Method::PUT,
+        &path,
+        Some(&json!({ "origins": [nested] })),
+        &[],
+    )
+    .await
+    .expect("an answer, not a dropped connection");
+    assert_eq!(
+        refused.status,
+        StatusCode::UNPROCESSABLE_ENTITY,
+        "{}",
+        refused.body
+    );
+    assert_eq!(
+        refused.body["error"]["details"]["reason"].as_str(),
+        Some("invalid_origin"),
+        "{}",
+        refused.body
+    );
+    // Still serving: the next request is answered, and the list still takes a good origin.
+    let after = call(&owner, Method::GET, &path, None, &[])
+        .await
+        .expect("the server still answers");
+    assert_eq!(after.status, StatusCode::OK, "{}", after.body);
+    list_origins(&owner, &project, &["https://site.test"]).await;
+}
+
 /// Account takeover through `return_to` (D-148): a magic link is a credential, so its token
 /// may only ever be appended to an origin the project lists. An attacker who asks for a link
 /// to the victim's address with their own site as `return_to` is refused before any token

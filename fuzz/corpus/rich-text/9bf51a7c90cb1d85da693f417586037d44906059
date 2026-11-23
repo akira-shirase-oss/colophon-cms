@@ -1,0 +1,1 @@
+{"schema": "colophon/rich-text", "version": 1, "doc": {"type": "doc", "content": [{"type": "paragraph", "content": [{"type": "text", "text": "a"}, {"type": "hardBreak", "marks": [{"type": "bold"}]}, {"type": "text", "text": "b"}]}]}}

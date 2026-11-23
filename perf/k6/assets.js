@@ -10,6 +10,9 @@
 
 import http from 'k6/http';
 import { check, fail, sleep } from 'k6';
+import { Counter, Rate, Trend } from 'k6/metrics';
+import exec from 'k6/execution';
+import { idempotencyKey } from './lib/idempotency-key.js';
 
 const BASE_URL = __ENV.BASE_URL || 'http://127.0.0.1:58000';
 const PUBLIC_URL = __ENV.PUBLIC_URL || 'http://localhost:58000';
@@ -32,7 +35,28 @@ const scenarios = {
 };
 if (!(SCENARIO in scenarios)) throw new Error(`SCENARIO must be one of ${Object.keys(scenarios).join(', ')}`);
 
-const thresholds = { http_req_failed: ['rate==0'], checks: ['rate==1'], http_req_duration: [`p(99)<${P99_MS}`] };
+// D-218's evidence: how long an upload waits to leave quarantine, as the delete arm sees it (from the
+// upload's answer to the first read that isn't quarantined, or to giving up), and how many deletes met an
+// upload still being verified — the server's honest `409 asset_quarantined`, counted apart from failures.
+const verifyWait = new Trend('verify_wait_ms', true);
+const notYetVerified = new Counter('not_yet_verified');
+
+// Uploads refused for load (429 too_many_uploads, 503): a hard failure of the smoke when 1% or more of them are
+// (the record's hard_failures.upload_refused), so a run that measured refusals can't pass as uploads.
+const uploadRefused = new Rate('upload_refused');
+
+// Every state the API documents for an asset, read from the committed OpenAPI document (docs/api/openapi.json,
+// `AssetView.state`), so a state added there can't make a correct read fail this smoke. The newest asset a
+// read finds may be one another VU just asked to delete (`deleting`), which the hand-written list of three
+// refused: 10 reads in CI 44630577830. open() runs at init, relative to this file.
+const ASSET_STATES = (() => {
+  const spec = JSON.parse(open('../../docs/api/openapi.json'));
+  const states = spec.components?.schemas?.AssetView?.properties?.state?.enum;
+  if (!Array.isArray(states) || !states.includes('usable')) throw new Error('docs/api/openapi.json has no AssetView.state enum: the read check needs it');
+  return states;
+})();
+
+const thresholds = { http_req_failed: ['rate==0'], checks: ['rate==1'], http_req_duration: [`p(99)<${P99_MS}`], upload_refused: ['rate<0.01'] };
 if (SCENARIO === 'steady') {
   thresholds.dropped_iterations = [`count<=${Math.floor(RATE * durationSeconds(DURATION) * 0.0001)}`];
 }
@@ -61,7 +85,7 @@ const WIDE = new Uint8Array([
 ]);
 
 function key() {
-  return `k6-${__VU}-${__ITER}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+  return idempotencyKey(`k6-${__VU}-${__ITER}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`, 'assets');
 }
 
 export function setup() {
@@ -69,6 +93,17 @@ export function setup() {
   if (signedIn.status !== 204) fail(`sign-in failed: HTTP ${signedIn.status}`);
   const jar = http.cookieJar().cookiesForURL(PUBLIC_URL);
   const session = { cookie: `colophon_session=${jar.colophon_session[0]}`, csrf: jar.colophon_csrf[0] };
+  // One session per VU, as clients have (D-215): a session or token may have 4 uploads in flight and
+  // the Studio sends 3 at a time, so 64 VUs sharing one session measured 429 too_many_uploads, not
+  // uploads (CI 44608263509: 3,598 of 4,096 uploads refused). load.sh lifts the password limit.
+  const vus = SCENARIO === 'steady' ? VUS * 2 : VUS;
+  const sessions = [session];
+  for (let i = 1; i < vus; i++) {
+    const again = http.post(`${PUBLIC_URL}/auth/signin`, JSON.stringify({ email: 'dev-owner@colophon.test', password: 'colophon-dev' }), { headers: { 'Content-Type': 'application/json' } });
+    if (again.status !== 204) fail(`sign-in ${i + 1} of ${vus} failed: HTTP ${again.status}`);
+    const cookies = http.cookieJar().cookiesForURL(PUBLIC_URL);
+    sessions.push({ cookie: `colophon_session=${cookies.colophon_session[0]}`, csrf: cookies.colophon_csrf[0] });
+  }
 
   const write = { Cookie: session.cookie, 'X-CSRF-Token': session.csrf, Origin: PUBLIC_URL, 'Content-Type': 'application/json' };
   const slug = `k6-${Date.now().toString(36)}`;
@@ -80,7 +115,7 @@ export function setup() {
   // One known-usable asset for the public origin to serve: upload, then wait for the
   // worker to verify it before the run starts.
   const made = http.post(assets, WIDE.buffer, {
-    headers: { Cookie: session.cookie, 'X-CSRF-Token': session.csrf, Origin: PUBLIC_URL, 'Content-Type': 'image/png', 'X-Colophon-File-Name': 'warm.png', 'Idempotency-Key': `k6-warm-${Date.now().toString(36)}` },
+    headers: { Cookie: session.cookie, 'X-CSRF-Token': session.csrf, Origin: PUBLIC_URL, 'Content-Type': 'image/png', 'X-Colophon-File-Name': 'warm.png', 'Idempotency-Key': idempotencyKey(`k6-warm-${Date.now().toString(36)}`, 'assets') },
     redirects: 0,
   });
   if (made.status !== 202) fail(`warm upload: HTTP ${made.status} ${made.body}`);
@@ -97,15 +132,36 @@ export function setup() {
     sleep(0.1);
   }
 
-  return { session, assets, media: `${BASE_URL}/media/v1/${id}/production`, mediaId };
+  // Published, so the public origin serves it (D-229: an upload no release names is a member's,
+  // privately): a one-field type naming it, one entry, its changeset approved and released.
+  const base = `${BASE_URL}/api/v1/projects/${id}/environments/production`;
+  const keyed = () => Object.assign({ 'Idempotency-Key': idempotencyKey(`k6-pub-${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`, 'assets') }, write);
+  const type = http.post(`${base}/content-types`, JSON.stringify({ slug: 'covers', definition: { name: 'Covers', title_field: 'title', fields: [
+    { id: 'title', label: 'Title', type: 'text', required: true },
+    { id: 'photo', label: 'Photo', type: 'asset' },
+  ] } }), { headers: keyed() });
+  if (type.status !== 201) fail(`content type: HTTP ${type.status} ${type.body}`);
+  const cover = http.post(`${base}/collections/covers/entries`, JSON.stringify({ title: 'Warm', photo: mediaId }), { headers: keyed() });
+  if (cover.status !== 201) fail(`entry: HTTP ${cover.status} ${cover.body}`);
+  const set = http.post(`${base}/changesets`, JSON.stringify({ title: 'warm', entries: [cover.json('data.id')] }), { headers: keyed() });
+  if (set.status !== 201) fail(`changeset: HTTP ${set.status} ${set.body}`);
+  const path = `${base}/changesets/${set.json('data.id')}`;
+  const ifMatch = Object.assign({ 'If-Match': `"${set.json('data.hash')}"` }, write);
+  http.post(`${path}/submit`, null, { headers: ifMatch });
+  http.post(`${path}/reviews`, JSON.stringify({ decision: 'approve' }), { headers: ifMatch });
+  const released = http.post(`${path}/publish`, JSON.stringify({ base_generation: 0 }), { headers: Object.assign(keyed(), ifMatch) });
+  if (released.status !== 201) fail(`publish: HTTP ${released.status} ${released.body}`);
+
+  return { session, sessions, assets, media: `${BASE_URL}/media/v1/${id}/production`, mediaId };
 }
 
 export default function (data) {
-  const read = { headers: { Cookie: data.session.cookie }, redirects: 0 };
+  const session = data.sessions[(__VU - 1) % data.sessions.length];
+  const read = { headers: { Cookie: session.cookie }, redirects: 0 };
   const write = (fileName) => ({
     headers: {
-      Cookie: data.session.cookie,
-      'X-CSRF-Token': data.session.csrf,
+      Cookie: session.cookie,
+      'X-CSRF-Token': session.csrf,
       Origin: PUBLIC_URL,
       'Content-Type': 'image/png',
       'X-Colophon-File-Name': fileName,
@@ -113,12 +169,13 @@ export default function (data) {
     },
     redirects: 0,
   });
-  const roll = __ITER % 10;
+  const roll = exec.scenario.iterationInTest % 10;
   if (roll < 4) {
     // Half the uploads are real, one in ten a fake the verifier will reject.
-    const fake = __ITER % 50 === 49;
+    const fake = exec.scenario.iterationInTest % 50 === 49;
     const body = fake ? FAKE : PNG;
     const res = http.post(data.assets, body.buffer, Object.assign({ tags: { endpoint: 'upload', name: 'assets' } }, write(fake ? 'photo.png' : 'dot.png')));
+    uploadRefused.add(res.status === 429 || res.status === 503);
     check(res, {
       'upload 202': (r) => r.status === 202,
       'upload lands quarantined': (r) => r.json('data.state') === 'quarantined',
@@ -127,26 +184,33 @@ export default function (data) {
     // D-098: an unreferenced upload asked to go — 202 means the delete job is queued, not that
     // the object is gone. A delete can't touch quarantine, so the upload's verdict comes first.
     const made = http.post(data.assets, PNG.buffer, Object.assign({ tags: { endpoint: 'delete-upload', name: 'assets' } }, write('going.png')));
+    uploadRefused.add(made.status === 429 || made.status === 503);
     check(made, { 'delete upload 202': (r) => r.status === 202 });
     const id = made.json('data.id');
     if (typeof id === 'string') {
+      const uploaded = Date.now();
       for (let waits = 0; waits < 100; waits += 1) {
         const one = http.get(`${data.assets}/${id}`, Object.assign({ tags: { endpoint: 'delete-wait', name: 'assets/{asset}' } }, read));
         if (one.json('data.state') !== 'quarantined') break;
         sleep(0.05);
       }
+      verifyWait.add(Date.now() - uploaded);
       const gone = http.del(`${data.assets}/${id}`, null, Object.assign({ tags: { endpoint: 'delete', name: 'assets/{asset}' } }, {
         headers: {
-          Cookie: data.session.cookie,
-          'X-CSRF-Token': data.session.csrf,
+          Cookie: session.cookie,
+          'X-CSRF-Token': session.csrf,
           Origin: PUBLIC_URL,
           'Idempotency-Key': key(),
         },
         redirects: 0,
+        // A delete of an upload still being verified is refused, honestly: not a failed request.
+        responseCallback: http.expectedStatuses(202, 409),
       }));
+      const quarantined = gone.status === 409 && gone.json('error.details.reason') === 'asset_quarantined';
+      if (quarantined) notYetVerified.add(1);
       check(gone, {
-        'delete 202': (r) => r.status === 202,
-        'delete names the asset': (r) => r.json('data.id') === id,
+        'delete 202, or 409 asset_quarantined (not yet verified)': (r) => r.status === 202 || quarantined,
+        'delete names the asset': (r) => r.status !== 202 || r.json('data.id') === id,
       });
     }
   } else if (roll === 5) {
@@ -160,7 +224,7 @@ export default function (data) {
     }
   } else if (roll === 6) {
     // D-179: search over the trigram index — a common term and a rare one.
-    const q = __ITER % 20 === 6 ? 'warm' : 'dot';
+    const q = exec.scenario.iterationInTest % 20 === 6 ? 'warm' : 'dot';
     const res = http.get(`${data.assets}?q=${q}&limit=50`, Object.assign({ tags: { endpoint: 'search', name: 'assets?q' } }, read));
     check(res, { 'search 200': (r) => r.status === 200 && Array.isArray(r.json('data')) });
   } else if (roll === 7) {
@@ -169,7 +233,7 @@ export default function (data) {
     const one = http.get(`${data.assets}/${data.mediaId}`, Object.assign({ tags: { endpoint: 'read', name: 'assets/{asset}' } }, read));
     const etag = one.headers.Etag;
     const res = http.patch(`${data.assets}/${data.mediaId}`, JSON.stringify({ title: `Warm ${__VU}-${__ITER}`, tags: ['warm', `vu-${__VU}`] }), {
-      headers: { Cookie: data.session.cookie, 'X-CSRF-Token': data.session.csrf, Origin: PUBLIC_URL, 'Content-Type': 'application/json', 'If-Match': etag, 'Idempotency-Key': key() },
+      headers: { Cookie: session.cookie, 'X-CSRF-Token': session.csrf, Origin: PUBLIC_URL, 'Content-Type': 'application/json', 'If-Match': etag, 'Idempotency-Key': key() },
       redirects: 0,
       tags: { endpoint: 'patch', name: 'assets/{asset}' },
       responseCallback: http.expectedStatuses(200, 409),
@@ -185,13 +249,13 @@ export default function (data) {
       const one = http.get(`${data.assets}/${id}`, Object.assign({ tags: { endpoint: 'read', name: 'assets/{asset}' } }, read));
       check(one, {
         'read 200': (r) => r.status === 200,
-        'read settles or waits': (r) => ['quarantined', 'usable', 'rejected'].includes(r.json('data.state')),
+        'read settles or waits': (r) => ASSET_STATES.includes(r.json('data.state')),
       });
     }
   } else {
-    // M.1/M.3: the public origin serves the setup's verified object — the original half the
-    // time, its w320 rendition the other half — no sign-in, no row reads.
-    const at = __ITER % 2 === 0 ? `${data.media}/${data.mediaId}` : `${data.media}/${data.mediaId}/w320`;
+    // M.1/M.3: the public origin serves the setup's verified, published object — the original
+    // half the time, its w320 rendition the other half — no sign-in.
+    const at = exec.scenario.iterationInTest % 2 === 0 ? `${data.media}/${data.mediaId}` : `${data.media}/${data.mediaId}/w320`;
     const object = http.get(at, { tags: { endpoint: 'media', name: 'media/v1/{asset}' }, redirects: 0 });
     check(object, {
       'media 200': (r) => r.status === 200,

@@ -206,7 +206,7 @@ pub fn resolve(local: &str, zone: &str, choice: Option<Choice>) -> Result<Resolv
 pub const fn check_window(at: i64, now: i64, approval_expires: i64) -> Result<(), ScheduleError> {
     if at <= now {
         Err(ScheduleError::InThePast)
-    } else if at - now > MAX_AHEAD_SECS {
+    } else if at.saturating_sub(now) > MAX_AHEAD_SECS {
         Err(ScheduleError::TooFar)
     } else if at >= approval_expires {
         Err(ScheduleError::AfterApproval {
@@ -219,7 +219,7 @@ pub const fn check_window(at: i64, now: i64, approval_expires: i64) -> Result<()
 
 /// Whether a schedule that started at `started` (seconds) for `at` is labelled delayed.
 pub const fn delayed(at: i64, started: i64) -> bool {
-    started - at > DELAY_GRACE_SECS
+    started.saturating_sub(at) > DELAY_GRACE_SECS
 }
 
 #[cfg(test)]

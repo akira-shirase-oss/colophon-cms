@@ -11,12 +11,19 @@
 // While they read, a `publisher` arm lands a real release every PUBLISH_SECONDS — a new
 // article pinned and published on the generation it just read — so the regions' "latest"
 // moves under them the whole run, the way it does behind a real CDN. A fresh release is
-// a fresh cache key, so the fills each release causes are `miss`/`coalesced` — the share
-// served `hit` is the warm evidence, counted per region.
+// a fresh cache key, so each key the plan reads is filled once per release: the gate is
+// those fills against that bound (D-232), counted over all regions together, because the
+// three arms share one origin cache and a fill lands on whichever arm asks first. The share
+// served `hit`/`coalesced` is reported per region as evidence, not gated: the fills are a
+// fixed count while the requests scale with the runner (CI's RATE is 300 x the runner's
+// scale), so a share floor failed slower runners with nothing wrong (CI 44817664396). The server
+// also counts fills of a key it stored less than a lifetime ago, which this bound can't see per key;
+// scripts/load.sh adds that count to `l10` as a gate at zero.
 //
 // The arms are time-boxed: TOTAL and VUS are unused. `steady` and `throughput` run the
 // same plan. handleSummary() computes the verdict into `l10` — per-region requests, hit
-// share, p95/p99, the highest generation each observed, and the stale/torn counters;
+// share, p95/p99, the highest generation each observed, the fills against their bound, and
+// the stale/torn counters;
 // scripts/load.sh stores it and fails when `held` is false — and samples server RSS, CPU
 // and Postgres connections into `resources`. scripts/load.sh gives this endpoint
 // RATE 2000 (the regions split it) and P99_MS 400 — the warm-CDN gate.
@@ -25,6 +32,7 @@ import http from 'k6/http';
 import { check, fail } from 'k6';
 import exec from 'k6/execution';
 import { Counter, Trend } from 'k6/metrics';
+import { idempotencyKey } from './lib/idempotency-key.js';
 
 const BASE_URL = __ENV.BASE_URL || 'http://127.0.0.1:58000';
 const PUBLIC_URL = __ENV.PUBLIC_URL || 'http://localhost:58000';
@@ -33,7 +41,24 @@ const RATE = parseInt(__ENV.RATE || '2000', 10);
 const PUBLISH_SECONDS = parseInt(__ENV.PUBLISH_SECONDS || '15', 10);
 const DURATION = __ENV.DURATION || '60s';
 const P99_MS = parseFloat(__ENV.P99_MS || '400');
-const HIT_FLOOR = parseFloat(__ENV.HIT_FLOOR || '0.90'); // a warm edge serves nearly all hits
+// The read plan, by iteration: of every ten, six read the latest page, three one corpus
+// entry (`iterationInTest % CORPUS`) and one the page pinned at release 1. The fill bound is
+// derived from it, so it follows the plan if the plan changes.
+const CORPUS = 200;
+const PLAN_CYCLE = 10;
+function planned(iteration) {
+  const slot = iteration % PLAN_CYCLE;
+  if (slot < 6) return 'latest';
+  return slot < 9 ? 'entry' : 'pinned';
+}
+/** The distinct corpus entries the plan reads in iterations 0..iterations-1. */
+function plannedEntries(iterations) {
+  const read = new Set();
+  for (let i = 0; i < iterations && read.size < CORPUS; i += 1) {
+    if (planned(i) === 'entry') read.add(i % CORPUS);
+  }
+  return read.size;
+}
 
 const REGIONS = ['edge_iad', 'edge_lhr', 'edge_sin'];
 const REGION_RATE = Math.max(1, Math.round(RATE / REGIONS.length));
@@ -42,6 +67,19 @@ const stale = new Counter('l10_stale');
 const torn = new Counter('l10_torn');
 const errors = new Counter('l10_errors');
 const publishes = new Counter('l10_publishes');
+// The fills by kind of key, for the bound, and the highest iteration any arm ran, for the
+// entries the plan read (each arm numbers its own iterations from 0, in the same plan).
+const KINDS = ['latest', 'entry', 'pinned'];
+const fillsByKind = {};
+for (const kind of KINDS) fillsByKind[kind] = new Counter(`l10_fills_${kind}`);
+const lastIteration = new Trend('l10_iteration');
+// The publisher's own delivery reads that filled (its base reads and the read-back of what it
+// published): with the edges' fills, every fill the server did, which its count of stores must cover.
+const publisherFills = new Counter('l10_fills_publisher');
+function publisherRead(res) {
+  if (res.headers['Colophon-Cache'] === 'miss') publisherFills.add(1);
+  return res;
+}
 // Where each edge's answer came from and the newest generation it observed — one root
 // counter per (region, how) and one root trend per region. Root metrics, not tagged
 // submetrics: a `{arm:edge_iad}` submetric only reaches the summary when it carries a
@@ -100,7 +138,7 @@ const article = (title, text) => JSON.stringify({
 });
 
 function key() {
-  return `k6-l10-${__VU}-${__ITER}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+  return idempotencyKey(`k6-l10-${__VU}-${__ITER}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`, 'cdn-warm');
 }
 
 export function setup() {
@@ -116,21 +154,22 @@ export function setup() {
   const id = project.json('data.id');
   const env = `${BASE_URL}/api/v1/projects/${id}/environments/production`;
 
-  // Two hundred articles in two releases: the corpus every edge is warm on.
+  // CORPUS articles in two releases: the corpus every edge is warm on.
   let file = '';
   const ids = [];
-  for (let i = 0; i < 200; i += 1) {
+  for (let i = 0; i < CORPUS; i += 1) {
     file += article(`Article ${i}`, 'first') + '\n';
   }
   const imported = http.post(`${env}/collections/articles/import`, file, {
-    headers: Object.assign({}, write, { 'Content-Type': 'application/jsonlines', 'Idempotency-Key': `k6-seed-${slug}` }),
+    headers: Object.assign({}, write, { 'Content-Type': 'application/jsonlines', 'Idempotency-Key': idempotencyKey(`k6-seed-${slug}`, 'cdn-warm') }),
   });
   if (imported.status !== 201) fail(`seed import: HTTP ${imported.status} ${imported.body}`);
   for (const outcome of imported.json('data.outcomes')) ids.push(outcome.entry);
+  if (ids.length !== CORPUS) fail(`seed import: ${ids.length} entries, not ${CORPUS}`);
   let generation = 0;
   for (let c = 0; c * 100 < ids.length; c += 1) {
     const set = http.post(`${env}/changesets`, JSON.stringify({ title: `release ${c}`, entries: ids.slice(c * 100, c * 100 + 100) }), {
-      headers: Object.assign({ 'Idempotency-Key': `k6-cs-${slug}-${c}` }, write),
+      headers: Object.assign({ 'Idempotency-Key': idempotencyKey(`k6-cs-${slug}-${c}`, 'cdn-warm') }, write),
     });
     if (set.status !== 201) fail(`changeset ${c}: HTTP ${set.status} ${set.body}`);
     const path = `${env}/changesets/${set.json('data.id')}`;
@@ -138,7 +177,7 @@ export function setup() {
     http.post(`${path}/submit`, null, { headers: ifMatch });
     http.post(`${path}/reviews`, JSON.stringify({ decision: 'approve' }), { headers: ifMatch });
     const published = http.post(`${path}/publish`, JSON.stringify({ base_generation: generation }), {
-      headers: Object.assign({ 'Idempotency-Key': `k6-pub-${slug}-${c}` }, ifMatch),
+      headers: Object.assign({ 'Idempotency-Key': idempotencyKey(`k6-pub-${slug}-${c}`, 'cdn-warm') }, ifMatch),
     });
     if (published.status !== 201) fail(`publish ${c}: HTTP ${published.status} ${published.body}`);
     generation = published.json('data.generation');
@@ -157,12 +196,14 @@ const seen = { g: 0 };
 
 export function edge(data) {
   const region = exec.scenario.name;
-  const slot = __ITER % 10;
+  const iteration = exec.scenario.iterationInTest;
+  const kind = planned(iteration);
+  lastIteration.add(iteration);
   let res; let pinned = false;
-  if (slot < 6) {
+  if (kind === 'latest') {
     res = http.get(`${data.delivery}?limit=50`, { redirects: 0, tags: { arm: region, endpoint: 'latest', name: 'content' } });
-  } else if (slot < 9) {
-    res = http.get(`${data.delivery}/${data.ids[__ITER % data.ids.length]}`, { redirects: 0, tags: { arm: region, endpoint: 'entry', name: 'content/{entry}' } });
+  } else if (kind === 'entry') {
+    res = http.get(`${data.delivery}/${data.ids[iteration % CORPUS]}`, { redirects: 0, tags: { arm: region, endpoint: 'entry', name: 'content/{entry}' } });
   } else {
     pinned = true;
     res = http.get(`${data.delivery}?limit=50&generation=1`, { redirects: 0, tags: { arm: region, endpoint: 'pinned', name: 'content' } });
@@ -172,6 +213,7 @@ export function edge(data) {
     observedByRegion[region].add(generation);
     const how = res.headers['Colophon-Cache'];
     if (typeof how === 'string' && servedByRegion[region][how]) servedByRegion[region][how].add(1);
+    if (how === 'miss') fillsByKind[kind].add(1);
     // Pinned pages are old on purpose — only a "latest" answer can be a stale refill.
     if (!pinned) {
       if (generation < seen.g) stale.add(1);
@@ -193,7 +235,7 @@ export function edge(data) {
 // and each release must land exactly one ahead.
 export function publisher(data) {
   const write = { Cookie: data.session.cookie, 'X-CSRF-Token': data.session.csrf, Origin: PUBLIC_URL, 'Content-Type': 'application/json' };
-  const latest = http.get(`${data.delivery}?limit=1`, { redirects: 0, tags: { arm: 'publisher', endpoint: 'base', name: 'content' } });
+  const latest = publisherRead(http.get(`${data.delivery}?limit=1`, { redirects: 0, tags: { arm: 'publisher', endpoint: 'base', name: 'content' } }));
   if (!check(latest, { 'base read 200': (r) => r.status === 200 })) { errors.add(1); return; }
   const base = parseInt(latest.headers['Colophon-Generation'] || '-1', 10);
   const made = http.post(data.entries, article(`Release ${key()}`, 'new'), {
@@ -221,7 +263,7 @@ export function publisher(data) {
   if (published.status === 409) {
     // Another publish won between the base read and this one — read the generation and
     // republish, the honest retry.
-    const again = http.get(`${data.delivery}?limit=1`, { redirects: 0, tags: { arm: 'publisher', endpoint: 'base', name: 'content' } });
+    const again = publisherRead(http.get(`${data.delivery}?limit=1`, { redirects: 0, tags: { arm: 'publisher', endpoint: 'base', name: 'content' } }));
     const moved = parseInt(again.headers['Colophon-Generation'] || '-1', 10);
     published = http.post(`${path}/publish`, JSON.stringify({ base_generation: moved }), {
       headers: Object.assign({ 'Idempotency-Key': key() }, ifMatch), redirects: 0,
@@ -237,16 +279,17 @@ export function publisher(data) {
   if (!landed) { errors.add(1); return; }
   publishes.add(1);
   // A region would see it like this: the new entry reads back at the release it minted.
-  const back = http.get(`${data.delivery}/${id}`, { redirects: 0, tags: { arm: 'publisher', endpoint: 'published-read', name: 'content/{entry}' } });
+  const back = publisherRead(http.get(`${data.delivery}/${id}`, { redirects: 0, tags: { arm: 'publisher', endpoint: 'published-read', name: 'content/{entry}' } }));
   if (!check(back, {
     'published read 200': (r) => r.status === 200,
     'served at the release it minted': (r) => r.headers['Colophon-Generation'] === String(published.json('data.generation')),
   })) errors.add(1);
 }
 
-/** Computes the L10 verdict: every region ran inside the warm gate with its hit share
- *  above the floor, the newest generation was observed by every region, and stale
- *  refills and torn pages stayed at zero while releases landed underneath. */
+/** Computes the L10 verdict: every region ran inside the warm latency gate, the fills
+ *  stayed within one per key the plan read per release (all regions together, D-232), and
+ *  stale refills and torn pages stayed at zero while releases landed underneath. Hit and
+ *  coalesced shares are evidence only: they scale with the runner's speed. */
 export function handleSummary(data) {
   const metric = (name) => (data.metrics[name] ? data.metrics[name].values : null);
   const count = (name) => (metric(name) ? metric(name).count || 0 : 0);
@@ -272,12 +315,24 @@ export function handleSummary(data) {
       served,
       hit_share: regionWarm,
     };
-    regionsHeld = regionsHeld && (dur['p(99)'] || Infinity) < P99_MS && (reqs.count || 0) > 0 && regionWarm > HIT_FLOOR;
+    regionsHeld = regionsHeld && (dur['p(99)'] || Infinity) < P99_MS && (reqs.count || 0) > 0;
   }
   const hitShare = totalServed > 0 ? totalWarm / totalServed : 0;
+  // Each release is a fresh key for everything, and single-flight fills a key once: so over
+  // the run's releases (the seeded one plus each that landed) the latest page fills at most
+  // once a release, each entry the plan read at most once a release, and the page pinned at
+  // release 1 once. A fill beyond that is an answer the cache lost or never kept.
+  const releases = count('l10_publishes') + 1;
+  const iterations = metric('l10_iteration') ? metric('l10_iteration').max + 1 : 0;
+  const entriesRead = plannedEntries(iterations);
+  const bound = { latest: releases, entry: releases * entriesRead, pinned: 1 };
+  const fillCounts = {};
+  for (const kind of KINDS) fillCounts[kind] = count(`l10_fills_${kind}`);
+  const fillsTotal = KINDS.reduce((n, kind) => n + fillCounts[kind], 0);
+  const fillBound = KINDS.reduce((n, kind) => n + bound[kind], 0);
   const gates = {
     each_region_within_gate: regionsHeld,
-    warm_share: hitShare > HIT_FLOOR,
+    fills_within_bound: KINDS.every((kind) => fillCounts[kind] <= bound[kind]),
     no_stale_refills: count('l10_stale') === 0,
     no_torn_pages: count('l10_torn') === 0,
     publishes_landed: count('l10_publishes') > 0,
@@ -285,7 +340,7 @@ export function handleSummary(data) {
   };
   data.l10 = {
     spec: 'L10: CDN warm traffic + repeated publishes — per-region latency and observed generation; detect stale refills and mixed-release pages',
-    gate: `each named region's p99 <${P99_MS} ms, hit+coalesced share >${HIT_FLOOR * 100}% over fills every publish caused; zero stale refills or torn pages; releases landed the whole run`,
+    gate: `each named region's p99 <${P99_MS} ms; fills <= one per key read per release, over all regions (latest <= ${bound.latest}, entry <= ${bound.entry}, pinned <= ${bound.pinned}); zero stale refills or torn pages; releases landed the whole run`,
     regions_simulated: REGIONS,
     publishes_landed: count('l10_publishes'),
     served: {
@@ -295,6 +350,15 @@ export function handleSummary(data) {
       bypass: REGIONS.reduce((n, r) => n + regions[r].served.bypass, 0),
     },
     hit_share: hitShare,
+    fills: {
+      by_kind: fillCounts,
+      bound,
+      total: fillsTotal,
+      total_bound: fillBound,
+      publisher: count('l10_fills_publisher'),
+      releases,
+      entries_read: entriesRead,
+    },
     stale_refills: count('l10_stale'),
     torn_pages: count('l10_torn'),
     errors: count('l10_errors'),
@@ -308,7 +372,7 @@ export function handleSummary(data) {
       '',
       '  L10 — CDN warm traffic + repeated publishes',
       `    ${fmt}`,
-      `    hit share ${(hitShare * 100).toFixed(1)}% (floor ${HIT_FLOOR * 100}%), ${count('l10_publishes')} publishes landed; stale ${count('l10_stale')}, torn ${count('l10_torn')}, errors ${count('l10_errors')}`,
+      `    ${fillsTotal} fills (bound ${fillBound}: latest ${fillCounts.latest}/${bound.latest}, entry ${fillCounts.entry}/${bound.entry}, pinned ${fillCounts.pinned}/${bound.pinned}); hit share ${(hitShare * 100).toFixed(1)}% (evidence); ${count('l10_publishes')} publishes landed; stale ${count('l10_stale')}, torn ${count('l10_torn')}, errors ${count('l10_errors')}`,
       `    verdict: ${data.l10.held ? 'HELD' : 'BROKE'}`,
       '',
     ].join('\n'),

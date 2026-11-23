@@ -21,6 +21,8 @@ use colophon_domain::{policy::Action, rich_text::Rejection, schema::Refusal};
 use serde::{Serialize, Serializer};
 use uuid::Uuid;
 
+use crate::outages::Fault;
+
 /// Stable, machine-readable error codes. Renaming one is a breaking API change.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
@@ -495,6 +497,22 @@ pub enum ApiError {
         /// The bound.
         limit: i64,
     },
+    /// The uploads in flight already hold the memory budget, and none finished within the wait
+    /// (D-215). 503 with `Retry-After`; `details.reason` is `uploads_busy`.
+    #[error("too many uploads are in progress on this server; try again shortly")]
+    UploadsBusy,
+    /// This session or token already has its most uploads in flight (D-215). 429 with
+    /// `Retry-After`; `details.reason` is `too_many_uploads`.
+    #[error("you have several uploads in progress already; wait for one to finish")]
+    TooManyUploads,
+    /// An upload's body stopped arriving: no bytes for the idle timeout, or the whole read ran past
+    /// its bound (D-215). 408; `details.reason` is `body_stalled`.
+    #[error("the upload stopped arriving; send it again")]
+    BodyStalled,
+    /// The server's own work on an upload, after its body arrived, ran past the request deadline
+    /// (D-215). 504, as the deadline answers every other request.
+    #[error("the server took too long to answer")]
+    UploadDeadline,
     /// Sign-in failed. Details are logged, never shown: they can help an attacker.
     #[error("sign-in failed or expired; start again")]
     SignInFailed,
@@ -552,7 +570,9 @@ impl ApiError {
     /// such as a conflict, match it first.
     pub fn from_db(error: DbError) -> Self {
         match error {
-            DbError::Busy => Self::Busy,
+            // A transaction Postgres aborted for a deadlock or a serialization conflict rolled back
+            // whole: the same retryable answer as a saturated pool, never a 500.
+            DbError::Busy | DbError::Contended => Self::Busy,
             DbError::SlugTaken => Self::slug_taken(
                 "",
                 "another entry in this collection has the same slug, as a draft or published",
@@ -702,13 +722,16 @@ impl ApiError {
             | Self::AlreadySetUp
             | Self::Taken(_)
             | Self::StillNeeded(_) => StatusCode::CONFLICT,
-            Self::RateLimited { .. } | Self::TooManyRequests { .. } => {
+            Self::RateLimited { .. } | Self::TooManyRequests { .. } | Self::TooManyUploads => {
                 StatusCode::TOO_MANY_REQUESTS
             }
             Self::Unavailable(_)
             | Self::Busy
+            | Self::UploadsBusy
             | Self::WorkFull { .. }
             | Self::PayloadFull { .. } => StatusCode::SERVICE_UNAVAILABLE,
+            Self::BodyStalled => StatusCode::REQUEST_TIMEOUT,
+            Self::UploadDeadline => StatusCode::GATEWAY_TIMEOUT,
             Self::Internal(_) => StatusCode::INTERNAL_SERVER_ERROR,
             Self::Preview { status, .. } => *status,
         }
@@ -745,11 +768,15 @@ impl ApiError {
             | Self::AlreadySetUp
             | Self::Taken(_)
             | Self::StillNeeded(_) => ErrorCode::Conflict,
-            Self::RateLimited { .. } | Self::TooManyRequests { .. } => ErrorCode::RateLimited,
+            Self::RateLimited { .. } | Self::TooManyRequests { .. } | Self::TooManyUploads => {
+                ErrorCode::RateLimited
+            }
             Self::Unavailable(_)
             | Self::Busy
+            | Self::UploadsBusy
             | Self::WorkFull { .. }
             | Self::PayloadFull { .. } => ErrorCode::Unavailable,
+            Self::BodyStalled | Self::UploadDeadline => ErrorCode::DeadlineExceeded,
             Self::SignInFailed => ErrorCode::SignInFailed,
             Self::Internal(_) => ErrorCode::Internal,
             Self::Preview { status, .. } => match *status {
@@ -795,6 +822,9 @@ impl ApiError {
             Self::WorkFull { .. } => Some(ErrorDetails::new("work_full", "")),
             Self::PayloadFull { .. } => Some(ErrorDetails::new("payload_full", "")),
             Self::TooManyRequests { .. } => Some(ErrorDetails::new("rate_limited", "")),
+            Self::UploadsBusy => Some(ErrorDetails::new("uploads_busy", "")),
+            Self::TooManyUploads => Some(ErrorDetails::new("too_many_uploads", "")),
+            Self::BodyStalled => Some(ErrorDetails::new("body_stalled", "")),
             Self::InvalidField {
                 reason, pointer, ..
             } => Some(ErrorDetails::new(reason, *pointer)),
@@ -831,27 +861,32 @@ impl ApiError {
             let cause = error_chain(cause.as_ref());
             tracing::error!(code, %cause, "request failed");
         } else if matches!(self, Self::Busy) {
-            // Operators need to see saturation. Each of these waited out the acquire timeout,
-            // so their rate is bounded by in-flight requests over that timeout.
-            tracing::warn!(code, "request refused: no database connection free");
+            // Operators need to see saturation, once per outage rather than once per request
+            // (D-224): the first refusal at once, then a summary a window while it lasts.
+            crate::outages::refused(&crate::outages::OUTAGES, code);
         } else if let Self::WorkFull { open, limit } = self {
             // A project at its work bound is saturation too — the kind an operator can act on
-            // (a stuck destination, a runaway import). Bounded by the request rate.
-            tracing::warn!(
-                code,
-                open,
-                limit,
-                "request refused: project work bound full"
-            );
+            // (a stuck destination, a runaway import). A bulk flood is thousands a minute, so
+            // it is said once an outage too (D-224).
+            if crate::outages::refusal(&crate::outages::OUTAGES, Fault::WorkFull, code) {
+                tracing::warn!(
+                    code,
+                    open,
+                    limit,
+                    "request refused: project work bound full"
+                );
+            }
         } else if let Self::PayloadFull { pending, limit } = self {
             // The installation's payload bound — saturation an operator can act on the same
-            // way (D-135). Bounded by the request rate.
-            tracing::warn!(
-                code,
-                pending,
-                limit,
-                "request refused: installation payload bound full"
-            );
+            // way (D-135), said once an outage the same way (D-224).
+            if crate::outages::refusal(&crate::outages::OUTAGES, Fault::PayloadFull, code) {
+                tracing::warn!(
+                    code,
+                    pending,
+                    limit,
+                    "request refused: installation payload bound full"
+                );
+            }
         } else {
             // A client's mistake: worth a debug line, never a page.
             tracing::debug!(code, error = %self, "request rejected");
@@ -894,6 +929,12 @@ impl IntoResponse for ApiError {
                 response.headers_mut().insert(
                     header::RETRY_AFTER,
                     HeaderValue::from(WORK_FULL_RETRY_AFTER_SECONDS),
+                );
+            }
+            Self::UploadsBusy | Self::TooManyUploads => {
+                response.headers_mut().insert(
+                    header::RETRY_AFTER,
+                    HeaderValue::from(crate::uploads::RETRY_AFTER_SECONDS),
                 );
             }
             // Nothing keeps a removal: if the entry is published again, no cache must still say
@@ -1019,6 +1060,106 @@ mod tests {
 
     use super::*;
 
+    /// The WARN and DEBUG `colophon_api::refusals` lines 2,000 responses of `error` log, through the
+    /// real response path.
+    fn two_thousand(error: impl Fn() -> ApiError, status: StatusCode) -> (usize, usize) {
+        #[derive(Clone, Default)]
+        struct Lines(std::sync::Arc<std::sync::Mutex<Vec<u8>>>);
+        impl io::Write for Lines {
+            fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
+                self.0
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                    .extend_from_slice(bytes);
+                Ok(bytes.len())
+            }
+            fn flush(&mut self) -> io::Result<()> {
+                Ok(())
+            }
+        }
+        impl<'a> tracing_subscriber::fmt::MakeWriter<'a> for Lines {
+            type Writer = Self;
+            fn make_writer(&'a self) -> Self::Writer {
+                self.clone()
+            }
+        }
+        let lines = Lines::default();
+        let subscriber = tracing_subscriber::fmt()
+            .json()
+            .flatten_event(true)
+            .with_env_filter("info,colophon_api::refusals=debug")
+            .with_writer(lines.clone())
+            .finish();
+        tracing::subscriber::with_default(subscriber, || {
+            for _ in 0..2_000 {
+                assert_eq!(error().into_response().status(), status);
+            }
+        });
+        let text = String::from_utf8_lossy(
+            &lines
+                .0
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner),
+        )
+        .into_owned();
+        let warnings = text
+            .lines()
+            .filter(|line| line.contains(r#""level":"WARN""#))
+            .count();
+        let evidence = text
+            .lines()
+            .filter(|line| line.contains(r#""target":"colophon_api::refusals""#))
+            .count();
+        (warnings, evidence)
+    }
+
+    /// D-224: an outage's refusals are one WARN, not one per request, each kind its own outage. The
+    /// process's outage state may already be open from another test, so "at most one"; each refusal
+    /// is still its own DEBUG line on `colophon_api::refusals`.
+    #[test]
+    fn two_thousand_refusals_of_each_kind_warn_at_most_once() {
+        for (name, (warnings, evidence)) in [
+            (
+                "busy",
+                two_thousand(|| ApiError::Busy, StatusCode::SERVICE_UNAVAILABLE),
+            ),
+            (
+                "work bound",
+                two_thousand(
+                    || ApiError::WorkFull {
+                        open: 64,
+                        limit: 64,
+                    },
+                    ApiError::WorkFull {
+                        open: 64,
+                        limit: 64,
+                    }
+                    .status(),
+                ),
+            ),
+            (
+                "payload bound",
+                two_thousand(
+                    || ApiError::PayloadFull {
+                        pending: 9,
+                        limit: 8,
+                    },
+                    ApiError::PayloadFull {
+                        pending: 9,
+                        limit: 8,
+                    }
+                    .status(),
+                ),
+            ),
+        ] {
+            assert!(
+                warnings <= 1,
+                "{name}: {warnings} WARN lines for one outage"
+            );
+            assert_eq!(evidence, 2_000, "{name}");
+        }
+    }
+
     #[test]
     fn internal_errors_never_show_their_cause() {
         let cause = io::Error::other("password authentication failed for user colophon");
@@ -1089,6 +1230,19 @@ mod tests {
         assert_eq!(
             response.headers()[header::RETRY_AFTER],
             HeaderValue::from(WORK_FULL_RETRY_AFTER_SECONDS)
+        );
+    }
+
+    #[test]
+    fn a_transaction_aborted_for_a_deadlock_is_a_retryable_503_never_a_500() {
+        // Postgres rolled it back whole (40P01, 40001): the client may safely try again.
+        let error = ApiError::from_db(DbError::Contended);
+        assert_eq!(error.status(), StatusCode::SERVICE_UNAVAILABLE);
+        assert_eq!(error.code().as_str(), "unavailable");
+        let response = error.into_response();
+        assert_eq!(
+            response.headers()[header::RETRY_AFTER],
+            HeaderValue::from(BUSY_RETRY_AFTER_SECONDS)
         );
     }
 

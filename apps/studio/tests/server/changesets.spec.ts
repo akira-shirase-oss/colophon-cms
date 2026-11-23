@@ -3,7 +3,7 @@
 // see a second tab's approval refused because the version it shows is no longer current.
 
 import { type Page, expect, test } from '@playwright/test';
-import { env, newProject, signIn, violations } from './helpers.ts';
+import { env, newProject, roleReads, signIn, violations } from './helpers.ts';
 
 /** Creates an article through the API as the signed-in page; its id. */
 async function article(page: Page, project: string, title: string): Promise<string> {
@@ -70,20 +70,23 @@ test('a changeset is approved as the exact version on screen, and an edit makes 
 	await expect(page.getByTestId('changeset-items').getByRole('listitem')).toHaveCount(2);
 	const changesetPath = new URL(page.url()).pathname;
 
-	await page.getByRole('button', { name: 'Ask for review' }).click();
+	await page.getByTestId('ask-review').click();
+	await page.getByRole('button', { name: 'Send for review' }).click();
 	await expect(status(page)).toHaveAttribute('data-state', 'awaiting_review');
 	await page.getByLabel('Comment (optional)').fill('Looks right.');
-	await page.getByRole('button', { name: 'Approve this version' }).click();
+	await page.getByRole('button', { name: 'Approve', exact: true }).click();
 	await expect(status(page)).toHaveAttribute('data-state', 'approved');
 	await expect(page.getByTestId('self-review')).toBeVisible();
 	expect(await violations(page)).toEqual([]);
 
 	// An edit after approval: the changeset is stale until refreshed, and the approval stops counting.
 	await retitle(page, project, first, 'Spring launch, final');
+	const role = roleReads(page, project);
 	await page.reload();
 	await expect(status(page)).toHaveAttribute('data-state', 'stale');
 	await expect(page.getByTestId('edited')).toHaveCount(1);
-	await expect(page.getByRole('button', { name: 'Approve this version' })).toHaveCount(0);
+	await role;
+	await expect(page.getByRole('button', { name: 'Approve', exact: true })).toHaveCount(0);
 	await page.getByRole('button', { name: 'Update to the latest versions' }).click();
 	await expect(status(page)).toHaveAttribute('data-state', 'awaiting_review');
 	await expect(page.getByTestId('changeset-items')).toContainText('Spring launch, final');
@@ -108,7 +111,7 @@ test('a changeset is approved as the exact version on screen, and an edit makes 
 	await page.reload();
 	await page.getByRole('button', { name: 'Update to the latest versions' }).click();
 	await expect(status(page)).toHaveAttribute('data-state', 'awaiting_review');
-	await other.getByRole('button', { name: 'Approve this version' }).click();
+	await other.getByRole('button', { name: 'Approve', exact: true }).click();
 	await expect(other.getByTestId('changeset-notice')).toContainText('changed since you loaded it');
 	await other.unroute(`**/changesets/${changesetId}`);
 	await other.reload();

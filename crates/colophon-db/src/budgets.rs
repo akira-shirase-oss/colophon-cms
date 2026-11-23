@@ -483,8 +483,9 @@ pub struct Reconciled {
 /// and held rows that outlived their work are flagged `uncertain`, each announced
 /// in the project's audit log as `budget.discrepancy` by the system identity (migration 0045).
 /// Nothing silently drops an ambiguous reservation: it keeps counting until it is resolved.
-pub async fn reconcile(pool: &PgPool) -> Result<Reconciled, DbError> {
-    let mut tx = worker(pool).await?;
+/// Told to `stop` between its statements, it rolls back ([`DbError::Stopped`]).
+pub async fn reconcile(pool: &PgPool, stop: crate::Stop<'_>) -> Result<Reconciled, DbError> {
+    let mut tx = crate::transactions::background_worker(pool, stop).await?;
     let released = sqlx::query!(
         "WITH closing AS (
              SELECT r.project_id, r.id, j.status
@@ -506,6 +507,9 @@ pub async fn reconcile(pool: &PgPool) -> Result<Reconciled, DbError> {
     .await
     .map_err(DbError::from_query)?
     .rows_affected();
+    if stop.requested() {
+        return crate::transactions::stopped(tx).await;
+    }
     let stale = sqlx::query!(
         "WITH stale AS (
              SELECT project_id, id FROM budget_reservations
@@ -534,6 +538,9 @@ pub async fn reconcile(pool: &PgPool) -> Result<Reconciled, DbError> {
     .fetch_all(&mut *tx)
     .await
     .map_err(DbError::from_query)?;
+    if stop.requested() {
+        return crate::transactions::stopped(tx).await;
+    }
     if !stale.is_empty() {
         let projects: Vec<Uuid> = stale.iter().map(|row| row.project_id).collect();
         let ids: Vec<Uuid> = stale.iter().map(|row| row.id).collect();

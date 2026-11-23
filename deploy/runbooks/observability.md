@@ -16,6 +16,37 @@ at serving rates, an INFO line per request would cost more than the requests). T
 and they are exposed on the lines and endpoints named below. If an operation needs a
 number, it is a log line or a SQL query away — the recipes say which.
 
+## Outages and slow statements: what a WARN means (D-224)
+
+A WARN is something to act on, said once, not once per request:
+
+- **Refusals** (no database connection came free, a 503; a project's work bound or the
+  installation's payload bound full): the first of each kind is a WARN at once
+  (`request refused: no database connection free`, with its `code`); while it lasts, one WARN
+  per 10 s, `refused N requests in the last 10 s: no database connection free, since T` (or
+  `project work bound full`, `installation payload bound full`)
+  (fields `refused`, `since`); after 10 s without one, an INFO `requests are answered again`.
+  Each refusal is also its own DEBUG line on `colophon_api::refusals`, off by default:
+  `COLOPHON_LOG='info,colophon_api::refusals=debug'` shows every one.
+- **A dependency down** (database, cache): `dependency is down` (WARN, with the cause) at once,
+  then `dependency is still down: N failed probes…` per 10 s, then `dependency is up` (INFO)
+  after 10 s without a failed probe. Readiness itself changes at once; the line can trail it
+  by up to 10 s.
+- **Slow statements**, target `sqlx::query`: INFO from `COLOPHON_DB_SLOW_STATEMENT_INFO_MS`
+  (default 100) with the statement's `summary` and `elapsed_secs`, evidence for a slow
+  request; WARN `slow statement` from `COLOPHON_DB_SLOW_STATEMENT_MS` (default 1000), an alert.
+  At `COLOPHON_LOG=warn` only the alerts show; `warn,sqlx::query=info` adds the evidence.
+
+```sh
+# An outage's shape over a captured log: the first refusal, its summaries, the recovery.
+jq -c 'select(.refused or (.message // "" | startswith("request refused")))
+       | {timestamp, level, message}' server.log
+
+# Statements over 250 ms, slowest first:
+jq -r 'select(.target=="sqlx::query" and (.elapsed_secs // 0) >= 0.25)
+       | "\(.elapsed_secs) \(.summary)"' server.log | sort -rn | head
+```
+
 ## What a request line carries
 
 A `tower_http=debug` response line, as emitted (proven live, this checkout):

@@ -27,6 +27,7 @@ pub mod ledger;
 pub mod login_roles;
 pub mod members;
 pub mod migrations;
+pub mod nonsuperuser;
 pub mod passwords;
 pub mod previews;
 pub mod projects;
@@ -42,26 +43,37 @@ pub mod setup;
 pub mod throttle;
 pub mod tokens;
 pub mod transactions;
+pub mod undo;
 pub mod work;
 
 use std::{str::FromStr, time::Duration};
 
 use sqlx::{
-    Executor as _,
+    ConnectOptions as _, Executor as _,
     postgres::{PgConnectOptions, PgPoolOptions, PgSslMode},
 };
 
 pub use sqlx::postgres::{PgConnection, PgListener, PgPool};
 pub use sqlx::{Postgres, Transaction};
-pub use transactions::{begin_tx, begin_tx_snapshot};
+pub use transactions::{
+    BACKGROUND_LOCK_TIMEOUT, BACKGROUND_STATEMENT_TIMEOUT, Phases, Stop, begin_background,
+    begin_tx, begin_tx_snapshot, bound_background, with_phases,
+};
 
 /// The schema migrations, embedded at compile time from `migrations/`.
 pub static MIGRATOR: sqlx::migrate::Migrator = sqlx::migrate!("./migrations");
 
 /// Applies any migrations the database doesn't have yet. Run as the migrator role (the table
-/// owner), never as the application role.
+/// owner), never as the application role. A superuser runs [`MIGRATOR`]; any other migrator
+/// (Neon's owner role, for one) runs [`nonsuperuser::migrate`] (D-234), which records the same
+/// migrations with the same checksums.
 pub async fn migrate(pool: &PgPool) -> Result<(), DbError> {
-    MIGRATOR.run(pool).await.map_err(DbError::Migrate)
+    let mut conn = pool.acquire().await.map_err(DbError::from_query)?;
+    if nonsuperuser::is_superuser(&mut conn).await? {
+        MIGRATOR.run(&mut *conn).await.map_err(DbError::Migrate)
+    } else {
+        nonsuperuser::migrate(&mut conn).await
+    }
 }
 
 /// Pool settings. Every value is a bound: connections, waiting, and statement time.
@@ -108,9 +120,24 @@ pub enum DbError {
     /// capacity. Nothing was sent to it, so the caller can safely answer "try again".
     #[error("no database connection became free in time")]
     Busy,
+    /// Postgres aborted the transaction to break a lock cycle (`40P01`) or a serialization
+    /// conflict (`40001`): it rolled back whole, nothing committed, so the caller can answer "try
+    /// again" as for [`Self::Busy`], never a 500.
+    #[error("the database aborted the transaction for a conflicting one; nothing was committed")]
+    Contended,
+    /// A background unit told to stop between its statements: it rolled back, nothing
+    /// committed, and its loop runs it again next start ([`transactions::Stop`]).
+    #[error("stopped before finishing; rolled back, nothing committed")]
+    Stopped,
     /// No answer within the deadline.
     #[error("database did not answer within {0:?}")]
     Timeout(Duration),
+    /// Another non-superuser migration run held the run lock for the whole wait (D-234):
+    /// nothing was changed. Is another `admin migrate` (an upgrade) still running?
+    #[error(
+        "another migration run held the run lock for {0:?}; nothing was changed (is another `colophon admin migrate` running?)"
+    )]
+    RunLocked(Duration),
     /// A unique value (such as a slug) is already taken.
     #[error("already exists")]
     Conflict,
@@ -201,10 +228,16 @@ pub enum DbError {
 }
 
 impl DbError {
-    /// A query's error: an exhausted pool becomes `Busy`, everything else `Query`.
+    /// A query's error: an exhausted pool becomes `Busy`, a deadlock or serialization abort
+    /// `Contended`, everything else `Query`.
     pub(crate) fn from_query(error: sqlx::Error) -> Self {
         match error {
             sqlx::Error::PoolTimedOut => Self::Busy,
+            sqlx::Error::Database(database)
+                if matches!(database.code().as_deref(), Some("40P01" | "40001")) =>
+            {
+                Self::Contended
+            }
             error => Self::Query(error),
         }
     }
@@ -425,16 +458,46 @@ fn ssl_mode_weakness(mode: PgSslMode) -> &'static str {
     }
 }
 
+/// When a statement is slow enough to log, in two tiers (D-224): evidence from `info`, an alert from `warn`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SlowStatements {
+    /// From here a statement is logged, at INFO (target `sqlx::query`): evidence. The server's log layer
+    /// drops the faster ones (sqlx offers every statement at INFO once the tiers are set).
+    pub info: Duration,
+    /// From here it is an alert, at WARN.
+    pub warn: Duration,
+}
+
+impl Default for SlowStatements {
+    /// sqlx's own single threshold, 1 s, at WARN: what a process gets that doesn't set the tiers (and so
+    /// doesn't install the layer that drops the statements under the INFO tier).
+    fn default() -> Self {
+        Self {
+            info: Duration::from_secs(1),
+            warn: Duration::from_secs(1),
+        }
+    }
+}
+
+/// The tiers every pool is built with (D-221, D-224; `COLOPHON_DB_SLOW_STATEMENT_INFO_MS`,
+/// `COLOPHON_DB_SLOW_STATEMENT_MS`).
+static SLOW_STATEMENTS: std::sync::OnceLock<SlowStatements> = std::sync::OnceLock::new();
+
+/// Sets the slow-statement tiers for every pool built afterwards. The first call wins.
+pub fn set_slow_statements(tiers: SlowStatements) {
+    let _ = SLOW_STATEMENTS.set(tiers);
+}
+
+/// The tiers in force: what [`set_slow_statements`] set, else the default.
+pub fn slow_statements() -> SlowStatements {
+    SLOW_STATEMENTS.get().copied().unwrap_or_default()
+}
+
 /// Builds the pool without connecting. Connections open on first use, so the server starts
 /// (and reports "not ready") while the database is down, instead of failing to start. The URL
 /// is held to [`check_url`]'s TLS rule first.
 pub fn connect_lazy(url: &str, settings: PoolSettings) -> Result<PgPool, DbError> {
-    let options = check_url(url)?
-        .application_name("colophon-server")
-        .options([(
-            "statement_timeout",
-            settings.statement_timeout.as_millis().to_string(),
-        )]);
+    let options = pool_connect_options(url, &settings)?;
     // No ping on checkout: it is a round trip on every query. sqlx still pings each connection
     // as it returns to the pool and drops broken ones, so only a connection that breaks while
     // idle (a database restart) reaches a caller, and fails that one request (D-033).
@@ -443,9 +506,41 @@ pub fn connect_lazy(url: &str, settings: PoolSettings) -> Result<PgPool, DbError
         .min_connections(0)
         .acquire_timeout(settings.acquire_timeout)
         .test_before_acquire(false)
-        // A connection handed back inside a transaction is closed, not pooled (D-217).
+        // A connection handed back inside a transaction is closed, not pooled (D-217), checked on
+        // one release in `transactions::CANARY_EVERY` once the begin tripwire is armed (D-226).
         .after_release(transactions::release_check)
         .connect_lazy_with(options))
+}
+
+/// Proves, on one throwaway connection made exactly as [`connect_lazy`] makes them, that the begin
+/// tripwire works in this process, and arms it (D-226): the release check then runs on one release
+/// in [`transactions::CANARY_EVERY`]. Until this succeeds, and whenever it fails, every release is
+/// checked; the error says which dependency is missing. Call once at startup, after the tracing
+/// subscriber (with [`transactions::begin_tripwire`]) is installed.
+pub async fn arm_release_guard(url: &str) -> Result<(), transactions::TripwireOff> {
+    let options = pool_connect_options(url, &PoolSettings::default())
+        .map_err(|error| transactions::TripwireOff::CouldNotRun(error.to_string()))?;
+    transactions::arm_begin_tripwire(options).await
+}
+
+/// The options every pool's connections are made with: [`check_url`]'s TLS rule, the server's
+/// application name, its statement timeout and the slow-statement log (D-221, D-224).
+fn pool_connect_options(url: &str, settings: &PoolSettings) -> Result<PgConnectOptions, DbError> {
+    let options = check_url(url)?
+        .application_name("colophon-server")
+        .options([(
+            "statement_timeout",
+            settings.statement_timeout.as_millis().to_string(),
+        )]);
+    // D-224: with the tiers set (the server, which installs the layer that drops every statement
+    // under the INFO tier), sqlx offers each statement at INFO and says those past the WARN tier at
+    // WARN, "slow statement". Otherwise sqlx's own: WARN from 1 s, the rest at DEBUG.
+    Ok(match SLOW_STATEMENTS.get() {
+        Some(tiers) => options
+            .log_statements(log::LevelFilter::Info)
+            .log_slow_statements(log::LevelFilter::Warn, tiers.warn),
+        None => options.log_slow_statements(log::LevelFilter::Warn, SlowStatements::default().warn),
+    })
 }
 
 /// Opens the change-hint listener's connection (D-108): its own, not one of the pool's, since
@@ -464,6 +559,23 @@ pub async fn listener(url: &str) -> Result<PgListener, DbError> {
     PgListener::connect_with(&pool)
         .await
         .map_err(DbError::Query)
+}
+
+/// A change-hint listener for a process that holds only a pool (the worker's asset wake-up, D-218): its own
+/// connection, as [`listener`]'s is, built from the pool's own options — the same URL and TLS rule — and named
+/// `application`, so an operator (or a test) can tell it apart in `pg_stat_activity`.
+pub async fn listener_from(pool: &PgPool, application: &str) -> Result<PgListener, DbError> {
+    let options = (*pool.connect_options())
+        .clone()
+        .application_name(application);
+    let own = PgPoolOptions::new()
+        .max_connections(1)
+        .max_lifetime(None)
+        .idle_timeout(None)
+        .connect_with(options)
+        .await
+        .map_err(DbError::Query)?;
+    PgListener::connect_with(&own).await.map_err(DbError::Query)
 }
 
 /// sqlx's URL errors describe the problem, but keep only the first line and drop anything
@@ -494,6 +606,56 @@ pub async fn ping(pool: &PgPool, deadline: Duration) -> Result<(), DbError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A driver error carrying only a SQLSTATE, as Postgres reports one.
+    #[derive(Debug)]
+    struct Coded(&'static str);
+
+    impl std::fmt::Display for Coded {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            write!(f, "SQLSTATE {}", self.0)
+        }
+    }
+
+    impl std::error::Error for Coded {}
+
+    impl sqlx::error::DatabaseError for Coded {
+        fn message(&self) -> &'static str {
+            "coded"
+        }
+        fn code(&self) -> Option<std::borrow::Cow<'_, str>> {
+            Some(self.0.into())
+        }
+        fn as_error(&self) -> &(dyn std::error::Error + Send + Sync + 'static) {
+            self
+        }
+        fn as_error_mut(&mut self) -> &mut (dyn std::error::Error + Send + Sync + 'static) {
+            self
+        }
+        fn into_error(self: Box<Self>) -> Box<dyn std::error::Error + Send + Sync + 'static> {
+            self
+        }
+        fn kind(&self) -> sqlx::error::ErrorKind {
+            sqlx::error::ErrorKind::Other
+        }
+    }
+
+    #[test]
+    fn a_deadlock_or_serialization_abort_is_contended_never_a_query_failure() {
+        // CI 44719897863: a sweep aborted with 40P01 reached its caller as `Query`, which the
+        // API answers 500. The transaction rolled back whole, so it is a retryable refusal.
+        for code in ["40P01", "40001"] {
+            let error = DbError::from_query(sqlx::Error::Database(Box::new(Coded(code))));
+            assert!(matches!(error, DbError::Contended), "{code}: {error:?}");
+            let error = DbError::from_write(sqlx::Error::Database(Box::new(Coded(code))));
+            assert!(
+                matches!(error, DbError::Contended),
+                "{code} on a write: {error:?}"
+            );
+        }
+        let other = DbError::from_query(sqlx::Error::Database(Box::new(Coded("42P01"))));
+        assert!(matches!(other, DbError::Query(_)), "{other:?}");
+    }
 
     #[test]
     fn invalid_urls_are_reported_without_echoing_them() {

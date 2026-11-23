@@ -31,11 +31,21 @@ export type SiteMode =
 
 export interface World {
 	role: 'owner' | 'editor';
+	/** What built the request (D-097, D-184): a rollback restores `rollback_generation`; an undo of
+	 *  release N sets `undo_of` N and `rollback_generation` N - 1. */
+	rollbackGeneration: number | null;
+	undoOf: number | null;
 	template: string | null;
 	/** What issuing a grant answers: a grant, or a refusal. */
 	issue: 'grant' | 'not-configured' | 'unavailable' | 'limit' | 'invalid' | 'already-live' | 'offline';
 	/** Where the publish request stands. */
 	request: 'awaiting_review' | 'published';
+	/** The entry is live as drafted: readers get its current revision, from release 3. */
+	live: boolean;
+	/** The project's request list names the request (the editor then reads it to find the entry). */
+	listed: boolean;
+	/** Holds `GET {P}/changesets/{id}` until released (a slow read of the request). */
+	requestRead: Promise<void> | null;
 	/** What each `POST {P}/previews` asked for, as its body. */
 	issued: Record<string, unknown>[];
 	/** Milliseconds before an issued grant ends. */
@@ -63,9 +73,14 @@ export interface World {
 export function world(overrides: Partial<World> = {}): World {
 	return {
 		role: 'owner',
+		rollbackGeneration: null,
+		undoOf: null,
 		template: TEMPLATE,
 		issue: 'grant',
 		request: 'awaiting_review',
+		live: false,
+		listed: false,
+		requestRead: null,
 		issued: [],
 		lasts: 12.5 * 60_000,
 		renew: 'ok',
@@ -137,19 +152,26 @@ function draft(w: World, extra: Record<string, unknown> = {}) {
 	};
 }
 
+/** What readers get of the entry: its current revision when it is live. */
+function livePart(w: World) {
+	return w.live ? { revision_id: `rev-${w.revision}`, generation: 3 } : null;
+}
+
 function changeset(w: World) {
 	const published = w.request === 'published';
 	return {
 		id: CHANGESET,
 		title: 'Spring issue',
 		hash: 'sha256:request-hash-1',
+		hidden_items: 0,
 		status: { state: w.request, generation: published ? 3 : null, by: null, self_review: false, edited_items: 0 },
 		created_by: 'person-1',
 		created_at: AT,
 		submitted_by: 'person-1',
 		submitted_at: AT,
 		updated_at: AT,
-		rollback_generation: null,
+		rollback_generation: w.rollbackGeneration,
+		undo_of: w.undoOf,
 		items: [
 			{
 				kind: 'publish',
@@ -288,9 +310,14 @@ async function answer(w: World, request: Request): Promise<{ status: number; bod
 	// What the entry editor and the project's frame read.
 	if (rest === '/content-types') return ok({ data: [TYPE] });
 	if (rest === '/content-types/articles') return ok({ data: TYPE });
-	if (rest === '/changesets') return ok({ data: [] });
-	if (rest === `/changesets/${CHANGESET}`) return ok({ data: changeset(w) });
+	if (rest === '/changesets') return ok({ data: w.listed ? [changeset(w)] : [] });
+	if (rest === `/changesets/${CHANGESET}`) {
+		if (w.requestRead !== null) await w.requestRead;
+		return ok({ data: changeset(w) });
+	}
 	if (rest === '/schedules') return ok({ data: [] });
+	// The request page reads its review tasks to say who it waits for (P2-12).
+	if (rest === '/tasks') return ok({ data: [], next_cursor: null });
 	if (rest.startsWith(`/collections/articles/entries/${ENTRY}/revisions/`)) {
 		return ok({ data: { revision: revision(w), content: w.content } });
 	}
@@ -300,10 +327,10 @@ async function answer(w: World, request: Request): Promise<{ status: number; bod
 	if (rest === '/destinations') return ok({ data: [] });
 	if (rest === '/collections/articles/entries') {
 		const { revision: rev, updated_at, created_by } = draft(w);
-		return ok({ data: [{ id: ENTRY, created_by, updated_at, revision: rev, published: null, locale: null }], next_cursor: null });
+		return ok({ data: [{ id: ENTRY, created_by, updated_at, revision: rev, published: livePart(w), locale: null }], next_cursor: null });
 	}
 	if (rest === `/collections/articles/entries/${ENTRY}` && method === 'GET') {
-		return ok({ data: draft(w, { published: null, referenced_by: [] }) }, { etag: `"rev-${w.revision}"` });
+		return ok({ data: draft(w, { published: livePart(w), referenced_by: [] }) }, { etag: `"rev-${w.revision}"` });
 	}
 	if (rest === `/collections/articles/entries/${ENTRY}` && method === 'PUT') {
 		if (w.save === 'fail') return refusal(500, 'internal', 'internal error');

@@ -8,6 +8,7 @@
 
 import http from 'k6/http';
 import { check, fail } from 'k6';
+import exec from 'k6/execution';
 
 const BASE_URL = __ENV.BASE_URL || 'http://127.0.0.1:58000';
 const PUBLIC_URL = __ENV.PUBLIC_URL || 'http://localhost:58000';
@@ -84,7 +85,7 @@ export function setup() {
 
 export default function (data) {
   const params = { headers: data.owner, redirects: 0 };
-  const slot = __ITER % 10;
+  const slot = exec.scenario.iterationInTest % 10;
   if (slot < 6) {
     const res = http.get(`${data.base}/members`, Object.assign({ tags: { endpoint: 'members' } }, params));
     check(res, {
@@ -96,7 +97,7 @@ export default function (data) {
       Object.assign({ tags: { endpoint: 'lookup' } }, params));
     check(res, { 'lookup 200': (r) => r.status === 200 && r.json('data.project_name') === 'k6 members' });
   } else if (slot === 8) {
-    const role = __ITER % 20 < 10 ? 'editor' : 'publisher';
+    const role = exec.scenario.iterationInTest % 20 < 10 ? 'editor' : 'publisher';
     const res = http.put(`${data.base}/members/${data.guest}`, JSON.stringify({ role }), Object.assign({ tags: { endpoint: 'role' } }, params));
     check(res, { 'role 204': (r) => r.status === 204 });
   } else {

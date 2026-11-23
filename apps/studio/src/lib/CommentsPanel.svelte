@@ -2,7 +2,9 @@
 	Comments on one entry's versions (E1, D-102). A comment binds the immutable version its author
 	looked at, so it stays true as drafts move on; it is kept verbatim — never edited, never
 	deleted — only answered (resolved) or reopened. A deleted entry's comments stay readable while
-	nothing new can be added; the composer closes with a note instead of failing later.
+	nothing new can be added; the composer closes with a note instead of failing later. In the editor
+	it sits in a drawer beside the content (D-184), so the text stays in view while people talk
+	about it.
 -->
 <script lang="ts">
 	import CheckCheckIcon from '@lucide/svelte/icons/check-check';
@@ -16,6 +18,7 @@
 	import { Textarea } from '@colophon/ui/ui/textarea';
 	import { ApiError, createComment, type EntryComment, newKey, setCommentResolution } from './api.ts';
 	import { plainError } from './errors.ts';
+	import { initials } from './history.ts';
 	import { ago, commentsQuery, meQuery, membersQuery } from './queries.ts';
 	import EmptyState from './shell/EmptyState.svelte';
 	import Problem from './shell/Problem.svelte';
@@ -45,12 +48,15 @@
 	const queryClient = useQueryClient();
 	const who = createQuery(meQuery);
 	const people = createQuery(() => membersQuery(project));
-	/** Who wrote it: a member's name, "you", or an honest note for someone who left. */
+	/** Who wrote it: a member's name, "You", or an honest note for someone who left. */
 	const person = (id: string) => {
-		if (id === who.data?.id) return 'you';
+		if (id === who.data?.id) return 'You';
 		const member = people.data?.find((member) => member.identity_id === id);
-		return member?.display_name ?? 'someone who left the project';
+		return member?.display_name ?? 'Someone who left the project';
 	};
+	/** The name an avatar's initials come from: the person's own, even when it says "You". */
+	const named = (id: string) => (id === who.data?.id ? (who.data?.display_name ?? 'You') : person(id));
+	let input = $state<HTMLTextAreaElement | null>(null);
 
 	let showing = $state<'all' | 'open' | 'resolved'>('all');
 	const comments = createQuery(() => commentsQuery(project, collection, entry, showing === 'all' ? undefined : showing));
@@ -75,10 +81,19 @@
 		await queryClient.invalidateQueries({ queryKey: ['comments', project, collection, entry] });
 	}
 
+	/** Said under the box when Comment is pressed with nothing written, instead of a grey button. */
+	let empty = $state(false);
+
 	async function post(event: SubmitEvent) {
 		event.preventDefault();
-		if (revision === null || body.trim() === '' || busy) return;
+		if (revision === null || busy) return;
+		if (body.trim() === '') {
+			empty = true;
+			input?.focus();
+			return;
+		}
 		busy = true;
+		empty = false;
 		note = '';
 		try {
 			const comment = await createComment(project, collection, entry, { revision, body: body.trim() }, newKey());
@@ -127,15 +142,20 @@
 		<form class="mb-4" onsubmit={post} aria-label="Write a comment" data-testid="comment-composer">
 			<Textarea
 				bind:value={body}
+				bind:ref={input}
 				rows={3}
 				maxlength={8000}
 				placeholder="Say what needs changing or checking…"
 				aria-label="Write a comment"
+				aria-invalid={empty || undefined}
+				aria-describedby={empty ? 'comment-empty' : undefined}
+				oninput={() => (empty = false)}
 				data-testid="comment-input"
 			/>
+			{#if empty}<p id="comment-empty" class="mt-1.5 text-xs text-destructive">Write something first.</p>{/if}
 			<div class="mt-2 flex items-center justify-between gap-3">
-				<p class="text-xs text-muted-foreground">It attaches to the version on screen and can’t be edited.</p>
-				<Button type="submit" size="sm" variant="outline" disabled={busy || body.trim() === ''} data-testid="comment-post">Comment</Button>
+				<p class="text-xs text-muted-foreground">It stays with the version on screen and can’t be edited.</p>
+				<Button type="submit" size="sm" disabled={busy} data-testid="comment-post">Comment</Button>
 			</div>
 		</form>
 	{:else}
@@ -146,7 +166,7 @@
 		<Tabs.List aria-label="Show comments">
 			<Tabs.Trigger value="all" data-testid="comments-all">All</Tabs.Trigger>
 			<Tabs.Trigger value="open" data-testid="comments-open">Open</Tabs.Trigger>
-			<Tabs.Trigger value="resolved" data-testid="comments-resolved">Answered</Tabs.Trigger>
+			<Tabs.Trigger value="resolved" data-testid="comments-resolved">Resolved</Tabs.Trigger>
 		</Tabs.List>
 	</Tabs.Root>
 
@@ -168,9 +188,12 @@
 				{#each shown as comment (comment.id)}
 					<li class="rounded-xl border border-border bg-card p-4" data-testid="comment" data-resolved={comment.resolved_at !== null}>
 						<div class="flex items-start justify-between gap-3">
-							<p class="text-sm">
-								<span class="font-medium" data-user-content>{person(comment.author_id)}</span>
-								<span class="text-muted-foreground"> · {ago(comment.created_at)}</span>
+							<p class="flex min-w-0 items-center gap-2 text-sm">
+								<span class="flex size-6 shrink-0 items-center justify-center rounded-full bg-muted text-xs font-medium text-muted-foreground" aria-hidden="true"
+									>{initials(named(comment.author_id))}</span
+								>
+								<span class="truncate font-medium" data-user-content>{person(comment.author_id)}</span>
+								<span class="shrink-0 text-muted-foreground" title={new Date(comment.created_at).toLocaleString()}>{ago(comment.created_at)}</span>
 							</p>
 							{#if canWrite}
 								{#if comment.resolved_at === null}
@@ -189,7 +212,7 @@
 							{#if comment.field !== null}<span>on <span class="font-mono" data-user-content>{comment.field}</span></span>{/if}
 							{#if revision !== null && comment.revision_id !== revision}<span>on an earlier version</span>{/if}
 							{#if comment.resolved_at !== null}
-								<Badge variant="live">Answered</Badge>
+								<Badge variant="live">Resolved</Badge>
 								{#if comment.resolved_by !== null}<span>by <span data-user-content>{person(comment.resolved_by)}</span> {ago(comment.resolved_at)}</span>{/if}
 							{/if}
 						</p>

@@ -42,6 +42,8 @@ uuid.workspace = true
 
 [dev-dependencies]
 futures-util.workspace = true
+# Never-panics properties for the parsers of outside input this crate owns (D-231).
+proptest.workspace = true
 tokio = { workspace = true, features = ["test-util"] }
 # The log-redaction test captures what the request span writes (D-152).
 tracing-subscriber.workspace = true

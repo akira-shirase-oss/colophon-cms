@@ -90,10 +90,13 @@ L10, L11, L13, the spec §27 cache-isolation tests and the mixed-release checker
   release recorded in `publications.media`. Each carries `url` (the versioned address
   `{COLOPHON_MEDIA_URL}/media/v1/{project}/{env}/{asset}/{sha}`, immutable and cached a year, D-157),
   `renditions` (`w320`, `w1280` under that version, only those the worker wrote), `width`, `height`, `type`, and
-  `current_url` (the bare address, which follows replacements). A site that uses `url` shows exactly the bytes
+  `current_url` (the bare address, which shows the public the newest published version, D-229; in a signed-in site
+  member's answer it is `url` itself, because a member's signed address opens only a version a release recorded).
+  A site that uses `url` shows exactly the bytes
   that were released, so a pinned read at generation N shows N's images; a replaced image reaches it when the
   entries that use it are published again (publishing an unchanged entry whose upload has a newer version reopens
-  its publication). A site that wants the newest bytes without publishing uses `current_url`.
+  its publication). A site that wants the newest published bytes without republishing every entry uses
+  `current_url`; a replacement no release has named yet reaches nobody but the project's members and previews.
   `COLOPHON_MEDIA_URL` (an http(s) origin, default `COLOPHON_PUBLIC_URL`) puts a CDN or asset host in front.
   On a query, a row's `media` is what its answered `content` names: `fields` narrowing drops the stamps of the
   fields it left out, and `depth` adds the versions each populated reference's own release recorded (an avatar on
@@ -183,7 +186,9 @@ These are policies to test, not a global 30-second consistency guarantee.
 - Built in step 3.2, part 1 (D-049): unpublishing is a changeset item of kind `unpublish` that pins the published
   revision and is reviewed like any change. Its release closes the publication, records a tombstone, and marks every
   earlier publication of the entry `revoked_in`; delivery never serves a revoked publication, and a read of the entry
-  is 410 `gone` (`no-store`) at every generation until it is published again. Cache keys name the environment's
+  is 410 `gone` (`no-store`) at every generation it was published in and at every one from the takedown on, until it
+  is published again. At a generation from before the entry was first published it is 404 `not_found`, as for any
+  entry that didn't exist then: there was nothing to take down. Cache keys name the environment's
   `last_unpublish`, so answers cached before a takedown are never served again (F07 at the origin,
   `crates/colophon-server/tests/cache.rs`). Part 2 (D-050) purges it from CDNs: the release reports its purge as
   pending, accepted or failed, and the Studio shows *removal pending at the CDN* until it is accepted

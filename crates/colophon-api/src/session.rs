@@ -27,7 +27,7 @@ use colophon_db::{access, identity, tokens as api_tokens};
 use time::OffsetDateTime;
 use uuid::Uuid;
 
-use crate::{ApiError, AppState, state::Services};
+use crate::{ApiError, AppState, admission::Admission, state::Services};
 
 /// The session cookie (`HttpOnly`).
 pub const SESSION_COOKIE: &str = "colophon_session";
@@ -100,11 +100,17 @@ pub struct SignedIn {
     pub credential: Credential,
     /// For an API token, the one project it belongs to; `None` for people.
     pub project: Option<Uuid>,
+    /// For an API token, what its request was judged on — the SHA-256 of its secret, when its
+    /// row was read, when it expires: what a quota refusal is remembered under, so the token's
+    /// next requests can be refused before Postgres is asked, until its project's tokens change
+    /// (D-214).
+    pub judged: Option<crate::admission::Judged>,
 }
 
 /// The caller behind `Authorization: Bearer <token>`.
 async fn bearer(
     services: &Services,
+    admission: Option<&Admission>,
     value: &HeaderValue,
     path: &str,
 ) -> Result<SignedIn, ApiError> {
@@ -114,7 +120,7 @@ async fn bearer(
         .and_then(|text| text.strip_prefix("Bearer "))
         .ok_or(ApiError::Unauthorized)?;
     if let Some(secret) = token.strip_prefix(API_TOKEN_PREFIX) {
-        return api_token(services, secret, token, path).await;
+        return api_token(services, admission, secret, token, path).await;
     }
     if token.len() != 43 {
         return Err(ApiError::Unauthorized);
@@ -133,12 +139,14 @@ async fn bearer(
         session: found.id,
         credential: Credential::Token,
         project: None,
+        judged: None,
     })
 }
 
 /// The project API token `token` (whose random part is `secret`), on `path`.
 async fn api_token(
     services: &Services,
+    admission: Option<&Admission>,
     secret: &str,
     token: &str,
     path: &str,
@@ -146,7 +154,22 @@ async fn api_token(
     if secret.len() != 43 {
         return Err(ApiError::Unauthorized);
     }
-    let found = api_tokens::find(&services.pool, &tokens::hash(token))
+    let hash = tokens::hash(token);
+    // A token already refused for its quota is refused again here while its window is full:
+    // the limiter is asked once, Postgres not at all, so a flooding agent's refusals don't
+    // queue on the pool beside everyone else's work (D-214). Its first refusal took the full
+    // path below, where the ceiling comes from Postgres (D-118).
+    if let Some(admission) = admission
+        && let Some(throttle) = admission.refused_again(&hash, path).await
+    {
+        return Err(ApiError::TooManyRequests {
+            retry_after: throttle.retry_after(),
+        });
+    }
+    // Before the row is read: a change to the project's tokens after this instant means a
+    // refusal judged on this row is not remembered (D-214's addendum).
+    let read_at = std::time::Instant::now();
+    let found = api_tokens::find(&services.pool, &hash)
         .await
         .map_err(ApiError::from_db)?
         .ok_or(ApiError::Unauthorized)?;
@@ -186,6 +209,13 @@ async fn api_token(
         session: found.id,
         credential: Credential::ApiToken,
         project: Some(found.project_id),
+        judged: Some(crate::admission::Judged {
+            hash,
+            read_at,
+            // Not yet expired (checked above), so the difference is positive.
+            expires: std::time::Instant::now()
+                + std::time::Duration::try_from(found.expires_at - now).unwrap_or_default(),
+        }),
     })
 }
 
@@ -204,7 +234,13 @@ impl FromRequestParts<AppState> for SignedIn {
     async fn from_request_parts(parts: &mut Parts, state: &AppState) -> Result<Self, ApiError> {
         let services = services(state)?;
         if let Some(value) = parts.headers.get(header::AUTHORIZATION) {
-            return bearer(services, value, parts.uri.path()).await;
+            return bearer(
+                services,
+                state.admission.as_deref(),
+                value,
+                parts.uri.path(),
+            )
+            .await;
         }
         let token = cookie(&parts.headers, SESSION_COOKIE).ok_or(ApiError::Unauthorized)?;
         if token.len() != 43 {
@@ -260,6 +296,7 @@ impl FromRequestParts<AppState> for SignedIn {
             identity: session.identity_id,
             session: session.id,
             credential: Credential::Session,
+            judged: None,
             project: None,
         })
     }

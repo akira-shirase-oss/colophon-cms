@@ -55,6 +55,28 @@ describe('mediaFor', () => {
 		});
 	});
 
+	it('{ current: true } in a site member’s answer keeps its signed version addresses', () => {
+		// A member's answer signs its addresses and names versions only: current_url is url (D-229).
+		const signed = '?expires=1800000000&signature=abc';
+		const member: MediaSidecar = {
+			[WIDE]: {
+				url: `${BASE}/${WIDE}/${SHA}${signed}`,
+				current_url: `${BASE}/${WIDE}/${SHA}${signed}`,
+				type: 'image/webp',
+				width: 2400,
+				height: 1600,
+				renditions: { w320: `${BASE}/${WIDE}/${SHA}/w320${signed}` }
+			}
+		};
+		expect(mediaFor({ media: member }, { current: true })(WIDE)).toEqual({
+			src: `${BASE}/${WIDE}/${SHA}${signed}`,
+			width: 2400,
+			height: 1600,
+			srcset: `${BASE}/${WIDE}/${SHA}/w320${signed} 320w, ${BASE}/${WIDE}/${SHA}${signed} 2400w`,
+			sizes: DEFAULT_SIZES
+		});
+	});
+
 	it('takes the caller’s sizes', () => {
 		expect(mediaFor({ media }, { sizes: '50vw' })(WIDE)?.sizes).toBe('50vw');
 	});

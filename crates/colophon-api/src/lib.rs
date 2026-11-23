@@ -27,10 +27,12 @@ mod graphql;
 pub mod health;
 pub mod mail;
 pub mod mcp;
+pub mod media_sign;
 mod members;
 pub mod middleware;
 mod migrations;
 mod openapi;
+pub mod outages;
 mod populate;
 mod preview;
 mod projects;
@@ -45,13 +47,15 @@ pub mod state;
 pub mod studio;
 mod tokens;
 mod type_cache;
+mod undo;
+pub mod uploads;
 mod valkey;
 pub mod version;
 mod visibility;
 
 use axum::{Router, http::HeaderMap, routing::get};
 
-pub use cache::{DeliveryCache, InvalidCacheUrl};
+pub use cache::{DeliveryCache, InvalidCacheUrl, REFILLS, Refills};
 pub use colophon_version::BuildInfo;
 pub use error::{ApiError, ErrorCode, ErrorDetails, PublicError};
 pub use health::{CheckState, Dependency, Readiness, ReadinessReport, Status};
@@ -74,8 +78,9 @@ pub fn app(state: AppState, limits: HttpLimits) -> Router {
 /// the served routes and the published contract cannot drift (D-110).
 pub fn routes(state: AppState) -> Router {
     let admission = axum::middleware::from_fn_with_state(state.clone(), admission::admit);
-    // CORS for `/preview/v1` (D-172): outside admission, so a refusal still names the origin
-    // a browser may read it from; preflights are answered here, before the router.
+    // CORS for `/preview/v1` (D-172): inside admission since D-231 (G), so a preflight flood is
+    // limited before its origin lookup reaches Postgres; preflights are answered here, before the
+    // router. Admission's own 429s therefore carry no CORS headers (tracked, review 2026-11-21).
     let preview_cors = axum::middleware::from_fn_with_state(state.clone(), preview::cors);
     let served = std::sync::Arc::new(openapi::Served::new(&state.build));
     let mut router = Router::new();
@@ -91,9 +96,12 @@ pub fn routes(state: AppState) -> Router {
             }),
         )
         .fallback(fallback)
-        // Rate limits (D-076): inside the error envelope, before any handler does work.
-        .layer(admission)
+        // The preview CORS layer reads Postgres for a preflight's origin (D-172), so it sits inside
+        // the rate limits like every other read: a flood of preflights is limited per address
+        // before any reaches the database (D-231, gap G).
         .layer(preview_cors)
+        // Rate limits (D-076): inside the error envelope, before any handler or lookup does work.
+        .layer(admission)
         .with_state(state)
 }
 

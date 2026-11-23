@@ -1,0 +1,12 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "WITH due AS (\n             SELECT project_id, environment_id, id FROM asset_jobs\n             WHERE deadline_at <= now() AND status IN ('pending', 'retrying', 'running')\n               AND (status <> 'running' OR lease_expires_at < now())\n             ORDER BY id\n             FOR UPDATE SKIP LOCKED\n         )\n         UPDATE asset_jobs j SET status = 'failed', last_error = 'ran out of time',\n                                 lease_owner = NULL, lease_expires_at = NULL,\n                                 updated_at = now(), finished_at = now()\n         FROM due\n         WHERE j.project_id = due.project_id AND j.environment_id = due.environment_id AND j.id = due.id",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": []
+    },
+    "nullable": []
+  },
+  "hash": "166e7934c0a748ffa2a40587f989571d61057e612337131fbb2da083e3867c54"
+}

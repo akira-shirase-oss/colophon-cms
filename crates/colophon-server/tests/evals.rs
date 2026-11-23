@@ -775,13 +775,14 @@ fn tool_arguments(fx: &Fixture) -> RunFut {
             StatusCode::BAD_REQUEST,
             "bad_request",
         );
-        // A document over the rich-text bound is refused by the validator, not the
-        // payload limit: `validation_failed` with `too_large` at `/body`.
+        // A document over the rich-text bound (256 KiB) is refused by the validator, not the
+        // payload limit (1 MiB of JSON, D-230): `validation_failed` with `too_large` at `/body`.
+        // Past the payload limit is a 413 (tests/attacks/bodies.rs).
         let huge = as_token(
             &agent,
             Method::POST,
             &entries(&project),
-            Some(&article("big", &"x".repeat(1_200_000))),
+            Some(&article("big", &"x".repeat(300_000))),
             &[],
         )
         .await;

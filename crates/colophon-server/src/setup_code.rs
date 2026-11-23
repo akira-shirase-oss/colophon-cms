@@ -49,10 +49,12 @@ pub async fn run(pool: PgPool, studio: String, cancel: CancellationToken) {
     };
     let mut pause = Duration::from_secs(1);
     for attempt in 1..=ATTEMPTS {
-        let issued = tokio::select! {
-            () = cancel.cancelled() => return,
-            issued = setup::issue(&pool, &hash, LIFETIME) => issued,
-        };
+        if cancel.is_cancelled() {
+            return;
+        }
+        // Not raced against `cancel`: dropped mid-statement, a code could be issued and never
+        // printed. One statement, bounded by the pool's statement timeout.
+        let issued = setup::issue(&pool, &hash, LIFETIME).await;
         match issued {
             Ok(Some(expires)) => {
                 let text = banner(&code, &studio, expires);

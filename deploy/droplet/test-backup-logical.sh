@@ -3,7 +3,9 @@
 # they were given: the database password reaches pg_dump only through its environment (never
 # argv), over verify-full; a URL without verify-full is refused before any dump; the upload lands
 # under logical/; retention keeps the newest of the 14 newest days and of the 8 newest ISO weeks
-# and the newest dump, and deletes the rest; `latest` names the newest dump and its age.
+# and the newest dump, and deletes the rest; `latest` names the newest dump and its age. R2 is
+# reached with the backups' own key (COLOPHON_BACKUP_S3_ACCESS_KEY, credentials/backup_s3_secret_key),
+# never the media key the server holds; without it, nothing runs.
 #
 #   deploy/droplet/test-backup-logical.sh
 set -euo pipefail
@@ -19,6 +21,7 @@ cat >"$work/bin/rclone" <<STUB
 #!/usr/bin/env bash
 echo "rclone \$*" >>"$work/calls"
 echo "region=\${RCLONE_CONFIG_R2_REGION:-}" >>"$work/rclone-env"
+echo "key=\${RCLONE_CONFIG_R2_ACCESS_KEY_ID:-} secret=\${RCLONE_CONFIG_R2_SECRET_ACCESS_KEY:-}" >>"$work/rclone-keys"
 case "\$1" in
   lsf) cat "$work/listing" 2>/dev/null ;;
   copyto) echo "\$2" >>"$work/uploaded"; basename "\$2" >>"$work/listing" ;;
@@ -42,8 +45,9 @@ printf 'PGDMP-fake'
 STUB
 printf '#!/usr/bin/env bash\necho "age $*" >>"%s/calls"\nprintf "AGE:"; cat\n' "$work" >"$work/bin/age"
 chmod +x "$work/bin/"*
-printf 'COLOPHON_S3_ENDPOINT=https://acct.r2.cloudflarestorage.com\nCOLOPHON_S3_ACCESS_KEY=AKID\n' >"$work/colophon.env"
-echo 'r2-secret' >"$work/creds/s3_secret_key"
+printf 'COLOPHON_S3_ENDPOINT=https://acct.r2.cloudflarestorage.com\nCOLOPHON_S3_ACCESS_KEY=MEDIAKEY\nCOLOPHON_BACKUP_S3_ACCESS_KEY=BACKUPKEY\n' >"$work/colophon.env"
+echo 'media-secret' >"$work/creds/s3_secret_key"
+echo 'backup-secret' >"$work/creds/backup_s3_secret_key"
 echo 'age1recipientexample' >"$work/recipient"
 backup() { env PATH="$work/bin:$PATH" CREDENTIALS_DIRECTORY="$work/creds" COLOPHON_ENV_FILE="$work/colophon.env" \
   BACKUP_AGE_RECIPIENT_FILE="$work/recipient" deploy/droplet/backup-logical.sh "$@"; }
@@ -58,6 +62,8 @@ grep -qE '\.dump\.age$' "$work/uploaded" || fail "nothing uploaded: $(cat "$work
 # Neon's certificate is checked against the system's public roots, and R2's region is "auto".
 grep -q 'PGSSLROOTCERT=system' "$work/pg_dump" || fail "pg_dump's root certificates: $(cat "$work/pg_dump")"
 ! grep -qv '^region=auto$' "$work/rclone-env" || fail "rclone's R2 region isn't auto: $(sort -u "$work/rclone-env")"
+# The backups' own R2 key, never the media one.
+[[ "$(sort -u "$work/rclone-keys")" == "key=BACKUPKEY secret=backup-secret" ]] || fail "rclone's R2 key: $(sort -u "$work/rclone-keys")"
 # A URL naming its own CA (a private Postgres, or the rehearsal's stand-in) is verified against it.
 : >"$work/pg_dump"
 echo 'postgres://owner:pw@db.internal/colophon?sslmode=verify-full&sslrootcert=/etc/colophon/db-ca.pem' >"$work/creds/migration_database_url"
@@ -67,6 +73,15 @@ echo 'postgres://owner:s3cr%40t@ep-x.us-east-2.aws.neon.tech/colophon?sslmode=ve
 grep -qE 'rclone copyto .* r2:colophon-backups/logical/[0-9TZ-]+\.dump\.age' "$work/calls" || fail "the upload's key: $(cat "$work/calls")"
 grep -q 'age --encrypt --recipients-file' "$work/calls" || fail "not encrypted to the recipient file"
 grep -q 'PGDMP' "$(head -1 "$work/uploaded")" 2>/dev/null && fail "an unencrypted dump was uploaded"
+
+# Without the backups' own key: refused before any dump, never falling back to the media key.
+for missing in id secret; do
+  : >"$work/pg_dump"; : >"$work/rclone-keys"
+  if [[ $missing == id ]]; then sed -i.bak '/^COLOPHON_BACKUP_S3_ACCESS_KEY=/d' "$work/colophon.env"; else mv "$work/creds/backup_s3_secret_key" "$work/backup.keep"; fi
+  backup run >/dev/null 2>&1 && fail "ran without the backups' R2 key $missing"
+  [[ ! -s "$work/pg_dump" && ! -s "$work/rclone-keys" ]] || fail "without the backups' key $missing, something ran"
+  if [[ $missing == id ]]; then mv "$work/colophon.env.bak" "$work/colophon.env"; else mv "$work/backup.keep" "$work/creds/backup_s3_secret_key"; fi
+done
 
 # A URL without verify-full: refused before any dump.
 : >"$work/pg_dump"

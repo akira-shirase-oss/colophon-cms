@@ -22,8 +22,10 @@ use tokio_util::sync::CancellationToken;
 /// million of magic links and of sign-in keys, inside [`TICK_DEADLINE`].
 const PASSES: u32 = 200;
 
-/// The longest a tick may take: a stall inside is abandoned and retried whole next
-/// interval, every delete it made being committed per pass already.
+/// The longest a tick keeps starting passes: past it the tick ends after the pass under way,
+/// and the next interval carries on, every delete so far being committed per pass already. A
+/// pass is never cut short (a pass dropped mid-COMMIT leaves unknown whether it committed);
+/// its statements are bounded server side instead ([`colophon_db::bound_background`]).
 const TICK_DEADLINE: Duration = Duration::from_secs(120);
 
 /// Runs the sweep: [`colophon_db::retention::sweep`] every `interval`, with up to
@@ -39,19 +41,15 @@ impl Sweeper {
         Self { pool, interval }
     }
 
-    /// Ticks until `cancel` fires; between passes a cancellation is heard at the next await.
+    /// Ticks until `cancel` fires; a cancellation is heard between passes, so the pass under
+    /// way when it fires runs to its end.
     pub async fn run(self, cancel: CancellationToken) {
         tracing::info!("table retention sweep started");
         loop {
-            let tick = tokio::select! {
-                () = cancel.cancelled() => break,
-                tick = tokio::time::timeout(TICK_DEADLINE, self.tick()) => tick,
-            };
-            if tick.is_err() {
-                tracing::warn!(
-                    "a table retention tick ran out of time; trying again next interval"
-                );
+            if cancel.is_cancelled() {
+                break;
             }
+            self.tick(&cancel).await;
             tokio::select! {
                 () = cancel.cancelled() => break,
                 () = tokio::time::sleep(self.interval) => {}
@@ -60,15 +58,26 @@ impl Sweeper {
         tracing::info!("table retention sweep stopped");
     }
 
-    /// Up to [`PASSES`] passes, stopping as soon as one removes nothing. A failed pass ends
-    /// the tick: the next interval runs it again — every delete is committed per pass, so a
-    /// partial tick is progress kept, never work to undo.
-    async fn tick(&self) {
+    /// Up to [`PASSES`] passes, stopping as soon as one removes nothing, when `cancel` fires
+    /// or once [`TICK_DEADLINE`] has gone by. A failed pass ends the tick: the next interval
+    /// runs it again — every delete is committed per pass, so a partial tick is progress kept,
+    /// never work to undo.
+    async fn tick(&self, cancel: &CancellationToken) {
+        let deadline = std::time::Instant::now() + TICK_DEADLINE;
+        let stopping = || cancel.is_cancelled();
         for _ in 0..PASSES {
+            if cancel.is_cancelled() {
+                break;
+            }
+            if std::time::Instant::now() >= deadline {
+                tracing::warn!("a table retention tick ran out of time; carrying on next interval");
+                break;
+            }
             match colophon_db::retention::sweep(
                 &self.pool,
                 &colophon_db::retention::Retention::DEFAULT,
                 colophon_db::retention::BATCH,
+                colophon_db::Stop::new(&stopping),
             )
             .await
             {
@@ -99,6 +108,8 @@ impl Sweeper {
                         "table retention pass"
                     );
                 }
+                // Told to stop between statements: rolled back, run again next start.
+                Err(colophon_db::DbError::Stopped) => break,
                 Err(error) => {
                     tracing::warn!(error = %error, "a table retention pass failed; trying again next interval");
                     break;

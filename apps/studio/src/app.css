@@ -161,10 +161,6 @@
 	.lift:active {
 		transform: translateY(0);
 	}
-	/* Something is on its way: the dot breathes. */
-	.breathe {
-		animation: breathe 1.6s ease-in-out infinite;
-	}
 	/* A save that just landed. */
 	.pop {
 		animation: pop 320ms cubic-bezier(0.3, 1.6, 0.5, 1) both;
@@ -180,11 +176,6 @@
 	from {
 		opacity: 0;
 		transform: translateY(4px);
-	}
-}
-@keyframes breathe {
-	50% {
-		opacity: 0.35;
 	}
 }
 @keyframes pop {

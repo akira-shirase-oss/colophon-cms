@@ -4,7 +4,7 @@
 // says plainly when the entry has been taken down meanwhile.
 
 import { expect, test } from '@playwright/test';
-import { env, internalTerms, newEntry, newProject, publishThroughApi, signIn, violations } from './helpers.ts';
+import { env, internalTerms, newEntry, newProject, openTechnicalDetails, publishThroughApi, signIn, violations } from './helpers.ts';
 
 test('a published entry shows what readers get, as the website receives it, and says when that is behind or gone', async ({ page, context, request }) => {
 	await context.grantPermissions(['clipboard-read', 'clipboard-write']);
@@ -15,9 +15,9 @@ test('a published entry shows what readers get, as the website receives it, and 
 	await page.goto(`/studio/projects/${project}/articles/${entry}`);
 	await expect(page.getByTestId('save-status')).toHaveAttribute('data-status', 'saved');
 
-	// It waits in Technical details, beside the public address (D-081).
+	// It waits in Details › Technical details, beside the public address (D-081, D-184).
 	await expect(page.getByTestId('see-what-readers-get')).toBeHidden();
-	await page.getByTestId('entry-details').getByTestId('technical-details').locator('summary').click();
+	await openTechnicalDetails(page);
 	await page.getByTestId('see-what-readers-get').click();
 	const view = page.getByTestId('reader-view');
 	await expect(view.getByRole('heading', { name: 'What readers get' })).toBeVisible();

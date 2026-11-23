@@ -1,0 +1,1 @@
+{"schema": "colophon/rich-text", "version": 1, "doc": {"type": "doc", "content": [{"type": "bulletList", "content": [{"type": "listItem", "content": [{"type": "heading", "attrs": {"level": 2}, "content": [{"type": "text", "text": "x"}]}]}]}]}}

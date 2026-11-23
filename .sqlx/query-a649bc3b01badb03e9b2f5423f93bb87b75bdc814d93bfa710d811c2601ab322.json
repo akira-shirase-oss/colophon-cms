@@ -1,0 +1,70 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT kind AS \"kind!\", entry_id AS \"entry_id!\", collection AS \"collection!\", title AS \"title!\",\n                  revision_id AS \"revision_id!\", previous_revision_id, created_by\n           FROM (\n               (SELECT 'publish' AS kind, p.entry_id, p.collection, p.title, p.revision_id,\n                       prev.revision_id AS previous_revision_id, e.created_by\n                FROM publications p\n                LEFT JOIN publications prev ON prev.project_id = p.project_id AND prev.environment_id = p.environment_id\n                                           AND prev.entry_id = p.entry_id AND prev.valid_to = p.valid_from\n                LEFT JOIN entries e ON e.project_id = p.project_id AND e.environment_id = p.environment_id\n                                   AND e.id = p.entry_id\n                WHERE p.project_id = $1 AND p.environment_id = $2 AND p.valid_from = $3\n                  AND ($4::text IS NULL OR ($4 = 'publish' AND p.entry_id > $5))\n                ORDER BY p.entry_id\n                LIMIT $6)\n               UNION ALL\n               (SELECT 'unpublish', t.entry_id, t.collection, r.title, t.revision_id, t.revision_id,\n                       e.created_by\n                FROM tombstones t\n                JOIN revisions r ON r.project_id = t.project_id AND r.environment_id = t.environment_id\n                                AND r.id = t.revision_id\n                LEFT JOIN entries e ON e.project_id = t.project_id AND e.environment_id = t.environment_id\n                                   AND e.id = t.entry_id\n                WHERE t.project_id = $1 AND t.environment_id = $2 AND t.generation = $3\n                  AND ($4::text IS NULL OR $4 = 'publish' OR t.entry_id > $5)\n                ORDER BY t.entry_id\n                LIMIT $6)\n           ) changed\n           ORDER BY kind, entry_id\n           LIMIT $6",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "kind!",
+        "type_info": "Text",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 1,
+        "name": "entry_id!",
+        "type_info": "Uuid",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 2,
+        "name": "collection!",
+        "type_info": "Text",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 3,
+        "name": "title!",
+        "type_info": "Text",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 4,
+        "name": "revision_id!",
+        "type_info": "Uuid",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 5,
+        "name": "previous_revision_id",
+        "type_info": "Uuid",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 6,
+        "name": "created_by",
+        "type_info": "Uuid",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid",
+        "Int8",
+        "Text",
+        "Uuid",
+        "Int8"
+      ]
+    },
+    "nullable": [
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null
+    ]
+  },
+  "hash": "a649bc3b01badb03e9b2f5423f93bb87b75bdc814d93bfa710d811c2601ab322"
+}

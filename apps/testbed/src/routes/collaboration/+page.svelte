@@ -85,26 +85,44 @@
 		if (projectId !== '') await loadProject();
 	}
 
+	// Loads overlap (the page's first load and a project picked meanwhile; the refresh after a refusal and the one after
+	// the retry), and their answers can land out of order. Each load takes a number, and one that a newer load has
+	// overtaken drops what it read instead of writing it last over newer state.
+	let latest = 0;
+
 	async function loadProject() {
+		const mine = ++latest;
+		const forProject = projectId;
 		const found = await call('GET', `/api/v1/projects/${projectId}/members`);
-		members = found.status === 200 ? (found.body as { data: Member[] }).data : [];
 		const reply = await call('GET', `${base}/collections/articles/entries?limit=100`);
+		if (mine !== latest || projectId !== forProject) return;
+		members = found.status === 200 ? (found.body as { data: Member[] }).data : [];
 		entries = reply.status === 200 ? (reply.body as { data: Listed[] }).data : [];
-		if (entryId === '' && entries.length > 0) entryId = entries[0]?.id ?? '';
+		// An entry belongs to one project: on a switch, the previous project's entry (and the comment and task
+		// open on it) is dropped and this project's first entry is picked.
+		if (!entries.some((item) => item.id === entryId)) {
+			entryId = entries[0]?.id ?? '';
+			openComment = null;
+			openTask = null;
+		}
 		await loadEntry();
 	}
 
 	async function loadEntry() {
 		if (entryId === '') {
+			++latest;
 			comments = [];
 			tasks = [];
 			openComment = null;
 			openTask = null;
 			return;
 		}
+		const mine = ++latest;
+		const forEntry = entryId;
 		const list = await call('GET', `${entryPath}/comments?limit=100`);
-		comments = list.status === 200 ? (list.body as { data: Comment[] }).data : [];
 		const all = await call('GET', `${base}/tasks?entry=${entryId}&limit=100`);
+		if (mine !== latest || entryId !== forEntry) return;
+		comments = list.status === 200 ? (list.body as { data: Comment[] }).data : [];
 		tasks = all.status === 200 ? (all.body as { data: Task[] }).data : [];
 		if (openComment !== null) openComment = comments.find((item) => item.id === openComment?.id) ?? null;
 		commentEtag = openComment?.etag ?? '';

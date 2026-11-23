@@ -39,6 +39,9 @@ test('comment on a revision, resolve and reopen on its etag, and run a task', as
 	await page.getByLabel('If-Match etag').fill(`sha256:${'0'.repeat(64)}`);
 	await page.getByTestId('resolve').click();
 	await expect(page.getByTestId('message')).toHaveText('409 conflict (comment_moved)');
+	// The 409's refresh puts the comment's etag back in the field when it lands; typing before then races it
+	// (it landed mid-fill in CI 44790031484 and the retry sent the etag twice). Type once it has.
+	await expect(page.getByLabel('If-Match etag')).toHaveValue(etag);
 	await page.getByLabel('If-Match etag').fill(etag);
 	await page.getByTestId('resolve').click();
 	await expect(page.getByTestId('comment-state')).toHaveText('resolved');
@@ -59,4 +62,64 @@ test('comment on a revision, resolve and reopen on its etag, and run a task', as
 	await page.getByLabel('Reassign to').selectOption('none');
 	await page.getByTestId('assign').click();
 	await expect(page.getByTestId('task-waiting')).toHaveText('nobody');
+});
+
+// Switching project picks that project's own entry: the page used to keep the previous project's entry (it only
+// picked one when none was picked), so with another project listed first the comment form never appeared.
+test('switching project picks that project\'s entry', async ({ page }) => {
+	await signIn(page, 'dev-owner');
+	const first = await setup(page);
+	const { project } = await setup(page);
+	await page.goto('/collaboration');
+	await page.getByLabel('Project').selectOption(first.project);
+	await expect(page.getByTestId('add-comment')).toBeVisible();
+	const before = await page.getByLabel('Entry').inputValue();
+	await page.getByLabel('Project').selectOption(project);
+	await expect(page.getByLabel('Entry')).not.toHaveValue(before);
+	await expect(page.getByTestId('comments')).toBeVisible();
+	await expect(page.getByTestId('add-comment')).toBeVisible();
+});
+
+// A refresh started before the resolve can't overwrite it: the reload after the stale etag's 409 is held back (its
+// tasks read answers 2 s late) until the resolve and its own reload have landed. The page must keep "resolved" —
+// a load that a newer one has overtaken is dropped, not applied last (CI 44560804246's flake, made certain).
+test('a reload overtaken by a newer one is dropped, so a resolve stays resolved', async ({ page }) => {
+	await signIn(page, 'dev-owner');
+	const { project } = await setup(page);
+	let refused = false;
+	let held = false;
+	let released = false;
+	page.on('response', (response) => {
+		if (response.url().includes('/resolve') && response.status() === 409) refused = true;
+	});
+	await page.route('**/tasks?entry=*', async (route) => {
+		if (refused && !held) {
+			held = true;
+			await new Promise((resolve) => setTimeout(resolve, 2000));
+			await route.continue();
+			released = true;
+			return;
+		}
+		await route.continue();
+	});
+	await page.goto('/collaboration');
+	await page.getByLabel('Project').selectOption(project);
+	await page.getByLabel('New comment').fill('Check the closing sentence');
+	await page.getByTestId('add-comment').click();
+	await expect(page.getByTestId('message')).toHaveText('comment added');
+	await page.getByRole('button', { name: 'Check the closing sentence' }).click();
+
+	const etag = await page.getByLabel('If-Match etag').inputValue();
+	await page.getByLabel('If-Match etag').fill(`sha256:${'0'.repeat(64)}`);
+	await page.getByTestId('resolve').click();
+	await expect(page.getByTestId('message')).toHaveText('409 conflict (comment_moved)');
+	await page.getByLabel('If-Match etag').fill(etag);
+	await page.getByTestId('resolve').click();
+	await expect(page.getByTestId('message')).toHaveText('resolved');
+	await expect(page.getByTestId('comment-state')).toHaveText('resolved');
+	// The held reload lands now, last; it must change nothing.
+	await expect.poll(() => released, { timeout: 5000 }).toBe(true);
+	expect(held).toBe(true);
+	await page.waitForTimeout(300);
+	await expect(page.getByTestId('comment-state')).toHaveText('resolved');
 });

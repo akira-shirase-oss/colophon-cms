@@ -25,10 +25,8 @@
 		ApiError,
 		changeRole,
 		createInvitation,
-		getProject,
 		type Invitation,
 		listInvitations,
-		listMembers,
 		me,
 		may,
 		removeMember,
@@ -37,18 +35,18 @@
 	} from '#lib/api.ts';
 	import { plainError } from '#lib/errors.ts';
 	import { forgetInviteLabel, inviteLabel, keepInviteLabel, NEW_ROLE } from '#lib/inviteDraft.ts';
-	import { rolesQuery } from '#lib/queries.ts';
+	import { membersQuery, projectQuery, rolesQuery } from '#lib/queries.ts';
 
 	const project = $derived(page.params.project ?? '');
 	const queryClient = useQueryClient();
 	const who = createQuery(() => ({ queryKey: ['me'], queryFn: me }));
 	// The role comes from the project itself: me().projects lists at most 1,000 projects.
-	const mine = createQuery(() => ({ queryKey: ['project', project], queryFn: () => getProject(project) }));
+	const mine = createQuery(() => projectQuery(project));
 	const manages = $derived(may(mine.data, 'members.manage'));
 	const managesRoles = $derived(may(mine.data, 'roles.manage'));
 	const roles = createQuery(() => rolesQuery(project));
 	const nameOf = (key: string) => roles.data?.find((option) => option.key === key)?.name ?? key;
-	const people = createQuery(() => ({ queryKey: ['members', project], queryFn: () => listMembers(project) }));
+	const people = createQuery(() => membersQuery(project));
 	const pending = createQuery(() => ({
 		queryKey: ['invitations', project],
 		queryFn: () => listInvitations(project),

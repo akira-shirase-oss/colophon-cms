@@ -65,7 +65,7 @@ impl CheckState {
 }
 
 /// The dependencies readiness depends on.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Dependency {
     /// PostgreSQL: the only source of truth. Required.
     Database,

@@ -600,21 +600,45 @@ pub struct Claimed {
 
 /// Claims up to `limit` due asset jobs for `owner` under `lease`, rows another worker is
 /// claiming skipped not waited for (the delivery jobs' discipline, minus destinations).
+///
+/// Only waiting jobs, by an ordered scan of `asset_jobs_due` that stops at the limit; each
+/// claimed row is then updated by its key and its asset's fields read by theirs, so a claim
+/// reads a few blocks however many assets and jobs there are. Two plans broke that on main
+/// (CI 44868206132, 70,871 blocks a claim, 4.5 s by the end of the assets smoke): joining
+/// `assets` in the UPDATE let the planner read every asset of the environment per claimed row
+/// and filter on the id afterwards, so the asset fields come from scalar subqueries on the full
+/// key; and a generic plan, which a prepared statement settles on after five calls, can't know
+/// `LIMIT $3` is a handful and scans the whole table for the UPDATE's join, so the claim plans
+/// for its own limit every call (`plan_cache_mode = force_custom_plan`). That costs about
+/// 0.5 ms of planning a call (measured: 0.47 ms, against 0.2 ms for a cached generic plan); keep
+/// it — the generic plan it replaces read the whole table. A job
+/// whose worker stopped answering is made waiting again by [`release_lapsed`], on the sweep's
+/// interval, rather than looked for here: a claim that also searched `lease_expires_at <
+/// now()` walked the dead index entry every finished job leaves there once its lease time
+/// passes, on every claim, for as long as an open snapshot kept those entries from being
+/// marked dead (train-3's assets smoke: claim tails climbing with the run's history). And one
+/// `WHERE … OR …` over both kinds could use no index in order at all (1-3.5 s claims).
 pub async fn claim(
     pool: &PgPool,
     owner: &str,
     lease: Duration,
     limit: i64,
+    stop: crate::Stop<'_>,
 ) -> Result<Vec<Claimed>, DbError> {
-    let mut transaction = worker(pool).await?;
+    // A background unit: a stop while it waits for a connection ends it, nothing claimed.
+    let mut transaction = crate::transactions::background_worker(pool, stop).await?;
+    // Planned for this call's limit every time, never once for all (see above).
+    sqlx::query("SET LOCAL plan_cache_mode = force_custom_plan")
+        .execute(&mut *transaction)
+        .await
+        .map_err(DbError::from_query)?;
     let lease_ms = i64::try_from(lease.as_millis()).unwrap_or(i64::MAX);
     let claimed = sqlx::query_as!(
         Claimed,
         "WITH due AS (
              SELECT j.project_id, j.environment_id, j.id
              FROM asset_jobs j
-             WHERE ((j.status IN ('pending', 'retrying') AND j.next_attempt_at <= now())
-                    OR (j.status = 'running' AND j.lease_expires_at < now()))
+             WHERE j.status IN ('pending', 'retrying') AND j.next_attempt_at <= now()
                AND j.deadline_at > now()
              ORDER BY j.next_attempt_at
              LIMIT $3
@@ -624,13 +648,21 @@ pub async fn claim(
                             lease_expires_at = now() + make_interval(secs => $2::bigint / 1000.0),
                             lease_generation = j.lease_generation + 1, attempts = j.attempts + 1,
                             updated_at = now()
-         FROM due, assets a
+         FROM due
          WHERE j.project_id = due.project_id AND j.environment_id = due.environment_id AND j.id = due.id
-           AND a.project_id = j.project_id AND a.environment_id = j.environment_id AND a.id = j.asset_id
          RETURNING j.project_id, j.environment_id, j.id, j.kind, j.asset_id,
-                   coalesce(j.quarantine_key, a.quarantine_key) AS \"quarantine_key!\",
-                   coalesce(j.declared_type, a.declared_type) AS \"declared_type!\",
-                   coalesce(j.size_bytes, a.size_bytes) AS \"size_bytes!\",
+                   coalesce(j.quarantine_key,
+                            (SELECT a.quarantine_key FROM assets a
+                             WHERE a.project_id = j.project_id AND a.environment_id = j.environment_id
+                               AND a.id = j.asset_id)) AS \"quarantine_key!\",
+                   coalesce(j.declared_type,
+                            (SELECT a.declared_type FROM assets a
+                             WHERE a.project_id = j.project_id AND a.environment_id = j.environment_id
+                               AND a.id = j.asset_id)) AS \"declared_type!\",
+                   coalesce(j.size_bytes,
+                            (SELECT a.size_bytes FROM assets a
+                             WHERE a.project_id = j.project_id AND a.environment_id = j.environment_id
+                               AND a.id = j.asset_id)) AS \"size_bytes!\",
                    j.idempotency_key, j.attempts,
                    j.lease_generation, j.deadline_at",
         owner,
@@ -642,6 +674,71 @@ pub async fn claim(
     .map_err(DbError::from_query)?;
     transaction.commit().await.map_err(DbError::from_query)?;
     Ok(claimed)
+}
+
+/// How many lapsed leases one [`release_lapsed`] pass releases.
+pub const RELEASE_BATCH: i64 = 200;
+
+/// Makes asset jobs whose lease ran out waiting again (`retrying`, keeping their place: their
+/// `next_attempt_at` was due when they were claimed, so the next [`claim`] takes them before
+/// newer work): the worker that held one stopped answering (a crash, a kill), and the job is
+/// anyone's. Runs on the worker's sweep interval, so such a job is picked up within
+/// that interval of its lease running out (D-093's addendum). Never waits: a job another
+/// transaction holds is the next pass's (`SKIP LOCKED`, in id order). Its old holder's late
+/// finish is refused ([`finish`] needs the job running under that holder's lease). A pass is
+/// one bounded statement: at most [`RELEASE_BATCH`] jobs, a 4 s statement and a 3 s lock wait,
+/// server side, so a stop that lets it finish waits under the 5 s cleanup deadline. How many
+/// it released. The sweep runs passes back to back ([`release_lapsed_all`]).
+pub async fn release_lapsed(pool: &PgPool, stop: crate::Stop<'_>) -> Result<u64, DbError> {
+    let mut transaction = crate::transactions::background_worker(pool, stop).await?;
+    let released = sqlx::query!(
+        "WITH lapsed AS (
+             SELECT project_id, environment_id, id FROM asset_jobs
+             WHERE status = 'running' AND lease_expires_at < now() AND deadline_at > now()
+             ORDER BY id
+             LIMIT $1
+             FOR UPDATE SKIP LOCKED
+         )
+         UPDATE asset_jobs j SET status = 'retrying', lease_owner = NULL, lease_expires_at = NULL,
+                                 updated_at = now()
+         FROM lapsed
+         WHERE j.project_id = lapsed.project_id AND j.environment_id = lapsed.environment_id
+           AND j.id = lapsed.id",
+        RELEASE_BATCH
+    )
+    .execute(&mut *transaction)
+    .await
+    .map_err(DbError::from_query)?
+    .rows_affected();
+    transaction.commit().await.map_err(DbError::from_query)?;
+    Ok(released)
+}
+
+/// The longest one sweep keeps starting [`release_lapsed`] passes: under the worker's 10 s
+/// sweep interval, so a sweep never runs into the next.
+pub const RELEASE_BUDGET: Duration = Duration::from_secs(5);
+
+/// One sweep's release of lapsed leases: [`release_lapsed`] passes, each its own short
+/// transaction, back to back until one comes back short of [`RELEASE_BATCH`], `stop` is
+/// requested (asked between passes, never during one) or `budget` has gone by. So every lease that
+/// lapsed is released by the next sweep, however many a crash stranded, unless releasing them
+/// takes longer than `budget`; only then does the rest wait for the sweeps after. How many it
+/// released.
+pub async fn release_lapsed_all(
+    pool: &PgPool,
+    budget: Duration,
+    stop: crate::Stop<'_>,
+) -> Result<u64, DbError> {
+    let started = std::time::Instant::now();
+    let full = u64::try_from(RELEASE_BATCH).unwrap_or(u64::MAX);
+    let mut total = 0;
+    loop {
+        let released = release_lapsed(pool, stop).await?;
+        total += released;
+        if released < full || stop.requested() || started.elapsed() >= budget {
+            return Ok(total);
+        }
+    }
 }
 
 /// What a delete attempt decided under the asset's row lock (media M3, D-098).
@@ -757,14 +854,24 @@ async fn removing(
     job: &Claimed,
     asset_key: String,
 ) -> Result<Deletion, DbError> {
+    // Every open verify of the asset must go, so this waits for each, in id order (the work
+    // tables' one multi-row lock order).
     let open_jobs = sqlx::query!(
-        "UPDATE asset_jobs SET status = 'superseded', last_error = 'the asset is being deleted',
-                               lease_owner = NULL, lease_expires_at = NULL,
-                               updated_at = now(), finished_at = now()
-         WHERE project_id = $1 AND environment_id = $2 AND asset_id = $3
-           AND kind IN ('verify', 'reverify') AND status IN ('pending', 'retrying')
-           AND quarantine_key IS NOT NULL
-         RETURNING quarantine_key",
+        "WITH open AS (
+             SELECT project_id, environment_id, id FROM asset_jobs
+             WHERE project_id = $1 AND environment_id = $2 AND asset_id = $3
+               AND kind IN ('verify', 'reverify') AND status IN ('pending', 'retrying')
+               AND quarantine_key IS NOT NULL
+             ORDER BY id
+             FOR UPDATE
+         )
+         UPDATE asset_jobs j SET status = 'superseded', last_error = 'the asset is being deleted',
+                                 lease_owner = NULL, lease_expires_at = NULL,
+                                 updated_at = now(), finished_at = now()
+         FROM open
+         WHERE j.project_id = open.project_id AND j.environment_id = open.environment_id
+           AND j.id = open.id
+         RETURNING j.quarantine_key",
         job.project_id,
         job.environment_id,
         job.asset_id
@@ -1007,14 +1114,22 @@ async fn land_usable(
 }
 
 /// Fails unfinished asset jobs that ran out of time (swept with the delivery jobs'); how many.
-pub async fn expire(pool: &PgPool) -> Result<u64, DbError> {
-    let mut transaction = worker(pool).await?;
+/// Like `jobs::expire` it never waits: a job another transaction holds is the next pass's.
+pub async fn expire(pool: &PgPool, stop: crate::Stop<'_>) -> Result<u64, DbError> {
+    let mut transaction = crate::transactions::background_worker(pool, stop).await?;
     let expired = sqlx::query!(
-        "UPDATE asset_jobs SET status = 'failed', last_error = 'ran out of time',
-                              lease_owner = NULL, lease_expires_at = NULL,
-                              updated_at = now(), finished_at = now()
-         WHERE deadline_at <= now() AND status IN ('pending', 'retrying', 'running')
-           AND (status <> 'running' OR lease_expires_at < now())"
+        "WITH due AS (
+             SELECT project_id, environment_id, id FROM asset_jobs
+             WHERE deadline_at <= now() AND status IN ('pending', 'retrying', 'running')
+               AND (status <> 'running' OR lease_expires_at < now())
+             ORDER BY id
+             FOR UPDATE SKIP LOCKED
+         )
+         UPDATE asset_jobs j SET status = 'failed', last_error = 'ran out of time',
+                                 lease_owner = NULL, lease_expires_at = NULL,
+                                 updated_at = now(), finished_at = now()
+         FROM due
+         WHERE j.project_id = due.project_id AND j.environment_id = due.environment_id AND j.id = due.id"
     )
     .execute(&mut *transaction)
     .await
@@ -1049,8 +1164,9 @@ pub async fn enqueue_expired(
     deadline_at: OffsetDateTime,
     limit: i64,
     room: i64,
+    stop: crate::Stop<'_>,
 ) -> Result<u64, DbError> {
-    let mut transaction = worker(pool).await?;
+    let mut transaction = crate::transactions::background_worker(pool, stop).await?;
     let enqueued = sqlx::query!(
         "WITH collectable AS (
              SELECT a.project_id, a.environment_id, a.id, a.created_at, a.size_bytes,

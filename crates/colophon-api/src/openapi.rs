@@ -27,7 +27,7 @@ use crate::{
     AppState, BuildInfo, assets, audience, audit, auth, bulk, changesets, collaboration,
     components, content_types, delivery, destinations, device, entries, graphql, health, mcp,
     members, migrations, preview, projects, receipts, rich_text, roles, schedules, setup, tokens,
-    version,
+    undo, version,
 };
 
 /// A verb Colophon's routes use. Naming them in a small enum keeps the table total: the
@@ -225,12 +225,24 @@ struct OpDoc {
     /// import dry run's plan (D-114).
     also: Option<Res>,
     extra: &'static [Refusal],
-    /// The most body bytes the operation reads, when it is smaller than the server-wide limit
-    /// (which is sized for uploads): the routes anyone may call with a body before signing in
-    /// read [`PUBLIC_FORM_BYTES`], so a stranger's body is never buffered past what its fields
-    /// could need.
+    /// The most body bytes the operation reads, when it isn't the 1 MiB every JSON route reads
+    /// (`middleware::JSON_BODY_BYTES`, D-230): the routes anyone may call with a body before
+    /// signing in read [`PUBLIC_FORM_BYTES`], so a stranger's body is never buffered past what its
+    /// fields could need; imports, bulk chunks and MCP messages document a larger need.
     body_limit: Option<usize>,
 }
+
+/// What an import may send (D-230): up to 512 items, each an entry of at most 257 KiB of
+/// content, in a file people make by hand or with another CMS's export — larger than the 1 MiB
+/// every other JSON route reads, smaller than an upload.
+pub(crate) const IMPORT_BODY_BYTES: usize = 16 * 1024 * 1024;
+
+/// What a bulk job's chunk may send (D-230): its items are at most 1 MiB of canonical JSON
+/// (`CHUNK_BYTES`), with room for the envelope and the whitespace a client writes.
+pub(crate) const BULK_CHUNK_BODY_BYTES: usize = 2 * 1024 * 1024;
+
+/// What one remote-MCP message may be (D-230): the session refuses more (`MAX_MESSAGE_BYTES`).
+pub(crate) const MCP_BODY_BYTES: usize = 2 * 1024 * 1024;
 
 /// What the public sign-in forms may send (D-164): an email (254 bytes), a password (512), a
 /// display name or a `return_to` (2 KiB), JSON around them — with room to spare.
@@ -277,6 +289,15 @@ const LIMIT: Param = query("limit", Kind::Int, "page size: 1–100, default 20")
 const RELEASES_LIMIT: Param = query("limit", Kind::Int, "page size: 1–100, default 100");
 /// The media library's page size: by default the 100 it listed before it paged (D-179).
 const LIBRARY_LIMIT: Param = query("limit", Kind::Int, "page size: 1–100, default 100");
+/// A rollback's confirm: the preview's `ETag`, so a rollback that would pin anything else is
+/// refused (D-185). Optional, for the CLI and scripts that roll back without a preview.
+const ROLLBACK_IF_MATCH: Param = header_maybe(
+    "if-match",
+    Kind::Str,
+    "the rollback preview's `ETag`: refused `stale_changeset` if the pins moved since",
+);
+/// A release's changes, a page at a time (D-185).
+const CHANGES_LIMIT: Param = query("limit", Kind::Int, "page size: 1–100, default 100");
 const GENERATION: Param = query(
     "generation",
     Kind::Int,
@@ -1439,6 +1460,7 @@ pub(crate) static TABLE: &[Route] = &[
                             "the project's or the server's session cap is full",
                         ),
                     ],
+                    body_limit: Some(MCP_BODY_BYTES),
                     ..MIN
                 },
             ),
@@ -2006,6 +2028,7 @@ pub(crate) static TABLE: &[Route] = &[
                         ),
                         REUSED_KEY,
                     ],
+                    body_limit: Some(BULK_CHUNK_BODY_BYTES),
                     ..MIN
                 },
             ),
@@ -2091,6 +2114,7 @@ pub(crate) static TABLE: &[Route] = &[
                         BAD_MATCH,
                         REUSED_KEY,
                     ],
+                    body_limit: Some(BULK_CHUNK_BODY_BYTES),
                     ..MIN
                 },
             ),
@@ -2344,7 +2368,7 @@ pub(crate) static TABLE: &[Route] = &[
                     BAD_MATCH,
                     REUSED_KEY,
                 ],
-                body_limit: None,
+                body_limit: Some(IMPORT_BODY_BYTES),
             },
         )],
     ),
@@ -2865,8 +2889,8 @@ pub(crate) static TABLE: &[Route] = &[
                     NOT_FOUND,
                     refusal(
                         403,
-                        "missing_permission, agent_self_review",
-                        "the role can't review it, or a token tried to approve a token's changeset",
+                        "missing_permission, agent_self_review, cannot_review_hidden",
+                        "the role can't review it, a token tried to approve a token's changeset, or an approval names a version the role can't read in full",
                     ),
                     refusal(
                         409,
@@ -3097,27 +3121,128 @@ pub(crate) static TABLE: &[Route] = &[
         )],
     ),
     route(
+        (P, "/releases/{generation}/changes"),
+        &[op(
+            Verb::Get,
+            |f| on(f, receipts::changes),
+            OpDoc {
+                id: "listReleaseChanges",
+                summary: "What a release changed for readers, as far as your role reads it",
+                tag: "publishing",
+                security: Security::Any,
+                query: &[CHANGES_LIMIT, CURSOR],
+                ok: Res {
+                    status: 200,
+                    shape: Shape::Page("ChangeView"),
+                    headers: &[],
+                    media: "",
+                    note: "a page of the entries it published (first) and took down, each by entry \
+                           id; an entry your role can't read is left out, so a page may hold fewer \
+                           than `limit` — follow `next_cursor` until it is `null`",
+                },
+                extra: &[BAD_PAGE, NOT_FOUND],
+                ..MIN
+            },
+        )],
+    ),
+    route(
         (P, "/releases/{generation}/rollback"),
+        &[
+            op(
+                Verb::Get,
+                |f| on(f, changesets::rollback_preview),
+                OpDoc {
+                    id: "previewRollback",
+                    summary: "What a rollback to that release would restore and take down, without making it",
+                    tag: "publishing",
+                    security: Security::Any,
+                    ok: etagd(data("RollbackPreviewView")),
+                    extra: &[
+                        NOT_FOUND,
+                        FORBIDDEN,
+                        refusal(
+                            422,
+                            "invalid_generation",
+                            "only an earlier release than the live one",
+                        ),
+                    ],
+                    ..MIN
+                },
+            ),
+            op(
+                Verb::Post,
+                |f| on(f, changesets::rollback),
+                OpDoc {
+                    id: "rollbackRelease",
+                    summary: "Open a changeset restoring what that release published",
+                    tag: "publishing",
+                    security: Security::Any,
+                    headers: &[IDEMPOTENCY, ROLLBACK_IF_MATCH],
+                    body: Some(json("NewChangeset")),
+                    ok: etagd(created("ChangesetView")),
+                    extra: &[
+                        NOT_FOUND,
+                        FORBIDDEN,
+                        refusal(
+                            409,
+                            "stale_changeset",
+                            "the pins moved since the preview named in `If-Match`",
+                        ),
+                        refusal(
+                            422,
+                            "invalid_field",
+                            "a rollback takes no `entries` or `unpublish`",
+                        ),
+                        refusal(
+                            422,
+                            "invalid_generation, already_at, rollback_too_large",
+                            "not an earlier release, nothing to restore, or more than 190 entries",
+                        ),
+                        P428,
+                        BAD_MATCH,
+                        REUSED_KEY,
+                    ],
+                    ..MIN
+                },
+            ),
+        ],
+    ),
+    route(
+        (P, "/releases/{generation}/undo"),
         &[op(
             Verb::Post,
-            |f| on(f, changesets::rollback),
+            |f| on(f, undo::undo),
             OpDoc {
-                id: "rollbackRelease",
-                summary: "Open a changeset restoring what that release published",
+                id: "undoRelease",
+                summary: "Put back what the newest release took down, as the next release (D-184)",
                 tag: "publishing",
                 security: Security::Any,
                 headers: &[IDEMPOTENCY],
-                body: Some(json("NewChangeset")),
-                ok: etagd(created("ChangesetView")),
+                ok: created("UndoneView"),
                 extra: &[
                     NOT_FOUND,
                     refusal(
-                        422,
-                        "invalid_field",
-                        "a rollback takes no `entries` or `unpublish`",
+                        403,
+                        "not_your_release, agent_self_review, missing_permission",
+                        "only the person who published the release may undo it, and never an API token",
                     ),
+                    refusal(
+                        409,
+                        "changed_since",
+                        "another release went out after it, before or during this request",
+                    ),
+                    refusal(
+                        409,
+                        "not_undoable, undo_expired, needs_review",
+                        "it published something, its 60 seconds passed, or publishing here goes through review",
+                    ),
+                    refusal(
+                        409,
+                        "entry_deleted, revision_outdated, references_unpublished, asset_not_usable",
+                        "what it took down can't be put back as it was",
+                    ),
+                    refusal(422, "invalid_generation", "there is no such release"),
                     P428,
-                    BAD_MATCH,
                     REUSED_KEY,
                 ],
                 ..MIN
@@ -3270,10 +3395,20 @@ pub(crate) static TABLE: &[Route] = &[
                         NOT_FOUND,
                         refusal(
                             503,
-                            "unavailable",
-                            "uploads are not configured on this server",
+                            "unavailable, uploads_busy",
+                            "uploads are not configured on this server, or the uploads in progress hold its upload memory (Retry-After)",
                         ),
                         refusal(422, "invalid_upload", "the name, type or size refused"),
+                        refusal(
+                            408,
+                            "body_stalled",
+                            "the body stopped arriving for 15 s, or took longer than its bound",
+                        ),
+                        refusal(
+                            429,
+                            "too_many_uploads",
+                            "this session or token has four uploads in progress (Retry-After)",
+                        ),
                         P428,
                         BAD_MATCH,
                         REUSED_KEY,
@@ -3412,10 +3547,20 @@ pub(crate) static TABLE: &[Route] = &[
                     ),
                     refusal(
                         503,
-                        "unavailable",
-                        "uploads are not configured on this server",
+                        "unavailable, uploads_busy",
+                        "uploads are not configured on this server, or the uploads in progress hold its upload memory (Retry-After)",
                     ),
                     refusal(422, "invalid_upload", "the name, type or size refused"),
+                    refusal(
+                        408,
+                        "body_stalled",
+                        "the body stopped arriving for 15 s, or took longer than its bound",
+                    ),
+                    refusal(
+                        429,
+                        "too_many_uploads",
+                        "this session or token has four uploads in progress (Retry-After)",
+                    ),
                     P428,
                     BAD_MATCH,
                     REUSED_KEY,
@@ -4243,7 +4388,7 @@ pub(crate) static TABLE: &[Route] = &[
             |f| on(f, assets::serve),
             OpDoc {
                 id: "serveAsset",
-                summary: "The asset's current version's verified bytes, publicly",
+                summary: "The asset's verified bytes: its newest published version to anyone, its current one to a member or a signed address (D-229)",
                 tag: "media",
                 security: Security::Public,
                 ok: Res {
@@ -4251,7 +4396,7 @@ pub(crate) static TABLE: &[Route] = &[
                     shape: Shape::Empty,
                     headers: &[],
                     media: "*/*",
-                    note: "the stored `Content-Type`; `max-age=60, must-revalidate` with the version's `ETag` (a replace or delete moves this address, D-157) — a matching `If-None-Match` answers 304; a version's sha address is `immutable`",
+                    note: "the stored `Content-Type`; published: `max-age=60, must-revalidate` with the version's `ETag` (a publish or delete moves this address, D-157) — a matching `If-None-Match` answers 304; a version's sha address is `immutable`. Not yet published: only to a signed-in member or with `?kid=&expires=&signature=` (the addresses preview and members' delivery answers carry), `private, no-store`; anyone else gets 404",
                 },
                 extra: &[
                     NOT_FOUND,
@@ -4914,6 +5059,8 @@ fn schema_table() -> Value {
         entry_parts(),
         collaboration_parts(),
         publishing_parts(),
+        release_change_parts(),
+        undo_parts(),
         delivery_parts(),
         media_parts(),
         preview_parts(),
@@ -6075,6 +6222,25 @@ fn collaboration_parts() -> Value {
     })
 }
 
+/// An undo's answer (D-184), apart from the publishing schemas, whose literal is at the macro's
+/// recursion limit.
+fn undo_parts() -> Value {
+    json!({
+        "UndoneView": {
+            "type": "object",
+            "required": ["generation", "epoch", "undo_of", "changeset_id", "changeset_hash", "entries_restored"],
+            "properties": {
+                "generation": { "type": "integer", "description": "the release that put things back" },
+                "epoch": { "type": "integer" },
+                "undo_of": { "type": "integer", "description": "the release it undid" },
+                "changeset_id": { "type": "string", "format": "uuid" },
+                "changeset_hash": { "type": "string" },
+                "entries_restored": { "type": "integer", "description": "how many entries readers get again" },
+            },
+        },
+    })
+}
+
 /// Changesets, reviews, stages, schedules, releases, receipts, destinations, jobs.
 #[expect(
     clippy::too_many_lines,
@@ -6149,6 +6315,7 @@ fn publishing_parts() -> Value {
                 "published_revision_id": { "type": ["string", "null"], "format": "uuid" },
                 "created_by": { "type": ["string", "null"], "format": "uuid" },
                 "entry_deleted": { "type": "boolean" },
+                "title_hidden": { "type": "boolean", "description": "your role doesn't read the entry's title field, so `title` is blank" },
             },
         },
         "ReviewView": {
@@ -6215,7 +6382,8 @@ fn publishing_parts() -> Value {
                 "updated_at": { "type": "string", "format": "date-time" },
                 "rollback_generation": { "type": ["integer", "null"] },
                 "undo_of": { "type": ["integer", "null"], "description": "the release it undoes, for an undo of a takedown (D-184); read it before `rollback_generation`, which an undo also sets" },
-                "items": { "type": "array", "items": { "$ref": "#/components/schemas/ChangesetItemView" } },
+                "items": { "type": "array", "items": { "$ref": "#/components/schemas/ChangesetItemView" }, "description": "the items your role reads (D-185); the hash covers every item" },
+                "hidden_items": { "type": "integer", "description": "items left out because your role can't read their entries" },
                 "reviews": { "type": "array", "items": { "$ref": "#/components/schemas/ReviewView" } },
                 "stages": { "type": "array", "items": { "$ref": "#/components/schemas/StageStateView" } },
             },
@@ -6274,7 +6442,7 @@ fn publishing_parts() -> Value {
         },
         "ReceiptView": {
             "type": "object",
-            "description": "a release — every `ReleaseView` field, at the top level — plus its deliveries and observations: the publish receipt",
+            "description": "a release — every `ReleaseView` field, at the top level — plus its deliveries and observations: the publish receipt. What it changed for readers pages at `…/releases/{generation}/changes`",
             "required": ["deliveries", "observations"],
             "properties": {
                 "deliveries": { "type": "array", "items": { "$ref": "#/components/schemas/DeliveryView" } },
@@ -6385,6 +6553,70 @@ fn publishing_parts() -> Value {
     })
 }
 
+/// What a release changed for readers (its receipt's `changes`) and what a rollback to it would do
+/// before it is made (D-097's preview).
+fn release_change_parts() -> Value {
+    json!({
+        "ChangeView": {
+            "type": "object",
+            "required": ["kind", "entry_id", "collection", "title", "revision_id", "previous_revision_id", "entry_deleted", "title_hidden"],
+            "properties": {
+                "kind": { "type": "string", "enum": ["publish", "unpublish"] },
+                "entry_id": { "type": "string", "format": "uuid" },
+                "collection": { "type": "string" },
+                "title": { "type": "string", "description": "the title of the version it published, or took down" },
+                "revision_id": { "type": "string", "format": "uuid", "description": "the version it published, or took down" },
+                "previous_revision_id": { "type": ["string", "null"], "format": "uuid", "description": "what readers had just before: the version it replaced or took down; null when the entry was new to them" },
+                "entry_deleted": { "type": "boolean", "description": "the entry was deleted since (D-080)" },
+                "title_hidden": { "type": "boolean", "description": "your role doesn't read the entry's title field, so `title` is blank" },
+            },
+        },
+        "RollbackPreviewView": {
+            "type": "object",
+            "description": "what `POST` would build now (the same pins), and what it would leave down",
+            "required": ["generation", "latest", "hash", "publish_total", "unpublish_total", "max_items", "too_large", "restore", "kept_down", "kept_down_total"],
+            "properties": {
+                "generation": { "type": "integer", "description": "the release it restores" },
+                "latest": { "type": "integer", "description": "the environment's current generation" },
+                "hash": { "type": ["string", "null"], "description": "`sha256:<hex>` of the pins a rollback made now would carry — the `ETag`; send it as `If-Match` on `POST`. Null when `too_large`" },
+                "max_items": { "type": "integer", "description": "the most entries one rollback may change" },
+                "too_large": { "type": "boolean", "description": "it would change more than `max_items`, so `POST` refuses it `rollback_too_large`; roll back to a nearer release first" },
+                "publish_total": { "type": "integer", "description": "entries it would put back" },
+                "unpublish_total": { "type": "integer", "description": "entries it would take down" },
+                "restore": { "type": "array", "items": { "$ref": "#/components/schemas/RollbackLineView" }, "description": "the first 100 of the pins a rollback made now would carry, publishes first, each by entry id, less those your role can't read; empty when it would be refused `already_at`, and when `too_large`" },
+                "kept_down": { "type": "array", "items": { "$ref": "#/components/schemas/KeptDownView" }, "description": "up to 100 entries readers had at that release that it won't bring back, because they were taken down since (D-049), by title, less those your role can't read" },
+                "kept_down_total": { "type": "integer" },
+            },
+        },
+        "RollbackLineView": {
+            "type": "object",
+            "required": ["kind", "entry_id", "collection", "title", "title_hidden", "revision_id", "live_revision_id"],
+            "properties": {
+                "kind": { "type": "string", "enum": ["publish", "unpublish"], "description": "`publish` puts back the version readers had then; `unpublish` takes down what they didn't have" },
+                "entry_id": { "type": "string", "format": "uuid" },
+                "collection": { "type": "string" },
+                "title": { "type": "string", "description": "the title of the version it pins" },
+                "title_hidden": { "type": "boolean", "description": "your role doesn't read the title field, so `title` is blank" },
+                "revision_id": { "type": "string", "format": "uuid" },
+                "live_revision_id": { "type": ["string", "null"], "format": "uuid", "description": "what readers get of the entry now, if anything" },
+            },
+        },
+        "KeptDownView": {
+            "type": "object",
+            "required": ["entry_id", "collection", "title", "title_hidden", "revision_id", "taken_down_in", "entry_deleted"],
+            "properties": {
+                "entry_id": { "type": "string", "format": "uuid" },
+                "collection": { "type": "string" },
+                "title": { "type": "string", "description": "the title readers had at that release" },
+                "title_hidden": { "type": "boolean", "description": "your role doesn't read the title field, so `title` is blank" },
+                "revision_id": { "type": "string", "format": "uuid" },
+                "taken_down_in": { "type": "integer", "description": "the release that took it down" },
+                "entry_deleted": { "type": "boolean", "description": "deleted since (D-080), so it can't be published again" },
+            },
+        },
+    })
+}
+
 /// The library's metadata and the media a release recorded (D-178, D-179).
 fn media_parts() -> Value {
     json!({
@@ -6402,7 +6634,7 @@ fn media_parts() -> Value {
             "required": ["url", "current_url", "type", "width", "height", "renditions"],
             "properties": {
                 "url": { "type": "string", "description": "the exact bytes the release published: immutable, cached a year" },
-                "current_url": { "type": "string", "description": "follows replacements, without publishing again" },
+                "current_url": { "type": "string", "description": "the bare address: the newest published version (D-229); in a site member's answer, the same version as url" },
                 "type": { "type": "string" },
                 "width": { "type": "integer" },
                 "height": { "type": "integer" },

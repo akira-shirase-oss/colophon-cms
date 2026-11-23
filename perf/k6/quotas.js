@@ -13,6 +13,7 @@
 import http from 'k6/http';
 import { check, fail } from 'k6';
 import { Rate } from 'k6/metrics';
+import exec from 'k6/execution';
 
 const BASE_URL = __ENV.BASE_URL || 'http://127.0.0.1:58000';
 const PUBLIC_URL = __ENV.PUBLIC_URL || 'http://localhost:58000';
@@ -105,7 +106,7 @@ export function setup() {
 }
 
 export default function (data) {
-  if (__ITER % 10 < 2) {
+  if (exec.scenario.iterationInTest % 10 < 2) {
     // Under its ceiling the quota costs the check and nothing more: the list it asked for.
     const res = http.get(data.entries, {
       headers: { Authorization: `Bearer ${data.bounded}` },

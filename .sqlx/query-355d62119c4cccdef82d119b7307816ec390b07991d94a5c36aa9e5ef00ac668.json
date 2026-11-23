@@ -1,0 +1,93 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "WITH at AS (\n               -- Live at $3: still open, or closed after it. Two halves, each on its own\n               -- index (open rows; closed by release), so the read follows what was live\n               -- then, not the whole history (D-185).\n               SELECT p.entry_id, p.revision_id\n               FROM publications p\n               WHERE p.project_id = $1 AND p.environment_id = $2\n                 AND p.valid_to IS NULL AND p.valid_from <= $3 AND p.revoked_in IS NULL\n               UNION ALL\n               SELECT p.entry_id, p.revision_id\n               FROM publications p\n               WHERE p.project_id = $1 AND p.environment_id = $2\n                 AND p.valid_to > $3 AND p.valid_from <= $3 AND p.revoked_in IS NULL\n           ), now AS (\n               SELECT p.entry_id, p.revision_id\n               FROM publications p\n               WHERE p.project_id = $1 AND p.environment_id = $2 AND p.valid_to IS NULL\n           ), diff AS MATERIALIZED (\n               -- What differs, cut to the page first: only these rows meet the revisions\n               -- (D-185; joining first fetched every revision live then, at 48k live entries\n               -- most of half a second).\n               SELECT 'publish' AS kind, at.entry_id, at.revision_id\n               FROM at\n               WHERE NOT EXISTS (\n                   SELECT 1 FROM now WHERE now.entry_id = at.entry_id AND now.revision_id = at.revision_id\n               )\n               UNION ALL\n               SELECT 'unpublish', now.entry_id, now.revision_id\n               FROM now\n               WHERE NOT EXISTS (SELECT 1 FROM at WHERE at.entry_id = now.entry_id)\n               ORDER BY 1, 2\n               LIMIT $4\n           )\n           SELECT d.kind AS \"kind!\", d.entry_id AS \"entry_id!\", r.id AS \"revision_id!\",\n                  r.collection AS \"collection!\", r.content_hash AS \"content_hash!\",\n                  r.schema_version AS \"schema_version!\", v.definition_hash AS \"definition_hash!\"\n           FROM diff d\n           JOIN revisions r ON r.project_id = $1 AND r.environment_id = $2\n                           AND r.id = d.revision_id\n           JOIN content_type_versions v ON v.project_id = r.project_id AND v.environment_id = r.environment_id\n                                       AND v.collection = r.collection AND v.version = r.schema_version\n           ORDER BY 1, 2",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "kind!",
+        "type_info": "Text",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 1,
+        "name": "entry_id!",
+        "type_info": "Uuid",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 2,
+        "name": "revision_id!",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "revisions",
+            "name": "id"
+          }
+        }
+      },
+      {
+        "ordinal": 3,
+        "name": "collection!",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "revisions",
+            "name": "collection"
+          }
+        }
+      },
+      {
+        "ordinal": 4,
+        "name": "content_hash!",
+        "type_info": "Bytea",
+        "origin": {
+          "Table": {
+            "table": "revisions",
+            "name": "content_hash"
+          }
+        }
+      },
+      {
+        "ordinal": 5,
+        "name": "schema_version!",
+        "type_info": "Int4",
+        "origin": {
+          "Table": {
+            "table": "revisions",
+            "name": "schema_version"
+          }
+        }
+      },
+      {
+        "ordinal": 6,
+        "name": "definition_hash!",
+        "type_info": "Bytea",
+        "origin": {
+          "Table": {
+            "table": "content_type_versions",
+            "name": "definition_hash"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid",
+        "Int8",
+        "Int8"
+      ]
+    },
+    "nullable": [
+      null,
+      null,
+      false,
+      false,
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "355d62119c4cccdef82d119b7307816ec390b07991d94a5c36aa9e5ef00ac668"
+}

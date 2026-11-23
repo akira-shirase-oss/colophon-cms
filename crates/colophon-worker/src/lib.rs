@@ -30,7 +30,7 @@ use futures_util::StreamExt;
 use object_store::ObjectStoreExt;
 use serde_json::json;
 use time::OffsetDateTime;
-use tokio::sync::Semaphore;
+use tokio::sync::{Notify, Semaphore};
 use tokio_util::{sync::CancellationToken, task::TaskTracker};
 
 /// How often the worker fails jobs that ran out of time.
@@ -72,6 +72,94 @@ pub struct Settings {
 /// The most image verifications in flight at once (07-media: four image workers), on their own
 /// semaphore so media load can never take a delivery slot (L14).
 const IMAGE_SLOTS: usize = 4;
+
+/// The asset worker's listener connection's `application_name` (D-218): one per process, told apart from the
+/// API servers' change-hint listeners.
+pub const ASSET_LISTENER: &str = "colophon-asset-wake";
+/// The first and the longest wait before the asset listener tries again after failing (D-218): bounded, so a
+/// database that stays away can't spin it, and short, so uploads are woken for again soon after a blip.
+const ASSET_LISTEN_RETRY: Duration = Duration::from_millis(250);
+const ASSET_LISTEN_RETRY_MAX: Duration = Duration::from_secs(5);
+
+/// Whether a change hint names asset work (`k=assets`; migration 0068 maps `asset_jobs` to it).
+fn wakes_assets(payload: &str) -> bool {
+    payload.split('|').any(|field| field == "k=assets")
+}
+
+/// Listens for asset change hints and wakes the asset worker on each (D-218), until `cancel`. One listener per
+/// process, on a connection of its own. A hint only wakes the worker: the claim that follows is the usual
+/// `SKIP LOCKED` one, so workers woken together still take each job once. Losing the connection wakes the worker
+/// too (hints sent in the gap are gone); failing to listen is said once, the poll carries on, and the listener
+/// tries again after a backoff that doubles up to [`ASSET_LISTEN_RETRY_MAX`].
+async fn listen_for_assets(pool: PgPool, wake: Arc<Notify>, cancel: CancellationToken) {
+    let mut retry = ASSET_LISTEN_RETRY;
+    let mut down = false;
+    'connect: loop {
+        let connected = tokio::select! {
+            () = cancel.cancelled() => return,
+            connected = async {
+                let mut listener = colophon_db::listener_from(&pool, ASSET_LISTENER).await?;
+                listener
+                    .listen(colophon_db::events::CHANNEL)
+                    .await
+                    .map_err(colophon_db::DbError::Query)?;
+                Ok::<_, colophon_db::DbError>(listener)
+            } => connected,
+        };
+        let mut listener = match connected {
+            Ok(listener) => listener,
+            Err(error) => {
+                if !down {
+                    tracing::warn!(%error, "the asset worker can't listen for uploads; it polls until it can");
+                    down = true;
+                }
+                tokio::select! {
+                    () = cancel.cancelled() => return,
+                    () = tokio::time::sleep(retry) => {}
+                }
+                retry = (retry * 2).min(ASSET_LISTEN_RETRY_MAX);
+                continue 'connect;
+            }
+        };
+        if down {
+            tracing::info!("the asset worker listens for uploads again");
+            down = false;
+        }
+        retry = ASSET_LISTEN_RETRY;
+        // Anything queued while it wasn't listening.
+        wake.notify_one();
+        loop {
+            let message = tokio::select! {
+                () = cancel.cancelled() => return,
+                message = listener.try_recv() => message,
+            };
+            match message {
+                Ok(Some(notification)) => {
+                    if wakes_assets(notification.payload()) {
+                        wake.notify_one();
+                    }
+                }
+                // sqlx reconnected and listened again; whatever was hinted in the gap is lost.
+                Ok(None) => {
+                    tracing::info!("the asset worker's listener reconnected");
+                    wake.notify_one();
+                }
+                Err(error) => {
+                    if !down {
+                        tracing::warn!(%error, "the asset worker's listener failed; it polls until it listens again");
+                        down = true;
+                    }
+                    tokio::select! {
+                        () = cancel.cancelled() => return,
+                        () = tokio::time::sleep(retry) => {}
+                    }
+                    retry = (retry * 2).min(ASSET_LISTEN_RETRY_MAX);
+                    continue 'connect;
+                }
+            }
+        }
+    }
+}
 
 // The worker gets its own small database pool (colophon-server's COLOPHON_WORKER_DB_CONNECTIONS),
 // so delivering announcements can never starve editors' requests of connections.
@@ -225,29 +313,65 @@ impl Worker {
             tracker.spawn(worker.run_bulk(cancel.clone()));
         }
         let mut last_expiry: Option<std::time::Instant> = None;
+        // Heard between units and while one waits for a connection (colophon_db::begin_background).
+        let stopping = || cancel.is_cancelled();
         loop {
             if last_expiry.is_none_or(|at| at.elapsed() >= EXPIRY_INTERVAL) {
                 last_expiry = Some(std::time::Instant::now());
-                // One cancel-aware block for the sweeps: each of them can sit in a pool
-                // acquisition for the acquire timeout, and a shutdown can't wait on a
-                // queued-up chain of them (SIGTERM still drains in seconds). A sweep
-                // abandoned mid-flight rolls back; the next pass repeats it.
+                // The sweeps, one after another, a stop heard between them: a sweep under way
+                // runs to its end (dropped mid-COMMIT, whether it committed would be unknown),
+                // bounded server side (colophon_db::bound_background), and a shutdown never
+                // waits on more than the one in flight.
                 let sweeps = async {
-                    match jobs::expire(&self.pool).await {
-                        Ok(0) => {}
+                    match jobs::expire(&self.pool, colophon_db::Stop::new(&stopping)).await {
+                        Ok(0) | Err(colophon_db::DbError::Stopped) => {}
                         Ok(expired) => tracing::info!(expired, "jobs ran out of time"),
                         Err(error) => {
                             tracing::warn!(error = %error, "expiring jobs failed; trying again later");
                         }
                     }
-                    match colophon_db::assets::expire(&self.pool).await {
+                    if cancel.is_cancelled() {
+                        return;
+                    }
+                    match colophon_db::assets::expire(&self.pool, colophon_db::Stop::new(&stopping))
+                        .await
+                    {
                         Ok(0) | Err(_) => {}
                         Ok(expired) => tracing::info!(expired, "asset jobs ran out of time"),
+                    }
+                    if cancel.is_cancelled() {
+                        return;
+                    }
+                    // Asset jobs whose worker stopped answering wait again, for the next
+                    // claim (the claim itself looks only at waiting jobs): bounded passes,
+                    // the stop heard between them.
+                    match colophon_db::assets::release_lapsed_all(
+                        &self.pool,
+                        colophon_db::assets::RELEASE_BUDGET,
+                        colophon_db::Stop::new(&stopping),
+                    )
+                    .await
+                    {
+                        Ok(0) => {}
+                        Ok(released) => {
+                            tracing::info!(released, "asset jobs whose lease ran out wait again");
+                        }
+                        Err(error) => {
+                            tracing::warn!(error = %error, "releasing lapsed asset jobs failed; trying again later");
+                        }
+                    }
+                    if cancel.is_cancelled() {
+                        return;
                     }
                     // The budget reconciler (D-113): free reservations of jobs that ended,
                     // flag held rows that outlived their work as `uncertain` and audit the
                     // discrepancy.
-                    match colophon_db::budgets::reconcile(&self.pool).await {
+                    match colophon_db::budgets::reconcile(
+                        &self.pool,
+                        colophon_db::Stop::new(&stopping),
+                    )
+                    .await
+                    {
                         Ok(done) if done.released == 0 && done.uncertain == 0 => {}
                         Ok(done) => {
                             tracing::info!(
@@ -256,14 +380,15 @@ impl Worker {
                                 "budgets reconciled"
                             );
                         }
+                        Err(colophon_db::DbError::Stopped) => {}
                         Err(error) => {
                             tracing::warn!(error = %error, "reconciling budgets failed; trying again later");
                         }
                     }
                 };
-                tokio::select! {
-                    () = cancel.cancelled() => break,
-                    () = sweeps => {}
+                sweeps.await;
+                if cancel.is_cancelled() {
+                    break;
                 }
             }
             let first = tokio::select! {
@@ -283,10 +408,13 @@ impl Worker {
                 &self.settings.location,
                 self.settings.lease,
                 i64::try_from(free).unwrap_or(1),
+                colophon_db::Stop::new(&stopping),
             )
             .await
             {
                 Ok(claimed) => claimed,
+                // Stopped while waiting for a connection: nothing was claimed.
+                Err(colophon_db::DbError::Stopped) => break,
                 Err(error) => {
                     tracing::warn!(error = %error, "claiming jobs failed; trying again");
                     Vec::new()
@@ -1840,6 +1968,15 @@ impl Worker {
     /// pool's own semaphore so decodes can never take a delivery slot (L14). Runs only when the
     /// worker was built with an object store.
     async fn run_assets(self: Arc<Self>, cancel: CancellationToken, tracker: TaskTracker) {
+        // D-218: an upload wakes the worker through its change hint, so a verify waits for a pump pass (100 ms),
+        // not the poll. The poll stays as the fallback for a hint missed or a listener that is down.
+        let wake = Arc::new(Notify::new());
+        tracker.spawn(listen_for_assets(
+            self.pool.clone(),
+            Arc::clone(&wake),
+            cancel.clone(),
+        ));
+        let stopping = || cancel.is_cancelled();
         loop {
             let first = tokio::select! {
                 () = cancel.cancelled() => break,
@@ -1855,10 +1992,13 @@ impl Worker {
                 &self.settings.owner,
                 self.settings.lease,
                 i64::try_from(free).unwrap_or(1),
+                colophon_db::Stop::new(&stopping),
             )
             .await
             {
                 Ok(claimed) => claimed,
+                // Stopped while waiting for a connection: nothing was claimed.
+                Err(colophon_db::DbError::Stopped) => break,
                 Err(error) => {
                     tracing::warn!(error = %error, "claiming asset jobs failed; trying again");
                     Vec::new()
@@ -1866,12 +2006,22 @@ impl Worker {
             };
             if claimed.is_empty() {
                 drop(first);
+                // `notified()` is cancel-safe: a wake that lands while this select isn't waiting stays stored
+                // (one permit, so a burst of hints is one wake) for the next.
                 tokio::select! {
                     () = cancel.cancelled() => break,
+                    () = wake.notified() => {}
                     () = tokio::time::sleep(self.settings.poll) => {}
                 }
                 continue;
             }
+            // D-218's evidence: how many each claim took against the slots free for it.
+            tracing::debug!(
+                claimed = claimed.len(),
+                free,
+                slots = IMAGE_SLOTS,
+                "asset jobs claimed"
+            );
             let mut permit = Some(first);
             for job in claimed {
                 let held = match permit.take() {
@@ -1904,17 +2054,33 @@ impl Worker {
         let Some(store) = self.settings.assets.clone() else {
             return;
         };
+        let started = std::time::Instant::now();
+        self.attempt_asset_kind(&job, attempts, &store, asked_at)
+            .await;
+        // D-218's evidence: the attempt's own time, joined by job id with the job's
+        // created-to-finished time in asset_jobs, splits the wait from the work.
+        tracing::debug!(job = %job.id, kind = %job.kind, attempt = attempts, work_ms = started.elapsed().as_millis(), "asset attempt done");
+    }
+
+    /// The attempt itself, by the job's kind.
+    async fn attempt_asset_kind(
+        &self,
+        job: &colophon_db::assets::Claimed,
+        attempts: u32,
+        store: &colophon_media::Shared,
+        asked_at: std::time::Instant,
+    ) {
         match job.kind.as_str() {
             // A reverify is a verify: the job's own quarantine key and upload metadata are what
             // `claim` coalesced into the attempt, and the landing decides first- versus
             // replacement-version by the state it meets (D-136).
-            "verify" | "reverify" => self.verify(&job, attempts, &store, asked_at).await,
-            "delete" | "expire" => self.remove(&job, attempts, &store, asked_at).await,
+            "verify" | "reverify" => self.verify(job, attempts, store, asked_at).await,
+            "delete" | "expire" => self.remove(job, attempts, store, asked_at).await,
             other => {
                 tracing::warn!(job = %job.id, kind = %other, "an asset job kind this worker doesn't do");
                 let _ = self
                     .finish_asset(
-                        &job,
+                        job,
                         attempts,
                         "failed",
                         Some("an asset job kind this worker doesn't do"),
@@ -1935,9 +2101,12 @@ impl Worker {
         asked_at: std::time::Instant,
     ) {
         let budget = self.settings.attempt.saturating_sub(asked_at.elapsed());
+        let fetching = std::time::Instant::now();
         let Some(bytes) = self.quarantined(job, attempts, store, budget).await else {
             return;
         };
+        let fetch_ms = fetching.elapsed().as_millis();
+        let decoding = std::time::Instant::now();
         // The decode is CPU-bound and its own worst case is bounded (20 MiB in, strict limits
         // out); it runs on a blocking thread so a pathological file never stalls this worker.
         let checked =
@@ -1953,7 +2122,11 @@ impl Worker {
                     &job.asset_id.to_string(),
                     &colophon_media::sha_hex(&verified.sha256),
                 );
+                let decode_ms = decoding.elapsed().as_millis();
+                let landing = std::time::Instant::now();
                 self.promote(job, attempts, store, key, verified).await;
+                // D-218's evidence: where a verify's time goes.
+                tracing::debug!(job = %job.id, fetch_ms, decode_ms, land_ms = landing.elapsed().as_millis(), "asset verified");
             }
             Ok(Err(reason)) => {
                 let _ = self
@@ -2345,4 +2518,37 @@ fn sha256(bytes: &[u8]) -> [u8; 32] {
     let mut out = [0; 32];
     out.copy_from_slice(digest.as_ref());
     out
+}
+
+#[cfg(test)]
+mod asset_wake_tests {
+    use super::{Notify, wakes_assets};
+    use std::time::Duration;
+
+    #[test]
+    fn only_an_assets_hint_wakes_the_asset_worker() {
+        let p = "p=01a1f1d6-b4aa-73c9-9c7a-d6f828a1acc9|e=01a1f1d6-b4aa-73c9-9c7a-d6f828a1acc8";
+        assert!(wakes_assets(&format!("{p}|k=assets")));
+        assert!(!wakes_assets(&format!("{p}|k=entries|c=articles")));
+        assert!(!wakes_assets(&format!("{p}|k=assetsx")));
+        assert!(!wakes_assets("k=releases"));
+    }
+
+    /// A burst of hints is one wake (D-218): `notify_one` keeps a single permit, so nothing queues up.
+    #[tokio::test]
+    async fn a_burst_of_hints_is_one_wake() {
+        let wake = Notify::new();
+        for _ in 0..1_000 {
+            wake.notify_one();
+        }
+        tokio::time::timeout(Duration::from_millis(50), wake.notified())
+            .await
+            .expect("the burst's one wake");
+        assert!(
+            tokio::time::timeout(Duration::from_millis(50), wake.notified())
+                .await
+                .is_err(),
+            "a second wake out of one burst"
+        );
+    }
 }
