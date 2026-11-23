@@ -13,6 +13,12 @@ use crate::DbError;
 /// clients are pruned (each registration prunes a few first).
 pub const MAX_CLIENTS: i64 = 10_000;
 
+/// Rows as the queries below read them.
+type PendingRow = (Uuid, String, Vec<String>, String, Option<String>, String);
+type RedeemedRow = (Uuid, Uuid, Uuid, Uuid, String, String);
+type AccessRow = (Uuid, Uuid, Uuid, Uuid, Option<OffsetDateTime>);
+type ConnectedRow = (Uuid, String, Uuid, String, OffsetDateTime, Option<OffsetDateTime>);
+
 /// A registered client.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Client {
@@ -168,7 +174,7 @@ pub async fn start_request(
 
 /// The authorization `id`, if it is `identity`'s and hasn't expired.
 pub async fn pending(pool: &PgPool, id: Uuid, identity: Uuid) -> Result<Option<Pending>, DbError> {
-    let row: Option<(Uuid, String, Vec<String>, String, Option<String>, String)> = sqlx::query_as(
+    let row: Option<PendingRow> = sqlx::query_as(
         "SELECT c.id, c.name, c.redirect_uris, r.redirect_uri, r.state, r.code_challenge
          FROM oauth_requests r JOIN oauth_clients c ON c.id = r.client_id
          WHERE r.id = $1 AND r.identity_id = $2 AND r.expires_at > now()",
@@ -261,7 +267,7 @@ async fn revoke(executor: impl sqlx::PgExecutor<'_>, grant: Uuid) -> Result<(), 
 /// Uses up the code with this hash. A code presented a second time revokes its grant: the first
 /// use may have been an attacker's (RFC 6749 §4.1.2).
 pub async fn redeem_code(pool: &PgPool, code_hash: &[u8; 32]) -> Result<Presented<Redeemed>, DbError> {
-    let taken: Option<(Uuid, Uuid, Uuid, Uuid, String, String)> = sqlx::query_as(
+    let taken: Option<RedeemedRow> = sqlx::query_as(
         "UPDATE oauth_codes c SET used_at = now()
          FROM oauth_grants g
          WHERE c.code_hash = $1 AND c.used_at IS NULL AND c.expires_at > now()
@@ -370,7 +376,7 @@ pub async fn redeem_refresh(
 /// The grant the access token with this hash acts under: unexpired, its grant unrevoked and its
 /// person's account enabled. Records the grant's use at most once a minute.
 pub async fn access(pool: &PgPool, access_hash: &[u8; 32]) -> Result<Option<Grant>, DbError> {
-    let row: Option<(Uuid, Uuid, Uuid, Uuid, Option<OffsetDateTime>)> = sqlx::query_as(
+    let row: Option<AccessRow> = sqlx::query_as(
         "SELECT g.id, g.identity_id, g.project_id, g.client_id, g.last_used_at
          FROM oauth_tokens t
          JOIN oauth_grants g ON g.id = t.grant_id AND g.revoked_at IS NULL
@@ -417,7 +423,7 @@ pub async fn revoke_token(pool: &PgPool, token_hash: &[u8; 32]) -> Result<(), Db
 
 /// `identity`'s grants that still stand, newest first.
 pub async fn connected(pool: &PgPool, identity: Uuid) -> Result<Vec<Connected>, DbError> {
-    let rows: Vec<(Uuid, String, Uuid, String, OffsetDateTime, Option<OffsetDateTime>)> = sqlx::query_as(
+    let rows: Vec<ConnectedRow> = sqlx::query_as(
         "SELECT g.id, c.name, g.project_id, p.name, g.created_at, g.last_used_at
          FROM oauth_grants g
          JOIN oauth_clients c ON c.id = g.client_id
