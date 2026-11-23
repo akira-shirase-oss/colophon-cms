@@ -19,6 +19,8 @@ through `--version` and `GET /version`.
 - The Studio's sign-in only returns to an address on its own origin (`/\evil.example` used to pass).
 
 ### Fixed
+- MCP: a tool that only reads, such as previewing a rollback, is no longer marked destructive, and `if_match` takes the ETag as its header gave it, quotes included (D-247).
+- MCP tests follow the D-247 catalog: the expected tool list is built from the catalog itself; every tool that publishes, approves, removes or manages access is shown to send nothing without `confirm: true`; the API still refuses what the token may not do; deleting a project is never offered.
 
 - **The Studio never waits past 15 seconds for an answer** (D-245): a request whose answer stalls on a
   flaky connection now stops with "Colophon didn't answer: try again", and publishing again sends the same
