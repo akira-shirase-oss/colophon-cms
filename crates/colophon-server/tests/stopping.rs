@@ -383,6 +383,78 @@ async fn every_check_of_the_sweep_stops_it_after_the_statement_under_way() {
     owner.close().await;
 }
 
+/// A stop that comes while a unit's COMMIT is itself under way: the COMMIT lands (the work is
+/// saved, never left unknown), and the loop stops after it. The fold's COMMIT is made to take
+/// 2 s by a deferred constraint trigger that fires only on this test's sentinel delta (7777),
+/// so a trigger left behind by a failed run slows nothing else; it is dropped at the end.
+#[tokio::test]
+#[ignore = "needs the stack and scripts/migrate.sh"]
+async fn a_stop_mid_commit_lets_the_commit_land() {
+    let (owner, app) = (owner_database().await, app_database().await);
+    colophon_db::work::fold_payload(&app, colophon_db::Stop::NEVER)
+        .await
+        .expect("the log starts empty");
+    sqlx::raw_sql(
+        "CREATE OR REPLACE FUNCTION colophon_test_slow_commit() RETURNS trigger
+             LANGUAGE plpgsql AS $$ BEGIN PERFORM pg_sleep(2); RETURN NULL; END $$;
+         DROP TRIGGER IF EXISTS colophon_test_slow_commit ON payload_deltas;
+         CREATE CONSTRAINT TRIGGER colophon_test_slow_commit AFTER DELETE ON payload_deltas
+             DEFERRABLE INITIALLY DEFERRED FOR EACH ROW WHEN (OLD.bytes = 7777)
+             EXECUTE FUNCTION colophon_test_slow_commit();",
+    )
+    .execute(&owner)
+    .await
+    .expect("a slow commit for the sentinel");
+    sqlx::query("INSERT INTO payload_deltas (bytes) VALUES (7777), (-7777)")
+        .execute(&owner)
+        .await
+        .expect("the sentinel deltas");
+    let cancel = CancellationToken::new();
+    let folder =
+        tokio::spawn(colophon_worker::payload::Folder::new(app.clone()).run(cancel.clone()));
+    let deadline = Instant::now() + Duration::from_secs(10);
+    loop {
+        let committing: i64 = sqlx::query_scalar(
+            "SELECT count(*) FROM pg_stat_activity
+             WHERE datname = current_database() AND state = 'active'
+               AND upper(query) LIKE 'COMMIT%' AND pid <> pg_backend_pid()",
+        )
+        .fetch_one(&owner)
+        .await
+        .expect("pg_stat_activity");
+        if committing > 0 {
+            break;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "the fold never reached its COMMIT"
+        );
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+
+    cancel.cancel();
+    tokio::time::sleep(STILL_RUNNING).await;
+    assert!(
+        !folder.is_finished(),
+        "the stop dropped the COMMIT under way"
+    );
+    tokio::time::timeout(CLEANUP_DEADLINE, folder)
+        .await
+        .expect("the COMMIT lands inside the cleanup deadline")
+        .expect("joined");
+    let left = deltas(&owner).await;
+    sqlx::raw_sql(
+        "DROP TRIGGER IF EXISTS colophon_test_slow_commit ON payload_deltas;
+         DROP FUNCTION IF EXISTS colophon_test_slow_commit();",
+    )
+    .execute(&owner)
+    .await
+    .expect("drop the slow commit");
+    assert_eq!(left, 0, "the fold under way at the stop committed");
+    app.close().await;
+    owner.close().await;
+}
+
 /// A one-connection pool on the application login, the worker pool's settings otherwise (its
 /// 2 s acquire timeout included), and that connection held: a unit started on it waits in
 /// pool acquisition, as a sweep does on a worker pool its deliveries have exhausted.
@@ -740,6 +812,19 @@ impl Drop for Logged {
 #[tokio::test]
 #[ignore = "needs the stack and scripts/migrate.sh"]
 async fn sigterm_mid_save_lets_the_save_finish_and_drops_no_transaction() {
+    stopped_mid_save(1).await;
+}
+
+/// A second SIGTERM while the first's drain is under way changes nothing: no forced exit, the
+/// save under way still finishes, the server still exits 0 and drops no transaction.
+#[tokio::test]
+#[ignore = "needs the stack and scripts/migrate.sh"]
+async fn a_second_sigterm_mid_save_changes_nothing() {
+    stopped_mid_save(2).await;
+}
+
+/// A save waiting on a held row lock, `signals` SIGTERMs (100 ms apart), then the row freed.
+async fn stopped_mid_save(signals: usize) {
     let mut server = Logged::start().await;
     let owner = sign_in("dev-owner").await;
     let project = project(&owner).await;
@@ -773,7 +858,10 @@ async fn sigterm_mid_save_lets_the_save_finish_and_drops_no_transaction() {
     });
     waits_on_a_lock(&database, "entries").await;
 
-    server.terminate();
+    for _ in 0..signals {
+        server.terminate();
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
     tokio::time::sleep(STILL_RUNNING).await;
     holder.rollback().await.expect("release");
     let saved = tokio::time::timeout(Duration::from_secs(10), save)
