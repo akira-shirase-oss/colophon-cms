@@ -34,16 +34,15 @@ async fn enter(pool: &PgPool, identity: Uuid, project: Uuid) -> ProjectTransacti
         .expect("a member")
 }
 
-/// A project of alice's with two webhook destinations and one release: two pending delivery
-/// jobs, in id order (the release inserts them in one statement, so heap order agrees).
-async fn two_jobs(db: &TestDb) -> (Uuid, Uuid) {
+/// A project of alice's with `destinations` webhook destinations: (alice, the project).
+async fn project_with(db: &TestDb, destinations: usize) -> (Uuid, Uuid) {
     let alice = db.administrator("alice").await;
     let project = projects::create(&db.app, alice, "alpha", "Alpha")
         .await
         .expect("created")
         .id;
     let mut tx = enter(&db.app, alice, project).await;
-    for n in 0..2 {
+    for n in 0..destinations {
         destinations::create(
             &mut tx,
             "webhook",
@@ -54,6 +53,16 @@ async fn two_jobs(db: &TestDb) -> (Uuid, Uuid) {
         .await
         .expect("destination");
     }
+    tx.commit().await.expect("commit");
+    (alice, project)
+}
+
+/// Publishes one more release of a new entry in alice's project: one pending job per
+/// destination, and every older job that hasn't started superseded (the release's outbox, which
+/// waits for each older job it supersedes, in id order).
+async fn publish(pool: &PgPool, alice: Uuid, project: Uuid) {
+    let mut tx = enter(pool, alice, project).await;
+    let (_, base) = releases::generation(&mut tx).await.expect("the generation");
     let (entry, revision) = (Uuid::now_v7(), Uuid::now_v7());
     entries::create(
         &mut tx,
@@ -91,10 +100,17 @@ async fn two_jobs(db: &TestDb) -> (Uuid, Uuid) {
         .await
         .expect("reviews")[0]
         .id;
-    releases::commit(&mut tx, 0, changeset, &[2; 32], review, HOUR)
+    releases::commit(&mut tx, base, changeset, &[2; 32], review, HOUR)
         .await
         .expect("released");
     tx.commit().await.expect("commit");
+}
+
+/// A project of alice's with two webhook destinations and one release: two pending delivery
+/// jobs, in id order (the release inserts them in one statement, so heap order agrees).
+async fn two_jobs(db: &TestDb) -> (Uuid, Uuid) {
+    let (alice, project) = project_with(db, 2).await;
+    publish(&db.app, alice, project).await;
     let ids: Vec<Uuid> = sqlx::query_scalar("SELECT id FROM jobs ORDER BY id")
         .fetch_all(&db.owner().await)
         .await
@@ -192,7 +208,7 @@ async fn the_delivery_sweep_never_waits_on_a_held_job() {
         earlier,
         later,
         move || async move { jobs::expire(&pool, colophon_db::Stop::NEVER).await },
-        "UPDATE jobs SET status = 'failed'",
+        "WITH due AS",
     )
     .await;
     assert_eq!(swept, 1, "the held job is left for the next pass");
@@ -255,7 +271,7 @@ async fn the_asset_sweep_never_waits_on_a_held_job() {
         earlier,
         later,
         move || async move { assets::expire(&pool, colophon_db::Stop::NEVER).await },
-        "UPDATE asset_jobs SET status = 'failed'",
+        "WITH due AS",
     )
     .await;
     assert_eq!(swept, 1, "the held job is left for the next pass");
@@ -267,4 +283,142 @@ async fn the_asset_sweep_never_waits_on_a_held_job() {
     );
     owner.close().await;
     db.drop().await;
+}
+
+/// The lapsed-lease release (D-237) never waits either: it takes lapsed jobs in id order and skips
+/// one another transaction holds, which is the next pass's.
+#[tokio::test]
+#[ignore = "needs the local stack: scripts/stack.sh up"]
+async fn the_lapsed_release_never_waits_on_a_held_job() {
+    let db = TestDb::new().await;
+    let (earlier, later) = two_jobs(&db).await;
+    let owner = db.owner().await;
+    sqlx::query(
+        "UPDATE jobs SET status = 'running', lease_owner = 'gone', attempts = 1,
+                         lease_expires_at = now() - interval '1 second'",
+    )
+    .execute(&owner)
+    .await
+    .expect("both lapsed");
+    let pool = db.app.clone();
+    let released = sweep_beside_a_holder(
+        &owner,
+        "jobs",
+        earlier,
+        later,
+        move || async move { jobs::release_lapsed(&pool, colophon_db::Stop::NEVER).await },
+        "WITH lapsed AS",
+    )
+    .await;
+    assert_eq!(released, 1, "the held job is left for the next pass");
+    owner.close().await;
+    db.drop().await;
+}
+
+/// Eight at once, round after round: three lapsed-lease releases, two deadline sweeps and three
+/// releases (on eight connections) superseding every older job that hasn't started (each waiting for each such job, in
+/// id order), over jobs that are lapsed, out of time or waiting. No deadlock (40P01), no error at
+/// all, and no transition lost: afterwards no job is left running on a lease that ran out, none
+/// open past its deadline, and every job of an older release that was waiting is superseded.
+#[tokio::test]
+#[ignore = "needs the local stack: scripts/stack.sh up"]
+async fn releases_sweeps_and_supersedes_racing_never_deadlock_or_lose_a_transition() {
+    const DESTINATIONS: usize = 12;
+    const ROUNDS: usize = 6;
+    let db = TestDb::new().await;
+    let (alice, project) = project_with(&db, DESTINATIONS).await;
+    publish(&db.app, alice, project).await;
+    let owner = db.owner().await;
+    let pool = db.app_pool(8).await;
+    for round in 0..ROUNDS {
+        // The jobs as a crash and a slow destination leave them: a third lapsed, a third out of
+        // time (some lapsed too), the rest waiting.
+        sqlx::query(
+            "UPDATE jobs SET status = 'running', lease_owner = 'gone', attempts = attempts + 1,
+                             lease_expires_at = now() - interval '1 second'
+             WHERE status IN ('pending', 'retrying') AND hashtext(id::text) % 3 = 0",
+        )
+        .execute(&owner)
+        .await
+        .expect("lapsed");
+        sqlx::query(
+            "UPDATE jobs SET deadline_at = now() - interval '1 second'
+             WHERE status IN ('pending', 'retrying', 'running') AND hashtext(id::text) % 3 = 1",
+        )
+        .execute(&owner)
+        .await
+        .expect("out of time");
+        let mut racers = tokio::task::JoinSet::new();
+        for racer in 0..5 {
+            let pool = pool.clone();
+            racers.spawn(async move {
+                if racer < 3 {
+                    jobs::release_lapsed(&pool, colophon_db::Stop::NEVER)
+                        .await
+                        .map(|_| ())
+                } else {
+                    jobs::expire(&pool, colophon_db::Stop::NEVER)
+                        .await
+                        .map(|_| ())
+                }
+            });
+        }
+        // Three superseding releases beside them, each on a connection of its own.
+        futures_join_all((0..3).map(|_| publish(&pool, alice, project))).await;
+        while let Some(joined) = racers.join_next().await {
+            let result = joined.expect("a racer's task");
+            assert!(result.is_ok(), "round {round}: {result:?}");
+        }
+    }
+    // The sweeps' next passes leave nothing behind.
+    jobs::release_lapsed_all(&db.app, jobs::RELEASE_BUDGET, colophon_db::Stop::NEVER)
+        .await
+        .expect("release");
+    jobs::expire(&db.app, colophon_db::Stop::NEVER)
+        .await
+        .expect("expire");
+    let (stuck, overdue, stale): (i64, i64, i64) = sqlx::query_as(
+        "SELECT count(*) FILTER (WHERE status = 'running' AND lease_expires_at < now()),
+                count(*) FILTER (WHERE status IN ('pending', 'retrying', 'running')
+                                   AND deadline_at <= now()),
+                count(*) FILTER (WHERE status IN ('pending', 'retrying')
+                                   AND generation < (SELECT max(generation) FROM jobs))
+         FROM jobs",
+    )
+    .fetch_one(&owner)
+    .await
+    .expect("the jobs");
+    assert_eq!(stuck, 0, "a lapsed job left running");
+    assert_eq!(overdue, 0, "an open job left past its deadline");
+    // A job released to waiting after the last release's supersede is fine (the attempt's own
+    // check supersedes it); one waiting from before it would be a lost supersede.
+    let latest_supersede_missed: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM jobs j
+         WHERE j.status IN ('pending', 'retrying') AND j.generation < (SELECT max(generation) FROM jobs)
+           AND j.updated_at < (SELECT max(published_at) FROM releases WHERE project_id = j.project_id)",
+    )
+    .fetch_one(&owner)
+    .await
+    .expect("missed supersedes");
+    assert_eq!(
+        latest_supersede_missed, 0,
+        "an older waiting job the last release should have superseded ({stale} older waiting in all)"
+    );
+    pool.close().await;
+    owner.close().await;
+    db.drop().await;
+}
+
+/// Runs every future to its end, concurrently, on this task.
+async fn futures_join_all<F: std::future::Future<Output = ()>>(futures: impl Iterator<Item = F>) {
+    let mut set: Vec<std::pin::Pin<Box<F>>> = futures.map(Box::pin).collect();
+    std::future::poll_fn(|cx| {
+        set.retain_mut(|future| future.as_mut().poll(cx).is_pending());
+        if set.is_empty() {
+            std::task::Poll::Ready(())
+        } else {
+            std::task::Poll::Pending
+        }
+    })
+    .await;
 }
