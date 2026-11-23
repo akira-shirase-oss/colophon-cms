@@ -8,6 +8,18 @@ through `--version` and `GET /version`.
 
 ## [Unreleased]
 
+## [0.1.0-alpha.5] — 2026-11-22
+
+### Security
+
+- **The key that signs media addresses rotates** (D-233): `colophon admin media-key rotate` makes a new one, and the
+  one before it keeps verifying the links it signed; `--retire-previous` drops every older key at once, for a key
+  that leaked. Every restore makes a new key and retires its source's, so a staging copy restored from production
+  can no longer sign or verify production's links. Addresses now carry the key's id (`?kid=`): links signed
+  before upgrading (at most 15 minutes old) stop working at the upgrade. Each rotation is recorded, never the key.
+  A server reads the keys one read at a time, so an older read can never bring back a key a rotation retired.
+  Upgrading runs migration 0086 (it works under a non-superuser owner such as Neon's, D-234).
+
 ## [0.1.0-alpha.4] — 2026-11-22
 
 ### Security
@@ -138,11 +150,6 @@ through `--version` and `GET /version`.
 
 ### Security
 
-- The key that signs media addresses rotates (D-233): `colophon admin media-key rotate` makes a new one, and the
-  one before it keeps verifying the links it signed; `--retire-previous` drops every older key at once, for a key
-  that leaked. Every restore makes a new key and retires its source's, so a staging copy restored from production
-  can no longer sign or verify production's links. Addresses now carry the key's id (`?kid=`): links signed
-  before upgrading (at most 15 minutes old) stop working at the upgrade. Each rotation is recorded, never the key.
 - A project API token is held to its creator's role as it is now (D-228): demoting the person who
   made it narrows it at its next request, and removing them (or their leaving) revokes it, with a
   `token.revoked` audit row giving the reason. Before, a removed owner's token kept working.
