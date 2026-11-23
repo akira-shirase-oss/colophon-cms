@@ -309,3 +309,13 @@ export function roleReads(page: Page, project: string): Promise<unknown> {
 	const get = (path: string) => page.waitForResponse((response) => response.request().method() === 'GET' && new URL(response.url()).pathname === path && response.ok());
 	return Promise.all([get(`/api/v1/projects/${project}`), get('/me')]);
 }
+
+/** Who may sign up on this server (D-235): 'open', 'invite' or 'closed'. With it open, anyone may
+ *  create a project; otherwise only an administrator, and others are told to ask for an
+ *  invitation. */
+export async function registration(page: Page): Promise<string> {
+	return page.evaluate(async () => {
+		const response = await fetch('/auth/providers');
+		return ((await response.json()) as { data: { registration: string } }).data.registration;
+	});
+}

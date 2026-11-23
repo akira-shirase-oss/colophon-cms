@@ -12,7 +12,7 @@ import { mkdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { type Browser, expect, type Page, test } from '@playwright/test';
-import { internalTerms, toast, violations } from './helpers.ts';
+import { internalTerms, registration, toast, violations } from './helpers.ts';
 
 const repo = fileURLToPath(new URL('../../../../', import.meta.url));
 // Its own port — sign-in is the built-in password card (D-146), so any port works.
@@ -261,11 +261,17 @@ test('a new person sets up Colophon, publishes a first article, and brings in a 
 	});
 
 	const teammate = await fresh(browser);
-	await test.step('the teammate makes an account first, and learns they need an invitation', async () => {
+	await test.step('the teammate makes an account first: their own project to start, or an invitation to wait for', async () => {
 		await teammate.goto('/studio/');
 		await teammate.getByRole('button', { name: 'Create one' }).click();
 		await makeAccount(teammate, 'Sam Writer');
-		await expect(teammate.getByTestId('not-administrator')).toContainText('invitation link');
+		if ((await registration(teammate)) === 'open') {
+			// Open registration (D-235): anyone may start a project; joining one still takes its link.
+			await expect(teammate.getByTestId('first-project')).toBeVisible();
+			await expect(teammate.getByTestId('not-administrator')).toHaveCount(0);
+		} else {
+			await expect(teammate.getByTestId('not-administrator')).toContainText('invitation link');
+		}
 		await screen(teammate, 'not-in-a-project');
 	});
 
