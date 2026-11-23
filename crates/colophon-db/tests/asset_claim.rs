@@ -666,7 +666,7 @@ async fn the_expiry_enqueue_counts_a_project_s_open_work_once() {
     const ASSETS: i64 = 23_000;
     const WAITING: i64 = 3_000;
     /// The most one pass enqueueing 200 may read: about 3 a collectable asset and the
-    /// project's open work once (77,000 measured at this size), against 4.7 million before.
+    /// project's open work once (about 99,000 measured here), against 4.7 million before.
     const MAX_ENQUEUE_BLOCKS: i64 = 150_000;
     let db = TestDb::new().await;
     one_upload(&db).await;

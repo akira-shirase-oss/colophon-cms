@@ -1149,9 +1149,12 @@ pub async fn expire(pool: &PgPool, stop: crate::Stop<'_>) -> Result<u64, DbError
 /// it: what is running decides what it becomes. Two passes racing the same asset can both
 /// enqueue; the second job finds `deleted` and finishes having removed nothing. A project at
 /// the work bound keeps its assets instead: one statement can't honestly hold one project's
-/// admission lock, so each row counts the same open work [`crate::work::admit`] does, under
-/// the statement's own snapshot — a pass may overshoot [`crate::work::MAX_OPEN`] by at most
-/// its own `limit`, and the next pass sees the truth and enqueues nothing (D-131). The byte
+/// admission lock, so each project with collectable assets has the same open work
+/// [`crate::work::admit`] counts counted once, under the statement's own snapshot — a pass may
+/// overshoot [`crate::work::MAX_OPEN`] by at most its own `limit`, and the next pass sees the
+/// truth and enqueues nothing (D-131). Once a project, not once an asset (D-237): counted per
+/// asset before the limit applied, it read 4.7 million buffers and took 7.5 s a pass at 23,000
+/// collectable assets and 3,000 open jobs, past the background units' 4 s bound (D-236). The byte
 /// bound is enforced the same way, from the caller's `room` — what
 /// [`crate::work::install_payload`] left under [`crate::work::MAX_PENDING_PAYLOAD`]: a
 /// running sum of each candidate's recorded size plus its key caps the pass's enqueue at
@@ -1168,11 +1171,35 @@ pub async fn enqueue_expired(
 ) -> Result<u64, DbError> {
     let mut transaction = crate::transactions::background_worker(pool, stop).await?;
     let enqueued = sqlx::query!(
-        "WITH collectable AS (
+        "WITH candidate_projects AS (
+             SELECT DISTINCT a.project_id FROM assets a
+             WHERE a.created_at < $1 AND a.state IN ('quarantined', 'usable', 'rejected')
+         ), full_projects AS (
+             SELECT c.project_id FROM candidate_projects c
+             WHERE (
+                 SELECT count(*) FROM (
+                     SELECT 1 FROM jobs j
+                     WHERE j.project_id = c.project_id
+                       AND j.status IN ('pending', 'retrying', 'running', 'held')
+                     UNION ALL
+                     SELECT 1 FROM asset_jobs j
+                     WHERE j.project_id = c.project_id
+                       AND j.status IN ('pending', 'running', 'retrying')
+                     UNION ALL
+                     SELECT 1 FROM bulk_jobs b
+                     WHERE b.project_id = c.project_id AND b.state IN ('accepting', 'running')
+                     UNION ALL
+                     SELECT 1 FROM migration_plans m
+                     WHERE m.project_id = c.project_id
+                       AND m.state IN ('proposed', 'approved', 'running')
+                 ) open_work
+             ) >= $4
+         ), collectable AS (
              SELECT a.project_id, a.environment_id, a.id, a.created_at, a.size_bytes,
                     'expire:' || a.id::text || ':' || gen_random_uuid()::text AS key
              FROM assets a
              WHERE a.created_at < $1 AND a.state IN ('quarantined', 'usable', 'rejected')
+               AND NOT EXISTS (SELECT 1 FROM full_projects f WHERE f.project_id = a.project_id)
                AND NOT EXISTS (
                    SELECT 1 FROM asset_references r
                    JOIN entries e
@@ -1192,24 +1219,6 @@ pub async fn enqueue_expired(
                    WHERE j.project_id = a.project_id AND j.environment_id = a.environment_id
                      AND j.asset_id = a.id
                      AND j.status IN ('pending', 'running', 'retrying'))
-               AND (
-                   SELECT count(*) FROM (
-                       SELECT 1 FROM jobs j
-                       WHERE j.project_id = a.project_id
-                         AND j.status IN ('pending', 'retrying', 'running', 'held')
-                       UNION ALL
-                       SELECT 1 FROM asset_jobs j
-                       WHERE j.project_id = a.project_id
-                         AND j.status IN ('pending', 'running', 'retrying')
-                       UNION ALL
-                       SELECT 1 FROM bulk_jobs b
-                       WHERE b.project_id = a.project_id AND b.state IN ('accepting', 'running')
-                       UNION ALL
-                       SELECT 1 FROM migration_plans m
-                       WHERE m.project_id = a.project_id
-                         AND m.state IN ('proposed', 'approved', 'running')
-                   ) open_work
-               ) < $4
              ORDER BY a.created_at
              LIMIT $3
          ), fitting AS (

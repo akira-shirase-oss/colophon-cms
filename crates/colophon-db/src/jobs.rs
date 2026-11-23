@@ -102,12 +102,15 @@ pub struct Claimed {
 /// claim); how many. A sweep never waits: it takes only the rows it can lock at once (`SKIP
 /// LOCKED`), and a job another transaction holds (a release superseding it, a worker finishing
 /// it) is the next pass's, so the sweep can never be part of a lock cycle (CI 44719897863: two
-/// sweeps and a supersede, each locking rows in its own order, deadlocked).
+/// sweeps and a supersede, each locking rows in its own order, deadlocked). Each row it takes is
+/// updated by its key and generation (D-237): on the key alone the planner, taking a project and an
+/// environment as independent, found rows through `jobs_by_generation` on the environment and read
+/// every job of the environment for each.
 pub async fn expire(pool: &PgPool, stop: crate::Stop<'_>) -> Result<u64, DbError> {
     let mut transaction = crate::transactions::background_worker(pool, stop).await?;
     let expired = sqlx::query!(
         "WITH due AS (
-             SELECT project_id, environment_id, id FROM jobs
+             SELECT project_id, environment_id, id, generation FROM jobs
              WHERE deadline_at <= now() AND status IN ('pending', 'retrying', 'running')
                AND (status <> 'running' OR lease_expires_at < now())
              ORDER BY id
@@ -116,7 +119,8 @@ pub async fn expire(pool: &PgPool, stop: crate::Stop<'_>) -> Result<u64, DbError
          UPDATE jobs j SET status = 'failed', last_error = 'ran out of time', lease_owner = NULL,
                            lease_expires_at = NULL, updated_at = now(), finished_at = now()
          FROM due
-         WHERE j.project_id = due.project_id AND j.environment_id = due.environment_id AND j.id = due.id"
+         WHERE j.project_id = due.project_id AND j.environment_id = due.environment_id AND j.id = due.id
+           AND j.generation = due.generation"
     )
     .execute(&mut *transaction)
     .await
@@ -225,12 +229,13 @@ pub const RELEASE_BUDGET: Duration = Duration::from_secs(5);
 /// such a job is claimed again within that interval of its lease running out. Never waits: a job
 /// another transaction holds is the next pass's (`SKIP LOCKED`, in id order, the one order every
 /// multi-row lock on the work tables uses). A pass is one bounded statement of at most
-/// [`RELEASE_BATCH`] jobs under the background bounds (D-236). How many it released.
+/// [`RELEASE_BATCH`] jobs under the background bounds (D-236), each updated by its key and
+/// generation (as [`expire`]'s). How many it released.
 pub async fn release_lapsed(pool: &PgPool, stop: crate::Stop<'_>) -> Result<u64, DbError> {
     let mut transaction = crate::transactions::background_worker(pool, stop).await?;
     let released = sqlx::query!(
         "WITH lapsed AS (
-             SELECT project_id, environment_id, id FROM jobs
+             SELECT project_id, environment_id, id, generation FROM jobs
              WHERE status = 'running' AND lease_expires_at < now() AND deadline_at > now()
              ORDER BY id
              LIMIT $1
@@ -240,7 +245,7 @@ pub async fn release_lapsed(pool: &PgPool, stop: crate::Stop<'_>) -> Result<u64,
                            updated_at = now()
          FROM lapsed
          WHERE j.project_id = lapsed.project_id AND j.environment_id = lapsed.environment_id
-           AND j.id = lapsed.id",
+           AND j.id = lapsed.id AND j.generation = lapsed.generation",
         RELEASE_BATCH
     )
     .execute(&mut *transaction)
