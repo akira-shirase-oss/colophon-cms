@@ -57,7 +57,7 @@ for path in "${staged[@]}"; do
 done
 
 if (( docs_only == 1 )); then
-  echo "pre-commit: docs only; the leak check is the whole hook" >&2
+  echo "pre-commit: docs only; the identity and leak checks are the whole hook" >&2
   hook_verdict
   exit 0
 fi

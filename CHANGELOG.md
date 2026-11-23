@@ -8,6 +8,13 @@ through `--version` and `GET /version`.
 
 ## [Unreleased]
 
+### Changed
+
+- **Git hooks catch problems before a push, and per-push CI runs the tests only** (D-241):
+  `scripts/install-hooks.sh` installs a fast pre-commit check of what a commit touches and a pre-push
+  `QUICK=1 scripts/check.sh`; integration runs in four parallel shards, and fuzz, the load smokes,
+  quick start, distribution, the Next.js demo and the benchmarks run nightly and before every release.
+
 ### Removed
 
 - **The 24-hour soak test** (D-240), by the maintainer's decision: `scripts/soak.sh`, `scripts/soak-sidecar.sh`

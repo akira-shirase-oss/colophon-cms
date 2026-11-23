@@ -146,6 +146,20 @@ Every feature ships with all three, in the same branch:
 
 ## Verification commands
 
+**Git hooks (D-241): install them in every clone before your first commit:**
+`scripts/install-hooks.sh --require-email 254750979+akira-shirase-oss@users.noreply.github.com` (idempotent; sets
+`core.hooksPath` to `.githooks/` for every worktree of the clone). The pre-commit hook (about a minute; under 10 s for
+frontend or docs changes) checks only what the staged files touch: the identity and the leak check (no home
+directory, host or real name in the staged lines), rustfmt, clippy and the unit tests of the changed crates, the
+type check and unit tests of the changed frontend packages, ShellCheck on changed scripts; a docs-only commit runs the
+identity and leak checks alone. The pre-push hook warns when the branch doesn't contain `origin/main` and runs
+`QUICK=1 scripts/check.sh` (a docs-only push runs the leak check alone). Escape hatch, for a work-in-progress commit
+during a mutation proof only: `COLOPHON_SKIP_HOOKS=1 COLOPHON_SKIP_REASON="<why>" git commit ...`, logged to
+`.git/colophon-hooks-skipped.log`; `--no-verify` also skips them but leaves no record, so don't use it. Per push, CI
+runs the tests (rust, integration in four shards, frontend), cargo-deny and the docs check; fuzz, the load smokes,
+quick start, distribution, the Next.js demo and the benchmarks run nightly, by hand (`gh workflow run ci.yml`) and
+before every release (release.yml calls ci.yml in full).
+
 `scripts/check.sh` runs exactly what CI runs (D-014): the toolchain check, `cargo fmt --all --check`,
 `cargo clippy --workspace --all-targets --locked -- -D warnings`, `cargo test --workspace --locked`, `cargo doc` with
 `-D warnings`, `scripts/check-architecture.sh` (no I/O crates in `colophon-domain`), `cargo deny check`, ShellCheck,

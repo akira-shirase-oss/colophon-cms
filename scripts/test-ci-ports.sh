@@ -22,6 +22,9 @@ unguarded() {
   awk -v name="$GUARD_NAME" -v cmd="$GUARD_RUN" '
     function verdict() {
       if (job == "") return
+      # A job that calls a reusable workflow (jobs.<id>.uses) runs no steps of its own: the jobs
+      # of the called workflow are each judged in their own file (D-241).
+      if (called) return
       if (!seen) { print file ": job " job " has no steps"; return }
       if (!(first ~ ("name: " name) && index(first, "run: " cmd))) {
         print file ": job " job " (line " line "): step 1 is not the guard"; return
@@ -35,8 +38,9 @@ unguarded() {
     /^jobs:/ { injobs = 1; next }
     !injobs { next }
     /^  [A-Za-z0-9_-]+:[[:space:]]*$/ {
-      verdict(); job = $1; sub(/:$/, "", job); line = FNR; seen = 0; collecting = 0; steps = 0; matrix = 0; first = ""; next
+      verdict(); job = $1; sub(/:$/, "", job); line = FNR; seen = 0; collecting = 0; steps = 0; matrix = 0; called = 0; first = ""; next
     }
+    /^    uses: / { called = 1 }
     /^    runs-on:/ && /matrix\./ { matrix = 1 }
     /^    steps:/ { steps = 1; next }
     steps && /^      - / { if (seen) { collecting = 0; steps = 0; next } seen = 1; collecting = 1; first = $0; next }
@@ -106,6 +110,8 @@ if [[ "${1:-}" == "--self-test" ]]; then
   expect pass "guard first" "$(job a ubuntu-latest "$guard"$'\n'"$checkout")"
   expect fail "no guard" "$(job a ubuntu-latest "$checkout")"
   expect fail "guard after checkout" "$(job a ubuntu-latest "$checkout"$'\n'"$guard")"
+  expect pass "a job that calls a reusable workflow" "$(job a ubuntu-latest "$guard")"$'\n  b:\n    uses: ./.github/workflows/ci.yml\n    with:\n      full: true'
+  expect fail "a job with no steps that calls nothing" "$(job a ubuntu-latest "$guard")"$'\n  b:\n    runs-on: ubuntu-latest'
   expect fail "one of two jobs unguarded" "$(job a ubuntu-latest "$guard")"$'\n'"$(job b ubuntu-latest "$checkout")"
   expect fail "a different range" "$(job a ubuntu-latest $'      - name: '"$GUARD_NAME"$'\n        run: sudo sysctl -w net.ipv4.ip_local_port_range="32768 60999"')"
   expect fail "matrix guard not limited to Linux" "$(job a '${{ matrix.os }}' "$guard")"
