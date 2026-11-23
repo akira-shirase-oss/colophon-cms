@@ -495,7 +495,7 @@ mod tests {
         assert!(gated.len() > 20, "only {} need a yes", gated.len());
         for op in &gated {
             let mut args = Map::new();
-            for param in op.path_params.iter() {
+            for param in &op.path_params {
                 args.insert(
                     param.name.clone(),
                     json!("0190a000-0000-7000-8000-000000000000"),
@@ -538,7 +538,7 @@ mod tests {
         // And with the yes, it is sent: the gate is the only thing holding it.
         let op = gated[0];
         let mut args = Map::new();
-        for param in op.path_params.iter() {
+        for param in &op.path_params {
             args.insert(
                 param.name.clone(),
                 json!("0190a000-0000-7000-8000-000000000000"),

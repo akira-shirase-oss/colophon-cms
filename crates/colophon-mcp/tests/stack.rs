@@ -603,6 +603,29 @@ async fn a_custom_token_drafts_and_asks_for_review_and_nothing_more() {
     assert_eq!(mcp.close().await, Some(0));
 }
 
+/// The catalog's writes are offered to a read-only token too, and the API refuses them just the
+/// same, confirmed or not needing a yes at all.
+async fn catalog_writes_are_refused(mcp: &mut Mcp, entry: &Value, revision: &Value) {
+    let catalog_write = mcp
+        .call(
+            "create_entry",
+            json!({"environment": "production", "collection": "articles", "body": article("Sneaky", "x")}),
+        )
+        .await;
+    assert_eq!(failed(&catalog_write)["status"], 403, "{catalog_write}");
+    let confirmed_delete = mcp
+        .call(
+            "delete_entry",
+            json!({"environment": "production", "collection": "articles", "entry": entry, "if_match": format!("\"{}\"", revision.as_str().expect("a revision")), "confirm": true}),
+        )
+        .await;
+    assert_eq!(
+        failed(&confirmed_delete)["status"],
+        403,
+        "{confirmed_delete}"
+    );
+}
+
 #[tokio::test]
 #[ignore = "needs the local stack and colophon-server; see the module docs"]
 async fn a_read_only_token_is_offered_no_writes_and_the_api_refuses_them() {
@@ -683,26 +706,7 @@ async fn a_read_only_token_is_offered_no_writes_and_the_api_refuses_them() {
         )
         .await;
     assert_eq!(failed(&proposed)["status"], 403);
-    // The catalog's writes are offered too, and the API refuses them just the same, confirmed
-    // or not needing a yes at all.
-    let catalog_write = mcp
-        .call(
-            "create_entry",
-            json!({"environment": "production", "collection": "articles", "body": article("Sneaky", "x")}),
-        )
-        .await;
-    assert_eq!(failed(&catalog_write)["status"], 403, "{catalog_write}");
-    let confirmed_delete = mcp
-        .call(
-            "delete_entry",
-            json!({"environment": "production", "collection": "articles", "entry": entry, "if_match": format!("\"{}\"", revision.as_str().expect("a revision")), "confirm": true}),
-        )
-        .await;
-    assert_eq!(
-        failed(&confirmed_delete)["status"],
-        403,
-        "{confirmed_delete}"
-    );
+    catalog_writes_are_refused(&mut mcp, entry, revision).await;
     let (_, listed) = call(&owner, Method::GET, &entries, None).await;
     assert_eq!(
         listed["data"].as_array().map(Vec::len),
