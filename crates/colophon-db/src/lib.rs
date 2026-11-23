@@ -87,7 +87,21 @@ pub struct PoolSettings {
     pub acquire_timeout: Duration,
     /// Server-side limit on any single statement (`statement_timeout`).
     pub statement_timeout: Duration,
+    /// Server-side limit on any one lock wait (`lock_timeout`), or none. Under the statement
+    /// timeout, so a statement queued behind a held row or advisory lock fails as a lock wait
+    /// (`55P03`, [`DbError::Contended`]: retryable) and only a statement genuinely slow at its own
+    /// work fails as a statement timeout (D-239). A background unit sets its own
+    /// (`transactions::bound_background`), which this never changes.
+    pub lock_timeout: Option<Duration>,
 }
+
+/// The request pool's lock wait (D-239): under its 5 s statement timeout, with 2 s left for the
+/// statement's own work once it has the lock, the split the background units' 3 s of 4 keeps
+/// (D-236). Every lock a request takes in the ordinary course (a row it saves, the collection,
+/// role and admission advisory locks) is held for one other request's transaction, milliseconds
+/// to well under a second, so ordinary contention still waits and succeeds; only a holder
+/// stuck for seconds turns a wait into a "try again".
+pub const REQUEST_LOCK_TIMEOUT: Duration = Duration::from_secs(3);
 
 impl Default for PoolSettings {
     fn default() -> Self {
@@ -95,6 +109,7 @@ impl Default for PoolSettings {
             max_connections: 16,
             acquire_timeout: Duration::from_secs(2),
             statement_timeout: Duration::from_secs(5),
+            lock_timeout: Some(REQUEST_LOCK_TIMEOUT),
         }
     }
 }
@@ -123,8 +138,9 @@ pub enum DbError {
     #[error("no database connection became free in time")]
     Busy,
     /// Postgres aborted the transaction to break a lock cycle (`40P01`) or a serialization
-    /// conflict (`40001`): it rolled back whole, nothing committed, so the caller can answer "try
-    /// again" as for [`Self::Busy`], never a 500.
+    /// conflict (`40001`), or a statement waited out the lock timeout (`55P03`, D-239): it rolled
+    /// back whole, nothing committed, so the caller can answer "try again" as for [`Self::Busy`],
+    /// never a 500.
     #[error("the database aborted the transaction for a conflicting one; nothing was committed")]
     Contended,
     /// A background unit told to stop between its statements: it rolled back, nothing
@@ -311,7 +327,10 @@ impl DbError {
     }
 
     /// A query's error: a quota refusal becomes `QuotaExceeded`, an exhausted pool `Busy`, a
-    /// deadlock or serialization abort `Contended`, everything else `Query`.
+    /// deadlock or serialization abort or a lock wait past the lock timeout `Contended`,
+    /// everything else `Query`. A statement timeout (`57014`) stays `Query`: it is also a
+    /// statement slow at its own work (a bad plan, a missing index), which "try again" would hide
+    /// and repeat (D-239).
     pub(crate) fn from_query(error: sqlx::Error) -> Self {
         if let Some(refused) = Self::quota_exceeded(&error) {
             return refused;
@@ -319,12 +338,28 @@ impl DbError {
         match error {
             sqlx::Error::PoolTimedOut => Self::Busy,
             sqlx::Error::Database(database)
-                if matches!(database.code().as_deref(), Some("40P01" | "40001")) =>
+                if matches!(
+                    database.code().as_deref(),
+                    Some("40P01" | "40001" | "55P03")
+                ) =>
             {
                 Self::Contended
             }
             error => Self::Query(error),
         }
+    }
+
+    /// Whether this is a statement the server cancelled at the statement timeout (`57014` with
+    /// Postgres's "statement timeout" message, not a cancel someone asked for): a statement slow at
+    /// its own work, which the API logs by name rather than as a bare internal error (D-239).
+    #[must_use]
+    pub fn statement_timed_out(&self) -> bool {
+        matches!(
+            self,
+            Self::Query(sqlx::Error::Database(database))
+                if database.code().as_deref() == Some("57014")
+                    && database.message().contains("statement timeout")
+        )
     }
 
     /// A write's error: a violation of the slug indexes becomes `SlugTaken`, of the unique
@@ -609,14 +644,20 @@ pub async fn arm_release_guard(url: &str) -> Result<(), transactions::TripwireOf
 }
 
 /// The options every pool's connections are made with: [`check_url`]'s TLS rule, the server's
-/// application name, its statement timeout and the slow-statement log (D-221, D-224).
+/// application name, its statement and lock timeouts and the slow-statement log (D-221, D-224,
+/// D-239).
 fn pool_connect_options(url: &str, settings: &PoolSettings) -> Result<PgConnectOptions, DbError> {
-    let options = check_url(url)?
-        .application_name("colophon-server")
-        .options([(
+    let options = check_url(url)?.application_name("colophon-server").options(
+        std::iter::once((
             "statement_timeout",
             settings.statement_timeout.as_millis().to_string(),
-        )]);
+        ))
+        .chain(
+            settings
+                .lock_timeout
+                .map(|wait| ("lock_timeout", wait.as_millis().to_string())),
+        ),
+    );
     // D-224: with the tiers set (the server, which installs the layer that drops every statement
     // under the INFO tier), sqlx offers each statement at INFO and says those past the WARN tier at
     // WARN, "slow statement". Otherwise sqlx's own: WARN from 1 s, the rest at DEBUG.
@@ -706,10 +747,14 @@ mod tests {
 
     impl sqlx::error::DatabaseError for Coded {
         fn message(&self) -> &'static str {
-            "coded"
+            // Postgres's own words for the two kinds of 57014 (D-239 tells them apart).
+            match self.0 {
+                "57014" => "canceling statement due to statement timeout",
+                _ => "coded",
+            }
         }
         fn code(&self) -> Option<std::borrow::Cow<'_, str>> {
-            Some(self.0.into())
+            Some(self.0.trim_end_matches(" by request").into())
         }
         fn as_error(&self) -> &(dyn std::error::Error + Send + Sync + 'static) {
             self
@@ -729,7 +774,7 @@ mod tests {
     fn a_deadlock_or_serialization_abort_is_contended_never_a_query_failure() {
         // CI 44719897863: a sweep aborted with 40P01 reached its caller as `Query`, which the
         // API answers 500. The transaction rolled back whole, so it is a retryable refusal.
-        for code in ["40P01", "40001"] {
+        for code in ["40P01", "40001", "55P03"] {
             let error = DbError::from_query(sqlx::Error::Database(Box::new(Coded(code))));
             assert!(matches!(error, DbError::Contended), "{code}: {error:?}");
             let error = DbError::from_write(sqlx::Error::Database(Box::new(Coded(code))));
@@ -738,6 +783,14 @@ mod tests {
                 "{code} on a write: {error:?}"
             );
         }
+        // A statement timeout stays a failure: it is also a slow statement (D-239), named as one.
+        let error = DbError::from_query(sqlx::Error::Database(Box::new(Coded("57014"))));
+        assert!(matches!(error, DbError::Query(_)), "57014: {error:?}");
+        assert!(error.statement_timed_out());
+        // Same code, "canceling statement due to user request": a cancel someone asked for.
+        let cancelled =
+            DbError::from_query(sqlx::Error::Database(Box::new(Coded("57014 by request"))));
+        assert!(!cancelled.statement_timed_out(), "{cancelled:?}");
         let other = DbError::from_query(sqlx::Error::Database(Box::new(Coded("42P01"))));
         assert!(matches!(other, DbError::Query(_)), "{other:?}");
     }

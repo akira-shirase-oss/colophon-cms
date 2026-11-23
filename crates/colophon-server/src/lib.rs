@@ -61,6 +61,9 @@ fn start_worker(
         config.database_url.expose(),
         PoolSettings {
             max_connections: config.worker_db_connections,
+            // Every unit on this pool bounds its own lock waits (D-236's 3 s); D-239's is the
+            // request pool's.
+            lock_timeout: None,
             ..PoolSettings::default()
         },
     )

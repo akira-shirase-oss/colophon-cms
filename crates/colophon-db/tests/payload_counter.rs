@@ -631,8 +631,9 @@ async fn a_counter_updated_in_the_triggers_would_make_workers_wait() {
     .expect("the other design");
     owner.close().await;
     let swept = sweep_beside_an_open_admission(&db).await;
+    // It waits out the 1 s lock timeout set above: a lock wait past it is `Contended` (D-239).
     assert!(
-        matches!(&swept, Err(error) if format!("{error:?}").contains("lock")),
+        matches!(&swept, Err(DbError::Contended)),
         "the sweep waited on the admission's counter lock: {swept:?}"
     );
     db.drop().await;

@@ -107,6 +107,9 @@ async fn connect(database: &MigratorUrl, out: &Out) -> Result<PgPool, Exit> {
         acquire_timeout: Duration::from_secs(10),
         // Migrations may take longer than the application's statement limit.
         statement_timeout: Duration::from_secs(300),
+        // A migration waits for its locks as long as its statements may run (D-239 is the
+        // request pool's).
+        lock_timeout: None,
     };
     let pool = colophon_db::connect_lazy(database_url, settings)
         .map_err(|error| fail(out, Exit::Usage, &error.to_string()))?;
