@@ -24,6 +24,14 @@ through `--version` and `GET /version`.
   than it is allowed and never finished. Each now reads its own few rows. A delivery whose worker
   died mid-attempt resumes up to 10 seconds after its lease runs out (30 seconds by default),
   instead of at the next claim; its receipt says the update is pending meanwhile.
+- **The releases page and the schedules list stay fast as an environment grows** (D-219). Each page
+  now reads its releases' or schedules' changesets once as a set, so a database whose statistics
+  lag behind its growth can no longer make one page read every changeset once per row.
+- **A flood of new clients while Valkey is down can no longer reset everyone's rate limits**
+  (D-238). With Valkey away each server keeps limits of its own, at most 100,000 keys; at that bound
+  it used to start over, so a flood of new addresses handed every limited client, a password
+  guesser's address included, a fresh burst. It now lets the least restrictive keys go first and
+  keeps the ones actually being limited.
 - **Stopping the server no longer cuts background work off mid-transaction**. The worker's
   sweeps, the pending-work fold, the media and table retention sweeps and the change-hint sender
   each stopped the moment shutdown began, even while a database transaction was committing, so
