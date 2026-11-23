@@ -114,9 +114,14 @@ async fn retention_keeps_the_staff_auth_log_for_the_audit_age_and_ends_signup_wi
     .execute(&owner)
     .await
     .expect("seed windows");
-    let swept = retention::sweep(&db.app, &retention::Retention::default(), 1000)
-        .await
-        .expect("sweep");
+    let swept = retention::sweep(
+        &db.app,
+        &retention::Retention::default(),
+        1000,
+        colophon_db::Stop::NEVER,
+    )
+    .await
+    .expect("sweep");
     assert_eq!((swept.staff_auth, swept.signup_throttle), (1, 1));
     let left: Vec<i32> = sqlx::query_scalar(
         "SELECT extract(day FROM now() - at)::int FROM staff_auth_events WHERE address = 'seed'",
