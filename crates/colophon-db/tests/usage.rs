@@ -294,7 +294,11 @@ async fn deleting_a_project_returns_exactly_what_it_held() {
     tx.commit().await.expect("commit");
     let after = usage::of_identity(&db.app, alice).await.expect("usage");
     assert_eq!(
-        after, before,
+        after,
+        usage::Usage {
+            projects: before.projects - 1,
+            ..before
+        },
         "the deleted project's share, no more, no less"
     );
     assert_eq!(
