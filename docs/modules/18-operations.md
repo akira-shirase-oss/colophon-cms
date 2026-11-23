@@ -224,7 +224,9 @@ never silently rerun without `--force`; `deploy/runbooks/restore.md` is the oper
    embedded set (`colophon_db::restore::check_schema`): a backup carrying a migration this binary doesn't know is
    refused; a schema behind the binary reports `pending` and passes — nothing migrates silently inside verify.
 3. **epoch:** `admin restore epoch` advances every environment's epoch exactly once — the new recovery epoch (D4)
-   that invalidates the old timeline's cache generations, delivery scope keys and worker leases.
+   that invalidates the old timeline's cache generations, delivery scope keys and worker leases — after replacing
+   the media signing key and retiring every older one (D-233), so a restored copy never shares its source's key.
+   Outside a restore, `admin media-key rotate [--retire-previous]` rotates it; servers read the keys every minute.
 4. **ledger:** every `--ledger` export replays the interval the restored `deletion_ledger` lacks (anti-joined by
    row id — `id > max` would hide out-of-order rows). A gap the files don't cover, or a row that can't replay,
    blocks the stage — O2 keeps serving off.

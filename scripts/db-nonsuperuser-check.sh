@@ -11,6 +11,7 @@
 #   delivery_environment / media_object                         no app.* setting pinned on them
 #   after a call, the caller's app.project_id and audience      as they were (set, and unset)
 #   after an error inside a call, caught by a savepoint         as they were
+#   admin media-key rotate (and --retire-previous), restore epoch as the owner; logged; the app can't (D-233)
 #
 # COLOPHON_BIN picks the binary (default target/release/colophon, built if missing);
 # COLOPHON_NONSUPER_CHECK_PORT the port (default 55451, bumped while taken). Needs docker and jq.
@@ -194,6 +195,24 @@ SQL
   if grep -q 'lock timeout' <<<"$got"; then pass "$name failed inside the call (lock timeout)"; else fail "$name didn't fail inside the call: $got"; fi
   expect "the caller's project and audience after $name's error, caught by a savepoint" "after:$other|members" "$(grep '^after:' <<<"$got")"
 done
+
+# D-233 on a non-superuser owner: the media signing key rotates as Neon's owner would run it (the admin
+# command and the restore's epoch stage), each rotation logged with that login, and the app can't rotate.
+cli admin media-key rotate --json
+expect "admin media-key rotate as the owner" "0|2" "$code|$(jq -r '.data.media_key_id' <<<"$out" 2>/dev/null)"
+cli admin media-key rotate --retire-previous --json
+expect "admin media-key rotate --retire-previous as the owner" "0|3" "$code|$(jq -r '.data.media_key_id' <<<"$out" 2>/dev/null)"
+expect "after --retire-previous, one key is left" "3" "$(super -c "SELECT string_agg(id::text, ',' ORDER BY id) FROM media_signing_keys")"
+cli admin restore epoch --json
+expect "admin restore epoch as the owner makes one new key" "0|4|4" \
+  "$code|$(jq -r '.data.media_key_id' <<<"$out" 2>/dev/null)|$(super -c "SELECT string_agg(id::text, ',' ORDER BY id) FROM media_signing_keys")"
+expect "each rotation is logged with the owner's login" "2|neon_owner|f|admin,3|neon_owner|t|admin,4|neon_owner|t|restore" "$(super -c "
+  SELECT string_agg(kid || '|' || by_role || '|' || CASE WHEN retired_previous THEN 't' ELSE 'f' END || '|' || reason, ',' ORDER BY kid)
+  FROM media_key_rotations")"
+got=$(app <<<"SELECT colophon_rotate_media_key(true, 'admin');")
+if grep -q 'permission denied' <<<"$got"; then pass "colophon_app can't rotate the media key"; else fail "colophon_app rotating the media key: ${got:-no error}"; fi
+expect "the app's refused rotation changed nothing" "4" "$(super -c "SELECT string_agg(id::text, ',' ORDER BY id) FROM media_signing_keys")"
+grants_after "after the media key rotations"
 
 # A run held open inside a migration, then killed (D-234): each migration's grants are its own
 # transaction's. A second database in the same cluster (roles are cluster-wide, as on Neon):

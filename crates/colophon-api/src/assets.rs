@@ -1007,25 +1007,30 @@ const PRIVATE_CACHE: &str = "private, no-store";
 /// (`pinned`) opens to a preview's signature or a site member's; the bare address, which serves
 /// the newest upload, to a preview's alone (review S1, 2026-11-21).
 async fn signed(state: &AppState, uri: &axum::http::Uri, pinned: bool) -> Result<bool, ApiError> {
-    use crate::media_sign::Purpose;
+    use crate::media_sign::{Purpose, Verdict, verifies};
     if uri.query().is_none() {
         return Ok(false);
     }
     let services = services(state)?;
-    let key = services.media_keys.key(&services.pool).await?;
     let now = time::OffsetDateTime::now_utc().unix_timestamp();
     let purposes: &[Purpose] = if pinned {
         &[Purpose::Preview, Purpose::Member]
     } else {
         &[Purpose::Preview]
     };
-    Ok(crate::media_sign::verifies(
-        key,
-        purposes,
-        uri.path(),
-        uri.query(),
-        now,
-    ))
+    let keys = services.media_keys.current(&services.pool).await?;
+    match verifies(&keys, purposes, uri.path(), uri.query(), now) {
+        Verdict::Valid => Ok(true),
+        Verdict::Invalid => Ok(false),
+        // A key this server hasn't read yet (another server rotated a moment ago), or a forged id: one read of the
+        // keys, at most once a second, then the same check once more.
+        Verdict::UnknownKey(_) => {
+            let Some(keys) = services.media_keys.for_unknown_kid(&services.pool).await? else {
+                return Ok(false);
+            };
+            Ok(verifies(&keys, purposes, uri.path(), uri.query(), now) == Verdict::Valid)
+        }
+    }
 }
 
 /// Whether the request is signed in (a session or a bearer) as someone who may read this

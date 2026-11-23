@@ -164,7 +164,7 @@ through `--version` and `GET /version`.
 - **Unpublished media is private** (D-229). `/media/v1/…` serves an upload to the public only once a
   release names it; until then it answers `404` (as if it didn't exist), except to a signed-in member
   of the project and to the short-lived signed addresses that preview answers, and delivery answers
-  for signed-in site members, now carry (`?expires=&signature=`). A replaced image's bare address
+  for signed-in site members, now carry (`?kid=&expires=&signature=`). A replaced image's bare address
   keeps showing the published version until the next publish. In a signed-in site member's answer,
   `current_url` is the published version's own address (the same as `url`): a member's signed address
   never opens a replacement nobody has published. A site that linked uploads by id before
@@ -174,6 +174,11 @@ through `--version` and `GET /version`.
 
 ### Security
 
+- The key that signs media addresses rotates (D-233): `colophon admin media-key rotate` makes a new one, and the
+  one before it keeps verifying the links it signed; `--retire-previous` drops every older key at once, for a key
+  that leaked. Every restore makes a new key and retires its source's, so a staging copy restored from production
+  can no longer sign or verify production's links. Addresses now carry the key's id (`?kid=`): links signed
+  before upgrading (at most 15 minutes old) stop working at the upgrade. Each rotation is recorded, never the key.
 - A project API token is held to its creator's role as it is now (D-228): demoting the person who
   made it narrows it at its next request, and removing them (or their leaving) revokes it, with a
   `token.revoked` audit row giving the reason. Before, a removed owner's token kept working.
