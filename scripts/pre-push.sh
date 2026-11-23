@@ -15,9 +15,10 @@ hook_skip_if_asked
 hook_toolchain
 
 zero=0000000000000000000000000000000000000000
-ranges=()
+ranges=() heads=()
 while read -r _local_ref local_sha _remote_ref remote_sha; do
   [[ "$local_sha" == "$zero" ]] && continue # a deletion pushes nothing
+  heads+=("$local_sha")
   if [[ "$remote_sha" == "$zero" ]]; then
     # A new branch: what it adds over origin/main, as last fetched.
     base=$(git merge-base origin/main "$local_sha" 2>/dev/null || true)
@@ -63,11 +64,27 @@ if (( docs_only == 1 )); then
   exit 0
 fi
 
+# Git opened its connection to the remote before this hook ran, and a remote drops one left idle
+# for the minutes QUICK takes: the push then dies after a green check. So a commit whose QUICK
+# passed is remembered, and pushing it again (or a branch at it) skips straight through.
+passed="$(git rev-parse --git-common-dir)/colophon-quick-passed"
+all_passed=1
+for head in "${heads[@]}"; do
+  grep -qx "$head" "$passed" 2>/dev/null || all_passed=0
+done
+if (( all_passed == 1 )); then
+  echo "pre-push: QUICK=1 scripts/check.sh already passed for ${heads[*]:0:1}; not run again" >&2
+  hook_verdict
+  exit 0
+fi
+
 # check.sh prints its own progress; it runs in the open, timed as one step.
 echo "pre-push: QUICK=1 scripts/check.sh (every CI check but the stack's; several minutes) ..." >&2
 quick_started=$(date +%s)
 if QUICK=1 scripts/check.sh; then
   echo "pre-push: QUICK=1 scripts/check.sh            ok   ($(( $(date +%s) - quick_started ))s)" >&2
+  printf '%s\n' "${heads[@]}" >>"$passed"
+  echo "pre-push: if the push now fails with a dropped connection, push again: this commit won't be checked twice" >&2
 else
   echo "pre-push: QUICK=1 scripts/check.sh            FAIL ($(( $(date +%s) - quick_started ))s)" >&2
   [[ -n "$hook_failed" ]] || hook_failed="QUICK=1 scripts/check.sh"
