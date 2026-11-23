@@ -113,4 +113,7 @@ against, and how far:
   password or a live session, which an outsider doesn't have; a session signs out once. What stays: an
   attacker with many addresses still adds up to 21 lines an hour per address, a cost that grows with what they
   spend, not with what they send.
-
+- **Login CSRF and fixation.** Sign-up and sign-in refuse a cross-site browser and any `Origin` but the
+  installation's; signing in, up or back from the provider rotates the session and ends the one presented; the
+  session cookies are `__Host-` (no sibling subdomain can set or shadow them). The old cookie names are read for
+  one release only, and only for sessions made before the rename.

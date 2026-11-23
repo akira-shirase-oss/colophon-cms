@@ -10,7 +10,7 @@ import { newProject, nextAmbiguous, signIn, violations } from './helpers.ts';
 async function approved(page: Page, project: string, title: string): Promise<{ id: string; hash: string }> {
 	return page.evaluate(
 		async ({ project, title }) => {
-			const csrf = document.cookie.split('; ').find((pair) => pair.startsWith('colophon_csrf='))?.slice('colophon_csrf='.length) ?? '';
+			const csrf = document.cookie.split('; ').find((pair) => pair.startsWith('__Host-colophon_csrf='))?.slice('__Host-colophon_csrf='.length) ?? '';
 			const base = `/api/v1/projects/${project}/environments/production`;
 			const send = async (path: string, body: unknown, headers: Record<string, string> = {}) => {
 				const response = await fetch(`${base}${path}`, {
@@ -85,7 +85,7 @@ test('the worker publishes a schedule when its time comes, and Releases shows it
 	// Four seconds ahead, in UTC, to the second: through the API, as the form only takes minutes.
 	const status = await page.evaluate(
 		async ({ project, set }) => {
-			const csrf = document.cookie.split('; ').find((pair) => pair.startsWith('colophon_csrf='))?.slice('colophon_csrf='.length) ?? '';
+			const csrf = document.cookie.split('; ').find((pair) => pair.startsWith('__Host-colophon_csrf='))?.slice('__Host-colophon_csrf='.length) ?? '';
 			const at = new Date(Date.now() + 4000).toISOString().slice(0, 19);
 			const response = await fetch(`/api/v1/projects/${project}/environments/production/changesets/${set.id}/schedule`, {
 				method: 'POST',

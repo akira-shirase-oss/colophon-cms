@@ -257,11 +257,11 @@ async fn a_new_account_signs_in_and_grants_nothing() {
     let set = common::cookies_from(&response);
     let session = common::Session {
         cookie: format!(
-            "colophon_session={}; colophon_csrf={}",
-            common::cookie(&set, "colophon_session"),
-            common::cookie(&set, "colophon_csrf")
+            "__Host-colophon_session={}; __Host-colophon_csrf={}",
+            common::cookie(&set, "__Host-colophon_session"),
+            common::cookie(&set, "__Host-colophon_csrf")
         ),
-        csrf: common::cookie(&set, "colophon_csrf"),
+        csrf: common::cookie(&set, "__Host-colophon_csrf"),
     };
     let (status, me) = get(Some(&session), "/me").await;
     assert_eq!(status, StatusCode::OK);
@@ -319,11 +319,11 @@ async fn sign_in_keeping(keycloak: &reqwest::Client, user: &str) -> common::Sess
     assert_eq!(done.status(), StatusCode::SEE_OTHER);
     let set = common::cookies_from(&done);
     let (session, csrf) = (
-        common::cookie(&set, "colophon_session"),
-        common::cookie(&set, "colophon_csrf"),
+        common::cookie(&set, "__Host-colophon_session"),
+        common::cookie(&set, "__Host-colophon_csrf"),
     );
     common::Session {
-        cookie: format!("colophon_session={session}; colophon_csrf={csrf}"),
+        cookie: format!("__Host-colophon_session={session}; __Host-colophon_csrf={csrf}"),
         csrf,
     }
 }

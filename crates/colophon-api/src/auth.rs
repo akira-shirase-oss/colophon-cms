@@ -17,7 +17,8 @@ use crate::{
     ApiError, AppState,
     selfserve::Registration,
     session::{
-        CSRF_COOKIE, SESSION_COOKIE, SIGN_IN_COOKIE, SignedIn, cookie, services, set_cookie,
+        CSRF_COOKIE, LEGACY_CSRF_COOKIE, LEGACY_SESSION_COOKIE, SESSION_COOKIE, SIGN_IN_COOKIE,
+        SignedIn, cookie, public_write_origin, services, set_cookie,
     },
     shape::Data,
 };
@@ -218,6 +219,7 @@ pub(crate) async fn callback(
         .await
         .map_err(ApiError::from_db)?
     };
+    rotate_presented(services, &headers, &address, identity_id).await;
     let (session_token, csrf_token) = issue_session(services, identity_id).await?;
     staff_auth_line(
         services,
@@ -243,7 +245,7 @@ pub(crate) async fn callback(
 }
 
 /// Issues a session for `identity` and answers its fresh token and CSRF token.
-async fn issue_session(
+pub(crate) async fn issue_session(
     services: &crate::state::Services,
     identity: uuid::Uuid,
 ) -> Result<(String, String), ApiError> {
@@ -262,7 +264,12 @@ async fn issue_session(
 }
 
 /// The `Set-Cookie` pair a new session puts on a browser.
-fn session_cookies(response: &mut Response, session_token: &str, csrf_token: &str, lifetime: u64) {
+pub(crate) fn session_cookies(
+    response: &mut Response,
+    session_token: &str,
+    csrf_token: &str,
+    lifetime: u64,
+) {
     let headers = response.headers_mut();
     headers.insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
     headers.append(
@@ -273,6 +280,44 @@ fn session_cookies(response: &mut Response, session_token: &str, csrf_token: &st
         header::SET_COOKIE,
         set_cookie(CSRF_COOKIE, csrf_token, lifetime, false, "Strict", "/"),
     );
+    // The names before D-235's rename go, so a browser never carries both.
+    headers.append(header::SET_COOKIE, clear(LEGACY_SESSION_COOKIE, "/"));
+    headers.append(header::SET_COOKIE, clear(LEGACY_CSRF_COOKIE, "/"));
+}
+
+/// Session rotation (D-235): a browser that signs in, signs up or comes back from the provider
+/// gets a new session, and any session it presented, under either cookie name, ends now. A
+/// session planted on the browser beforehand (fixation) never becomes the signed-in one.
+pub(crate) async fn rotate_presented(
+    services: &crate::state::Services,
+    headers: &HeaderMap,
+    address: &str,
+    now_signed_in: uuid::Uuid,
+) {
+    for name in [SESSION_COOKIE, LEGACY_SESSION_COOKIE] {
+        let Some(token) = cookie(headers, name).filter(|token| token.len() == 43) else {
+            continue;
+        };
+        match identity::revoke_session_by_token(&services.pool, &tokens::hash(token)).await {
+            Ok(Some(was)) => {
+                staff_auth_line(
+                    services,
+                    colophon_db::staff_auth::Line {
+                        identity: Some(now_signed_in),
+                        actor: (was != now_signed_in).then_some(was),
+                        detail: Some("signed_in_again"),
+                        ..colophon_db::staff_auth::Line::new(
+                            colophon_db::staff_auth::Event::SessionRotated,
+                            address,
+                        )
+                    },
+                )
+                .await;
+            }
+            Ok(None) => {}
+            Err(error) => tracing::warn!(error = %error, "could not end the presented session"),
+        }
+    }
 }
 
 /// What making an account asks for.
@@ -366,9 +411,11 @@ pub(crate) async fn sign_up(
     State(state): State<AppState>,
     crate::admission::ClientAddress(address): crate::admission::ClientAddress,
     crate::admission::ClientIp(client_ip): crate::admission::ClientIp,
+    headers: HeaderMap,
     Json(body): Json<SignUp>,
 ) -> Result<Response, ApiError> {
     let services = services(&state)?;
+    public_write_origin(&headers, services)?;
     let invitation = body.invitation.as_deref().map(tokens::hash);
     let admission = match services.selfserve.registration {
         Registration::Closed => {
@@ -445,6 +492,7 @@ pub(crate) async fn sign_up(
             }
             Err(error) => return Err(ApiError::from_db(error)),
         };
+    rotate_presented(services, &headers, &address, id).await;
     let (session_token, csrf_token) = issue_session(services, id).await?;
     let mut response = (
         StatusCode::CREATED,
@@ -469,7 +517,7 @@ pub(crate) async fn sign_up(
 
 /// A line in the staff auth log (D-235). A log that won't take it doesn't change the answer: the
 /// request already did what it did.
-async fn staff_auth_line(
+pub(crate) async fn staff_auth_line(
     services: &crate::state::Services,
     line: colophon_db::staff_auth::Line<'_>,
 ) {
@@ -568,9 +616,11 @@ const fn invitation_required() -> ApiError {
 pub(crate) async fn sign_in(
     State(state): State<AppState>,
     crate::admission::ClientAddress(address): crate::admission::ClientAddress,
+    headers: HeaderMap,
     Json(body): Json<PasswordSignIn>,
 ) -> Result<Response, ApiError> {
     let services = services(&state)?;
+    public_write_origin(&headers, services)?;
     let email = clean_email(&body.email)?;
     check_sign_in_password(&body.password)?;
     match identity::password_sign_in(
@@ -583,6 +633,7 @@ pub(crate) async fn sign_in(
     .await
     {
         Ok(identity::PasswordSignIn::SignedIn(id)) => {
+            rotate_presented(services, &headers, &address, id).await;
             let (session_token, csrf_token) = issue_session(services, id).await?;
             staff_auth_line(
                 services,
@@ -676,6 +727,8 @@ pub(crate) async fn logout(
         header::SET_COOKIE,
         set_cookie(CSRF_COOKIE, "", 0, false, "Strict", "/"),
     );
+    headers.append(header::SET_COOKIE, clear(LEGACY_SESSION_COOKIE, "/"));
+    headers.append(header::SET_COOKIE, clear(LEGACY_CSRF_COOKIE, "/"));
     Ok(response)
 }
 

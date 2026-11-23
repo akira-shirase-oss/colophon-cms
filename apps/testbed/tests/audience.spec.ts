@@ -9,7 +9,7 @@ import { signIn } from './sign-in.ts';
 
 async function newProject(page: Page): Promise<string> {
 	return page.evaluate(async (slug) => {
-		const csrf = document.cookie.split('; ').find((pair) => pair.startsWith('colophon_csrf='))?.slice('colophon_csrf='.length) ?? '';
+		const csrf = document.cookie.split('; ').find((pair) => pair.startsWith('__Host-colophon_csrf='))?.slice('__Host-colophon_csrf='.length) ?? '';
 		const response = await fetch('/server/api/v1/projects', {
 			method: 'POST',
 			headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrf },
@@ -22,7 +22,7 @@ async function newProject(page: Page): Promise<string> {
 /** A public article and a `role:member` one, published as release 1 through a changeset. */
 async function publishGated(page: Page, project: string): Promise<number> {
 	return page.evaluate(async (project) => {
-		const csrf = document.cookie.split('; ').find((pair) => pair.startsWith('colophon_csrf='))?.slice('colophon_csrf='.length) ?? '';
+		const csrf = document.cookie.split('; ').find((pair) => pair.startsWith('__Host-colophon_csrf='))?.slice('__Host-colophon_csrf='.length) ?? '';
 		const headers = { 'Content-Type': 'application/json', 'X-CSRF-Token': csrf };
 		const base = `/server/api/v1/projects/${project}/environments/production`;
 		const doc = { schema: 'colophon/rich-text', version: 1, doc: { type: 'doc', content: [{ type: 'paragraph' }] } };

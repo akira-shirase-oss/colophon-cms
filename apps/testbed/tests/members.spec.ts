@@ -7,7 +7,7 @@ import { signIn } from './sign-in.ts';
 
 async function newProject(page: Page): Promise<string> {
 	return page.evaluate(async (slug) => {
-		const csrf = document.cookie.split('; ').find((pair) => pair.startsWith('colophon_csrf='))?.slice('colophon_csrf='.length) ?? '';
+		const csrf = document.cookie.split('; ').find((pair) => pair.startsWith('__Host-colophon_csrf='))?.slice('__Host-colophon_csrf='.length) ?? '';
 		const response = await fetch('/server/api/v1/projects', {
 			method: 'POST',
 			headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrf },

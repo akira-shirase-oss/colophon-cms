@@ -381,8 +381,8 @@ export interface Details {
 
 /** The session's CSRF token, which every cookie-authenticated write echoes. */
 export function csrfToken(): string {
-	const match = document.cookie.split('; ').find((pair) => pair.startsWith('colophon_csrf='));
-	return match?.slice('colophon_csrf='.length) ?? '';
+	const match = document.cookie.split('; ').find((pair) => pair.startsWith('__Host-colophon_csrf='));
+	return match?.slice('__Host-colophon_csrf='.length) ?? '';
 }
 
 /** Where "Sign in" goes; the server comes back to `returnTo` afterwards. */

@@ -11,7 +11,7 @@ const key = () => `tb-${crypto.randomUUID()}`;
 async function api(page: Page, method: string, path: string, body?: unknown, extra: Record<string, string> = {}) {
 	return page.evaluate(
 		async ({ method, path, body, extra }) => {
-			const csrf = document.cookie.split('; ').find((pair) => pair.startsWith('colophon_csrf='))?.slice('colophon_csrf='.length) ?? '';
+			const csrf = document.cookie.split('; ').find((pair) => pair.startsWith('__Host-colophon_csrf='))?.slice('__Host-colophon_csrf='.length) ?? '';
 			const response = await fetch(`/server${path}`, {
 				method,
 				headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrf, 'Idempotency-Key': `tb-${crypto.randomUUID()}`, ...extra },

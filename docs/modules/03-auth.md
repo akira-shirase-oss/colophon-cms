@@ -213,6 +213,24 @@ operation, and the cross-project and identity test families from spec §27 pass.
 - Rust issues opaque, random, revocable session tokens and stores only their hash in Postgres.
 - Cookies are `Secure`, `HttpOnly`, with `SameSite`; sessions have expiry and idle timeout.
 - Cookie-authenticated writes need a CSRF token **and** a matching `Origin`.
+- **Writes without a session yet (D-235): sign-up and sign-in** have no CSRF token to check, so the `Origin` rule
+  alone stops another site signing a visitor in to an account of its choosing (login CSRF): a browser's
+  `Sec-Fetch-Site: cross-site` is refused whatever else comes with it; an `Origin` must be trusted exactly (`null`,
+  another scheme, host or port refused); with no `Origin`, `Sec-Fetch-Site` must be `same-origin` or `none`; a
+  request with neither header (a CLI, a script) passes, since no browser sends a cross-site write without them.
+  `403 origin_not_allowed`. Sign-out with a session goes through the session's own rule above (tested).
+- **Rotation (D-235).** Signing in, signing up and coming back from the provider issue a new session and end any
+  session the browser presented, under either cookie name, so a session planted beforehand (fixation) never
+  becomes the signed-in one. Becoming the administrator with the setup code is a change of standing: the session
+  that asked ends and the answer carries a new one. Each is `session_rotated` in the staff auth log.
+- **Cookie names (D-235).** `__Host-colophon_session` (`HttpOnly`, `SameSite=Lax`) and `__Host-colophon_csrf`
+  (readable, `SameSite=Strict`), both `Secure`, `Path=/`, no `Domain`: the browser refuses a `__Host-` cookie
+  otherwise, so a sibling subdomain can neither set nor shadow them. For one release the old names
+  (`colophon_session`, `colophon_csrf`) are still read (`colophon_api::legacy_cookie`), but only for a session made
+  before the rename was deployed (`session_cookie_rename`, recorded by migration 0090): its first use swaps it, in
+  one statement, for a new session under the new name with the same identity, CSRF token, expiry and last use, and
+  expires the old cookies. An old-name cookie for a session made after the rename (planted, say) is dropped from
+  the request and cleared. Every sign-in, sign-up and sign-out clears the old names too.
 - Defaults: a session ends 12 hours after sign-in or after 2 hours unused. Its last use is written at most once a
   minute, decided from the row just read, so most requests only read.
 - The CSRF token is per session, stored hashed, and sent to the page in a readable `SameSite=Strict` cookie; writes

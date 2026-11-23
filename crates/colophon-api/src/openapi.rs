@@ -4525,8 +4525,8 @@ pub(crate) fn document(build: &BuildInfo) -> Value {
                 "sessionCookie": {
                     "type": "apiKey",
                     "in": "cookie",
-                    "name": "colophon_session",
-                    "description": "a browser session. Cookie-authenticated writes (anything but GET, HEAD, OPTIONS) also need an `Origin` the server trusts exactly and an `X-CSRF-Token` header matching the session's CSRF token, which lives in the readable `colophon_csrf` cookie."
+                    "name": "__Host-colophon_session",
+                    "description": "a browser session. Cookie-authenticated writes (anything but GET, HEAD, OPTIONS) also need an `Origin` the server trusts exactly and an `X-CSRF-Token` header matching the session's CSRF token, which lives in the readable `__Host-colophon_csrf` cookie."
                 },
                 "bearerToken": {
                     "type": "http",

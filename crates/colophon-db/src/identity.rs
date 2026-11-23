@@ -422,6 +422,53 @@ pub async fn revoke_session(pool: &PgPool, id: Uuid) -> Result<(), DbError> {
     Ok(())
 }
 
+/// Revokes the live session whose token hashes to `token_hash`, if there is one: what a browser
+/// presented when it signs in again (D-235, session rotation). The session's identity, if it was
+/// live.
+pub async fn revoke_session_by_token(
+    pool: &PgPool,
+    token_hash: &[u8; 32],
+) -> Result<Option<Uuid>, DbError> {
+    sqlx::query_scalar!(
+        "UPDATE sessions SET revoked_at = now()
+         WHERE token_hash = $1 AND revoked_at IS NULL AND expires_at > now()
+         RETURNING identity_id",
+        &token_hash[..]
+    )
+    .fetch_optional(pool)
+    .await
+    .map_err(DbError::from_query)
+}
+
+/// Swaps a session presented under the cookie name before D-235's rename for a new one, in one
+/// statement: only a live session made before the rename was deployed
+/// (`session_cookie_rename`), so one planted under the old name later is never accepted. The new
+/// session keeps the old one's identity, CSRF token, expiry and last use; the old one ends. The
+/// identity, if it was swapped.
+pub async fn upgrade_legacy_session(
+    pool: &PgPool,
+    old_token_hash: &[u8; 32],
+    new_token_hash: &[u8; 32],
+) -> Result<Option<(Uuid, OffsetDateTime)>, DbError> {
+    let row = sqlx::query!(
+        "WITH old AS (
+             UPDATE sessions SET revoked_at = now()
+             WHERE token_hash = $1 AND revoked_at IS NULL AND expires_at > now()
+               AND created_at < (SELECT at FROM session_cookie_rename)
+             RETURNING identity_id, csrf_hash, expires_at, last_seen_at)
+         INSERT INTO sessions (id, token_hash, csrf_hash, identity_id, expires_at, last_seen_at)
+         SELECT $2, $3, csrf_hash, identity_id, expires_at, last_seen_at FROM old
+         RETURNING identity_id, expires_at",
+        &old_token_hash[..],
+        Uuid::now_v7(),
+        &new_token_hash[..]
+    )
+    .fetch_optional(pool)
+    .await
+    .map_err(DbError::from_query)?;
+    Ok(row.map(|row| (row.identity_id, row.expires_at)))
+}
+
 /// The state kept between leaving for the identity provider and coming back.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SignInAttempt {

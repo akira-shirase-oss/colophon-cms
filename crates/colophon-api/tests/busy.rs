@@ -81,7 +81,7 @@ async fn a_request_that_cannot_get_a_connection_is_told_to_retry() {
     let request = Request::get("/api/v1/projects")
         .header(
             header::COOKIE,
-            format!("colophon_session={}", "a".repeat(43)),
+            format!("__Host-colophon_session={}", "a".repeat(43)),
         )
         .body(Body::empty())
         .expect("request");

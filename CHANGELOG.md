@@ -20,6 +20,15 @@ through `--version` and `GET /version`.
 
 ### Security
 
+- **No login CSRF, no session fixation, `__Host-` session cookies** (D-235). Sign-up and sign-in refuse a
+  cross-site browser and any `Origin` but the installation's (`403 origin_not_allowed`); a request with neither
+  `Origin` nor `Sec-Fetch-Site`, as a CLI sends, still works. Signing in, signing up and coming back from the
+  identity provider rotate the session and end the one the browser presented; becoming the administrator with
+  the setup code rotates it too. The session cookies are now `__Host-colophon_session` and
+  `__Host-colophon_csrf`. **Upgrading:** nobody is signed out. The old names (`colophon_session`,
+  `colophon_csrf`) are read in this release only, for sessions made before the upgrade, and swapped for new-name
+  ones on first use. The release after this one stops reading them. Scripts that set the cookie by
+  name must use the new names.
 - **Sign-up guards and a staff sign-in log** (D-235, migration 0090). Sign-ups are capped per client address
   (`COLOPHON_SIGNUPS_PER_ADDRESS_HOUR`, default 10 an hour; every attempt counts, refused ones included; `429
   rate_limited` with `Retry-After`), and with `COLOPHON_TURNSTILE_SITE_KEY` and `COLOPHON_TURNSTILE_SECRET` set,

@@ -58,7 +58,7 @@ test('an article published in the Studio is live on the site, verified, and acce
 
 		// An approved changeset of one article, made through the API; published in the Studio.
 		const changeset = await page.evaluate(async (project) => {
-			const csrf = document.cookie.split('; ').find((pair) => pair.startsWith('colophon_csrf='))?.slice('colophon_csrf='.length) ?? '';
+			const csrf = document.cookie.split('; ').find((pair) => pair.startsWith('__Host-colophon_csrf='))?.slice('__Host-colophon_csrf='.length) ?? '';
 			const headers = { 'Content-Type': 'application/json', 'X-CSRF-Token': csrf };
 			const key = () => crypto.randomUUID().replaceAll('-', '');
 			const base = `/api/v1/projects/${project}/environments/production`;

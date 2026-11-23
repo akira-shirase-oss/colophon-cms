@@ -227,6 +227,32 @@ impl Drop for Fresh {
     }
 }
 
+/// The session a reply's `Set-Cookie`s start.
+fn session_from_reply(reply: &Reply) -> Session {
+    let set: Vec<&str> = reply
+        .headers
+        .get_all(header::SET_COOKIE)
+        .iter()
+        .filter_map(|value| value.to_str().ok())
+        .collect();
+    let value = |name: &str| {
+        set.iter()
+            .find_map(|line| line.strip_prefix(&format!("{name}=")))
+            .and_then(|rest| rest.split(';').next())
+            .filter(|value| !value.is_empty())
+            .expect("a new cookie")
+            .to_owned()
+    };
+    let (session, csrf) = (
+        value("__Host-colophon_session"),
+        value("__Host-colophon_csrf"),
+    );
+    Session {
+        cookie: format!("__Host-colophon_session={session}; __Host-colophon_csrf={csrf}"),
+        csrf,
+    }
+}
+
 /// Every response a test saw, as text, to search for the code afterwards.
 #[derive(Default)]
 struct Seen(String);
@@ -423,6 +449,11 @@ async fn a_setup_code_from_the_terminal_makes_the_first_administrator_once() {
     let reply = seen.present(&editor, &typed).await;
     assert_eq!(reply.status, StatusCode::OK, "{}", reply.body);
     assert_eq!(reply.body["data"]["administrator"], true);
+    // A change of standing rotates the session (D-235): the one that asked is over, and the
+    // answer carries the new one.
+    let stale = seen.call(&editor, Method::GET, "/me", None).await;
+    assert_eq!(stale.status, StatusCode::UNAUTHORIZED, "{}", stale.body);
+    let editor = session_from_reply(&reply);
     let me = seen.call(&editor, Method::GET, "/me", None).await;
     assert_eq!(
         (

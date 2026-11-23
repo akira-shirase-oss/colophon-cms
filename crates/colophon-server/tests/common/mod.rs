@@ -549,8 +549,8 @@ pub(crate) async fn sign_in(user: &str) -> Session {
     };
     let set = cookies_from(&response);
     let (session, csrf) = (
-        cookie(&set, "colophon_session"),
-        cookie(&set, "colophon_csrf"),
+        cookie(&set, "__Host-colophon_session"),
+        cookie(&set, "__Host-colophon_csrf"),
     );
     assert_eq!((session.len(), csrf.len()), (43, 43));
     let raw: Vec<_> = response
@@ -560,14 +560,14 @@ pub(crate) async fn sign_in(user: &str) -> Session {
         .map(|v| v.to_str().unwrap_or_default().to_owned())
         .collect();
     assert!(
-        raw.iter().any(|c| c.starts_with("colophon_session=")
+        raw.iter().any(|c| c.starts_with("__Host-colophon_session=")
             && c.contains("HttpOnly")
             && c.contains("Secure")
             && c.contains("SameSite=Lax")),
         "{raw:?}"
     );
     Session {
-        cookie: format!("colophon_session={session}; colophon_csrf={csrf}"),
+        cookie: format!("__Host-colophon_session={session}; __Host-colophon_csrf={csrf}"),
         csrf,
     }
 }

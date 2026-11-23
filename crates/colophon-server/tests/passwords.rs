@@ -72,12 +72,12 @@ fn cookies_from_headers(headers: &header::HeaderMap) -> Vec<(String, String)> {
 /// The session a sign-in or sign-up answer sets, read from its `Set-Cookie` headers.
 fn session_from(cookies: &[(String, String)]) -> Session {
     let (session, csrf) = (
-        cookie(cookies, "colophon_session"),
-        cookie(cookies, "colophon_csrf"),
+        cookie(cookies, "__Host-colophon_session"),
+        cookie(cookies, "__Host-colophon_csrf"),
     );
     assert_eq!((session.len(), csrf.len()), (43, 43), "{cookies:?}");
     Session {
-        cookie: format!("colophon_session={session}; colophon_csrf={csrf}"),
+        cookie: format!("__Host-colophon_session={session}; __Host-colophon_csrf={csrf}"),
         csrf,
     }
 }
@@ -154,7 +154,7 @@ async fn an_email_account_signs_up_and_uses_its_session() {
         .map(|v| v.to_str().unwrap_or_default().to_owned())
         .collect();
     assert!(
-        raw.iter().any(|c| c.starts_with("colophon_session=")
+        raw.iter().any(|c| c.starts_with("__Host-colophon_session=")
             && c.contains("HttpOnly")
             && c.contains("Secure")
             && c.contains("SameSite=Lax")),

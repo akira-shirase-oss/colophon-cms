@@ -29,10 +29,16 @@ use uuid::Uuid;
 
 use crate::{ApiError, AppState, admission::Admission, state::Services};
 
-/// The session cookie (`HttpOnly`).
-pub const SESSION_COOKIE: &str = "colophon_session";
-/// The CSRF token cookie (readable by this site's scripts).
-pub const CSRF_COOKIE: &str = "colophon_csrf";
+/// The session cookie (`HttpOnly`). `__Host-` (D-235): the browser takes it only with `Secure`,
+/// `Path=/` and no `Domain`, so a sibling subdomain can't set or shadow it.
+pub const SESSION_COOKIE: &str = "__Host-colophon_session";
+/// The CSRF token cookie (readable by this site's scripts), `__Host-` like the session's.
+pub const CSRF_COOKIE: &str = "__Host-colophon_csrf";
+/// The session cookie's name before D-235, read for one release only, and only for a session
+/// made before the rename was deployed (the `legacy_cookie` middleware).
+pub const LEGACY_SESSION_COOKIE: &str = "colophon_session";
+/// The CSRF cookie's name before D-235.
+pub const LEGACY_CSRF_COOKIE: &str = "colophon_csrf";
 /// The sign-in binding cookie: ties a sign-in's state to the browser that started it.
 pub const SIGN_IN_COOKIE: &str = "colophon_signin";
 /// The header writes must carry.
@@ -65,6 +71,47 @@ pub fn set_cookie(
     );
     // Every part is ASCII: names are constants, values are base64url tokens.
     HeaderValue::from_str(&text).unwrap_or_else(|_| HeaderValue::from_static(""))
+}
+
+/// The `Origin` rule for writes that carry no session yet (D-235): sign-up and sign-in, so another
+/// site can't sign a visitor in to an account of its choosing (login CSRF). A browser's
+/// `Sec-Fetch-Site: cross-site` is refused whatever else is sent; an `Origin` must be trusted
+/// exactly (so `null`, another scheme, host or port are refused); with no `Origin`, a browser's
+/// `Sec-Fetch-Site` must say `same-origin` or `none`, and a request with neither header (a CLI, a
+/// script) is let through, since no browser sends a cross-site write without them.
+///
+/// # Errors
+///
+/// `403 origin_not_allowed`.
+pub(crate) fn public_write_origin(
+    headers: &HeaderMap,
+    services: &Services,
+) -> Result<(), ApiError> {
+    let refused = || ApiError::forbidden("origin_not_allowed", "this origin may not make changes");
+    let fetch_site = headers
+        .get("sec-fetch-site")
+        .map(|value| value.to_str().unwrap_or("unreadable"));
+    if fetch_site == Some("cross-site") {
+        return Err(refused());
+    }
+    match headers.get(header::ORIGIN) {
+        Some(origin) => {
+            let origin = origin.to_str().map_err(|_| refused())?;
+            if services
+                .trusted_origins
+                .iter()
+                .any(|trusted| trusted == origin)
+            {
+                Ok(())
+            } else {
+                Err(refused())
+            }
+        }
+        None => match fetch_site {
+            None | Some("same-origin" | "none") => Ok(()),
+            Some(_) => Err(refused()),
+        },
+    }
 }
 
 pub(crate) fn services(state: &AppState) -> Result<&Services, ApiError> {
@@ -311,14 +358,19 @@ mod tests {
         let mut headers = HeaderMap::new();
         headers.append(
             header::COOKIE,
-            HeaderValue::from_static("a=1; colophon_session=abc"),
+            HeaderValue::from_static("a=1; __Host-colophon_session=abc; colophon_session=old"),
         );
         headers.append(
             header::COOKIE,
-            HeaderValue::from_static("colophon_csrf=def"),
+            HeaderValue::from_static("__Host-colophon_csrf=def"),
         );
         assert_eq!(cookie(&headers, SESSION_COOKIE), Some("abc"));
         assert_eq!(cookie(&headers, CSRF_COOKIE), Some("def"));
+        assert_eq!(
+            cookie(&headers, LEGACY_SESSION_COOKIE),
+            Some("old"),
+            "the old name is its own cookie, never the new one"
+        );
         assert_eq!(cookie(&headers, "missing"), None);
         assert_eq!(
             cookie(&headers, "colophon"),
@@ -332,7 +384,8 @@ mod tests {
         let value = set_cookie(SESSION_COOKIE, "token", 60, true, "Lax", "/");
         assert_eq!(
             value,
-            "colophon_session=token; Path=/; Max-Age=60; Secure; SameSite=Lax; HttpOnly"
+            "__Host-colophon_session=token; Path=/; Max-Age=60; Secure; SameSite=Lax; HttpOnly",
+            "__Host-: Secure, Path=/ and no Domain, or the browser refuses it"
         );
     }
 }

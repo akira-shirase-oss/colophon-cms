@@ -71,7 +71,7 @@ test.afterAll(() => {
  *  `Second words.`; the project id and the changesets' ids and hashes. */
 async function setup(page: Page) {
 	return page.evaluate(async (slug) => {
-		const csrf = document.cookie.split('; ').find((pair) => pair.startsWith('colophon_csrf='))?.slice('colophon_csrf='.length) ?? '';
+		const csrf = document.cookie.split('; ').find((pair) => pair.startsWith('__Host-colophon_csrf='))?.slice('__Host-colophon_csrf='.length) ?? '';
 		const json = { 'Content-Type': 'application/json', 'X-CSRF-Token': csrf };
 		async function ok(response: Promise<Response>, what: string): Promise<Response> {
 			const answer = await response;
@@ -104,7 +104,7 @@ async function setup(page: Page) {
 async function publish(page: Page, project: string, set: { id: string; hash: string }, baseGeneration: number) {
 	const status = await page.evaluate(
 		async ({ project, set, baseGeneration }) => {
-			const csrf = document.cookie.split('; ').find((pair) => pair.startsWith('colophon_csrf='))?.slice('colophon_csrf='.length) ?? '';
+			const csrf = document.cookie.split('; ').find((pair) => pair.startsWith('__Host-colophon_csrf='))?.slice('__Host-colophon_csrf='.length) ?? '';
 			const response = await fetch(`/server/api/v1/projects/${project}/environments/production/changesets/${set.id}/publish`, {
 				method: 'POST',
 				headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrf, 'If-Match': `"${set.hash}"`, 'Idempotency-Key': crypto.randomUUID() },

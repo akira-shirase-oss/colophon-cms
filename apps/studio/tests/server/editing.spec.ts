@@ -230,7 +230,7 @@ test('a save that committed just before a reload is resent with its key on reope
 			const url = `/api/v1/projects/${project}/environments/production/collections/articles/entries/${entry}`;
 			const current = await fetch(url);
 			const draft = ((await current.json()) as { data: { content: { body: unknown } } }).data;
-			const csrf = document.cookie.split('; ').find((pair) => pair.startsWith('colophon_csrf='))?.slice('colophon_csrf='.length) ?? '';
+			const csrf = document.cookie.split('; ').find((pair) => pair.startsWith('__Host-colophon_csrf='))?.slice('__Host-colophon_csrf='.length) ?? '';
 			const response = await fetch(url, {
 				method: 'PUT',
 				headers: {
@@ -265,7 +265,7 @@ test('an entry of a content type you define: every kind of field, saved and read
 	await signIn(page);
 	const project = await newProject(page);
 	const created = await page.evaluate(async (project) => {
-		const csrf = document.cookie.split('; ').find((pair) => pair.startsWith('colophon_csrf='))?.slice('colophon_csrf='.length) ?? '';
+		const csrf = document.cookie.split('; ').find((pair) => pair.startsWith('__Host-colophon_csrf='))?.slice('__Host-colophon_csrf='.length) ?? '';
 		const response = await fetch(`/api/v1/projects/${project}/environments/production/content-types`, {
 			method: 'POST',
 			headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrf, 'Idempotency-Key': crypto.randomUUID() },
@@ -394,7 +394,7 @@ test('an open entry stays open when a refresh of it is turned away', async ({ pa
 	);
 	// Another entry in the collection: its hint refreshes this one's reads.
 	const created = await page.evaluate(async (project) => {
-		const csrf = document.cookie.split('; ').find((pair) => pair.startsWith('colophon_csrf='))?.slice('colophon_csrf='.length) ?? '';
+		const csrf = document.cookie.split('; ').find((pair) => pair.startsWith('__Host-colophon_csrf='))?.slice('__Host-colophon_csrf='.length) ?? '';
 		const body = { title: 'Another', body: { schema: 'colophon/rich-text', version: 1, doc: { type: 'doc', content: [{ type: 'paragraph' }] } } };
 		const reply = await fetch(`/api/v1/projects/${project}/environments/production/collections/articles/entries`, {
 			method: 'POST',

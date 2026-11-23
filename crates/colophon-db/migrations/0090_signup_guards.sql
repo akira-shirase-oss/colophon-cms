@@ -204,3 +204,15 @@ END $$;
 ALTER FUNCTION colophon_sweep_sign_in_log_budget(timestamptz, bigint) OWNER TO colophon_retention;
 REVOKE ALL ON FUNCTION colophon_sweep_sign_in_log_budget(timestamptz, bigint) FROM PUBLIC;
 GRANT EXECUTE ON FUNCTION colophon_sweep_sign_in_log_budget(timestamptz, bigint) TO colophon_worker;
+
+-- The session cookies' rename to __Host-colophon_session / __Host-colophon_csrf (D-235). For one
+-- release the server still reads the old name, but only for a session made before this
+-- migration ran: an old-name cookie can be planted from a sibling subdomain (cookie tossing), so
+-- a session made after the rename is never accepted under it. The first use of an accepted one
+-- swaps it for a new session under the new name.
+CREATE TABLE session_cookie_rename (
+    singleton boolean PRIMARY KEY DEFAULT true CHECK (singleton),
+    at timestamptz NOT NULL DEFAULT now()
+);
+INSERT INTO session_cookie_rename DEFAULT VALUES;
+GRANT SELECT ON session_cookie_rename TO colophon_api;

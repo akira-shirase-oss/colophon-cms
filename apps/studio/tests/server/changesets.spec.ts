@@ -9,7 +9,7 @@ import { env, newProject, roleReads, signIn, violations } from './helpers.ts';
 async function article(page: Page, project: string, title: string): Promise<string> {
 	return page.evaluate(
 		async ([project, title]) => {
-			const csrf = document.cookie.split('; ').find((pair) => pair.startsWith('colophon_csrf='))?.slice('colophon_csrf='.length) ?? '';
+			const csrf = document.cookie.split('; ').find((pair) => pair.startsWith('__Host-colophon_csrf='))?.slice('__Host-colophon_csrf='.length) ?? '';
 			const body = {
 				title,
 				body: { schema: 'colophon/rich-text', version: 1, doc: { type: 'doc', content: [{ type: 'paragraph', content: [{ type: 'text', text: 'Hello.' }] }] } }
@@ -29,7 +29,7 @@ async function article(page: Page, project: string, title: string): Promise<stri
 async function retitle(page: Page, project: string, entry: string, title: string) {
 	const status = await page.evaluate(
 		async ([project, entry, title]) => {
-			const csrf = document.cookie.split('; ').find((pair) => pair.startsWith('colophon_csrf='))?.slice('colophon_csrf='.length) ?? '';
+			const csrf = document.cookie.split('; ').find((pair) => pair.startsWith('__Host-colophon_csrf='))?.slice('__Host-colophon_csrf='.length) ?? '';
 			const path = `/api/v1/projects/${project}/environments/production/collections/articles/entries/${entry}`;
 			const current = await fetch(path);
 			const draft = ((await current.json()) as { data: { content: Record<string, unknown> } }).data;
