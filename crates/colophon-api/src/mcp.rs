@@ -302,6 +302,19 @@ pub(crate) async fn post(
     post_on(&state, &caller, id, project, environment, &headers, &body).await
 }
 
+/// `GET /mcp`: a browser opening the MCP address gets a page on how to connect (D-244). MCP
+/// clients only `POST`; this answers people who follow the link.
+pub(crate) async fn page() -> Response {
+    (
+        [
+            (header::CONTENT_TYPE, "text/html; charset=utf-8"),
+            (header::CACHE_CONTROL, "public, max-age=300"),
+        ],
+        include_str!("mcp_page.html"),
+    )
+        .into_response()
+}
+
 /// `POST /mcp`: the public address (D-244). A project API token belongs to exactly one project, so
 /// the project comes from the token and the environment is `production`; everything else is
 /// `POST {P}/mcp`'s.

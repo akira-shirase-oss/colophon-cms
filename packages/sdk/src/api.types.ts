@@ -1868,7 +1868,8 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        get?: never;
+        /** How to connect an AI app to this MCP server: a page for people who open the address (D-244) */
+        get: operations["mcpConnectPage"];
         put?: never;
         /** The public MCP address: one JSON-RPC message, on the token's own project (D-244) */
         post: operations["mcpPublicPost"];
@@ -2595,6 +2596,8 @@ export interface components {
                 path?: unknown[];
             }[];
         };
+        /** @description an HTML page for people */
+        HtmlPage: string;
         /** @description one JSON object per line, one JSON array of the same objects, or a Strapi API response's `{"data": […], "meta": {…}}`. Each item is a native content document, a Strapi entity (`{"type": "api::…", "data": {…}}`, `{"version":…,"data":{…}}`, `{id, attributes}` or a flat `documentId`/`id` document) or a Sanity document (`_id`, `_type`). At most 512 items. */
         ImportBody: unknown;
         /** @description one item's place in the report */
@@ -15310,6 +15313,35 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["Liveness"];
+                };
+            };
+            /** @description any other failure, in the one error envelope */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    mcpConnectPage: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description a static page; MCP clients POST to this address */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "text/html": components["schemas"]["HtmlPage"];
                 };
             };
             /** @description any other failure, in the one error envelope */

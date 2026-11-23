@@ -41,9 +41,6 @@ test('Get started leads with Content types, and writes the first entry of the fi
 	] as const) {
 		expect((await api(page, 'POST', `${env(project)}/content-types`, { slug, definition }, { 'Idempotency-Key': key() })).status).toBe(201);
 	}
-	// Your work offers the same, while nothing is written.
-	await page.goto('/studio/');
-	await expect(page.getByTestId('my-work').getByRole('link', { name: 'Write a new zine' })).toHaveAttribute('href', `/studio/projects/${project}/zines?new=1`);
 	await newEntry(page, project, 'Sourdough', 'bakes', { title: 'Sourdough' });
 	await page.goto(`/studio/projects/${project}`);
 	await expect(list.locator('[data-item=types]')).toHaveAttribute('data-done', 'true');

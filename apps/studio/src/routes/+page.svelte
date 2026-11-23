@@ -13,7 +13,7 @@
 	import KeyRoundIcon from '@lucide/svelte/icons/key-round';
 	import MailIcon from '@lucide/svelte/icons/mail';
 	import PlusIcon from '@lucide/svelte/icons/plus';
-	import { replaceState } from '$app/navigation';
+	import { goto, replaceState } from '$app/navigation';
 	import { resolve } from '$app/paths';
 	import { page } from '$app/state';
 	import { createQuery, useQueryClient } from '@tanstack/svelte-query';
@@ -24,9 +24,7 @@
 	import { Skeleton } from '@colophon/ui/ui/skeleton';
 	import { ApiError, claimSetup, installation, me } from '#lib/api.ts';
 	import { providersQuery } from '#lib/queries.ts';
-	import { lastProject } from '#lib/lastProject.ts';
 	import { forgetSetupCode, keepSetupCode, keptSetupCode, setupCodeFrom } from '#lib/setupLink.ts';
-	import MyWork from '#lib/MyWork.svelte';
 	import NewProject from '#lib/NewProject.svelte';
 	import AuthForm from '#lib/shell/AuthForm.svelte';
 	import EmptyState from '#lib/shell/EmptyState.svelte';
@@ -106,14 +104,15 @@
 
 	const bootstrapCommand = $derived(`colophon admin bootstrap --subject ${who.data?.subject ?? ''}`);
 
-	// Whose work the home page shows: the project last opened in this browser, or the first. With
-	// one project there is nothing to choose.
-	let chosen = $state<string | null>(null);
 	const projects = $derived(who.data?.projects ?? []);
-	const remembered = $derived(who.data ? lastProject(who.data.id) : null);
-	const current = $derived(
-		projects.find((project) => project.id === chosen) ?? projects.find((project) => project.id === remembered) ?? projects[0]
-	);
+	// One project: straight into it. Several: the list. `?all` (the switcher's "All projects")
+	// keeps the list even with one, so a one-project account can still make another.
+	$effect(() => {
+		const only = who.data?.projects.length === 1 ? who.data.projects[0] : null;
+		if (only && !page.url.searchParams.has('all')) {
+			void goto(resolve('/projects/[project]', { project: only.id }), { replaceState: true });
+		}
+	});
 
 	// "All projects" grows without bound on a busy installation, so it can be filtered by name —
 	// and even unfiltered it is capped: hundreds of rows hide the project someone wants, not show it.
@@ -234,7 +233,7 @@
 		</TechnicalDetails>
 	</div>
 {:else}
-	<PageHeader title={who.data.projects.length > 0 ? 'Your work' : 'Projects'}>
+	<PageHeader title="Projects">
 		{#snippet meta()}
 			<span data-testid="signed-in">Signed in as {who.data?.display_name ?? who.data?.id}{who.data?.administrator ? ', administrator' : ''}</span>
 		{/snippet}
@@ -261,30 +260,9 @@
 			<p class="mt-2">When the link arrives, open it in this browser and press Join.</p>
 		</EmptyState>
 	{:else}
-		{#if current}
-			<div class="mb-4 flex flex-wrap items-center justify-between gap-3">
-				<p class="text-sm text-muted-foreground">In <strong class="font-medium text-foreground" data-user-content data-testid="work-project">{current.name}</strong>, as {current.role_name}</p>
-				{#if projects.length > 1}
-					<label class="flex items-center gap-2 text-sm">
-						<span class="text-muted-foreground">Show work in</span>
-						<select
-							class="h-9 max-w-56 rounded-md border border-input bg-popover px-3 text-sm outline-none focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/40"
-							value={current.id}
-							onchange={(event) => (chosen = event.currentTarget.value)}
-							data-testid="work-picker"
-						>
-							{#each projects as project (project.id)}<option value={project.id}>{project.name}</option>{/each}
-						</select>
-					</label>
-				{/if}
-			</div>
-			{#key current.id}
-				<MyWork project={current.id} identity={who.data.id} />
-			{/key}
-		{/if}
-		{#if projects.length > 1}
-			<div class="mt-12 mb-3 flex flex-wrap items-center justify-between gap-3">
-				<h2 class="text-base font-semibold" id="all-projects">All projects</h2>
+		{#if projects.length > 0}
+			<div class="mb-3 flex flex-wrap items-center justify-between gap-3">
+				<h2 class="text-base font-semibold" id="all-projects">Your projects</h2>
 				<Input
 					class="h-9 w-full max-w-64"
 					placeholder="Search projects"

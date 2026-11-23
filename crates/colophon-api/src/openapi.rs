@@ -1594,6 +1594,24 @@ pub(crate) static TABLE: &[Route] = &[
         ("", "/mcp"),
         &[
             op(
+                Verb::Get,
+                |f| on(f, mcp::page),
+                OpDoc {
+                    id: "mcpConnectPage",
+                    summary: "How to connect an AI app to this MCP server: a page for people who open the address (D-244)",
+                    tag: "mcp",
+                    security: Security::Public,
+                    ok: Res {
+                        status: 200,
+                        shape: Shape::It("HtmlPage"),
+                        headers: &[],
+                        media: "text/html",
+                        note: "a static page; MCP clients POST to this address",
+                    },
+                    ..MIN
+                },
+            ),
+            op(
                 Verb::Post,
                 |f| on(f, mcp::post_public),
                 OpDoc {
@@ -5804,6 +5822,10 @@ fn membership() -> Value {
                 "name": { "type": ["string", "null"] },
                 "kind": { "type": "string", "enum": ["person", "token"] },
             },
+        },
+        "HtmlPage": {
+            "type": "string",
+            "description": "an HTML page for people",
         },
         "EventStream": {
             "type": "string",

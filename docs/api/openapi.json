@@ -1522,6 +1522,10 @@
         },
         "type": "object"
       },
+      "HtmlPage": {
+        "description": "an HTML page for people",
+        "type": "string"
+      },
       "ImportBody": {
         "description": "one JSON object per line, one JSON array of the same objects, or a Strapi API response's `{\"data\": […], \"meta\": {…}}`. Each item is a native content document, a Strapi entity (`{\"type\": \"api::…\", \"data\": {…}}`, `{\"version\":…,\"data\":{…}}`, `{id, attributes}` or a flat `documentId`/`id` document) or a Sanity document (`_id`, `_type`). At most 512 items."
       },
@@ -23497,6 +23501,36 @@
           }
         ],
         "summary": "End the remote-MCP session early",
+        "tags": [
+          "mcp"
+        ]
+      },
+      "get": {
+        "operationId": "mcpConnectPage",
+        "responses": {
+          "200": {
+            "content": {
+              "text/html": {
+                "schema": {
+                  "$ref": "#/components/schemas/HtmlPage"
+                }
+              }
+            },
+            "description": "a static page; MCP clients POST to this address"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "any other failure, in the one error envelope"
+          }
+        },
+        "security": [],
+        "summary": "How to connect an AI app to this MCP server: a page for people who open the address (D-244)",
         "tags": [
           "mcp"
         ]

@@ -1,0 +1,68 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Colophon MCP</title>
+<style>
+:root { --bg:#fafafa; --fg:#1a1a1a; --muted:#5f6368; --card:#fff; --border:#e3e3e3; --code:#f1f3f5; --brand:#1d5bd6; }
+@media (prefers-color-scheme: dark) { :root { --bg:#161616; --fg:#ececec; --muted:#a3a3a3; --card:#1f1f1f; --border:#333; --code:#262626; --brand:#7aa7ff; } }
+* { box-sizing:border-box; }
+body { margin:0; background:var(--bg); color:var(--fg); font:16px/1.6 ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif; }
+main { max-width:760px; margin:0 auto; padding:48px 16px 64px; }
+h1 { font-size:32px; line-height:1.2; margin:0 0 8px; }
+h2 { font-size:19px; margin:32px 0 8px; }
+p { margin:8px 0; color:var(--muted); }
+.card { background:var(--card); border:1px solid var(--border); border-radius:14px; padding:18px 20px; margin:12px 0; }
+.card p { color:var(--fg); }
+code, pre { font:14px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace; background:var(--code); border-radius:8px; }
+code { padding:2px 6px; }
+pre { padding:12px 14px; overflow-x:auto; white-space:pre-wrap; word-break:break-all; margin:8px 0 0; }
+ol { margin:8px 0 0; padding-left:22px; }
+li { margin:4px 0; }
+a { color:var(--brand); }
+.url { font-size:15px; display:inline-block; padding:6px 10px; }
+</style>
+</head>
+<body>
+<main>
+<h1>Connect Colophon to your AI app</h1>
+<p>This address is Colophon's MCP server. AI apps (Claude, Claude Code, Cursor and others) use it to read and write your content, publish, manage media and members, on your behalf.</p>
+<div class="card">
+<p>Server URL</p>
+<code class="url">https://colophonapp.404human.dev/mcp</code>
+</div>
+
+<h2>1. Make a project API token</h2>
+<ol>
+<li>Open <a href="/studio/">Colophon Studio</a> and go into your project.</li>
+<li>Open <strong>Settings → API tokens</strong>, choose <strong>New token</strong> (full access, or read-only), and copy it. It starts with <code>colophon_api_</code>.</li>
+</ol>
+
+<h2>2. Add it to your app</h2>
+<div class="card">
+<p><strong>Claude Code</strong></p>
+<pre>claude mcp add --transport http colophon https://colophonapp.404human.dev/mcp \
+  --header "Authorization: Bearer colophon_api_…"</pre>
+</div>
+<div class="card">
+<p><strong>Cursor, VS Code and other apps</strong> (an MCP server entry in their settings)</p>
+<pre>{
+  "mcpServers": {
+    "colophon": {
+      "url": "https://colophonapp.404human.dev/mcp",
+      "headers": { "Authorization": "Bearer colophon_api_…" }
+    }
+  }
+}</pre>
+</div>
+<div class="card">
+<p><strong>Claude.ai and Claude Desktop</strong></p>
+<p>Connecting by signing in to Colophon (no token to copy) is coming next. Until then, use Claude Code or an app that accepts the header above.</p>
+</div>
+
+<h2>What it can do, and what stays with you</h2>
+<p>Every project action the Studio has is available, except deleting a project. Anything that publishes, removes, revokes, or changes who can do what asks you first: the app shows you what it would do, and only goes ahead after you say yes. The token can never do more than its own permissions allow, and you can revoke it in Settings → API tokens at any time.</p>
+</main>
+</body>
+</html>
