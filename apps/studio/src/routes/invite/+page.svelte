@@ -63,12 +63,11 @@
 		try {
 			const joined = await acceptInvitation(token);
 			keep('');
-			// Straight to the work in the project just joined: the home page shows the project last
-			// opened here, so this one is remembered first.
+			// Straight into the project just joined, remembered as the last one opened here.
 			if (who.data) rememberProject(who.data.id, joined.project_id);
 			await queryClient.invalidateQueries({ queryKey: ['me'] });
 			toast.success(`You joined ${offer.data?.project_name ?? 'the project'} as ${offer.data?.role_name ?? 'a member'}`);
-			await goto(resolve('/'));
+			await goto(resolve('/projects/[project]', { project: joined.project_id }));
 		} catch (failure) {
 			error = failure instanceof ApiError ? failure.message : String(failure);
 		} finally {
@@ -84,7 +83,7 @@
 		const signedIn = await queryClient.fetchQuery({ queryKey: ['me'], queryFn: me });
 		if (signedIn) rememberProject(signedIn.id, joined.project_id);
 		toast.success(`You joined the project as ${joined.role}`);
-		await goto(resolve('/'));
+		await goto(resolve('/projects/[project]', { project: joined.project_id }));
 	}
 
 	function decline() {

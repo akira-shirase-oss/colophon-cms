@@ -8,6 +8,16 @@ through `--version` and `GET /version`.
 
 ## [Unreleased]
 
+### Added
+
+- **Connect an AI app by the MCP address alone** (D-246): add `https://<your server>/mcp` to Claude, ChatGPT
+  or Cursor as a custom connector, sign in, pick a project and approve. No API token to copy; the app acts as
+  you, with your role, in that one project, and the Studio's Connected apps page disconnects it.
+
+### Security
+
+- The Studio's sign-in only returns to an address on its own origin (`/\evil.example` used to pass).
+
 ### Changed
 
 - **Git hooks catch problems before a push, and per-push CI runs the tests only** (D-241):
@@ -16,6 +26,9 @@ through `--version` and `GET /version`.
   quick start, distribution, the Next.js demo and the benchmarks run nightly and before every release.
 
 ### Fixed
+
+- MCP: a tool that only reads, such as previewing a rollback, is no longer marked destructive, and `if_match` takes the ETag as its header gave it, quotes included (D-247).
+- MCP tests follow the D-247 catalog: the expected tool list is built from the catalog itself; every tool that publishes, approves, removes or manages access is shown to send nothing without `confirm: true`; the API still refuses what the token may not do; deleting a project is never offered.
 
 - **The Studio never waits past 15 seconds for an answer** (D-245): a request whose answer stalls on a
   flaky connection now stops with "Colophon didn't answer: try again", and publishing again sends the same

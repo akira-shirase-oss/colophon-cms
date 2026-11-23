@@ -7,16 +7,32 @@
 import { expect, type Page, test } from '@playwright/test';
 import { api, env, key, newEntry, newProject, publishThroughApi, signIn } from './helpers.ts';
 
-/** Every request the page sends from now on, as `METHOD path` (ids folded to `:id`). */
+const fold = (path: string) => path.replace(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/g, ':id');
+
+/** The live stream's own path; its answer is when it opens (`live.ts`, `streamGate.ts`). */
+const STREAM = /^\/api\/v1\/projects\/[^/]+\/environments\/[^/]+\/events$/;
+
+/** Every request the page sends from now on, as `METHOD path` (ids folded to `:id`), in order, with
+ *  `OPEN stream` where the live stream's answer arrived. */
 function logged(page: Page): string[] {
 	const seen: string[] = [];
 	page.on('request', (request) => {
 		const url = new URL(request.url());
 		if (!url.pathname.startsWith('/api/') && !url.pathname.startsWith('/content/') && url.pathname !== '/me') return;
-		const path = url.pathname.replace(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/g, ':id');
-		seen.push(`${request.method()} ${path}`);
+		seen.push(`${request.method()} ${fold(url.pathname)}`);
+	});
+	page.on('response', (response) => {
+		if (STREAM.test(new URL(response.url()).pathname)) seen.push('OPEN stream');
 	});
 	return seen;
+}
+
+/** Whether the first `read` went before the stream opened: the gate waits only OPEN_WAIT_MS for it
+ *  (D-203), and a read that went ahead is read once more when the stream opens, by design. */
+function wentEarly(seen: string[], read: string): boolean {
+	const first = seen.indexOf(read);
+	const open = seen.indexOf('OPEN stream');
+	return first !== -1 && (open === -1 || first < open);
 }
 
 function counts(seen: string[]): Record<string, number> {
@@ -82,7 +98,10 @@ test('In review reads the request list once and at most ten waiting requests in 
 	const full = opened['GET /api/v1/projects/:id/environments/production/changesets/:id'] ?? 0;
 	const lists = opened['GET /api/v1/projects/:id/environments/production/changesets'] ?? 0;
 	expect(full, JSON.stringify(opened, null, 1)).toBeLessThanOrEqual(10);
-	expect(lists, JSON.stringify(opened, null, 1)).toBeLessThanOrEqual(1);
+	// Once — or, when the stream was slower than the gate's wait and the read went ahead, once more
+	// at the open (streamGate.ts). Never a read per request.
+	const listRead = 'GET /api/v1/projects/:id/environments/production/changesets';
+	expect(lists, JSON.stringify(seen, null, 1)).toBeLessThanOrEqual(wentEarly(seen, listRead) ? 2 : 1);
 	console.log(`requests opening an entry with 14 requests waiting: ${JSON.stringify(opened)}`);
 	expect(newest).not.toBe('');
 

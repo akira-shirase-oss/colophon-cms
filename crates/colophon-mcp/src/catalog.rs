@@ -167,8 +167,9 @@ fn build(document: &str) -> Vec<Op> {
                 .as_object()
                 .map(|schema| plain(&Value::Object(schema.clone()), &schemas, 0));
             let words = format!("{name} {}", path.to_ascii_lowercase().replace('-', "_"));
-            let destructive =
-                method == Method::DELETE || DESTRUCTIVE.iter().any(|w| words.contains(w));
+            // A read is never destructive, even one that previews a rollback.
+            let destructive = method != Method::GET
+                && (method == Method::DELETE || DESTRUCTIVE.iter().any(|w| words.contains(w)));
             let people = ["/members", "/roles", "/tokens", "/invitations", "/audience"]
                 .iter()
                 .any(|segment| path.contains(segment));
@@ -410,7 +411,8 @@ pub async fn call<B: Backend>(api: &B, op: &'static Op, arguments: Value) -> Out
     if op.if_match
         && let Some(Value::String(tag)) = args.get("if_match")
     {
-        request = request.if_match(tag);
+        // The bare value or the ETag as its header gave it, quotes and all: either names it.
+        request = request.if_match(tag.trim().trim_matches('"'));
     }
     if op.idempotency {
         request = request.idempotency_key(&key);
@@ -445,7 +447,13 @@ mod tests {
                 assert!(op.confirm && op.destructive, "{} must ask first", op.name);
             }
             if op.read_only {
-                assert!(!op.confirm, "{} only reads", op.name);
+                assert!(!op.confirm && !op.destructive, "{} only reads", op.name);
+                assert_eq!(
+                    op.definition()["annotations"]["destructiveHint"],
+                    false,
+                    "{}",
+                    op.name
+                );
             }
             let def = op.definition();
             assert!(
@@ -459,6 +467,93 @@ mod tests {
             .find(|op| op.name.contains("publish") && !op.read_only)
             .expect("a publish tool");
         assert!(publish.confirm);
+    }
+
+    /// A backend that counts what reaches it and answers nothing useful.
+    struct Counting(std::sync::atomic::AtomicUsize);
+
+    impl Backend for Counting {
+        fn project(&self) -> uuid::Uuid {
+            uuid::Uuid::nil()
+        }
+
+        fn attempt<'a>(
+            &'a self,
+            _request: &'a Request<'a>,
+            _deadline: tokio::time::Instant,
+        ) -> impl Future<Output = Result<crate::api::Answer, crate::api::ApiError>> + Send + 'a
+        {
+            self.0.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            std::future::ready(Err(crate::api::ApiError::Unreachable("counted".into())))
+        }
+    }
+
+    #[tokio::test]
+    async fn nothing_that_needs_a_yes_is_sent_without_one() {
+        let backend = Counting(std::sync::atomic::AtomicUsize::new(0));
+        let gated: Vec<&Op> = CATALOG.iter().filter(|op| op.confirm).collect();
+        assert!(gated.len() > 20, "only {} need a yes", gated.len());
+        for op in &gated {
+            let mut args = Map::new();
+            for param in &op.path_params {
+                args.insert(
+                    param.name.clone(),
+                    json!("0190a000-0000-7000-8000-000000000000"),
+                );
+            }
+            if op.body.is_some() {
+                args.insert("body".into(), json!({}));
+            }
+            for confirm in [
+                None,
+                Some(json!(false)),
+                Some(json!("true")),
+                Some(json!(1)),
+            ] {
+                let mut args = args.clone();
+                if let Some(value) = confirm {
+                    args.insert("confirm".into(), value);
+                }
+                let outcome = call(&backend, op, Value::Object(args)).await;
+                assert_eq!(
+                    outcome.structured["needs_confirmation"],
+                    json!(true),
+                    "{}: {}",
+                    op.name,
+                    outcome.text
+                );
+                assert!(
+                    outcome.text.contains(&op.name),
+                    "{} says what it would do: {}",
+                    op.name,
+                    outcome.text
+                );
+            }
+        }
+        assert_eq!(
+            backend.0.load(std::sync::atomic::Ordering::SeqCst),
+            0,
+            "a request was sent"
+        );
+        // And with the yes, it is sent: the gate is the only thing holding it.
+        let op = gated[0];
+        let mut args = Map::new();
+        for param in &op.path_params {
+            args.insert(
+                param.name.clone(),
+                json!("0190a000-0000-7000-8000-000000000000"),
+            );
+        }
+        if op.body.is_some() {
+            args.insert("body".into(), json!({}));
+        }
+        args.insert("confirm".into(), json!(true));
+        let _ = call(&backend, op, Value::Object(args)).await;
+        assert!(
+            backend.0.load(std::sync::atomic::Ordering::SeqCst) > 0,
+            "{} with confirm: true was not sent",
+            op.name
+        );
     }
 
     #[test]

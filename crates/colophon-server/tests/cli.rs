@@ -1319,7 +1319,7 @@ async fn mcp_answer(lines: &mut Lines<LinesBuf<ChildStdout>>, id: i64) -> Value 
 /// `colophon mcp` is the standalone `colophon-mcp` server, linked rather than spawned
 /// (D-106, D-119): the same three environment variables configure it, `initialize`
 /// and `tools/list` answer over its own stdin and stdout with the same protocol and
-/// the same eighteen safe tools — and closing stdin ends it, exit 0.
+/// the same tools — and closing stdin ends it, exit 0.
 #[tokio::test]
 #[ignore = "needs the stack, migrations and the colophon binary"]
 async fn colophon_mcp_serves_the_stdio_server_in_process() {
@@ -1384,36 +1384,16 @@ async fn colophon_mcp_serves_the_stdio_server_in_process() {
     )
     .await;
     let listed = mcp_answer(&mut lines, 2).await;
-    let mut tools: Vec<&str> = listed["result"]["tools"]
+    let tools: Vec<String> = listed["result"]["tools"]
         .as_array()
         .expect("tools")
         .iter()
-        .filter_map(|tool| tool["name"].as_str())
+        .filter_map(|tool| tool["name"].as_str().map(str::to_owned))
         .collect();
-    tools.sort_unstable();
     assert_eq!(
         tools,
-        [
-            "create_comment",
-            "create_draft",
-            "create_publish_request",
-            "create_task",
-            "get_entry",
-            "get_migration",
-            "get_publish_request",
-            "get_release",
-            "list_comments",
-            "list_content_types",
-            "list_entries",
-            "list_migration_items",
-            "list_migrations",
-            "list_releases",
-            "list_tasks",
-            "query_entries",
-            "request_review",
-            "update_draft",
-        ],
-        "the same eighteen safe tools the standalone server offers (D-106)"
+        common::mcp_tools(),
+        "the same tools the standalone server offers (D-106, D-247)"
     );
 
     drop(stdin);

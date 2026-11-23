@@ -39,18 +39,18 @@ test('an owner invites with a link, the invitee signs in and joins, and roles de
 	expect(new URL(guest.url()).hash).toBe('');
 	expect(await violations(guest)).toEqual([]);
 	await guest.getByRole('button', { name: 'Join', exact: true }).click();
-	// Straight to their work in the project they joined, with a note saying so (D-147).
-	await expect(guest).toHaveURL(/\/studio\/$/);
+	// Straight into the project they joined, with a note saying so (D-147).
+	await expect(guest).toHaveURL(new RegExp(`/studio/projects/${project}$`));
 	await expect(guest.getByText('You joined Studio test as Editor', { exact: true })).toBeVisible();
-	await expect(guest.getByTestId('work-project')).toHaveText('Studio test');
-	await expect(guest.getByRole('link', { name: 'Open the project' })).toHaveAttribute('href', `/studio/projects/${project}`);
+	await expect(guest.getByTestId('project-name')).toHaveText('Studio test');
 	// Opened again, the invitation page has nothing to join, and offers their projects.
 	await guest.goto('/studio/invite');
 	await expect(guest.getByTestId('invite-outcome')).toContainText('Nothing to join here');
 	await expect(guest.getByTestId('invite-outcome')).not.toContainText('Ask the person who invited you');
 	expect(await violations(guest)).toEqual([]);
 	await guest.getByTestId('open-projects').click();
-	await expect(guest.getByTestId('work-project')).toHaveText('Studio test');
+	// Their projects: straight into it when it's their only one, or in the list when they have more.
+	await expect(guest.getByTestId('project-name').or(guest.getByTestId('projects').getByText('Studio test', { exact: true }))).toBeVisible();
 	// Signed out, a link without an invitation still says so.
 	const stranger = await (await browser.newContext()).newPage();
 	await stranger.goto('/studio/invite');

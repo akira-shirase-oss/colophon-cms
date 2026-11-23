@@ -40,6 +40,8 @@ COPY rust-toolchain.toml Cargo.toml Cargo.lock ./
 COPY .cargo ./.cargo
 COPY .sqlx ./.sqlx
 COPY crates ./crates
+# The MCP catalog compiles the committed API description in (D-247).
+COPY docs/api/openapi.json ./docs/api/openapi.json
 # The version stamp (D-062): the commit and the build date can't come from git in here.
 ARG COLOPHON_COMMIT=unknown
 ARG SOURCE_DATE_EPOCH

@@ -688,6 +688,7 @@ dependencies = [
  "colophon-auth",
  "colophon-db",
  "colophon-domain",
+ "colophon-mcp",
  "colophon-media",
  "colophon-version",
  "colophon-worker",

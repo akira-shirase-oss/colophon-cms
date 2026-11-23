@@ -42,7 +42,7 @@ export type Action =
 
 /** Actions only people hold: no API token may (step R.4), so a leaked token can't change who has
  *  access or read the record of it. */
-export const PEOPLE_ONLY: Action[] = ['members.manage', 'roles.manage', 'tokens.manage', 'audit.read'];
+export const PEOPLE_ONLY: Action[] = ['members.manage', 'roles.manage', 'tokens.manage', 'audit.read', 'audience.manage'];
 
 /** One permission: an action, on `*` or one collection. */
 export interface Grant {
@@ -386,6 +386,18 @@ export interface Details {
 export function csrfToken(): string {
 	const match = document.cookie.split('; ').find((pair) => pair.startsWith('__Host-colophon_csrf='));
 	return match?.slice('__Host-colophon_csrf='.length) ?? '';
+}
+
+/** Whether `path` is a path on this origin: what a `return_to` may be. A browser reads `/\\host`
+ *  and `//host` as another host, so the path is resolved and its origin compared, not its prefix. */
+export function sameOrigin(path: string): boolean {
+	if (!path.startsWith('/') || path.startsWith('//') || path.startsWith('/\\') || /[\u0000-\u001f]/.test(path)) return false;
+	try {
+		const base = typeof location === 'undefined' ? 'http://studio.invalid' : location.origin;
+		return new URL(path, base).origin === new URL(base).origin;
+	} catch {
+		return false;
+	}
 }
 
 /** Where "Sign in" goes; the server comes back to `returnTo` afterwards. */
@@ -2130,4 +2142,43 @@ export async function updateTask(project: string, task: string, etag: string, up
 			data: EditorialTask;
 		}
 	).data;
+}
+
+/** An app asking to connect over OAuth, as the consent page shows it (D-246). */
+export interface OAuthRequest {
+	client_id: string;
+	/** The app's own name for itself: nobody verified it. */
+	client_name: string;
+	/** Where the answer goes, and its host on its own. */
+	redirect_uri: string;
+	redirect_host: string;
+}
+
+/** The authorization `id` waiting for the signed-in person's answer. */
+export async function oauthRequest(id: string): Promise<OAuthRequest> {
+	return ((await (await send('GET', `/oauth/requests/${id}`)).json()) as { data: OAuthRequest }).data;
+}
+
+/** Approves the app for `project`, or denies it; where the browser goes next (the app). */
+export async function answerOAuth(id: string, decision: 'approve' | 'deny', project?: string): Promise<string> {
+	const body = decision === 'approve' ? { decision, project } : { decision };
+	return ((await (await send('POST', `/oauth/requests/${id}`, body)).json()) as { data: { redirect: string } }).data.redirect;
+}
+
+/** An app the person connected and hasn't revoked (D-246). */
+export interface ConnectedApp {
+	id: string;
+	client_name: string;
+	project: string;
+	project_name: string;
+	created_at: string;
+	last_used_at: string | null;
+}
+
+export async function connectedApps(): Promise<ConnectedApp[]> {
+	return ((await (await send('GET', '/api/v1/me/connected-apps')).json()) as { data: ConnectedApp[] }).data;
+}
+
+export async function disconnectApp(id: string): Promise<void> {
+	await send('DELETE', `/api/v1/me/connected-apps/${id}`);
 }

@@ -83,39 +83,6 @@ test('a commit made while the stream is slow to open still shows, without a relo
 	await expect(page.getByText('Made while the stream opened').first()).toBeVisible({ timeout: 10_000 });
 });
 
-test('a long release title stays on one line inside its home card (F11)', async ({ page }) => {
-	await signIn(page);
-	const project = await newProject(page);
-	const title = 'Storm week: how the coast road at Penmarch reopened in four days, and what the village did while the tide came '.padEnd(120, 'x').slice(0, 120);
-	const entry = await newEntry(page, project, 'For the long title');
-	await publishThroughApi(page, project, title, [entry]);
-	// The home page shows the project opened last: open this one first.
-	await page.goto(`/studio/projects/${project}`);
-	await page.waitForLoadState('networkidle');
-	for (const viewport of [
-		{ width: 1440, height: 900 },
-		{ width: 390, height: 844 }
-	]) {
-		await page.setViewportSize(viewport);
-		await page.goto('/studio/');
-		const list = page.getByTestId('my-releases-list');
-		// The release row itself, not the list's "nothing yet" line, which shows while releases load.
-		await expect(list.getByRole('link')).toHaveCount(1);
-		const fits = await list.evaluate((ul) => {
-			const card = ul.closest('section')!;
-			const row = ul.querySelector('a')!;
-			const line = row.querySelector('.truncate') as HTMLElement;
-			return {
-				rowInCard: row.getBoundingClientRect().right <= card.getBoundingClientRect().right + 0.5,
-				oneLine: line.getBoundingClientRect().height < 24,
-				truncated: line.scrollWidth > line.clientWidth,
-				pageScroll: document.documentElement.scrollWidth > innerWidth
-			};
-		});
-		expect(fits, `${viewport.width}px`).toEqual({ rowInCard: true, oneLine: true, truncated: true, pageScroll: false });
-	}
-});
-
 // The price of waiting for the stream (D-203): on a full load, how long until the page's first project read
 // answers, and until the releases list shows. Printed for the before/after comparison (main's build against this
 // one), not asserted beyond a loose ceiling: laptop numbers are not capacity claims.

@@ -1,12 +1,12 @@
 // Creating projects in the Studio (D-043, step 3.7): the bootstrapped administrator (dev-owner)
-// creates one from the home page, from a starting point, and lands in it as its owner; anyone
-// else sees no form, only how to join. (A first project, on an installation with none, is in
-// journey.spec.ts.)
+// creates one from the home page, from a starting point, and lands in it as its owner. Anyone else
+// may too when registration is open (D-235); otherwise they see no form, only how to join. (A
+// first project, on an installation with none, is in journey.spec.ts.)
 
 import { expect, test } from '@playwright/test';
-import { newProject, signIn, violations } from './helpers.ts';
+import { newProject, registration, signIn, violations } from './helpers.ts';
 
-test('the administrator creates a project from the home page; others are told how to join one', async ({ page, browser }) => {
+test('the administrator creates a project from the home page; others may too when registration is open, or are told how to join', async ({ page, browser }) => {
 	await signIn(page);
 	// With a project already, making another is the page's one action, in a dialog.
 	await newProject(page);
@@ -43,7 +43,14 @@ test('the administrator creates a project from the home page; others are told ho
 
 	const other = await (await browser.newContext()).newPage();
 	await signIn(other, 'dev-editor');
-	await expect(other.getByTestId('not-administrator')).toContainText('invitation link');
-	await expect(other.getByRole('button', { name: 'Create project' })).toHaveCount(0);
+	// The list, not the one project it might be in: ?all keeps the home page.
+	await other.goto('/studio/?all');
+	if ((await registration(other)) === 'open') {
+		await expect(other.getByRole('button', { name: /New project|Create project/ }).first()).toBeVisible();
+		await expect(other.getByTestId('not-administrator')).toHaveCount(0);
+	} else {
+		await expect(other.getByTestId('not-administrator')).toContainText('invitation link');
+		await expect(other.getByRole('button', { name: 'Create project' })).toHaveCount(0);
+	}
 	expect(await violations(other)).toEqual([]);
 });

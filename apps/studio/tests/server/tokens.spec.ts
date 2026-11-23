@@ -1,7 +1,7 @@
 // API tokens in Settings (step R.4): an owner makes a token, sees its secret once and copies it;
 // the token works from outside the browser with `Authorization: Bearer`, with exactly its powers;
 // last use shows up; revoking asks first and then the token is refused (401). A custom token is
-// chosen in the role editor's grid, without the four powers only people hold.
+// chosen in the role editor’s grid, without the five powers only people hold.
 
 import { expect, type Page, test } from '@playwright/test';
 import { env, internalTerms, key, newEntry, newProject, shot, signIn, violations } from './helpers.ts';
@@ -91,7 +91,7 @@ test('a custom token is chosen in the grid, without the powers only people hold,
 	const grid = page.getByTestId('token-grid');
 	await expect(grid.getByLabel('See: Articles')).toBeVisible();
 	await expect(grid.getByText('Manage where releases go')).toBeVisible();
-	for (const peopleOnly of ['Invite people and change their roles', 'Make and change roles', 'Manage API tokens', 'See the activity log']) {
+	for (const peopleOnly of ['Invite people and change their roles', 'Make and change roles', 'Manage API tokens', 'See the activity log', 'Manage the site’s visitors']) {
 		await expect(grid.getByText(peopleOnly)).toHaveCount(0);
 	}
 	await expect(page.getByRole('button', { name: 'Make the token' })).toBeDisabled();

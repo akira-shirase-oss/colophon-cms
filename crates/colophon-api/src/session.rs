@@ -129,6 +129,9 @@ pub enum Credential {
     Token,
     /// A project's API token (`Authorization: Bearer colophon_api_…`, step R.4).
     ApiToken,
+    /// An OAuth access token an agent got for the MCP endpoint (D-246): its person, with their role,
+    /// in the one project of its grant, and only through `/mcp` ([`SignedIn::oauth_project`]).
+    OAuth,
 }
 
 /// What every API token's secret starts with, so it can't be mistaken for a personal token and
@@ -152,6 +155,9 @@ pub struct SignedIn {
     /// next requests can be refused before Postgres is asked, until its project's tokens change
     /// (D-214).
     pub judged: Option<crate::admission::Judged>,
+    /// For an OAuth access token, the one project its grant acts in (D-246); `None` otherwise.
+    /// Kept apart from [`Self::project`], which says "a project API token" to the handlers.
+    pub oauth_project: Option<Uuid>,
 }
 
 /// The caller behind `Authorization: Bearer <token>`.
@@ -187,6 +193,41 @@ async fn bearer(
         credential: Credential::Token,
         project: None,
         judged: None,
+        oauth_project: None,
+    })
+}
+
+/// An OAuth access token (D-246). Its audience is the MCP endpoint alone: `/mcp` itself, and the
+/// requests `/mcp`'s tools make in-process ([`crate::mcp::InProcess`], which no network request
+/// carries) to the grant's own project. Anywhere else it is refused like no credential at all.
+async fn oauth_access(
+    services: &Services,
+    token: &str,
+    parts: &Parts,
+) -> Result<SignedIn, ApiError> {
+    let grant = colophon_db::oauth::access(&services.pool, &tokens::hash(token))
+        .await
+        .map_err(ApiError::from_db)?
+        .ok_or(ApiError::Unauthorized)?;
+    let path = parts.uri.path();
+    let in_process = parts.extensions.get::<crate::mcp::InProcess>().is_some();
+    let own = format!("/api/v1/projects/{}", grant.project);
+    let allowed = path == "/mcp"
+        || (in_process
+            && (path == own
+                || path
+                    .strip_prefix(&own)
+                    .is_some_and(|rest| rest.starts_with('/'))));
+    if !allowed {
+        return Err(ApiError::Unauthorized);
+    }
+    Ok(SignedIn {
+        identity: grant.identity,
+        session: grant.id,
+        credential: Credential::OAuth,
+        project: None,
+        judged: None,
+        oauth_project: Some(grant.project),
     })
 }
 
@@ -239,7 +280,8 @@ async fn api_token(
     } else if path.starts_with("/api/v1/projects/") {
         // Another project: as unknown to the token as one a person isn't in.
         return Err(ApiError::NotFound);
-    } else if path != "/api/v1/rich-text/validate" {
+    } else if path != "/api/v1/rich-text/validate" && path != "/mcp" {
+        // `/mcp` is the public MCP address (D-244): the project is the token's own.
         return Err(not_for_tokens(
             "an API token works only with its project's content",
         ));
@@ -256,6 +298,7 @@ async fn api_token(
         session: found.id,
         credential: Credential::ApiToken,
         project: Some(found.project_id),
+        oauth_project: None,
         judged: Some(crate::admission::Judged {
             hash,
             read_at,
@@ -281,6 +324,14 @@ impl FromRequestParts<AppState> for SignedIn {
     async fn from_request_parts(parts: &mut Parts, state: &AppState) -> Result<Self, ApiError> {
         let services = services(state)?;
         if let Some(value) = parts.headers.get(header::AUTHORIZATION) {
+            if let Some(token) = value
+                .to_str()
+                .ok()
+                .and_then(|text| text.strip_prefix("Bearer "))
+                .filter(|token| token.starts_with(crate::oauth::ACCESS_PREFIX))
+            {
+                return oauth_access(services, token, parts).await;
+            }
             return bearer(
                 services,
                 state.admission.as_deref(),
@@ -351,6 +402,7 @@ impl FromRequestParts<AppState> for SignedIn {
             credential: Credential::Session,
             judged: None,
             project: None,
+            oauth_project: None,
         })
     }
 }

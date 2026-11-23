@@ -197,7 +197,7 @@ async fn colophon_accounts_holds_exactly_the_grants_it_counts_with() {
     }
     // Exactly the grants it counts and reconciles with (0092, 0093), the sign-up cap's (0095)
     // and disabling an account's (0096: the account, its sessions and tokens, the log and the
-    // tokens' live-list hint), table and column, and no
+    // tokens' live-list hint; 0097: its connected apps' grants), table and column, and no
     // privilege on any other table by any route (PUBLIC included).
     let granted: Vec<String> = sqlx::query_scalar(
         "SELECT c.relname || ':' || a.privilege_type
@@ -242,6 +242,9 @@ async fn colophon_accounts_holds_exactly_the_grants_it_counts_with() {
             "identities.disabled_at:UPDATE",
             "identities.id:SELECT",
             "identities.issuer:SELECT",
+            "oauth_grants.identity_id:SELECT",
+            "oauth_grants.revoked_at:SELECT",
+            "oauth_grants.revoked_at:UPDATE",
             "projects.id:SELECT",
             "projects.owner_account:SELECT",
             "sessions.identity_id:SELECT",

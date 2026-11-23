@@ -47,6 +47,8 @@ mimalloc.workspace = true
 colophon-version = { workspace = true, features = ["stamp"] }
 
 [dev-dependencies]
+# The MCP tool list the tests expect is built from the server's own catalog (D-247).
+colophon-mcp.workspace = true
 # Local times for the scheduled-publishing tests (tests/schedules.rs).
 jiff.workspace = true
 # The crash loop checks publication history with the domain's own rule (tests/crash_loop.rs).

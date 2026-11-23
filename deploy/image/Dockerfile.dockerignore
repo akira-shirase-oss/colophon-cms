@@ -7,6 +7,8 @@
 !.cargo/config.toml
 !.sqlx
 !crates
+# The MCP catalog compiles the committed API description in (D-247).
+!docs/api/openapi.json
 !package.json
 !package-lock.json
 !.npmrc
