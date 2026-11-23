@@ -120,6 +120,8 @@ pub(crate) enum Work {
 pub(crate) enum Callable {
     Tool(Tool),
     Api(&'static crate::catalog::Op),
+    /// `list_projects`, in an all-projects session (D-248).
+    ListProjects,
 }
 
 impl Callable {
@@ -127,6 +129,7 @@ impl Callable {
         match self {
             Self::Tool(tool) => tool.name(),
             Self::Api(op) => op.name.as_str(),
+            Self::ListProjects => crate::catalog::LIST_PROJECTS,
         }
     }
 }
@@ -135,6 +138,10 @@ impl Work {
     /// The response to send.
     pub(crate) async fn run<B: Backend>(self, api: &B, id: &RequestId) -> String {
         match self {
+            Self::List if crate::catalog::all_projects(api) => jsonrpc::success(
+                id,
+                &json!({ "tools": crate::catalog::definitions_all_projects() }),
+            ),
             Self::List => match discovery::discover(api).await {
                 Ok(allowed) => {
                     let mut tools = allowed.tools();
@@ -150,9 +157,24 @@ impl Work {
             },
             Self::Call(tool, arguments) => {
                 let started = Instant::now();
+                let all = crate::catalog::all_projects(api);
                 let outcome = match tool {
+                    // An all-projects session (D-248) has no one project for the hand-written
+                    // tools' paths: their catalog twins (same name, with `project`) answer.
+                    Callable::Tool(hand) if all => match crate::catalog::named(hand.name()) {
+                        Some(op) => crate::catalog::call(api, op, arguments).await,
+                        None => tools::Outcome::invalid(
+                            hand.name(),
+                            "not available across projects; use the catalog tools with `project`",
+                        ),
+                    },
                     Callable::Tool(hand) => tools::call(api, hand, arguments).await,
                     Callable::Api(op) => crate::catalog::call(api, op, arguments).await,
+                    Callable::ListProjects if all => crate::catalog::list_projects(api).await,
+                    Callable::ListProjects => tools::Outcome::invalid(
+                        crate::catalog::LIST_PROJECTS,
+                        "this connection is for one project",
+                    ),
                 };
                 tracing::info!(
                     tool = tool.name(),
@@ -195,6 +217,9 @@ pub(crate) fn tool_call(mut params: Map<String, Value>) -> Result<(Callable, Val
     let Some(Value::String(name)) = params.get("name") else {
         return Err("params.name must be the name of a tool".into());
     };
+    if name == crate::catalog::LIST_PROJECTS {
+        return Ok((Callable::ListProjects, Value::Object(Map::new())));
+    }
     let tool = Tool::named(name)
         .map(Callable::Tool)
         .or_else(|| crate::catalog::named(name).map(Callable::Api))

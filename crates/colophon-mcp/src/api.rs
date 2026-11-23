@@ -288,6 +288,18 @@ pub trait Backend: Send + Sync {
 /// path for any other project, or outside the project's routes, is refused before it is sent.
 pub fn full_path(project: Uuid, path: &str) -> Result<String, ApiError> {
     if path.starts_with("/api/") {
+        // An all-projects session (D-248, the nil project) may name any project, and list them;
+        // the API decides each with the person's own membership and role.
+        if project.is_nil() {
+            let path_only = path.split('?').next().unwrap_or_default();
+            return if !path.contains("..")
+                && (path_only == "/api/v1/projects" || path_only.starts_with("/api/v1/projects/"))
+            {
+                Ok(path.to_owned())
+            } else {
+                Err(ApiError::BadUrl)
+            };
+        }
         let mine = format!("/api/v1/projects/{project}/");
         if path.starts_with(&mine) && !path.contains("..") {
             Ok(path.to_owned())

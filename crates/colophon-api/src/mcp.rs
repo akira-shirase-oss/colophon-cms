@@ -335,10 +335,13 @@ pub(crate) async fn post_public(
         Err(refused) => return Ok(challenged(&state, refused)),
     };
     let id = admitted(services(&state)?, &caller, &headers, false)?;
-    let project = caller
-        .project
-        .or(caller.oauth_project)
-        .ok_or(ApiError::NotFound)?;
+    // A sign-in connection for all of a person's projects (D-248) has none of its own: the nil
+    // project marks the session, and each tool call names its project.
+    let project = match caller.project.or(caller.oauth_project) {
+        Some(project) => project,
+        None if caller.credential == Credential::OAuth => Uuid::nil(),
+        None => return Err(ApiError::NotFound),
+    };
     post_on(
         &state,
         &caller,
@@ -439,10 +442,13 @@ pub(crate) async fn delete_public(
         Err(refused) => return Ok(challenged(&state, refused)),
     };
     let id = admitted(services(&state)?, &caller, &headers, true)?;
-    let project = caller
-        .project
-        .or(caller.oauth_project)
-        .ok_or(ApiError::NotFound)?;
+    // A sign-in connection for all of a person's projects (D-248) has none of its own: the nil
+    // project marks the session, and each tool call names its project.
+    let project = match caller.project.or(caller.oauth_project) {
+        Some(project) => project,
+        None if caller.credential == Credential::OAuth => Uuid::nil(),
+        None => return Err(ApiError::NotFound),
+    };
     delete_on(&state, &caller, id, project, "production")
 }
 

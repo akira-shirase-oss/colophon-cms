@@ -71,8 +71,39 @@ pub fn definitions(taken: &[&str]) -> Vec<Value> {
     CATALOG
         .iter()
         .filter(|op| !taken.contains(&op.name.as_str()))
-        .map(Op::definition)
+        .map(|op| op.definition(false))
         .collect()
+}
+
+/// The tools of a session that may act in every project of its person (D-248): `list_projects`,
+/// then every catalog operation with a required `project` argument.
+pub fn definitions_all_projects() -> Vec<Value> {
+    let mut tools = vec![json!({
+        "name": LIST_PROJECTS,
+        "title": "List projects",
+        "description": "Lists the projects you can work in, with your role in each. Every other tool takes one of these ids as `project`.",
+        "inputSchema": {"type": "object", "properties": {}, "additionalProperties": false},
+        "annotations": {"title": "List projects", "readOnlyHint": true, "destructiveHint": false, "idempotentHint": true, "openWorldHint": false},
+    })];
+    tools.extend(CATALOG.iter().map(|op| op.definition(true)));
+    tools
+}
+
+/// The project-list tool of an all-projects session (D-248).
+pub const LIST_PROJECTS: &str = "list_projects";
+
+/// Whether this session may act in every project of its person rather than one (D-248): the
+/// backend's project is the nil id then.
+pub fn all_projects<B: Backend>(api: &B) -> bool {
+    api.project().is_nil()
+}
+
+/// `list_projects`, for an all-projects session.
+pub async fn list_projects<B: Backend>(api: &B) -> Outcome {
+    match api.send(&Request::get("/api/v1/projects")).await {
+        Ok(answer) => Outcome::from_answer(&answer),
+        Err(error) => Outcome::from_api_error(LIST_PROJECTS, true, "", &error),
+    }
 }
 
 fn snake(id: &str) -> String {
@@ -248,9 +279,16 @@ fn plain(schema: &Value, schemas: &Value, depth: usize) -> Value {
 }
 
 impl Op {
-    fn definition(&self) -> Value {
+    fn definition(&self, all_projects: bool) -> Value {
         let mut properties = Map::new();
         let mut required = Vec::new();
+        if all_projects {
+            properties.insert(
+                "project".into(),
+                json!({"type": "string", "format": "uuid", "description": "the project to act in: an id from list_projects"}),
+            );
+            required.push(Value::String("project".into()));
+        }
         for param in self.path_params.iter().chain(&self.query_params) {
             let mut schema = param.schema.clone();
             if let (Some(map), false) = (schema.as_object_mut(), param.description.is_empty()) {
@@ -387,7 +425,7 @@ pub async fn call<B: Backend>(api: &B, op: &'static Op, arguments: Value) -> Out
         .iter()
         .chain(&op.query_params)
         .map(|param| param.name.as_str())
-        .chain(["body", "if_match", "confirm"])
+        .chain(["body", "if_match", "confirm", "project"])
         .collect();
     if let Some(unknown) = args.keys().find(|key| !allowed.contains(&key.as_str())) {
         return Outcome::invalid(&op.name, &format!("unknown argument `{unknown}`"));
@@ -395,7 +433,24 @@ pub async fn call<B: Backend>(api: &B, op: &'static Op, arguments: Value) -> Out
     if op.confirm && args.get("confirm") != Some(&Value::Bool(true)) {
         return Outcome::needs_confirmation(op.effect(&args));
     }
-    let path = match op.path(&api.project().to_string(), &args) {
+    let project = if all_projects(api) {
+        match args
+            .get("project")
+            .and_then(Value::as_str)
+            .map(uuid::Uuid::parse_str)
+        {
+            Some(Ok(id)) => id.to_string(),
+            _ => {
+                return Outcome::invalid(
+                    &op.name,
+                    "`project` must be a project id from list_projects",
+                );
+            }
+        }
+    } else {
+        api.project().to_string()
+    };
+    let path = match op.path(&project, &args) {
         Ok(path) => path,
         Err(problem) => return Outcome::invalid(&op.name, &problem),
     };
@@ -449,13 +504,18 @@ mod tests {
             if op.read_only {
                 assert!(!op.confirm && !op.destructive, "{} only reads", op.name);
                 assert_eq!(
-                    op.definition()["annotations"]["destructiveHint"],
+                    op.definition(false)["annotations"]["destructiveHint"],
                     false,
                     "{}",
                     op.name
                 );
             }
-            let def = op.definition();
+            let def = op.definition(false);
+            assert!(
+                op.definition(true)["inputSchema"]["required"]
+                    .to_string()
+                    .contains("project")
+            );
             assert!(
                 def["inputSchema"].to_string().find("$ref").is_none(),
                 "{} leaves a $ref",
@@ -474,7 +534,8 @@ mod tests {
 
     impl Backend for Counting {
         fn project(&self) -> uuid::Uuid {
-            uuid::Uuid::nil()
+            // A one-project session; the nil id would mean every project (D-248).
+            uuid::Uuid::from_u128(0x0190_a000_0000_7000_8000_0000_0000_0001)
         }
 
         fn attempt<'a>(
@@ -567,5 +628,43 @@ mod tests {
             args.insert(param.name.clone(), Value::String("../../x".into()));
         }
         assert!(op.path("p", &args).is_err());
+    }
+
+    #[test]
+    fn an_all_projects_session_lists_projects_and_names_one_per_call() {
+        let tools = definitions_all_projects();
+        assert_eq!(tools[0]["name"], LIST_PROJECTS);
+        assert!(tools.len() > 80);
+        assert!(tools.iter().all(|tool| tool["name"] != "delete_project"));
+        for tool in &tools[1..] {
+            let required = tool["inputSchema"]["required"].to_string();
+            assert!(
+                required.contains("\"project\""),
+                "{} must take a project",
+                tool["name"]
+            );
+        }
+    }
+
+    #[test]
+    fn an_all_projects_path_names_any_project_but_never_leaves_the_projects() {
+        let all = uuid::Uuid::nil();
+        assert!(crate::api::full_path(all, "/api/v1/projects").is_ok());
+        assert!(crate::api::full_path(all, "/api/v1/projects/abc/members").is_ok());
+        assert!(crate::api::full_path(all, "/api/v1/projects/abc/../../setup").is_err());
+        assert!(crate::api::full_path(all, "/api/v1/installation").is_err());
+        assert!(crate::api::full_path(all, "/api/v1/accounts/x/disable").is_err());
+        let one = uuid::Uuid::now_v7();
+        assert!(
+            crate::api::full_path(one, "/api/v1/projects").is_err(),
+            "one project: no list"
+        );
+        assert!(
+            crate::api::full_path(
+                one,
+                &format!("/api/v1/projects/{}/members", uuid::Uuid::now_v7())
+            )
+            .is_err()
+        );
     }
 }
