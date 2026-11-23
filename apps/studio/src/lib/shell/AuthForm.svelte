@@ -4,8 +4,8 @@
   provider button shows only when this server actually has one configured (D-141).
 -->
 <script lang="ts">
+	import { followReturn } from '#lib/returnTo.ts';
 	import { untrack } from 'svelte';
-	import { goto } from '$app/navigation';
 	import { createQuery } from '@tanstack/svelte-query';
 	import { Button } from '@colophon/ui/ui/button';
 	import { sameOrigin, signInUrl, type JoinedBySignUp } from '#lib/api.ts';
@@ -42,7 +42,7 @@
 
 	async function onward() {
 		// Only same-site paths, ever (the server's safe_return_path makes the same rule).
-		if (navigateAfter && sameOrigin(returnTo)) await goto(returnTo);
+		if (navigateAfter && sameOrigin(returnTo)) await followReturn(returnTo);
 	}
 
 	async function signedUp(joined: JoinedBySignUp | null) {
