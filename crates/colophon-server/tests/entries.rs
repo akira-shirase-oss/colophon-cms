@@ -991,7 +991,10 @@ async fn two_saves_held_in_flight_together_still_make_one_winner() {
             .expect("request")
         })
     });
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    // Released before the request pool's lock timeout (D-239) can end either wait: past it,
+    // the first save would be refused as contention instead of racing the second.
+    let deadline = std::time::Instant::now()
+        + colophon_db::REQUEST_LOCK_TIMEOUT.saturating_sub(std::time::Duration::from_secs(1));
     loop {
         // The two queue: the first waits on the holder, the second on the first.
         let waiting: i64 = sqlx::query_scalar(
@@ -1015,6 +1018,7 @@ async fn two_saves_held_in_flight_together_still_make_one_winner() {
     holder.rollback().await.expect("release");
 
     let mut statuses = Vec::new();
+    let mut bodies = Vec::new();
     let mut winner = None;
     for save in saves {
         let reply = save.await.expect("joined");
@@ -1022,9 +1026,14 @@ async fn two_saves_held_in_flight_together_still_make_one_winner() {
             winner = Some(reply.body["data"]["content"]["title"].clone());
         }
         statuses.push(reply.status);
+        bodies.push(reply.body);
     }
     statuses.sort_unstable();
-    assert_eq!(statuses, [StatusCode::OK, StatusCode::CONFLICT]);
+    assert_eq!(
+        statuses,
+        [StatusCode::OK, StatusCode::CONFLICT],
+        "the two saves: {bodies:?}"
+    );
     let history = call(
         &owner,
         Method::GET,
