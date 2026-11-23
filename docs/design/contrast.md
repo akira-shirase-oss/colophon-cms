@@ -234,7 +234,7 @@ marks need 3:1 (1.4.11).
 | dark | `--foreground` #E5E5E5 | `--accent` #0657C9 | text | 5.20:1 | 4.5:1 | pass |
 | dark | `--sidebar-foreground` #E5E5E5 | `--sidebar` #171717 | text | 14.23:1 | 4.5:1 | pass |
 | dark | `--sidebar-primary-foreground` #FFFFFF | `--sidebar-primary` #155DFC | text | 5.26:1 | 4.5:1 | pass |
-| dark | `--sidebar-accent-foreground` #BEDBFF | `--sidebar-accent` #0657C9 | text | 4.60:1 | 4.5:1 | pass |
+| dark | `--sidebar-accent-foreground` #FAFAFA | `--sidebar-accent` #0657C9 | text | 6.27:1 | 4.5:1 | pass |
 | dark | `--primary-foreground` #FFFFFF | `--primary-hover` #236AFF | text | 4.60:1 | 4.5:1 | pass |
 | dark | `--brand-ink` #458BFF | `--background` #171717 | text | 5.45:1 | 4.5:1 | pass |
 | dark | `--brand-ink` #458BFF | `--card` #262626 | text | 4.60:1 | 4.5:1 | pass |

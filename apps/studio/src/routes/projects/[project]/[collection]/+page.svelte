@@ -157,7 +157,8 @@
 			step: (words) => (bulkStep = words)
 		});
 		bulkStep = '';
-		bulkKeys = newKeys();
+		// After no answer the same keys go again: trying once more replays, never doubles (D-245).
+		if (!(bulkOutcome.kind === 'stopped' && bulkOutcome.noAnswer)) bulkKeys = newKeys();
 		if (bulkOutcome.kind !== 'stopped') picked = [];
 		await Promise.all([
 			queryClient.invalidateQueries({ queryKey: ['entries', project] }),

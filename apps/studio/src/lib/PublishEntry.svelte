@@ -157,7 +157,8 @@
 		});
 		result = { outcome: done, revision: acting };
 		step = '';
-		keys = newKeys();
+		// After no answer the same keys go again, so trying once more replays, never doubles (D-245).
+		if (!(done.kind === 'stopped' && done.noAnswer)) keys = newKeys();
 		// Said before the reads refresh, while the page still knows what readers had (Undo needs it).
 		const receipt = (generation: number) => resolve('/projects/[project]/releases/[generation]', { project, generation: String(generation) });
 		const request = (id: string) => resolve('/projects/[project]/changesets/[changeset]', { project, changeset: id });
