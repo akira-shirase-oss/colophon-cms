@@ -18,7 +18,7 @@ async function request(page: Page, project: string, title: string, entries: stri
 async function retitle(page: Page, project: string, entry: string, title: string) {
 	const status = await page.evaluate(
 		async ({ path, title }) => {
-			const csrf = document.cookie.split('; ').find((pair) => pair.startsWith('colophon_csrf='))?.slice('colophon_csrf='.length) ?? '';
+			const csrf = document.cookie.split('; ').find((pair) => pair.startsWith('__Host-colophon_csrf='))?.slice('__Host-colophon_csrf='.length) ?? '';
 			const current = await fetch(path);
 			const { data } = (await current.json()) as { data: { content: Record<string, unknown> } };
 			const response = await fetch(path, {

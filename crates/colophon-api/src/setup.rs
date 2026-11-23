@@ -64,9 +64,10 @@ pub(crate) fn matching(presented: &[u8; 32], live: &[LiveCode]) -> Option<Uuid> 
 /// `POST /api/v1/setup` with `{"code": "…"}`.
 pub(crate) async fn claim(
     State(state): State<AppState>,
+    crate::admission::ClientAddress(address): crate::admission::ClientAddress,
     caller: SignedIn,
     body: Result<Json<Presented>, JsonRejection>,
-) -> Result<Json<Data<SetUp>>, ApiError> {
+) -> Result<Response, ApiError> {
     let services = services(&state)?;
     let Json(Presented { code }) = body?;
     // Hash first, and let the plain code go: from here on only the hash exists.
@@ -93,11 +94,40 @@ pub(crate) async fn claim(
     {
         Claimed::Claimed => {
             tracing::info!(identity = %caller.identity, "setup code used: first administrator made");
-            Ok(Json(Data {
+            let mut response = Json(Data {
                 data: SetUp {
                     administrator: true,
                 },
-            }))
+            })
+            .into_response();
+            // A change of standing gets a new session (D-235): the one that asked ends, so a
+            // session someone else knew can't ride along into administration.
+            if caller.credential == crate::session::Credential::Session {
+                colophon_db::identity::revoke_session(&services.pool, caller.session)
+                    .await
+                    .map_err(ApiError::from_db)?;
+                let (session_token, csrf_token) =
+                    crate::auth::issue_session(services, caller.identity).await?;
+                crate::auth::session_cookies(
+                    &mut response,
+                    &session_token,
+                    &csrf_token,
+                    services.sessions.lifetime.as_secs(),
+                );
+                crate::auth::staff_auth_line(
+                    services,
+                    colophon_db::staff_auth::Line {
+                        identity: Some(caller.identity),
+                        detail: Some("became_administrator"),
+                        ..colophon_db::staff_auth::Line::new(
+                            colophon_db::staff_auth::Event::SessionRotated,
+                            &address,
+                        )
+                    },
+                )
+                .await;
+            }
+            Ok(response)
         }
         Claimed::Invalid => Err(invalid()),
         Claimed::AlreadySetUp => Err(ApiError::AlreadySetUp),

@@ -9,14 +9,16 @@ use axum::{
     response::{IntoResponse, Redirect, Response},
 };
 use colophon_auth::tokens;
-use colophon_db::identity;
+use colophon_db::identity::{self, Admission};
 use serde::{Deserialize, Serialize};
 use time::OffsetDateTime;
 
 use crate::{
     ApiError, AppState,
+    selfserve::Registration,
     session::{
-        CSRF_COOKIE, SESSION_COOKIE, SIGN_IN_COOKIE, SignedIn, cookie, services, set_cookie,
+        CSRF_COOKIE, LEGACY_CSRF_COOKIE, LEGACY_SESSION_COOKIE, SESSION_COOKIE, SIGN_IN_COOKIE,
+        SignedIn, cookie, public_write_origin, services, set_cookie,
     },
     shape::Data,
 };
@@ -62,6 +64,11 @@ fn expires_in(duration: Duration) -> OffsetDateTime {
 #[derive(Serialize)]
 pub(crate) struct Providers {
     sso: bool,
+    /// Cloudflare Turnstile's site key, where sign-ups must carry a token (D-235); `null` when
+    /// the installation checks none. Public by design: it only renders the widget.
+    turnstile_site_key: Option<String>,
+    /// Who may sign up here (D-235), so the page can say "closed" before anyone fills a form.
+    registration: &'static str,
 }
 
 /// `GET /auth/providers`: public — a sign-in page asks before offering the provider button.
@@ -72,6 +79,13 @@ pub(crate) async fn providers(
     Ok(Json(Data {
         data: Providers {
             sso: services.oidc.is_some(),
+            // The key only while the server can verify what the widget returns.
+            turnstile_site_key: services
+                .guards
+                .turnstile
+                .as_ref()
+                .and(services.selfserve.turnstile_site_key.clone()),
+            registration: services.selfserve.registration.as_str(),
         },
     }))
 }
@@ -150,6 +164,7 @@ pub(crate) fn clear(name: &str, path: &str) -> HeaderValue {
 /// started.
 pub(crate) async fn callback(
     State(state): State<AppState>,
+    crate::admission::ClientAddress(address): crate::admission::ClientAddress,
     headers: HeaderMap,
     Query(query): Query<CallbackQuery>,
 ) -> Result<Response, ApiError> {
@@ -179,15 +194,45 @@ pub(crate) async fn callback(
         .exchange(code, &attempt.pkce_verifier, &attempt.nonce)
         .await
         .map_err(|error| failed(&error.to_string()))?;
-    let identity_id = identity::record_sign_in(
-        &services.pool,
-        &person.issuer,
-        &person.subject,
-        person.display_name.as_deref(),
-    )
-    .await
-    .map_err(ApiError::from_db)?;
+    // Closed registration (D-235) admits no first sign-in through the provider either; an
+    // identity that already exists signs in as before.
+    let identity_id = if services.selfserve.registration == Registration::Closed {
+        identity::record_existing_sign_in(
+            &services.pool,
+            &person.issuer,
+            &person.subject,
+            person.display_name.as_deref(),
+        )
+        .await
+        .map_err(ApiError::from_db)?
+        .ok_or_else(|| {
+            tracing::info!("sign-in refused: a new identity on a closed installation");
+            ApiError::forbidden(
+                "registration_closed",
+                "this Colophon doesn't take new accounts; ask its operator for one",
+            )
+        })?
+    } else {
+        identity::record_sign_in(
+            &services.pool,
+            &person.issuer,
+            &person.subject,
+            person.display_name.as_deref(),
+        )
+        .await
+        .map_err(ApiError::from_db)?
+    };
+    rotate_presented(services, &headers, &address, identity_id).await;
     let (session_token, csrf_token) = issue_session(services, identity_id).await?;
+    staff_auth_line(
+        services,
+        colophon_db::staff_auth::Line {
+            identity: Some(identity_id),
+            detail: Some("provider"),
+            ..colophon_db::staff_auth::Line::new(colophon_db::staff_auth::Event::SignedIn, &address)
+        },
+    )
+    .await;
 
     let mut response = Redirect::to(&attempt.return_to).into_response();
     session_cookies(
@@ -203,7 +248,7 @@ pub(crate) async fn callback(
 }
 
 /// Issues a session for `identity` and answers its fresh token and CSRF token.
-async fn issue_session(
+pub(crate) async fn issue_session(
     services: &crate::state::Services,
     identity: uuid::Uuid,
 ) -> Result<(String, String), ApiError> {
@@ -222,7 +267,12 @@ async fn issue_session(
 }
 
 /// The `Set-Cookie` pair a new session puts on a browser.
-fn session_cookies(response: &mut Response, session_token: &str, csrf_token: &str, lifetime: u64) {
+pub(crate) fn session_cookies(
+    response: &mut Response,
+    session_token: &str,
+    csrf_token: &str,
+    lifetime: u64,
+) {
     let headers = response.headers_mut();
     headers.insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
     headers.append(
@@ -233,6 +283,44 @@ fn session_cookies(response: &mut Response, session_token: &str, csrf_token: &st
         header::SET_COOKIE,
         set_cookie(CSRF_COOKIE, csrf_token, lifetime, false, "Strict", "/"),
     );
+    // The names before D-235's rename go, so a browser never carries both.
+    headers.append(header::SET_COOKIE, clear(LEGACY_SESSION_COOKIE, "/"));
+    headers.append(header::SET_COOKIE, clear(LEGACY_CSRF_COOKIE, "/"));
+}
+
+/// Session rotation (D-235): a browser that signs in, signs up or comes back from the provider
+/// gets a new session, and any session it presented, under either cookie name, ends now. A
+/// session planted on the browser beforehand (fixation) never becomes the signed-in one.
+pub(crate) async fn rotate_presented(
+    services: &crate::state::Services,
+    headers: &HeaderMap,
+    address: &str,
+    now_signed_in: uuid::Uuid,
+) {
+    for name in [SESSION_COOKIE, LEGACY_SESSION_COOKIE] {
+        let Some(token) = cookie(headers, name).filter(|token| token.len() == 43) else {
+            continue;
+        };
+        match identity::revoke_session_by_token(&services.pool, &tokens::hash(token)).await {
+            Ok(Some(was)) => {
+                staff_auth_line(
+                    services,
+                    colophon_db::staff_auth::Line {
+                        identity: Some(now_signed_in),
+                        actor: (was != now_signed_in).then_some(was),
+                        detail: Some("signed_in_again"),
+                        ..colophon_db::staff_auth::Line::new(
+                            colophon_db::staff_auth::Event::SessionRotated,
+                            address,
+                        )
+                    },
+                )
+                .await;
+            }
+            Ok(None) => {}
+            Err(error) => tracing::warn!(error = %error, "could not end the presented session"),
+        }
+    }
 }
 
 /// What making an account asks for.
@@ -243,6 +331,12 @@ pub(crate) struct SignUp {
     password: String,
     /// A name to show; optional, the email fills in.
     display_name: Option<String>,
+    /// A project invitation's token: what an invite-only installation admits a sign-up with
+    /// (D-235). The sign-up claims it and joins its project, or makes no account.
+    invitation: Option<String>,
+    /// Cloudflare Turnstile's token from the sign-up form, where the installation checks one
+    /// (D-235).
+    turnstile_token: Option<String>,
 }
 
 /// What signing in asks for.
@@ -311,13 +405,70 @@ pub(crate) fn check_sign_in_password(password: &str) -> Result<(), ApiError> {
 
 /// `POST /auth/signup`: makes an email-and-password account and signs it in at once, so a
 /// person who followed an invitation can join right after.
+///
+/// Registration decides who may (D-235): `closed` refuses every sign-up before any work;
+/// `invite` admits one that claims a valid project invitation (made and joined in one
+/// transaction) or, before setup, the installation's one first-run account; `open` admits any
+/// new email.
 pub(crate) async fn sign_up(
     State(state): State<AppState>,
+    crate::admission::ClientAddress(address): crate::admission::ClientAddress,
+    crate::admission::ClientIp(client_ip): crate::admission::ClientIp,
+    headers: HeaderMap,
     Json(body): Json<SignUp>,
 ) -> Result<Response, ApiError> {
     let services = services(&state)?;
+    public_write_origin(&headers, services)?;
+    let invitation = body.invitation.as_deref().map(tokens::hash);
+    let admission = match services.selfserve.registration {
+        Registration::Closed => {
+            return Err(ApiError::forbidden(
+                "registration_closed",
+                "this Colophon doesn't take sign-ups; ask its operator for an account",
+            ));
+        }
+        Registration::Open => Admission::Open {
+            invitation: invitation.as_ref(),
+        },
+        Registration::Invite => Admission::Invite {
+            invitation: invitation.as_ref(),
+        },
+    };
+    // The cap per client address comes first (D-235): every attempt past this point counts,
+    // refused ones included, before the bot check and before Argon2, in its own statement.
+    if let Some(retry_after) = colophon_db::staff_auth::signup_attempt(
+        &services.pool,
+        &address,
+        services.selfserve.signups_per_address_hour,
+    )
+    .await
+    .map_err(ApiError::from_db)?
+    {
+        return Err(ApiError::TooManyRequests { retry_after });
+    }
     let email = clean_email(&body.email)?;
     check_password(&body.password)?;
+    // Everything refused from here on is in the staff auth log, bounded by the cap above.
+    let refused = |detail| sign_up_refused(services, &address, &email, detail);
+    if let Err(why) = bot_check(services, body.turnstile_token.as_deref(), client_ip).await {
+        tracing::info!(reason = why, "sign-up refused by the bot check");
+        refused("bot_check_failed").await;
+        return Err(ApiError::InvalidField {
+            reason: "bot_check_failed",
+            pointer: "/turnstile_token",
+            message: "the check that you're a person didn't pass; try it again".to_owned(),
+        });
+    }
+    // An invite-only sign-up with no invitation that can't be the first-run account is refused
+    // before Argon2 runs: the transaction below decides it again, under its lock.
+    if admission == (Admission::Invite { invitation: None })
+        && !identity::first_run_open(&services.pool)
+            .await
+            .map_err(ApiError::from_db)?
+    {
+        refused("invitation_required").await;
+        return Err(invitation_required());
+    }
     let phc = services
         .passwords
         .hash(&body.password)
@@ -328,18 +479,36 @@ pub(crate) async fn sign_up(
         .as_deref()
         .map(str::trim)
         .filter(|n| !n.is_empty());
-    let id = match identity::sign_up(&services.pool, &email, &phc, name).await {
-        Ok(identity::SignedUp::Made(id)) => id,
-        Ok(identity::SignedUp::Taken) => {
-            return Err(ApiError::Conflict {
-                reason: "email_taken",
-                message: "that email already has an account",
-            });
-        }
-        Err(error) => return Err(ApiError::from_db(error)),
-    };
+    let (id, joined) =
+        match identity::sign_up(&services.pool, &email, &phc, name, admission, &address).await {
+            Ok(identity::SignedUp::Made { identity, joined }) => (identity, joined),
+            Ok(identity::SignedUp::Taken) => {
+                refused("email_taken").await;
+                return Err(ApiError::Conflict {
+                    reason: "email_taken",
+                    message: "that email already has an account",
+                });
+            }
+            Ok(identity::SignedUp::InvitationRequired) => {
+                refused("invitation_required").await;
+                return Err(invitation_required());
+            }
+            Err(error) => return Err(ApiError::from_db(error)),
+        };
+    rotate_presented(services, &headers, &address, id).await;
     let (session_token, csrf_token) = issue_session(services, id).await?;
-    let mut response = StatusCode::CREATED.into_response();
+    let mut response = (
+        StatusCode::CREATED,
+        Json(Data {
+            data: SignedUpView {
+                joined: joined.map(|joined| JoinedView {
+                    project_id: joined.project,
+                    role: joined.role,
+                }),
+            },
+        }),
+    )
+        .into_response();
     session_cookies(
         &mut response,
         &session_token,
@@ -349,15 +518,112 @@ pub(crate) async fn sign_up(
     Ok(response)
 }
 
+/// A line in the staff auth log (D-235). A log that won't take it doesn't change the answer: the
+/// request already did what it did.
+pub(crate) async fn staff_auth_line(
+    services: &crate::state::Services,
+    line: colophon_db::staff_auth::Line<'_>,
+) {
+    if let Err(error) = colophon_db::staff_auth::record(&services.pool, line).await {
+        tracing::warn!(error = %error, "the staff auth log refused a line");
+    }
+}
+
+/// A failed sign-in's line in the staff auth log (D-235), within the per-address budget: by the
+/// email's keyed digest, whether or not it has an account, so the log says no more about who
+/// exists than the answer does.
+async fn sign_in_failed(services: &crate::state::Services, address: &str, email: &str) {
+    let detail =
+        match colophon_db::staff_auth::sign_in_failure_logged(&services.pool, address).await {
+            Ok(Some(None)) => Some("password"),
+            Ok(Some(capped)) => capped,
+            Ok(None) => return,
+            Err(error) => {
+                tracing::warn!(error = %error, "the staff auth log's budget is unreadable");
+                return;
+            }
+        };
+    let digest = services.guards.digest(email);
+    staff_auth_line(
+        services,
+        colophon_db::staff_auth::Line {
+            email_digest: digest.as_ref(),
+            detail,
+            ..colophon_db::staff_auth::Line::new(
+                colophon_db::staff_auth::Event::SignInFailed,
+                address,
+            )
+        },
+    )
+    .await;
+}
+
+/// The bot check where the installation has one (D-235): `Err` with the reason a token was
+/// refused. No verifier configured, nothing to check.
+async fn bot_check(
+    services: &crate::state::Services,
+    token: Option<&str>,
+    client_ip: Option<std::net::IpAddr>,
+) -> Result<(), &'static str> {
+    let Some(turnstile) = services.guards.turnstile.as_ref() else {
+        return Ok(());
+    };
+    match turnstile.verify(token, client_ip).await {
+        colophon_auth::turnstile::Verdict::Passed => Ok(()),
+        colophon_auth::turnstile::Verdict::Failed(why) => Err(why),
+    }
+}
+
+/// A refused sign-up's line in the staff auth log: the email by its keyed digest (or not at
+/// all), never in the clear. A log that won't take the line doesn't change the answer.
+async fn sign_up_refused(
+    services: &crate::state::Services,
+    address: &str,
+    email: &str,
+    detail: &'static str,
+) {
+    let digest = services.guards.digest(email);
+    let line = colophon_db::staff_auth::Line {
+        email_digest: digest.as_ref(),
+        detail: Some(detail),
+        ..colophon_db::staff_auth::Line::new(colophon_db::staff_auth::Event::SignUpRefused, address)
+    };
+    staff_auth_line(services, line).await;
+}
+
+/// What a sign-up answers: the project it joined, when it claimed an invitation (D-235).
+#[derive(Serialize)]
+struct SignedUpView {
+    joined: Option<JoinedView>,
+}
+
+/// The project a sign-up joined, and the role it holds there.
+#[derive(Serialize)]
+struct JoinedView {
+    project_id: uuid::Uuid,
+    role: String,
+}
+
+/// Invite-only registration's one refusal: no invitation, or one that is unknown, expired,
+/// revoked or claimed, alike.
+const fn invitation_required() -> ApiError {
+    ApiError::forbidden(
+        "invitation_required",
+        "this Colophon takes sign-ups by invitation; open the invitation link you were sent",
+    )
+}
+
 /// `POST /auth/signin`: trades an email and password for a session. A wrong password, a
 /// missing account and an (account, address) paused after eight misses are refused the same
 /// way, `400 sign_in_failed` (D-154).
 pub(crate) async fn sign_in(
     State(state): State<AppState>,
     crate::admission::ClientAddress(address): crate::admission::ClientAddress,
+    headers: HeaderMap,
     Json(body): Json<PasswordSignIn>,
 ) -> Result<Response, ApiError> {
     let services = services(&state)?;
+    public_write_origin(&headers, services)?;
     let email = clean_email(&body.email)?;
     check_sign_in_password(&body.password)?;
     match identity::password_sign_in(
@@ -370,7 +636,20 @@ pub(crate) async fn sign_in(
     .await
     {
         Ok(identity::PasswordSignIn::SignedIn(id)) => {
+            rotate_presented(services, &headers, &address, id).await;
             let (session_token, csrf_token) = issue_session(services, id).await?;
+            staff_auth_line(
+                services,
+                colophon_db::staff_auth::Line {
+                    identity: Some(id),
+                    detail: Some("password"),
+                    ..colophon_db::staff_auth::Line::new(
+                        colophon_db::staff_auth::Event::SignedIn,
+                        &address,
+                    )
+                },
+            )
+            .await;
             let mut response = StatusCode::NO_CONTENT.into_response();
             session_cookies(
                 &mut response,
@@ -384,7 +663,10 @@ pub(crate) async fn sign_in(
         // answer (D-154). Not one kind of work: a paused attempt runs no Argon2, so its
         // timing can tell a guesser they are paused — never whether the account exists, since
         // a missing account verifies against the dummy hash like a real one.
-        Ok(identity::PasswordSignIn::Refused) => Err(ApiError::SignInFailed),
+        Ok(identity::PasswordSignIn::Refused) => {
+            sign_in_failed(services, &address, &email).await;
+            Err(ApiError::SignInFailed)
+        }
         Err(error) => Err(ApiError::from_db(error)),
     }
 }
@@ -403,6 +685,7 @@ struct SignedOut {
 /// (RP-Initiated Logout), coming back to the Studio's front door.
 pub(crate) async fn logout(
     State(state): State<AppState>,
+    crate::admission::ClientAddress(address): crate::admission::ClientAddress,
     caller: SignedIn,
 ) -> Result<Response, ApiError> {
     let services = services(&state)?;
@@ -416,6 +699,17 @@ pub(crate) async fn logout(
     identity::revoke_session(&services.pool, caller.session)
         .await
         .map_err(ApiError::from_db)?;
+    staff_auth_line(
+        services,
+        colophon_db::staff_auth::Line {
+            identity: Some(caller.identity),
+            ..colophon_db::staff_auth::Line::new(
+                colophon_db::staff_auth::Event::SignedOut,
+                &address,
+            )
+        },
+    )
+    .await;
     let provider_sign_out = match (services.oidc.as_ref(), services.trusted_origins.first()) {
         (Some(oidc), Some(origin)) => match oidc.logout_url(&format!("{origin}/studio/")).await {
             Ok(url) => url.map(String::from),
@@ -436,6 +730,8 @@ pub(crate) async fn logout(
         header::SET_COOKIE,
         set_cookie(CSRF_COOKIE, "", 0, false, "Strict", "/"),
     );
+    headers.append(header::SET_COOKIE, clear(LEGACY_SESSION_COOKIE, "/"));
+    headers.append(header::SET_COOKIE, clear(LEGACY_CSRF_COOKIE, "/"));
     Ok(response)
 }
 

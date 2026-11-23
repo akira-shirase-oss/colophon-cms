@@ -7,7 +7,7 @@ import { signIn } from './sign-in.ts';
 
 async function newProject(page: Page): Promise<string> {
 	return page.evaluate(async (slug) => {
-		const csrf = document.cookie.split('; ').find((pair) => pair.startsWith('colophon_csrf='))?.slice('colophon_csrf='.length) ?? '';
+		const csrf = document.cookie.split('; ').find((pair) => pair.startsWith('__Host-colophon_csrf='))?.slice('__Host-colophon_csrf='.length) ?? '';
 		const response = await fetch('/server/api/v1/projects', {
 			method: 'POST',
 			headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrf },
@@ -54,7 +54,7 @@ test('define a content type, change it safely, and see unsafe and stale changes 
 	// An entry uses `price`: removing it is refused, naming the entry (D-055).
 	const kettle = await page.evaluate(
 		async ({ project, body }) => {
-			const csrf = document.cookie.split('; ').find((pair) => pair.startsWith('colophon_csrf='))?.slice('colophon_csrf='.length) ?? '';
+			const csrf = document.cookie.split('; ').find((pair) => pair.startsWith('__Host-colophon_csrf='))?.slice('__Host-colophon_csrf='.length) ?? '';
 			const response = await fetch(`/server/api/v1/projects/${project}/environments/production/collections/products/entries`, {
 				method: 'POST',
 				headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrf, 'Idempotency-Key': crypto.randomUUID() },
@@ -99,7 +99,7 @@ test('a slug field gives each entry its own URL name', async ({ page }) => {
 	const create = (body: object) =>
 		page.evaluate(
 			async ({ project, body }) => {
-				const csrf = document.cookie.split('; ').find((pair) => pair.startsWith('colophon_csrf='))?.slice('colophon_csrf='.length) ?? '';
+				const csrf = document.cookie.split('; ').find((pair) => pair.startsWith('__Host-colophon_csrf='))?.slice('__Host-colophon_csrf='.length) ?? '';
 				const response = await fetch(`/server/api/v1/projects/${project}/environments/production/collections/pages/entries`, {
 					method: 'POST',
 					headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrf, 'Idempotency-Key': crypto.randomUUID() },
@@ -163,7 +163,7 @@ test('an empty collection is deleted; one with entries, referrers, or history is
 
 	// An entry keeps it too.
 	const entry = await page.evaluate(async ({ project }) => {
-		const csrf = document.cookie.split('; ').find((pair) => pair.startsWith('colophon_csrf='))?.slice('colophon_csrf='.length) ?? '';
+		const csrf = document.cookie.split('; ').find((pair) => pair.startsWith('__Host-colophon_csrf='))?.slice('__Host-colophon_csrf='.length) ?? '';
 		const response = await fetch(`/server/api/v1/projects/${project}/environments/production/collections/notes/entries`, {
 			method: 'POST',
 			headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrf, 'Idempotency-Key': crypto.randomUUID() },
@@ -182,7 +182,7 @@ test('an empty collection is deleted; one with entries, referrers, or history is
 
 	// Even with the entry deleted, its history pins the collection (collection_has_history).
 	const gone = await page.evaluate(async ({ project, id }) => {
-		const csrf = document.cookie.split('; ').find((pair) => pair.startsWith('colophon_csrf='))?.slice('colophon_csrf='.length) ?? '';
+		const csrf = document.cookie.split('; ').find((pair) => pair.startsWith('__Host-colophon_csrf='))?.slice('__Host-colophon_csrf='.length) ?? '';
 		const path = `/server/api/v1/projects/${project}/environments/production/collections/notes/entries/${id}`;
 		const read = await fetch(path);
 		const etag = read.headers.get('etag') ?? '';

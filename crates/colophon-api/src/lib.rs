@@ -4,6 +4,7 @@
 //!
 //! Design: `docs/modules/04-api.md`.
 
+mod accounts;
 pub mod admission;
 mod assets;
 mod audience;
@@ -25,8 +26,11 @@ pub mod events;
 mod fault;
 mod graphql;
 pub mod health;
+mod hint;
+mod legacy_cookie;
 pub mod mail;
 pub mod mcp;
+mod me_usage;
 pub mod media_sign;
 mod members;
 pub mod middleware;
@@ -40,6 +44,7 @@ mod receipts;
 mod rich_text;
 mod roles;
 mod schedules;
+pub mod selfserve;
 pub mod session;
 mod setup;
 mod shape;
@@ -82,6 +87,11 @@ pub fn routes(state: AppState) -> Router {
     // limited before its origin lookup reaches Postgres; preflights are answered here, before the
     // router. Admission's own 429s therefore carry no CORS headers (tracked, review 2026-11-21).
     let preview_cors = axum::middleware::from_fn_with_state(state.clone(), preview::cors);
+    // The session cookies' old names, for one release (D-235): inside admission, so a flood of
+    // old cookies is rate-limited before it reaches Postgres.
+    let legacy_cookie = axum::middleware::from_fn_with_state(state.clone(), legacy_cookie::upgrade);
+    // The signed-in hint (D-235): outside the legacy swap, so a swapped session counts as a new one.
+    let hint = axum::middleware::from_fn_with_state(state.clone(), hint::signed_in);
     let served = std::sync::Arc::new(openapi::Served::new(&state.build));
     let mut router = Router::new();
     for route in openapi::TABLE {
@@ -100,6 +110,8 @@ pub fn routes(state: AppState) -> Router {
         // the rate limits like every other read: a flood of preflights is limited per address
         // before any reaches the database (D-231, gap G).
         .layer(preview_cors)
+        .layer(legacy_cookie)
+        .layer(hint)
         // Rate limits (D-076): inside the error envelope, before any handler or lookup does work.
         .layer(admission)
         .with_state(state)

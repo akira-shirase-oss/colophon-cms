@@ -1,0 +1,21 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT NOT EXISTS (SELECT 1 FROM administrators)\n                  AND NOT EXISTS (SELECT 1 FROM identities WHERE issuer NOT LIKE 'urn:colophon:%')\n                  AS \"open!\"",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "open!",
+        "type_info": "Bool",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Left": []
+    },
+    "nullable": [
+      null
+    ]
+  },
+  "hash": "53cc51cc93735fe4917e3e21fb0596592af76ee358de7e5eea186fc2b4ef7867"
+}

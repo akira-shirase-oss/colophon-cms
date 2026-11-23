@@ -95,7 +95,17 @@ impl Server {
             // Every test signs its people up and in from loopback; the password limit (D-213)
             // is tested where a test sets its own, which `extra` then overrides.
             .env("COLOPHON_RATE_LIMIT_PASSWORD", "1000/2000")
+            // The same for the sign-up cap per address (D-235): every test signs up from loopback.
+            .env("COLOPHON_SIGNUPS_PER_ADDRESS_HOUR", "100000")
             .envs(extra.iter().copied());
+        // The account quotas this server writes at boot (D-235), in the background: a test's
+        // first request must see them, never a previous server's.
+        let db = owner_database().await;
+        let since: i64 =
+            sqlx::query_scalar("SELECT (extract(epoch FROM clock_timestamp()) * 1e6)::bigint")
+                .fetch_one(&db)
+                .await
+                .expect("the database clock");
         let server = Self(command.spawn().expect("the server starts"));
         let deadline = Instant::now() + Duration::from_secs(10);
         while reqwest::get(format!("http://127.0.0.1:{port}/livez"))
@@ -105,6 +115,24 @@ impl Server {
             assert!(Instant::now() < deadline, "the server never answered");
             tokio::time::sleep(Duration::from_millis(50)).await;
         }
+        loop {
+            let applied: bool = sqlx::query_scalar(
+                "SELECT (extract(epoch FROM updated_at) * 1e6)::bigint >= $1 FROM account_quotas",
+            )
+            .bind(since)
+            .fetch_one(&db)
+            .await
+            .expect("account quotas");
+            if applied {
+                break;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "the server never applied its account quotas"
+            );
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+        db.close().await;
         server
     }
 
@@ -203,8 +231,15 @@ impl Drop for Stopped {
 /// `COLOPHON_TEST_DATABASE` set to a database name, the server uses that database on the stack's
 /// Postgres instead of `colophon`: a branch with newer migrations is tested without migrating the
 /// database other checkouts share.
+///
+/// `COLOPHON_TEST_ENV_FILE` names another file in the same format instead: a builder's own
+/// Postgres and Valkey on their own ports, for a branch whose migrations change cluster-wide
+/// roles (D-235's `colophon_accounts`), which must never run on the shared stack's Postgres.
 pub(crate) fn local_env() -> Vec<(String, String)> {
-    let env_file = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../deploy/local.env");
+    let env_file = std::env::var_os("COLOPHON_TEST_ENV_FILE").map_or_else(
+        || PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../deploy/local.env"),
+        PathBuf::from,
+    );
     let database = std::env::var("COLOPHON_TEST_DATABASE").ok();
     std::fs::read_to_string(env_file)
         .expect("deploy/local.env")
@@ -514,8 +549,8 @@ pub(crate) async fn sign_in(user: &str) -> Session {
     };
     let set = cookies_from(&response);
     let (session, csrf) = (
-        cookie(&set, "colophon_session"),
-        cookie(&set, "colophon_csrf"),
+        cookie(&set, "__Host-colophon_session"),
+        cookie(&set, "__Host-colophon_csrf"),
     );
     assert_eq!((session.len(), csrf.len()), (43, 43));
     let raw: Vec<_> = response
@@ -525,14 +560,14 @@ pub(crate) async fn sign_in(user: &str) -> Session {
         .map(|v| v.to_str().unwrap_or_default().to_owned())
         .collect();
     assert!(
-        raw.iter().any(|c| c.starts_with("colophon_session=")
+        raw.iter().any(|c| c.starts_with("__Host-colophon_session=")
             && c.contains("HttpOnly")
             && c.contains("Secure")
             && c.contains("SameSite=Lax")),
         "{raw:?}"
     );
     Session {
-        cookie: format!("colophon_session={session}; colophon_csrf={csrf}"),
+        cookie: format!("__Host-colophon_session={session}; __Host-colophon_csrf={csrf}"),
         csrf,
     }
 }

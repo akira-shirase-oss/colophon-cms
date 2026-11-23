@@ -1,112 +1,66 @@
 <!--
-  Signing in with an email and a password, or creating that account (D-084). One card, two
-  modes; the session cookie comes back in the response itself, and a successful answer makes
-  the parent's `me` query refetch, so the page moves on without a redirect. The provider button
-  shows only when this server actually has one configured (D-141) — an installation on the
-  built-in accounts alone never offers a button that can only fail.
+  The front door's card (D-084): signing in, or creating an account, with a link between the two.
+  The forms themselves are SignInForm and SignUpForm, which /signin and /signup use alone. The
+  provider button shows only when this server actually has one configured (D-141).
 -->
 <script lang="ts">
 	import { untrack } from 'svelte';
 	import { goto } from '$app/navigation';
-	import { createQuery, useQueryClient } from '@tanstack/svelte-query';
+	import { createQuery } from '@tanstack/svelte-query';
 	import { Button } from '@colophon/ui/ui/button';
-	import { Input } from '@colophon/ui/ui/input';
-	import { ApiError, signInPassword, signInUrl, signUp } from '#lib/api.ts';
+	import { signInUrl, type JoinedBySignUp } from '#lib/api.ts';
 	import { providersQuery } from '#lib/queries.ts';
+	import SignInForm from './SignInForm.svelte';
+	import SignUpForm from './SignUpForm.svelte';
 
 	/**
-	 * `returnTo`: where the single sign-on button comes back to afterwards — and where the
-	 * password card navigates when `navigateAfter` is set, which is how `/auth/login`
-	 * degrades with no provider (D-146): the front door signs you in, then sends you on.
-	 * `start`: the mode the card opens in. A new installation's front door opens it on
-	 * creating an account, because that is what its first visitor has to do (D-147).
+	 * `returnTo`: where the single sign-on button comes back to afterwards, and where the card
+	 * navigates when `navigateAfter` is set (D-146). `start`: the mode the card opens in.
+	 * `invitation`: an invitation's token a new account claims as it is made (D-235); the project
+	 * it joined goes to `onJoined`. `firstRun`: the installation's first account (D-147).
 	 */
 	let {
 		returnTo = '/',
 		navigateAfter = false,
-		start = 'signin'
-	}: { returnTo?: string; navigateAfter?: boolean; start?: 'signin' | 'signup' } = $props();
+		start = 'signin',
+		invitation = undefined,
+		firstRun = false,
+		onJoined = undefined
+	}: {
+		returnTo?: string;
+		navigateAfter?: boolean;
+		start?: 'signin' | 'signup';
+		invitation?: string;
+		firstRun?: boolean;
+		onJoined?: (joined: JoinedBySignUp) => Promise<void> | void;
+	} = $props();
 
-	const queryClient = useQueryClient();
-	// Until the answer arrives the button stays: a slow fetch should not flash it away from a
-	// server that does have a provider; only an explicit `false` hides it.
+	// Until the answer arrives the button stays: only an explicit `false` hides it.
 	const providers = createQuery(providersQuery);
-	// Only the opening mode comes from `start`; after that the card's own links switch it.
 	let mode = $state<'signin' | 'signup'>(untrack(() => start));
-	let name = $state('');
-	let email = $state('');
-	let password = $state('');
-	let error = $state('');
-	let busy = $state(false);
+	const canSignUp = $derived(providers.data?.registration !== 'closed');
 
-	function words(failure: unknown): string {
-		// The server's sign-in failure is generic by design; for a password it means one thing.
-		if (failure instanceof ApiError && failure.status === 400) {
-			return 'That email and password did not match.';
-		}
-		return failure instanceof ApiError ? failure.message : String(failure);
+	async function onward() {
+		// Only same-site paths, ever (the server's safe_return_path makes the same rule).
+		if (navigateAfter && returnTo.startsWith('/') && !returnTo.startsWith('//')) await goto(returnTo);
 	}
 
-	async function submit(event: SubmitEvent) {
-		event.preventDefault();
-		busy = true;
-		error = '';
-		try {
-			if (mode === 'signup') await signUp(email, password, name.trim() || undefined);
-			else await signInPassword(email, password);
-			await queryClient.invalidateQueries({ queryKey: ['me'] });
-			// Only same-site paths, ever (the server's safe_return_path makes the same rule).
-			if (navigateAfter && returnTo.startsWith('/') && !returnTo.startsWith('//')) await goto(returnTo);
-		} catch (failure) {
-			error = words(failure);
-		} finally {
-			busy = false;
-		}
-	}
-
-	function swap(next: typeof mode) {
-		mode = next;
-		error = '';
+	async function signedUp(joined: JoinedBySignUp | null) {
+		if (joined && onJoined) await onJoined(joined);
+		else await onward();
 	}
 </script>
 
-<form onsubmit={submit} data-testid="password-auth" class="space-y-3">
-	{#if mode === 'signup'}
-		<div class="space-y-1">
-			<label for="auth-name" class="text-sm font-medium">Your name</label>
-			<Input id="auth-name" bind:value={name} maxlength={200} autocomplete="name" />
-			<p class="text-sm text-muted-foreground">Shown to the people you work with.</p>
-		</div>
-	{/if}
-	<div class="space-y-1">
-		<label for="auth-email" class="text-sm font-medium">Email</label>
-		<Input id="auth-email" type="email" bind:value={email} required maxlength={254} autocomplete="email" />
-	</div>
-	<div class="space-y-1">
-		<label for="auth-password" class="text-sm font-medium">Password</label>
-		<Input
-			id="auth-password"
-			type="password"
-			bind:value={password}
-			required
-			minlength={8}
-			maxlength={512}
-			autocomplete={mode === 'signup' ? 'new-password' : 'current-password'}
-		/>
-		{#if mode === 'signup'}<p class="text-sm text-muted-foreground">At least 8 characters.</p>{/if}
-	</div>
-	{#if error}<p role="alert" class="pt-2 text-sm text-destructive">{error}</p>{/if}
-	<div class="pt-4">
-		<Button type="submit" class="w-full" disabled={busy} data-testid="password-submit">
-			{mode === 'signup' ? 'Create account and continue' : 'Sign in'}
-		</Button>
-	</div>
-</form>
+{#if mode === 'signup'}
+	<SignUpForm {invitation} {firstRun} onSignedUp={signedUp} />
+{:else}
+	<SignInForm onSignedIn={onward} />
+{/if}
 <p class="pt-4 text-center text-sm text-muted-foreground">
-	{#if mode === 'signin'}
-		No account yet? <button type="button" class="underline underline-offset-2 hover:text-foreground" onclick={() => swap('signup')}>Create one</button>
-	{:else}
-		Already have an account? <button type="button" class="underline underline-offset-2 hover:text-foreground" onclick={() => swap('signin')}>Sign in</button>
+	{#if mode === 'signin' && canSignUp}
+		No account yet? <button type="button" class="underline underline-offset-2 hover:text-foreground" onclick={() => (mode = 'signup')}>Create one</button>
+	{:else if mode === 'signup'}
+		Already have an account? <button type="button" class="underline underline-offset-2 hover:text-foreground" onclick={() => (mode = 'signin')}>Sign in</button>
 	{/if}
 </p>
 {#if providers.data?.sso !== false}

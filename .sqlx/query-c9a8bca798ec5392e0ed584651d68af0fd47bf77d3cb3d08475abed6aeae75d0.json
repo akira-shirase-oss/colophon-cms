@@ -1,0 +1,42 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "WITH old AS (\n             UPDATE sessions SET revoked_at = now()\n             WHERE token_hash = $1 AND revoked_at IS NULL AND expires_at > now()\n               AND created_at < (SELECT at FROM session_cookie_rename)\n             RETURNING identity_id, csrf_hash, expires_at, last_seen_at)\n         INSERT INTO sessions (id, token_hash, csrf_hash, identity_id, expires_at, last_seen_at)\n         SELECT $2, $3, csrf_hash, identity_id, expires_at, last_seen_at FROM old\n         RETURNING identity_id, expires_at",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "identity_id",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "sessions",
+            "name": "identity_id"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "expires_at",
+        "type_info": "Timestamptz",
+        "origin": {
+          "Table": {
+            "table": "sessions",
+            "name": "expires_at"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Bytea",
+        "Uuid",
+        "Bytea"
+      ]
+    },
+    "nullable": [
+      false,
+      false
+    ]
+  },
+  "hash": "c9a8bca798ec5392e0ed584651d68af0fd47bf77d3cb3d08475abed6aeae75d0"
+}

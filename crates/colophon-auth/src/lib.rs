@@ -4,5 +4,6 @@
 
 pub mod oidc;
 pub mod tokens;
+pub mod turnstile;
 
 pub use oidc::{ClientSecret, OidcClient, OidcConfig, OidcError, Start, VerifiedIdentity};

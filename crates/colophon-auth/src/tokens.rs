@@ -20,6 +20,16 @@ pub fn hash(token: &str) -> [u8; 32] {
     out
 }
 
+/// HMAC-SHA256 of `value` under `key`: how the staff auth log names an email it may not store
+/// (D-235). Without the key, a digest can't be checked against a guessed address.
+pub fn keyed_digest(key: &[u8], value: &str) -> [u8; 32] {
+    let key = aws_lc_rs::hmac::Key::new(aws_lc_rs::hmac::HMAC_SHA256, key);
+    let tag = aws_lc_rs::hmac::sign(&key, value.as_bytes());
+    let mut out = [0_u8; 32];
+    out.copy_from_slice(tag.as_ref());
+    out
+}
+
 /// The PKCE `S256` challenge for a verifier (RFC 7636 §4.2).
 pub fn pkce_challenge(verifier: &str) -> String {
     URL_SAFE_NO_PAD.encode(hash(verifier))
@@ -80,6 +90,22 @@ pub fn setup_code_hash(typed: &str) -> Option<[u8; 32]> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn keyed_digest_is_hmac_sha256_rfc_4231_case_2() {
+        let tag = keyed_digest(b"Jefe", "what do ya want for nothing?");
+        let expected: Vec<u8> = (0..32)
+            .map(|i| {
+                u8::from_str_radix(
+                    &"5bdcc146bf60754e6a042426089575c75a003f089d2739839dec58b964ec3843"
+                        [i * 2..i * 2 + 2],
+                    16,
+                )
+                .expect("hex")
+            })
+            .collect();
+        assert_eq!(tag.as_slice(), expected.as_slice());
+    }
 
     #[test]
     fn pkce_matches_the_rfc_7636_example() {

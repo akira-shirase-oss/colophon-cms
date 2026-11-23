@@ -179,8 +179,8 @@ async fn the_api_reads_keys_but_can_t_rotate_or_write_them() {
 }
 
 /// White-hat: not just the API's role. Every role the API's login can become (`colophon_api`, which it inherits,
-/// and `colophon_delivery` and `colophon_worker`, which it can `SET ROLE` to) can neither rotate nor write a key
-/// or a rotation line, and none can read the rotation log.
+/// and `colophon_audience`, `colophon_delivery` and `colophon_worker`, which it can `SET ROLE` to) can neither
+/// rotate nor write a key or a rotation line, and none can read the rotation log.
 #[tokio::test]
 #[ignore = "needs the local stack: scripts/stack.sh up"]
 async fn no_role_the_api_s_login_can_become_rotates_or_writes_keys() {
@@ -196,11 +196,16 @@ async fn no_role_the_api_s_login_can_become_rotates_or_writes_keys() {
     .expect("the roles");
     assert_eq!(
         roles,
-        ["colophon_api", "colophon_delivery", "colophon_worker"],
+        [
+            "colophon_api",
+            "colophon_audience",
+            "colophon_delivery",
+            "colophon_worker"
+        ],
         "a new role the login can become needs a look here"
     );
     for role in &roles {
-        // Audited: `role` is one of the three names asserted just above.
+        // Audited: `role` is one of the four names asserted just above.
         sqlx::raw_sql(sqlx::AssertSqlSafe(format!("SET ROLE {role}")))
             .execute(&mut *connection)
             .await

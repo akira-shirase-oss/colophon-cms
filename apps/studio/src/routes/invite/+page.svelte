@@ -14,7 +14,7 @@
 	import { createQuery, useQueryClient } from '@tanstack/svelte-query';
 	import { toast } from 'svelte-sonner';
 	import { Button } from '@colophon/ui/ui/button';
-	import { acceptInvitation, ApiError, lookupInvitation, me } from '#lib/api.ts';
+	import { acceptInvitation, ApiError, lookupInvitation, me, type JoinedBySignUp } from '#lib/api.ts';
 	import { rememberProject } from '#lib/lastProject.ts';
 	import AuthForm from '#lib/shell/AuthForm.svelte';
 
@@ -77,6 +77,16 @@
 	}
 
 
+	// A new account made from this page claims the invitation as it is made (D-235): it is already
+	// in the project, so there's nothing left to accept.
+	async function joinedBySignUp(joined: JoinedBySignUp) {
+		keep('');
+		const signedIn = await queryClient.fetchQuery({ queryKey: ['me'], queryFn: me });
+		if (signedIn) rememberProject(signedIn.id, joined.project_id);
+		toast.success(`You joined the project as ${joined.role}`);
+		await goto(resolve('/'));
+	}
+
 	function decline() {
 		keep('');
 		outcome = 'declined';
@@ -96,7 +106,7 @@
 	<p role="alert" data-testid="invite-outcome">This link has no invitation in it. Ask the person who invited you for a new link.</p>
 {:else if who.data === null}
 	<p data-testid="signed-out">Sign in first, or create an account if you don't have one; this page shows the invitation afterwards.</p>
-	<AuthForm returnTo={resolve('/invite')} />
+	<AuthForm returnTo={resolve('/invite')} invitation={token} onJoined={joinedBySignUp} />
 {:else if outcome === 'declined'}
 	<p data-testid="invite-outcome" role="status">Not joined. The invitation stays unused until it expires.</p>
 {:else if offer.isPending}

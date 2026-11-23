@@ -62,7 +62,7 @@ export function setup() {
   if (signedIn.status !== 204) fail(`sign-in failed: HTTP ${signedIn.status}`);
   const jar = http.cookieJar().cookiesForURL(PUBLIC_URL);
   const headers = {
-    Cookie: `colophon_session=${jar.colophon_session[0]}`, 'X-CSRF-Token': jar.colophon_csrf[0], Origin: PUBLIC_URL,
+    Cookie: `__Host-colophon_session=${jar['__Host-colophon_session'][0]}`, 'X-CSRF-Token': jar['__Host-colophon_csrf'][0], Origin: PUBLIC_URL,
     'Content-Type': 'application/json',
   };
 

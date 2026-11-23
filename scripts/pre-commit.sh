@@ -87,11 +87,13 @@ fi
 
 for pkg in "${packages[@]}"; do
   name=$(jq -r .name "$pkg/package.json")
+  # From the package's own directory: npm finds a workspace's root itself, and a package outside the
+  # workspaces (packages/cli-npm) has no -w name to give.
   if jq -e '.scripts.check' "$pkg/package.json" >/dev/null; then
-    step "types ($name)" npm run --silent -w "$name" check
+    step "types ($name)" npm --prefix "$pkg" run --silent check
   fi
   if jq -e '.scripts.test' "$pkg/package.json" >/dev/null; then
-    step "unit tests ($name)" npm run --silent -w "$name" test
+    step "unit tests ($name)" npm --prefix "$pkg" run --silent test
   fi
 done
 

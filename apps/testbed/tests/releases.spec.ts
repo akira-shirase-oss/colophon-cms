@@ -8,7 +8,7 @@ import { signIn } from './sign-in.ts';
 /** A project with two approved changesets of one article each; the project id. */
 async function setup(page: Page): Promise<string> {
 	return page.evaluate(async (slug) => {
-		const csrf = document.cookie.split('; ').find((pair) => pair.startsWith('colophon_csrf='))?.slice('colophon_csrf='.length) ?? '';
+		const csrf = document.cookie.split('; ').find((pair) => pair.startsWith('__Host-colophon_csrf='))?.slice('__Host-colophon_csrf='.length) ?? '';
 		const json = { 'Content-Type': 'application/json', 'X-CSRF-Token': csrf };
 		// Every setup request must succeed: a refusal here is reported with the server's answer,
 		// not found a minute later as a choice missing from a list.
@@ -81,7 +81,7 @@ test('release on a base, refuse a stale base, and read releases with no cookie',
 /** A project with "Time traveller" approved as "First release"; the project and article ids. */
 async function rollbackSetup(page: Page): Promise<{ project: string; first: string }> {
 	return page.evaluate(async (slug) => {
-		const csrf = document.cookie.split('; ').find((pair) => pair.startsWith('colophon_csrf='))?.slice('colophon_csrf='.length) ?? '';
+		const csrf = document.cookie.split('; ').find((pair) => pair.startsWith('__Host-colophon_csrf='))?.slice('__Host-colophon_csrf='.length) ?? '';
 		const json = { 'Content-Type': 'application/json', 'X-CSRF-Token': csrf };
 		async function ok(response: Promise<Response>, what: string): Promise<Response> {
 			const answer = await response;
@@ -111,7 +111,7 @@ async function rollbackSetup(page: Page): Promise<{ project: string; first: stri
 async function secondRelease(page: Page, project: string, first: string): Promise<string> {
 	return page.evaluate(
 		async ({ project, first }) => {
-			const csrf = document.cookie.split('; ').find((pair) => pair.startsWith('colophon_csrf='))?.slice('colophon_csrf='.length) ?? '';
+			const csrf = document.cookie.split('; ').find((pair) => pair.startsWith('__Host-colophon_csrf='))?.slice('__Host-colophon_csrf='.length) ?? '';
 			const json = { 'Content-Type': 'application/json', 'X-CSRF-Token': csrf };
 			async function ok(response: Promise<Response>, what: string): Promise<Response> {
 				const answer = await response;
@@ -258,7 +258,7 @@ test('roll back to an earlier release through an ordinary changeset', async ({ p
 /** A project with one approved changeset of a published-to-be article and one draft; ids. */
 async function unpublishSetup(page: Page): Promise<{ project: string; live: string }> {
 	return page.evaluate(async (slug) => {
-		const csrf = document.cookie.split('; ').find((pair) => pair.startsWith('colophon_csrf='))?.slice('colophon_csrf='.length) ?? '';
+		const csrf = document.cookie.split('; ').find((pair) => pair.startsWith('__Host-colophon_csrf='))?.slice('__Host-colophon_csrf='.length) ?? '';
 		const json = { 'Content-Type': 'application/json', 'X-CSRF-Token': csrf };
 		const created = await fetch('/server/api/v1/projects', { method: 'POST', headers: json, body: JSON.stringify({ slug, name: 'Unpublish testbed' }) });
 		const project = ((await created.json()) as { data: { id: string } }).data.id;

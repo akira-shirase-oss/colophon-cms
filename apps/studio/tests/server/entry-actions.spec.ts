@@ -130,7 +130,7 @@ test('a collection of 101 entries loads more, and the oldest, published, shows a
 	const oldest = await newEntry(page, project, 'The oldest one');
 	await publishThroughApi(page, project, 'The oldest one', [oldest]);
 	const made = await page.evaluate(async (path) => {
-		const csrf = document.cookie.split('; ').find((pair) => pair.startsWith('colophon_csrf='))?.slice('colophon_csrf='.length) ?? '';
+		const csrf = document.cookie.split('; ').find((pair) => pair.startsWith('__Host-colophon_csrf='))?.slice('__Host-colophon_csrf='.length) ?? '';
 		const doc = { schema: 'colophon/rich-text', version: 1, doc: { type: 'doc', content: [{ type: 'paragraph' }] } };
 		let created = 0;
 		for (let batch = 0; batch < 10; batch += 1) {

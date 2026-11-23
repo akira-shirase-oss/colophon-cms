@@ -18,7 +18,8 @@
 //!   happened"; the reconciler owns it, not retention.
 //! - `audit` (90 days, spec §27): `audit_events`, through `colophon_audit_sweep` — the only
 //!   delete the append-only trigger allows, run as `colophon_retention`, a role that can do
-//!   nothing else (migration 0050).
+//!   nothing else (migration 0050); and the staff auth log, `staff_auth_events`, the same way
+//!   through `colophon_staff_auth_sweep` (D-235, migration 0095).
 //! - `idempotency` (30 days; the spec floor is 7): `idempotency_records`. Past the age a
 //!   replayed key is a fresh write, which the spec's minimum makes honest.
 //! - `session` (90 days past `expires_at`): `sessions`, `access_tokens` — dead state, not
@@ -29,6 +30,7 @@
 //! - `attempt` (15 minutes): `setup_attempts`, matching the throttle's own window in
 //!   `colophon_setup_attempt`; and `audience_magic_links` that far past `expires_at`
 //!   (D-153) — a link is dead when it expires, and its audit events are the record.
+//! - `signup_throttle` windows an hour old (D-235): the per-address sign-up count starts over.
 //! - `throttle` (1 day): `sign_in_throttle` keys untouched that long and not paused (D-154)
 //!   — the count of misses from one address at one account starts over. `sign_in_attempts` and `device_logins` go at `expires_at`:
 //!   dead rows their writers already prune on a busy day, swept here so a quiet one
@@ -164,6 +166,12 @@ pub struct Swept {
     pub sign_in_throttle: u64,
     /// `preview_grants` ended (expired or revoked) more than a week ago (D-171).
     pub preview_grants: u64,
+    /// `staff_auth_events` past the audit age (D-235).
+    pub staff_auth: u64,
+    /// `signup_throttle` windows over (an hour old, D-235).
+    pub signup_throttle: u64,
+    /// `sign_in_log_budget` windows over (an hour old, D-235).
+    pub sign_in_log_budget: u64,
 }
 
 impl Swept {
@@ -190,6 +198,9 @@ impl Swept {
             + self.magic_links
             + self.sign_in_throttle
             + self.preview_grants
+            + self.staff_auth
+            + self.signup_throttle
+            + self.sign_in_log_budget
     }
 }
 
@@ -562,6 +573,20 @@ pub async fn sweep(
     }
     let preview_grants =
         retained(&mut tx, "colophon_sweep_preview_grants", preview_cut, batch).await?;
+    // The staff auth log (D-235) is an audit record: the audit age, through the one delete its
+    // append-only trigger allows (colophon_staff_auth_sweep, as colophon_retention).
+    let staff_auth = retained(&mut tx, "colophon_staff_auth_sweep", audit_cut, batch).await?;
+    // A sign-up window an hour old has ended; its row only starts the count over.
+    let signup_cut = OffsetDateTime::now_utc() - SIGNUP_WINDOW;
+    let signup_throttle =
+        retained(&mut tx, "colophon_sweep_signup_throttle", signup_cut, hot).await?;
+    let sign_in_log_budget = retained(
+        &mut tx,
+        "colophon_sweep_sign_in_log_budget",
+        signup_cut,
+        hot,
+    )
+    .await?;
 
     tx.commit().await.map_err(DbError::from_query)?;
     Ok(Swept {
@@ -586,8 +611,14 @@ pub async fn sweep(
         magic_links,
         sign_in_throttle,
         preview_grants,
+        staff_auth,
+        signup_throttle,
+        sign_in_log_budget,
     })
 }
+
+/// The sign-up cap's window (D-235, `colophon_signup_attempt`): an hour.
+const SIGNUP_WINDOW: time::Duration = time::Duration::hours(1);
 
 /// How long an ended preview grant is kept (D-171): a week.
 const PREVIEW_GRANT_AGE: time::Duration = time::Duration::days(7);

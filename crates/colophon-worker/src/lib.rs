@@ -33,8 +33,10 @@ use time::OffsetDateTime;
 use tokio::sync::{Notify, Semaphore};
 use tokio_util::{sync::CancellationToken, task::TaskTracker};
 
-/// How often the worker fails jobs that ran out of time.
-const EXPIRY_INTERVAL: Duration = Duration::from_secs(10);
+/// How often the worker runs its sweeps: it fails jobs that ran out of time and releases the
+/// ones whose lease lapsed (D-237). Each start runs them at once, then every interval, so a
+/// killed worker's job is waiting again within its lease plus this of a restart.
+pub const EXPIRY_INTERVAL: Duration = Duration::from_secs(10);
 
 /// Bulk jobs one worker may drive at once — the spec's "two AI jobs" (§33, D-116).
 const BULK_SLOTS: usize = 2;

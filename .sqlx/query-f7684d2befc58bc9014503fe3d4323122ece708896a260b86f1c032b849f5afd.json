@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "SELECT id, password_hash FROM identities WHERE issuer = $1 AND subject = $2",
+  "query": "SELECT id, password_hash FROM identities\n         WHERE issuer = $1 AND subject = $2 AND disabled_at IS NULL",
   "describe": {
     "columns": [
       {
@@ -37,5 +37,5 @@
       true
     ]
   },
-  "hash": "de6cf24c2e76eabfd995ee156125229d525cf63c5767b1fba98fe4335d9e174b"
+  "hash": "f7684d2befc58bc9014503fe3d4323122ece708896a260b86f1c032b849f5afd"
 }

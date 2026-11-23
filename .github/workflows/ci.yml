@@ -738,6 +738,7 @@ jobs:
           smoke DURATION=10s P99_MS=$(limit 500) scripts/load.sh postgres-trouble throughput
           smoke DURATION=10s P99_MS=$(limit 500) scripts/load.sh purge-trouble throughput
           smoke TOTAL=20000 P99_MS=$(limit 200) scripts/load.sh quotas throughput
+          smoke TOTAL=2000 P99_MS=$(limit 700) scripts/load.sh signup throughput
           smoke TOTAL=10000 P99_MS=$(limit 500) scripts/load.sh site-starter throughput
           smoke DURATION=10s P99_MS=$(limit 700) scripts/load.sh smoke throughput
           # A limiter smoke (perf/limiter-smokes.tsv): its rate exceeds the fixed delivery limit, so it never scales.

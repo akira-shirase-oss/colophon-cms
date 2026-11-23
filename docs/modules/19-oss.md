@@ -69,7 +69,7 @@ keep.
   may not. From 1.0, `/api/vN` is the contract: a breaking change ships as a new API version, served beside the old
   one for the support window below.
 - **Pre-releases.** `0.1.0-alpha.N` until P6's v0.1 gate, then `-beta.N` and `-rc.N` as needed, then `0.1.0`. The
-  version is `0.1.0-alpha.5`; it was `0.1.0-alpha.1` from milestone V until 2026-11-21, then briefly `0.1.0-alpha.2`, `0.1.0-alpha.3` and `0.1.0-alpha.4`.
+  version is `0.1.0-alpha.6`; it was `0.1.0-alpha.1` from milestone V until 2026-11-21, then briefly `0.1.0-alpha.2`, `0.1.0-alpha.3`, `0.1.0-alpha.4` and `0.1.0-alpha.5`.
 - **Raising it:** change `[workspace.package] version`, `packages/cli-npm/package.json` (its `version` and its
   five `optionalDependencies`), the `version` of `packages/sdk/package.json` and `packages/rich-text/package.json`,
   and `SDK_VERSION` in `packages/sdk/src/compat.ts` in one commit (tests and the pack check fail when they

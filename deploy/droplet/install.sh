@@ -12,7 +12,7 @@
 # (r2_account_id, r2_access_key_id, r2_backup_access_key_id, ssh_ip); COLOPHON_RELEASE_BASE a local
 # release directory (upgrade.sh; with COLOPHON_RELEASE_UNVERIFIED=rehearsal, as it says).
 set -euo pipefail
-export COLOPHON_VERSION="${COLOPHON_VERSION:-0.1.0-alpha.5}"
+export COLOPHON_VERSION="${COLOPHON_VERSION:-0.1.0-alpha.6}"
 here=$(cd "$(dirname "$0")" && pwd)
 # shellcheck source=deploy/droplet/public-host.sh
 . "$here/public-host.sh"

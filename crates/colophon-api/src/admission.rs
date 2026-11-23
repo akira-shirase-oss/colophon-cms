@@ -869,7 +869,12 @@ fn credential(headers: &HeaderMap) -> Option<String> {
             .iter()
             .filter_map(|value| value.to_str().ok())
             .flat_map(|value| value.split(';'))
-            .find_map(|pair| pair.trim().strip_prefix("colophon_session="))
+            .find_map(|pair| {
+                let pair = pair.trim();
+                // The old name too, for the one release it is still read (D-235).
+                pair.strip_prefix("__Host-colophon_session=")
+                    .or_else(|| pair.strip_prefix("colophon_session="))
+            })
     };
     let secret = bearer.or_else(session)?;
     let hash = content_hash(&sha256(secret.as_bytes()));
@@ -911,6 +916,21 @@ pub type SharedAdmission = Arc<Admission>;
 /// in-process router with no connection info).
 pub(crate) struct ClientAddress(pub(crate) String);
 
+impl ClientAddress {
+    /// The key for `request`, outside an extractor (a middleware's).
+    pub(crate) fn of(request: &axum::extract::Request, state: &AppState) -> String {
+        let peer = request
+            .extensions()
+            .get::<ConnectInfo<SocketAddr>>()
+            .map(|info| info.0.ip());
+        let client = match &state.admission {
+            Some(admission) => admission.client(peer, request.headers()),
+            None => peer,
+        };
+        client.map_or_else(|| "-".to_owned(), keyed_address)
+    }
+}
+
 impl axum::extract::FromRequestParts<AppState> for ClientAddress {
     type Rejection = std::convert::Infallible;
 
@@ -929,6 +949,29 @@ impl axum::extract::FromRequestParts<AppState> for ClientAddress {
         std::future::ready(Ok(Self(
             client.map_or_else(|| "-".to_owned(), keyed_address),
         )))
+    }
+}
+
+/// The client's whole address, as admission believes it ([`ClientAddress`] without the /64):
+/// what Turnstile is told solved the challenge (D-235). `None` when the server can't tell.
+pub(crate) struct ClientIp(pub(crate) Option<IpAddr>);
+
+impl axum::extract::FromRequestParts<AppState> for ClientIp {
+    type Rejection = std::convert::Infallible;
+
+    fn from_request_parts(
+        parts: &mut axum::http::request::Parts,
+        state: &AppState,
+    ) -> impl Future<Output = Result<Self, Self::Rejection>> + Send {
+        let peer = parts
+            .extensions
+            .get::<ConnectInfo<SocketAddr>>()
+            .map(|info| info.0.ip());
+        let client = match &state.admission {
+            Some(admission) => admission.client(peer, &parts.headers),
+            None => peer,
+        };
+        std::future::ready(Ok(Self(client)))
     }
 }
 

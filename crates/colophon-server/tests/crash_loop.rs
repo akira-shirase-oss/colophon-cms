@@ -303,6 +303,55 @@ async fn killing_the_server_and_worker_loses_and_doubles_nothing() {
     }
 
     let database = common::owner_database().await;
+    // A job the last killed worker left `running` is released by the sweep (D-237), which the
+    // restarted worker runs as it starts, too early for a lease still running, and then every
+    // EXPIRY_INTERVAL: so it waits again within the lease plus that interval of the last start,
+    // and its next attempt finishes it, delivered or superseded by a newer release. The latest
+    // releases can succeed well before that, so wait for every job to finish, within that bound,
+    // and prove each one still running at the first look came back through a later attempt.
+    let projects: Vec<String> = states.iter().map(|state| state.id.clone()).collect();
+    let open_jobs = || async {
+        sqlx::query_as::<_, (uuid::Uuid, String, i32)>(
+            "SELECT id, status, attempts FROM jobs
+             WHERE project_id = ANY($1::uuid[]) AND status NOT IN ('succeeded', 'superseded')",
+        )
+        .bind(&projects)
+        .fetch_all(&database)
+        .await
+        .expect("jobs")
+    };
+    let first_look = open_jobs().await;
+    let lease = Duration::from_millis(1_500);
+    let bound = lease + colophon_worker::EXPIRY_INTERVAL + Duration::from_secs(5);
+    let waiting_since = Instant::now();
+    loop {
+        if open_jobs().await.is_empty() {
+            break;
+        }
+        assert!(
+            waiting_since.elapsed() < bound,
+            "jobs still open past lease + EXPIRY_INTERVAL + 5 s: {:?}",
+            open_jobs().await
+        );
+        tokio::time::sleep(Duration::from_millis(200)).await;
+    }
+    for (id, status, attempts) in &first_look {
+        let (ended, ended_attempts): (String, i32) =
+            sqlx::query_as("SELECT status, attempts FROM jobs WHERE id = $1")
+                .bind(id)
+                .fetch_one(&database)
+                .await
+                .expect("the job");
+        assert!(
+            matches!(ended.as_str(), "succeeded" | "superseded") && ended_attempts > *attempts,
+            "job {id}, {status} at attempt {attempts}, ended {ended} at attempt {ended_attempts}"
+        );
+    }
+    println!(
+        "crash loop: {} job(s) open when the latest releases were delivered, all finished through a later attempt within {:?}",
+        first_look.len(),
+        waiting_since.elapsed()
+    );
     let announcements = receiver.seen();
     let mut published = 0;
     for state in &states {

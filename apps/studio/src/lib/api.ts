@@ -344,7 +344,10 @@ export class ApiError extends Error {
 		readonly details: Details | null = null,
 		/** For a rate limit (429 `rate_limited`, D-076): how long to wait before sending it again,
 		 *  in milliseconds, from `Retry-After`. */
-		readonly retryAfter: number | null = null
+		readonly retryAfter: number | null = null,
+		/** For a 429: when the server says to try again, uncapped (a sign-up cap is per hour,
+		 *  D-235), as a time in milliseconds since the epoch, for showing to a person. */
+		readonly retryAt: number | null = null
 	) {
 		super(message);
 	}
@@ -381,8 +384,8 @@ export interface Details {
 
 /** The session's CSRF token, which every cookie-authenticated write echoes. */
 export function csrfToken(): string {
-	const match = document.cookie.split('; ').find((pair) => pair.startsWith('colophon_csrf='));
-	return match?.slice('colophon_csrf='.length) ?? '';
+	const match = document.cookie.split('; ').find((pair) => pair.startsWith('__Host-colophon_csrf='));
+	return match?.slice('__Host-colophon_csrf='.length) ?? '';
 }
 
 /** Where "Sign in" goes; the server comes back to `returnTo` afterwards. */
@@ -390,9 +393,30 @@ export function signInUrl(returnTo: string): string {
 	return `/auth/login?return_to=${encodeURIComponent(returnTo)}`;
 }
 
-/** Creates an email-and-password account and starts its session in one step (D-084). */
-export async function signUp(email: string, password: string, display_name?: string): Promise<void> {
-	await send('POST', '/auth/signup', { email, password, ...(display_name ? { display_name } : {}) });
+/** The project a sign-up joined by claiming its invitation (D-235). */
+export type JoinedBySignUp = { project_id: string; role: string };
+
+/**
+ * Creates an email-and-password account and starts its session in one step (D-084). With an
+ * invitation's token the sign-up claims it (D-235: an invite-only installation takes sign-ups only
+ * this way) and answers the project it joined; `null` when it joined none.
+ */
+export async function signUp(
+	email: string,
+	password: string,
+	display_name?: string,
+	invitation?: string,
+	turnstile_token?: string
+): Promise<JoinedBySignUp | null> {
+	const response = await send('POST', '/auth/signup', {
+		email,
+		password,
+		...(display_name ? { display_name } : {}),
+		...(invitation ? { invitation } : {}),
+		...(turnstile_token ? { turnstile_token } : {})
+	});
+	const answer = (await response.json().catch(() => null)) as { data?: { joined?: JoinedBySignUp | null } } | null;
+	return answer?.data?.joined ?? null;
 }
 
 /** Signs in with an email and a password; the session cookie is set by the response itself. */
@@ -400,11 +424,38 @@ export async function signInPassword(email: string, password: string): Promise<v
 	await send('POST', '/auth/signin', { email, password });
 }
 
-/** What sign-in methods this server offers (D-141): `sso` — an external provider is configured. */
-export async function authProviders(): Promise<{ sso: boolean }> {
-	return ((await (await send('GET', '/auth/providers')).json()) as {
-		data: { sso: boolean };
-	}).data;
+/** Who may sign up (D-235): anyone, only with an invitation, or nobody. */
+export type Registration = 'open' | 'invite' | 'closed';
+
+/** What this server offers a signed-out visitor (D-141, D-235): `sso` — an external provider is
+ *  configured; `turnstile_site_key` — sign-ups carry a Turnstile token; `registration` — who may
+ *  sign up. */
+export interface AuthProviders {
+	sso: boolean;
+	turnstile_site_key: string | null;
+	registration: Registration;
+}
+
+export async function authProviders(): Promise<AuthProviders> {
+	return ((await (await send('GET', '/auth/providers')).json()) as { data: AuthProviders }).data;
+}
+
+/** One quota: what is used and its limit; `null` limit means unbounded (administrators). */
+export interface Meter {
+	used: number;
+	limit: number | null;
+}
+
+/** The caller's own usage across every project they own (D-235). */
+export interface Usage {
+	projects: Meter;
+	entries: Meter;
+	assets: Meter;
+	storage_bytes: Meter;
+}
+
+export async function usage(): Promise<Usage> {
+	return ((await (await send('GET', '/api/v1/me/usage')).json()) as { data: Usage }).data;
 }
 
 /** Every request gives up after this long and counts as "no answer": a save is then retried with
@@ -421,6 +472,14 @@ export function retryAfterMs(header: string | null, now = Date.now()): number {
 	const text = header?.trim() ?? '';
 	const wait = /^\d+$/.test(text) ? Number(text) * 1000 : Number.isNaN(Date.parse(text)) ? 1000 : Date.parse(text) - now;
 	return Math.min(Math.max(wait, 0), 60_000);
+}
+
+/** When a 429's `Retry-After` says to try again, uncapped but at most a day away, for telling a
+ *  person (`retryAfterMs` caps the wait a request itself sleeps). */
+export function retryAt(header: string | null, now = Date.now()): number {
+	const text = header?.trim() ?? '';
+	const wait = /^\d+$/.test(text) ? Number(text) * 1000 : Number.isNaN(Date.parse(text)) ? 1000 : Date.parse(text) - now;
+	return now + Math.min(Math.max(wait, 0), 86_400_000);
 }
 
 const pause = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -467,8 +526,9 @@ export async function send(method: string, path: string, body?: unknown, headers
 	const reason = details?.reason ?? null;
 	switch (true) {
 		case response.status === 429 && reason === 'rate_limited': {
-			const wait = retryAfterMs(response.headers.get('retry-after'));
-			throw new ApiError('retry', busyFor(wait / 1000, false), 429, reason, null, details, wait);
+			const header = response.headers.get('retry-after');
+			const wait = retryAfterMs(header);
+			throw new ApiError('retry', busyFor(wait / 1000, false), 429, reason, null, details, wait, retryAt(header));
 		}
 		case response.status === 401:
 			throw new ApiError('signed-out', message, 401);

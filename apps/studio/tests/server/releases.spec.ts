@@ -9,7 +9,7 @@ import { env, newProject, signIn, violations } from './helpers.ts';
 async function approvedChangeset(page: Page, project: string, title: string): Promise<string> {
 	const id = await page.evaluate(
 		async ([project, title]) => {
-			const csrf = document.cookie.split('; ').find((pair) => pair.startsWith('colophon_csrf='))?.slice('colophon_csrf='.length) ?? '';
+			const csrf = document.cookie.split('; ').find((pair) => pair.startsWith('__Host-colophon_csrf='))?.slice('__Host-colophon_csrf='.length) ?? '';
 			const headers = { 'Content-Type': 'application/json', 'X-CSRF-Token': csrf };
 			const key = () => crypto.randomUUID().replaceAll('-', '');
 			const base = `/api/v1/projects/${project}/environments/production`;
@@ -150,7 +150,7 @@ test('an article is taken down through a reviewed changeset, and delivery says i
 async function manyReleases(page: Page, project: string, count: number): Promise<void> {
 	await page.evaluate(
 		async ([project, count]) => {
-			const csrf = document.cookie.split('; ').find((pair) => pair.startsWith('colophon_csrf='))?.slice('colophon_csrf='.length) ?? '';
+			const csrf = document.cookie.split('; ').find((pair) => pair.startsWith('__Host-colophon_csrf='))?.slice('__Host-colophon_csrf='.length) ?? '';
 			const headers = { 'Content-Type': 'application/json', 'X-CSRF-Token': csrf };
 			const key = () => crypto.randomUUID().replaceAll('-', '');
 			const base = `/api/v1/projects/${project}/environments/production`;

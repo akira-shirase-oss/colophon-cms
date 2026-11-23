@@ -97,7 +97,7 @@ test('a review refused because an entry was edited meanwhile says what happened 
 	// Someone edits the entry while the reviewer has the request open.
 	const saved = await page.evaluate(
 		async ({ path }) => {
-			const csrf = document.cookie.split('; ').find((pair) => pair.startsWith('colophon_csrf='))?.slice('colophon_csrf='.length) ?? '';
+			const csrf = document.cookie.split('; ').find((pair) => pair.startsWith('__Host-colophon_csrf='))?.slice('__Host-colophon_csrf='.length) ?? '';
 			const current = await fetch(path);
 			const { data } = (await current.json()) as { data: { content: Record<string, unknown> } };
 			const response = await fetch(path, {

@@ -61,6 +61,8 @@ async fn a_request_that_cannot_get_a_connection_is_told_to_retry() {
             media_keys: colophon_api::media_sign::Keys::default(),
             uploads: colophon_api::uploads::UploadGate::new(256, 21 * 1024 * 1024),
             install_kind: None,
+            selfserve: colophon_api::selfserve::SelfServe::default(),
+            guards: colophon_api::selfserve::Guards::default(),
         })),
         build: colophon_api::BuildInfo::unstamped("0.0.0-test"),
         admission: None,
@@ -79,7 +81,7 @@ async fn a_request_that_cannot_get_a_connection_is_told_to_retry() {
     let request = Request::get("/api/v1/projects")
         .header(
             header::COOKIE,
-            format!("colophon_session={}", "a".repeat(43)),
+            format!("__Host-colophon_session={}", "a".repeat(43)),
         )
         .body(Body::empty())
         .expect("request");

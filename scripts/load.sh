@@ -117,7 +117,7 @@ else
   [[ -f "perf/k6/$endpoint.js" ]] && script_ok=1 || script_ok=0
 fi
 if (( script_ok == 0 )) || [[ "$scenario" != throughput && "$scenario" != steady && "$scenario" != stress ]]; then
-  echo "usage: scripts/load.sh health|rich-text|openapi|session|accounts|cli|members|roles|tokens|quotas|noisy-agent|password-flood|schedules|projects|setup|changesets|stages|collaboration|live|migrations|delivery|audience|audience-sites|publishing|undo|cache-down|postgres-trouble|purge-trouble|smoke|warm-baseline|cold-cache|stampede|mixed|spike|import-scale|cdn-warm|media-load|entries|content-types|modelling|inverses|transfer|graphql|locales|deletion|collection-delete|site-starter|assets|rich-text-media|bulk|studio|site|preview|uploads-slow throughput|steady|stress [--baseline]" >&2
+  echo "usage: scripts/load.sh health|rich-text|openapi|session|accounts|cli|members|roles|tokens|quotas|noisy-agent|password-flood|signup|schedules|projects|setup|changesets|stages|collaboration|live|migrations|delivery|audience|audience-sites|publishing|undo|cache-down|postgres-trouble|purge-trouble|smoke|warm-baseline|cold-cache|stampede|mixed|spike|import-scale|cdn-warm|media-load|entries|content-types|modelling|inverses|transfer|graphql|locales|deletion|collection-delete|site-starter|assets|rich-text-media|bulk|studio|site|preview|uploads-slow throughput|steady|stress [--baseline]" >&2
   exit 2
 fi
 # The dependency-failure scenarios pause the stack's Postgres or Valkey (D-127): only on a stack
@@ -168,6 +168,7 @@ case "$endpoint" in
   # a 60-a-minute token hammers at ~600/s of mostly refused quota checks — quotas' total rate,
   # entries' p99 budget for the same reason.
   noisy-agent) RATE="${RATE:-250}" P99_MS="${P99_MS:-250}" ;;
+  signup) RATE="${RATE:-20}" P99_MS="${P99_MS:-700}" ;;
   password-flood) RATE="${RATE:-200}" P99_MS="${P99_MS:-250}" ;;
   # Writers save entries (entries' arm); subscribers' held streams aren't timed — only their
   # clean ends are checked (the p99 gate binds the writes alone).
@@ -395,6 +396,11 @@ else
     # Set before the generic ceiling below, whose `:-` then leaves it alone.
     if [[ "$endpoint" == "spike" ]]; then
       export COLOPHON_RATE_LIMIT_DELIVERY="${COLOPHON_RATE_LIMIT_DELIVERY:-1000/2000}"
+    fi
+    # signup measures open self-serve sign-up (D-235) with no Turnstile; one machine sends every
+    # sign-up, so the per-address cap is lifted here and pinned by the API tests instead.
+    if [[ "$endpoint" == "signup" ]]; then
+      export COLOPHON_REGISTRATION=open COLOPHON_SIGNUPS_PER_ADDRESS_HOUR="${COLOPHON_SIGNUPS_PER_ADDRESS_HOUR:-100000}"
     fi
     # password-flood measures production's password limit (D-213: 5 a second, a burst of 10).
     if [[ "$endpoint" == "password-flood" ]]; then

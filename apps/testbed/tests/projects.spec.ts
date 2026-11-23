@@ -9,7 +9,7 @@ test('search projects, page through them, and see a bad search refused', async (
 	await signIn(page, 'dev-owner');
 	const token = `pg${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
 	await page.evaluate(async (token) => {
-		const csrf = document.cookie.split('; ').find((pair) => pair.startsWith('colophon_csrf='))?.slice('colophon_csrf='.length) ?? '';
+		const csrf = document.cookie.split('; ').find((pair) => pair.startsWith('__Host-colophon_csrf='))?.slice('__Host-colophon_csrf='.length) ?? '';
 		for (const letter of ['C', 'A', 'B']) {
 			await fetch('/server/api/v1/projects', {
 				method: 'POST',

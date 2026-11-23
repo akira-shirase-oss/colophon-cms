@@ -4,6 +4,40 @@
  */
 
 export interface paths {
+    "/api/v1/accounts/{identity}/disable": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Disable an account: every session and API token it made is revoked, and it can't sign in (D-235) */
+        post: operations["disableAccount"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/accounts/{identity}/enable": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Enable a disabled account again; it signs in afresh (D-235) */
+        post: operations["enableAccount"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/installation": {
         parameters: {
             query?: never;
@@ -55,6 +89,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/me/usage": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** What the caller's account uses against its limits, across the projects it owns (D-235) */
+        get: operations["myUsage"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/projects": {
         parameters: {
             query?: never;
@@ -65,7 +116,7 @@ export interface paths {
         /** The projects the caller belongs to, by name */
         get: operations["listProjects"];
         put?: never;
-        /** Create a project (administrators only) */
+        /** Create a project (administrators; any account where registration is open, up to the per-account cap) */
         post: operations["createProject"];
         delete?: never;
         options?: never;
@@ -2132,8 +2183,15 @@ export interface components {
             role?: string;
         };
         AuthProviders: {
+            /**
+             * @description who may sign up (D-235): anyone, only with an invitation, or nobody
+             * @enum {string}
+             */
+            registration: "open" | "invite" | "closed";
             /** @description an external identity provider is configured */
             sso: boolean;
+            /** @description Cloudflare Turnstile's site key when sign-ups must carry a token (D-235); null when none is checked */
+            turnstile_site_key: string | null;
         };
         BulkAppendView: {
             appended?: number;
@@ -2696,6 +2754,11 @@ export interface components {
             /** Format: date-time */
             joined_at: string;
             role: string;
+        };
+        Meter: {
+            /** @description null: unbounded (an administrator, or no quota configured) */
+            limit: number | null;
+            used: number;
         };
         MigrationItemView: {
             /** Format: date-time */
@@ -3406,10 +3469,22 @@ export interface components {
             display_name?: string;
             /** Format: email */
             email: string;
+            /** @description A project invitation's token: the sign-up claims it and joins its project (D-235). Required on an invite-only installation (but for its first-run account); on an open one an invalid token is ignored */
+            invitation?: string;
             password: string;
+            /** @description Cloudflare Turnstile's token from the sign-up form; required where the installation checks one (`GET /auth/providers`) */
+            turnstile_token?: string;
         };
         SignedOut: {
             provider_sign_out?: string | null;
+        };
+        SignedUp: {
+            /** @description the project the sign-up joined by claiming its invitation (D-235); null when it claimed none */
+            joined: {
+                /** Format: uuid */
+                project_id: string;
+                role: string;
+            } | null;
         };
         SiteSession: {
             /** Format: date-time */
@@ -3594,6 +3669,13 @@ export interface components {
          * @description the file's bytes; its name in `X-Colophon-File-Name`, its claimed type in `Content-Type`
          */
         UploadBody: string;
+        Usage: {
+            assets: components["schemas"]["Meter"];
+            entries: components["schemas"]["Meter"];
+            projects: components["schemas"]["Meter"];
+            /** @description stored plus still-quarantined upload bytes */
+            storage_bytes: components["schemas"]["Meter"];
+        };
         /** @description the shape never changes: fields may be added, none removed or renamed */
         VersionReport: {
             /** @description the API versions served, oldest first */
@@ -3614,6 +3696,156 @@ export interface components {
 }
 export type $defs = Record<string, never>;
 export interface operations {
+    disableAccount: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description the member's identity id */
+                identity: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description disabled, or it already was */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description `unauthorized` — not signed in, the credential is invalid, or the token was revoked */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description `administrators_only` — only an administrator can disable an account */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description `not_found` — no such resource — or one the caller may not see, which looks the same */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description `own_account, last_administrator` — your own account, or the last enabled administrator */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description `rate_limited` — over the per-credential or per-address limit; `Retry-After` */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description any other failure, in the one error envelope */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    enableAccount: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description the member's identity id */
+                identity: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description enabled, or it already was */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description `unauthorized` — not signed in, the credential is invalid, or the token was revoked */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description `administrators_only` — only an administrator can enable an account */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description `not_found` — no such resource — or one the caller may not see, which looks the same */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description `own_account` — your own account */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description `rate_limited` — over the per-credential or per-address limit; `Retry-After` */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description any other failure, in the one error envelope */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
     installation: {
         parameters: {
             query?: never;
@@ -3787,6 +4019,55 @@ export interface operations {
             };
         };
     };
+    myUsage: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description ok */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        data: components["schemas"]["Usage"];
+                    };
+                };
+            };
+            /** @description `unauthorized` — not signed in, the credential is invalid, or the token was revoked */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description `rate_limited` — over the per-credential or per-address limit; `Retry-After` */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description any other failure, in the one error envelope */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
     listProjects: {
         parameters: {
             query?: {
@@ -3878,7 +4159,7 @@ export interface operations {
                     "application/json": components["schemas"]["Error"];
                 };
             };
-            /** @description `administrators_only, not_set_up` — only an administrator creates projects */
+            /** @description `administrators_only, not_set_up` — only an administrator creates projects here */
             403: {
                 headers: {
                     [name: string]: unknown;
@@ -3887,7 +4168,7 @@ export interface operations {
                     "application/json": components["schemas"]["Error"];
                 };
             };
-            /** @description `project_exists` — a project with this slug exists */
+            /** @description `project_exists, project_limit` — a project with this slug exists, or the account owns as many projects as it may */
             409: {
                 headers: {
                     [name: string]: unknown;
@@ -14644,13 +14925,26 @@ export interface operations {
             };
         };
         responses: {
-            /** @description the session's `Set-Cookie` pair */
+            /** @description the session's `Set-Cookie` pair, and the project joined when the sign-up claimed an invitation */
             201: {
                 headers: {
                     "Set-Cookie"?: string;
                     [name: string]: unknown;
                 };
-                content?: never;
+                content: {
+                    "application/json": {
+                        data: components["schemas"]["SignedUp"];
+                    };
+                };
+            };
+            /** @description `registration_closed, invitation_required` — this installation admits no sign-up (`closed`), or admits one only with a valid, unclaimed project invitation (`invite`; also the one first-run account before setup) */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
             };
             /** @description `email_taken` — an account with this email exists */
             409: {
@@ -14661,7 +14955,7 @@ export interface operations {
                     "application/json": components["schemas"]["Error"];
                 };
             };
-            /** @description `invalid_email, weak_password` — the fields refused */
+            /** @description `invalid_email, weak_password, bot_check_failed` — the fields refused, or (where the installation checks one) the Turnstile token: missing, expired, replayed, for another host, or unverifiable */
             422: {
                 headers: {
                     [name: string]: unknown;
@@ -14670,7 +14964,7 @@ export interface operations {
                     "application/json": components["schemas"]["Error"];
                 };
             };
-            /** @description `rate_limited` — over the per-credential or per-address limit; `Retry-After` */
+            /** @description `rate_limited` — past the sign-ups one address may attempt in an hour (`COLOPHON_SIGNUPS_PER_ADDRESS_HOUR`), refused attempts included; `Retry-After` says when the window ends; over the per-credential or per-address limit; `Retry-After` */
             429: {
                 headers: {
                     [name: string]: unknown;

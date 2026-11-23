@@ -10,9 +10,33 @@
 
 mod common;
 
-use common::{ORIGIN, Server, Session, app, cookie, get, post, unique_slug};
-use reqwest::{StatusCode, header};
+use common::{
+    ORIGIN, Server, Session, app, call, cookie, get, post, project, sign_in, unique_slug,
+};
+use reqwest::{Method, StatusCode, header};
 use serde_json::{Value, json};
+
+/// A fresh invitation's token to one of dev-owner's projects: what an invite-only installation
+/// takes a sign-up with (D-235).
+async fn an_invitation() -> String {
+    let owner = sign_in("dev-owner").await;
+    let project = project(&owner).await;
+    let invited = call(
+        &owner,
+        Method::POST,
+        &format!("/api/v1/projects/{project}/invitations"),
+        Some(&json!({"role": "editor", "label": "Erin"})),
+        &[],
+    )
+    .await
+    .expect("request");
+    assert_eq!(invited.status, StatusCode::CREATED, "{}", invited.body);
+    let link = invited.body["data"]["link"].as_str().expect("a link");
+    link.split_once('#')
+        .expect("the token after #")
+        .1
+        .to_owned()
+}
 
 /// `POST` a JSON body to an `/auth` route with no session, as a browser arriving fresh does:
 /// status, headers (the `Set-Cookie`s) and the body.
@@ -48,12 +72,12 @@ fn cookies_from_headers(headers: &header::HeaderMap) -> Vec<(String, String)> {
 /// The session a sign-in or sign-up answer sets, read from its `Set-Cookie` headers.
 fn session_from(cookies: &[(String, String)]) -> Session {
     let (session, csrf) = (
-        cookie(cookies, "colophon_session"),
-        cookie(cookies, "colophon_csrf"),
+        cookie(cookies, "__Host-colophon_session"),
+        cookie(cookies, "__Host-colophon_csrf"),
     );
     assert_eq!((session.len(), csrf.len()), (43, 43), "{cookies:?}");
     Session {
-        cookie: format!("colophon_session={session}; colophon_csrf={csrf}"),
+        cookie: format!("__Host-colophon_session={session}; __Host-colophon_csrf={csrf}"),
         csrf,
     }
 }
@@ -68,19 +92,25 @@ fn an_email() -> String {
 #[tokio::test]
 #[ignore = "needs the local stack and migrations: scripts/stack.sh up && scripts/migrate.sh"]
 async fn the_sign_in_page_asks_which_methods_this_server_offers() {
-    let _server = Server::start().await;
-    let (status, body) = get(None, "/auth/providers").await;
-    assert_eq!(
-        (status, body["data"]["sso"].as_bool()),
-        (StatusCode::OK, Some(false)),
-        "{body}"
-    );
+    for mode in ["open", "invite", "closed"] {
+        let _server = Server::start_with(&[("COLOPHON_REGISTRATION", mode)]).await;
+        let (status, body) = get(None, "/auth/providers").await;
+        assert_eq!(
+            (status, body["data"]["sso"].as_bool()),
+            (StatusCode::OK, Some(false)),
+            "{body}"
+        );
+        // The page shows "closed" or asks for the invitation before anyone fills the form.
+        assert_eq!(body["data"]["registration"], mode, "{body}");
+    }
 }
 
 #[tokio::test]
 #[ignore = "needs the local stack and migrations: scripts/stack.sh up && scripts/migrate.sh"]
 async fn an_email_account_signs_up_and_uses_its_session() {
-    let _server = Server::start().await;
+    // Invite-only: there, an account that isn't an administrator can't create projects (D-235;
+    // the development stack runs open).
+    let _server = Server::start_with(&[("COLOPHON_REGISTRATION", "invite")]).await;
     let email = an_email();
     let password = "a long enough password";
 
@@ -107,10 +137,16 @@ async fn an_email_account_signs_up_and_uses_its_session() {
         "{body}"
     );
 
-    // Signing up makes the account and starts its session at once, for an invitation's join.
+    // Signing up makes the account and starts its session at once; on this invite-only
+    // installation it claims an invitation as it does (D-235).
     let (status, response, _) = post_auth(
         "/auth/signup",
-        &json!({"email": email, "password": password, "display_name": "Erin"}),
+        &json!({
+            "email": email,
+            "password": password,
+            "display_name": "Erin",
+            "invitation": an_invitation().await,
+        }),
     )
     .await;
     assert_eq!(status, StatusCode::CREATED);
@@ -122,7 +158,7 @@ async fn an_email_account_signs_up_and_uses_its_session() {
         .map(|v| v.to_str().unwrap_or_default().to_owned())
         .collect();
     assert!(
-        raw.iter().any(|c| c.starts_with("colophon_session=")
+        raw.iter().any(|c| c.starts_with("__Host-colophon_session=")
             && c.contains("HttpOnly")
             && c.contains("Secure")
             && c.contains("SameSite=Lax")),
@@ -165,10 +201,14 @@ async fn an_email_account_signs_up_and_uses_its_session() {
         "the write reached authorization: {body}"
     );
 
-    // The email can't sign up a second account, in any casing.
+    // The email can't sign up a second account, in any casing, even with a valid invitation.
     let (status, _, body) = post_auth(
         "/auth/signup",
-        &json!({"email": email.to_uppercase(), "password": "a different password"}),
+        &json!({
+            "email": email.to_uppercase(),
+            "password": "a different password",
+            "invitation": an_invitation().await,
+        }),
     )
     .await;
     assert_eq!(
@@ -468,4 +508,145 @@ async fn misses_from_many_addresses_hit_a_per_account_ceiling_the_owner_bypasses
     // The owner's known address is not.
     let (status, body) = sign_in_from(owner_address, &right).await;
     assert_eq!(status, StatusCode::NO_CONTENT, "{body}");
+}
+
+/// The signed-in hint's `Set-Cookie`, if the response carries one.
+fn hint_of(headers: &header::HeaderMap) -> Option<String> {
+    headers
+        .get_all(header::SET_COOKIE)
+        .iter()
+        .filter_map(|value| value.to_str().ok())
+        .find(|value| value.starts_with("colophon_signed_in="))
+        .map(str::to_owned)
+}
+
+/// A request with exactly these cookies (and, for a write, the hint server's origin and `csrf`).
+async fn with_cookies(
+    method: Method,
+    path: &str,
+    cookies: &str,
+    csrf: Option<&str>,
+) -> reqwest::Response {
+    let mut request = app()
+        .request(method, format!("{ORIGIN}{path}"))
+        .header(header::COOKIE, cookies);
+    if let Some(csrf) = csrf {
+        request = request
+            .header(header::ORIGIN, format!("http://127.0.0.1:{}", common::PORT))
+            .header("x-csrf-token", csrf)
+            .json(&json!({}));
+    }
+    request.send().await.expect("request")
+}
+
+/// The signed-in hint (D-235): set with every new session, refreshed when a session is touched,
+/// cleared on sign-out and on any refusal of a presented session or hint, readable by scripts,
+/// and worth nothing on its own. The public host is 127.0.0.1 here so a hint domain can cover it.
+#[tokio::test]
+#[ignore = "needs the local stack and migrations: scripts/stack.sh up && scripts/migrate.sh"]
+async fn the_signed_in_hint_follows_the_session_and_authorises_nothing() {
+    let public = format!("http://127.0.0.1:{}", common::PORT);
+    let _server = Server::start_with(&[
+        ("COLOPHON_REGISTRATION", "open"),
+        ("COLOPHON_PUBLIC_URL", public.as_str()),
+        ("COLOPHON_SIGNED_IN_HINT_DOMAIN", "127.0.0.1"),
+    ])
+    .await;
+    let set = "colophon_signed_in=1; Domain=127.0.0.1; Path=/; Max-Age=7200; Secure; SameSite=Lax";
+    let cleared = "colophon_signed_in=1; Domain=127.0.0.1; Path=/; Max-Age=0; Secure; SameSite=Lax";
+
+    let email = an_email();
+    let (status, headers, body) = post_auth(
+        "/auth/signup",
+        &json!({"email": email, "password": "colophon-dev"}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "{body}");
+    assert_eq!(
+        hint_of(&headers).as_deref(),
+        Some(set),
+        "sign-up sets the hint"
+    );
+    let (status, headers, body) = post_auth(
+        "/auth/signin",
+        &json!({"email": email, "password": "colophon-dev"}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::NO_CONTENT, "{body}");
+    assert_eq!(hint_of(&headers).as_deref(), Some(set), "sign-in sets it");
+    let session = session_from(&cookies_from_headers(&headers));
+
+    // Refreshed when the session is touched, at most once a minute.
+    let quiet = with_cookies(Method::GET, "/me", &session.cookie, None).await;
+    assert_eq!(
+        (quiet.status(), hint_of(quiet.headers())),
+        (StatusCode::OK, None)
+    );
+    sqlx::query(
+        "UPDATE sessions SET last_seen_at = now() - interval '2 minutes'
+         WHERE identity_id = (SELECT id FROM identities WHERE subject = $1) AND revoked_at IS NULL",
+    )
+    .bind(&email)
+    .execute(&common::owner_database().await)
+    .await
+    .expect("age the session");
+    let touched = with_cookies(Method::GET, "/me", &session.cookie, None).await;
+    assert_eq!(touched.status(), StatusCode::OK);
+    assert_eq!(
+        hint_of(touched.headers()).as_deref(),
+        Some(set),
+        "a touch refreshes it"
+    );
+
+    // The hint alone is nobody: 401 everywhere, and each refusal clears it.
+    for (method, path) in [
+        (Method::GET, "/me"),
+        (Method::GET, "/api/v1/me/usage"),
+        (Method::GET, "/api/v1/projects"),
+        (Method::POST, "/api/v1/projects"),
+    ] {
+        let csrf = (method == Method::POST).then_some("x");
+        let reply = with_cookies(method.clone(), path, "colophon_signed_in=1", csrf).await;
+        assert_eq!(reply.status(), StatusCode::UNAUTHORIZED, "{method} {path}");
+        assert_eq!(
+            hint_of(reply.headers()).as_deref(),
+            Some(cleared),
+            "{method} {path}"
+        );
+    }
+
+    // Sign-out clears it.
+    let out = with_cookies(
+        Method::POST,
+        "/auth/logout",
+        &session.cookie,
+        Some(&session.csrf),
+    )
+    .await;
+    assert!(out.status().is_success(), "{}", out.status());
+    assert_eq!(
+        hint_of(out.headers()).as_deref(),
+        Some(cleared),
+        "sign-out clears it"
+    );
+
+    // A session refused later (here, revoked) clears it on its next request.
+    let (_, headers, _) = post_auth(
+        "/auth/signin",
+        &json!({"email": email, "password": "colophon-dev"}),
+    )
+    .await;
+    let again = session_from(&cookies_from_headers(&headers));
+    sqlx::query("UPDATE sessions SET revoked_at = now() WHERE identity_id = (SELECT id FROM identities WHERE subject = $1)")
+        .bind(&email)
+        .execute(&common::owner_database().await)
+        .await
+        .expect("revoke");
+    let refused = with_cookies(Method::GET, "/me", &again.cookie, None).await;
+    assert_eq!(refused.status(), StatusCode::UNAUTHORIZED);
+    assert_eq!(
+        hint_of(refused.headers()).as_deref(),
+        Some(cleared),
+        "a refused session clears it"
+    );
 }

@@ -496,7 +496,7 @@ pub(crate) async fn open_isolated(
 /// The transaction [`open`] begins, without counting the request against a token's quota: for
 /// a handler that checked membership with [`open`] already and opens a second transaction for
 /// the same request (an import, which reads its body between the two).
-async fn begin(
+pub(crate) async fn begin(
     state: &AppState,
     caller: SignedIn,
     project: &str,
