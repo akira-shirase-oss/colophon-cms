@@ -239,7 +239,7 @@
 			<span data-testid="signed-in">Signed in as {who.data?.display_name ?? who.data?.id}{who.data?.administrator ? ', administrator' : ''}</span>
 		{/snippet}
 		{#snippet actions()}
-			{#if canCreate && who.data.projects.length > 0}
+			{#if canCreate && (who.data?.projects.length ?? 0) > 0}
 				<Button onclick={() => (creating = true)}><PlusIcon data-icon="inline-start" />New project</Button>
 			{/if}
 		{/snippet}
