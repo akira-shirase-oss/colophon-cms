@@ -207,7 +207,9 @@ These are policies to test, not a global 30-second consistency guarantee.
   `colophon_domain::receipt::label`, and `GET …/releases/{generation}` is its receipt
   (`crates/colophon-server/tests/receipts.rs`, against a fake site; verified at 2 locations with a second worker),
   read in one snapshot (`scope::Isolation::Snapshot`, REPEATABLE READ) so the deliveries and the locations that saw
-  them always describe the same moment.
+  them always describe the same moment. A delivery whose worker died mid-attempt resumes up to 10 s after its lease
+  runs out (30 s by default), when the worker's sweep releases it (D-237); its receipt says *update pending*
+  throughout, since `pending`, `running` and `retrying` are all open, never a state it isn't in.
 
 ### Preview reads (D-172; built 2026-11-17, gap 1)
 `/preview/v1` answers exactly what `/content/v1` answers, with a grant's scope ([auth](03-auth.md), D-171) laid over

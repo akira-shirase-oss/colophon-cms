@@ -17,9 +17,22 @@ Step 2.3 (D-046): `crates/colophon-worker`, run by `colophon-server --role worke
 
 - **The outbox:** committing a release inserts one job per enabled destination in the same transaction, and
   supersedes that destination's older jobs that haven't started (migration 0009).
-- **Claims and leases:** `colophon_db::jobs::claim` fails jobs past their one-hour lifetime, then claims due jobs and
-  running ones whose lease ran out, with `FOR UPDATE SKIP LOCKED`, raising the lease generation each time; `finish`
-  lands only for the current owner and lease generation. All of it runs as `colophon_worker`.
+- **Claims and leases:** `colophon_db::jobs::claim` claims due waiting jobs within their one-hour lifetime, with
+  `FOR UPDATE SKIP LOCKED`, raising the lease generation each time; `finish` lands only for the current owner and
+  lease generation. All of it runs as `colophon_worker`. A claim reads its own handful of jobs whatever the backlog,
+  the history or the installation (D-237): an ordered scan of `jobs_due` that stops at the limit, each claimed job
+  found by its key and generation and its destination's fields by the destination's full key, planned for its own
+  limit every call (`plan_cache_mode = force_custom_plan`; a generic plan read every destination of the
+  installation). `colophon-db/tests/job_claims.rs` measures it on its own backend at 6,000 waiting, at 30 and 90
+  releases an environment, and across 12,000 destinations.
+- **A lapsed lease is the sweep's to release (D-237).** A running job whose lease ran out (its worker crashed or
+  was cut off) goes back to `retrying` in `jobs::release_lapsed`, run in the sweeps below as the worker starts and
+  every 10 s, so a dead worker's delivery resumes up to 10 s after its lease runs out (30 s by default) instead of
+  at the next claim. Nothing else of the job changes: its place, its attempt count, its deadline, its idempotency
+  key and its generation, so the next attempt re-announces under the same key (F03), counts as the attempt it
+  always did, and is superseded by a newer release like any waiting job; its old holder's late `finish` is refused.
+  It takes rows in id order under `SKIP LOCKED` (the one order every multi-row lock on the work tables uses), 200
+  a pass, passes back to back for up to 5 s, begun through `background_worker` (D-236).
 - **Attempts:** a supersession check, then a `release.committed` POST with `Idempotency-Key` and
   `Colophon-Generation`, a 10-second deadline, no redirects and no transaction open; the outcome follows
   `colophon_domain::job` (2xx succeeds; 408, 425, 429, 500, 502, 503 and 504 retry with full-jitter backoff up to five
@@ -31,8 +44,11 @@ Step 2.3 (D-046): `crates/colophon-worker`, run by `colophon-server --role worke
   proxy from the environment (`HTTP_PROXY`, `HTTPS_PROXY`, `ALL_PROXY`): a proxy resolves the destination itself,
   past the resolver, so the checks would no longer say where the request goes.
 - **The loop:** it claims as soon as a slot is free (eight by default) and sleeps only when there's nothing to do;
-  it fails jobs that ran out of time every 10 seconds; on shutdown it stops claiming and lets attempts finish within
-  the cleanup deadline.
+  every 10 seconds (and as it starts) it sweeps: delivery jobs that ran out of time fail (`jobs::expire`), lapsed
+  delivery leases are released (`jobs::release_lapsed_all`), asset jobs that ran out of time fail (`assets::expire`,
+  on the open asset jobs' deadline index, migration 0091), lapsed asset leases are released, budgets reconcile. The
+  sweeps update each row by its key and generation, never the environment's prefix (D-237). On shutdown it stops
+  claiming and lets attempts finish within the cleanup deadline.
 - **Its own database pool** (`COLOPHON_WORKER_DB_CONNECTIONS`, default 4), so deliveries can never take the
   connections editors' requests need. The first publishing load test found the worker sharing the API's pool: at a
   hundred deliveries a second, editors' requests queued behind it.
