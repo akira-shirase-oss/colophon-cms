@@ -579,3 +579,126 @@ async fn the_document_is_validated_against_the_collection_or_the_collection_isnt
     let missing = ask(&project, "stories", &json!({}), None, None, None).await;
     assert_eq!(missing.status, StatusCode::NOT_FOUND, "{}", missing.body);
 }
+
+/// What the delivery cache did for a reply: `miss`, `hit` or `bypass`.
+fn served(reply: &Reply) -> &str {
+    reply
+        .headers
+        .get("colophon-cache")
+        .and_then(|value| value.to_str().ok())
+        .unwrap_or("")
+}
+
+/// `headlines`, sorted: the cases below compare sets, not order.
+fn sorted_headlines(reply: &Reply) -> Vec<String> {
+    let mut seen = headlines(reply);
+    seen.sort();
+    seen
+}
+
+/// F06 at the origin, both ways (module 17): a filtered listing is cached by its document and the
+/// generation, so a release reaches it whatever its cached answer named. A new post that matches
+/// the filter appears though the old answer never named it, and one that doesn't match stays out;
+/// a post edited so it no longer matches leaves (stale inclusion, the worse exposure); and the
+/// generation the listing was first cached at still answers exactly as it did.
+#[tokio::test]
+#[ignore = "needs the stack and scripts/migrate.sh"]
+async fn a_filtered_listing_follows_every_release_in_and_out() {
+    let _server = Server::start().await;
+    let owner = sign_in("dev-owner").await;
+    let (project, ids, first) = seeded(&owner).await;
+    let news = json!({"filters": [{"field": "section", "op": "eq", "value": "News"}]});
+    let was = ["Alpha news", "Epsilon news", "Gamma news"];
+
+    let cold = ask(&project, "posts", &news, None, None, None).await;
+    assert_eq!(sorted_headlines(&cold), was);
+    assert_eq!((served(&cold), read_at(&cold)), ("miss", Some(first)));
+    let warm = ask(&project, "posts", &news, None, None, None).await;
+    assert_eq!(served(&warm), "hit", "cached by its document");
+    assert_eq!(sorted_headlines(&warm), was);
+
+    // In: a new News post (matches) and a new Guides post (doesn't), published together.
+    let mut added = Vec::new();
+    for content in [
+        json!({"headline": "Zeta news", "rating": 2, "score": 6.5, "section": "News",
+               "featured": false, "publish_at": "2026-01-06T09:00:00Z"}),
+        json!({"headline": "Eta guide", "rating": 2, "score": 7.5, "section": "Guides",
+               "featured": false, "publish_at": "2026-01-07T09:00:00Z"}),
+    ] {
+        let made = send(
+            &owner,
+            Method::POST,
+            &format!("{}/collections/posts/entries", base(&project)),
+            Some(&content),
+        )
+        .await;
+        assert_eq!(made.status, StatusCode::CREATED, "{}", made.body);
+        added.push(made.body["data"]["id"].as_str().expect("an id").to_owned());
+    }
+    let second = release(
+        &owner,
+        &project,
+        &json!({"title": "Two more", "entries": added}),
+    )
+    .await;
+    let grown = ask(&project, "posts", &news, None, None, None).await;
+    assert_eq!(
+        (served(&grown), read_at(&grown)),
+        ("miss", Some(second)),
+        "a new generation is a new key"
+    );
+    assert_eq!(
+        sorted_headlines(&grown),
+        ["Alpha news", "Epsilon news", "Gamma news", "Zeta news"],
+        "the new match is in, the non-match isn't"
+    );
+
+    // Out: Gamma edited into Guides and published leaves the News listing.
+    let gamma = &ids[2];
+    let path = format!("{}/collections/posts/entries/{gamma}", base(&project));
+    let current = call(&owner, Method::GET, &path, None, &[])
+        .await
+        .expect("request");
+    let etag = current.etag().expect("an etag");
+    let moved = call(
+        &owner,
+        Method::PUT,
+        &path,
+        Some(
+            &json!({"headline": "Gamma news", "rating": 5, "score": 3.5, "section": "Guides",
+                     "featured": true, "publish_at": "2026-01-03T09:00:00Z"}),
+        ),
+        &[("if-match", &etag), ("idempotency-key", &key())],
+    )
+    .await
+    .expect("request");
+    assert!(moved.status.is_success(), "{}", moved.body);
+    let third = release(
+        &owner,
+        &project,
+        &json!({"title": "Gamma moves", "entries": [gamma]}),
+    )
+    .await;
+    let shrunk = ask(&project, "posts", &news, None, None, None).await;
+    assert_eq!((served(&shrunk), read_at(&shrunk)), ("miss", Some(third)));
+    assert_eq!(
+        sorted_headlines(&shrunk),
+        ["Alpha news", "Epsilon news", "Zeta news"],
+        "an entry that leaves the filter leaves the listing"
+    );
+    let guides = ask(
+        &project,
+        "posts",
+        &json!({"filters": [{"field": "section", "op": "eq", "value": "Guides"}]}),
+        None,
+        None,
+        None,
+    )
+    .await;
+    assert!(sorted_headlines(&guides).contains(&"Gamma news".to_owned()));
+
+    // The first generation, pinned, is the listing as it was cached then.
+    let pinned = ask(&project, "posts", &news, None, Some(first), None).await;
+    assert_eq!(sorted_headlines(&pinned), was);
+    assert_eq!(read_at(&pinned), Some(first));
+}

@@ -747,3 +747,69 @@ async fn the_published_perspective_resolves_at_the_pinned_generation() {
     assert_eq!(mentor["id"], json!(carol));
     assert_eq!(mentor["content"]["name"], json!("Carol"));
 }
+
+/// F06's related-entry case (module 17): a published listing that populates a reference shows the
+/// referenced entry as the release it was read at has it, so a release that changes only that
+/// entry reaches the listing too, though no row of the listing changed. The cached answer (hit) is
+/// keyed by the generation, so the next read is a new key and names the new value. Filters can't
+/// reach a referenced entry's fields (a query filters on the collection's own fields), and a GET
+/// listing never populates references, so this is the one way a related entry shows in a listing.
+#[tokio::test]
+#[ignore = "needs the stack and scripts/migrate.sh"]
+async fn a_release_of_only_a_referenced_entry_reaches_a_populated_listing() {
+    let _server = Server::start().await;
+    let owner = sign_in("dev-owner").await;
+    let (project, [ada, ben, carol, alpha, beta, gamma]) = seed(&owner).await;
+    let first = common::release(
+        &owner,
+        &project,
+        &json!({"title": "Everyone", "entries": [ada, ben, carol, alpha, beta, gamma]}),
+    )
+    .await;
+    let document = json!({"sort": [{"field": "headline"}], "depth": 1});
+    let served = |reply: &Reply| {
+        reply
+            .headers
+            .get("colophon-cache")
+            .and_then(|value| value.to_str().ok())
+            .unwrap_or("")
+            .to_owned()
+    };
+    let cold = ask_published(&project, "posts", &document, None, None).await;
+    assert_eq!(
+        row(rows(&cold), "Alpha")["content"]["author"]["content"]["name"],
+        json!("Ada")
+    );
+    let warm = ask_published(&project, "posts", &document, None, None).await;
+    assert_eq!(served(&warm), "hit", "the populated listing is cached");
+
+    // Only Ada changes, and only Ada is released: no post's revision moves.
+    save(
+        &owner,
+        &project,
+        "staff",
+        &ada,
+        &json!({"name": "Ada Lovelace", "bio": "first", "mentor": ben}),
+    )
+    .await;
+    let second = common::release(
+        &owner,
+        &project,
+        &json!({"title": "Ada's name", "entries": [ada]}),
+    )
+    .await;
+    assert!(second > first);
+    let after = ask_published(&project, "posts", &document, None, None).await;
+    assert_eq!(served(&after), "miss", "a new generation, a new key");
+    assert_eq!(
+        row(rows(&after), "Alpha")["content"]["author"]["content"]["name"],
+        json!("Ada Lovelace"),
+        "the listing names the referenced entry as released"
+    );
+    // Pinned at the first release, the listing is as it was.
+    let pinned = ask_published(&project, "posts", &document, None, Some(first)).await;
+    assert_eq!(
+        row(rows(&pinned), "Alpha")["content"]["author"]["content"]["name"],
+        json!("Ada")
+    );
+}

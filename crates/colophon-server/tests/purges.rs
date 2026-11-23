@@ -398,3 +398,56 @@ async fn a_refused_purge_leaves_the_release_marked_failed() {
     );
     assert_eq!(purge_state(&owner, &id, 1).await, "failed");
 }
+
+/// F06 at the CDN (module 17): a listing the CDN holds without an entry gets it once a release
+/// adds one. The cached listing never named the new entry, so its entry tag can't reach it: the
+/// release's purge names the entry's collection (`colophon_domain::cache::purge_tags`), which every
+/// listing of that collection carries. Filters and populated references exist only in the query
+/// document, a `POST` no CDN keeps, so the plain listing is the only listing a CDN can hold.
+#[tokio::test]
+#[ignore = "needs the stack and scripts/migrate.sh"]
+async fn a_new_entry_reaches_a_listing_the_cdn_held_without_it() {
+    let _server = Server::start_with(&FAST).await;
+    let owner = sign_in("dev-owner").await;
+    let id = project(&owner).await;
+    let cdn = FakeCdn::start().await;
+    cdn_destination(&owner, &id, &cdn).await;
+    let first = create_article(&owner, &id, "First").await;
+    assert_eq!(
+        release(&owner, &id, &json!({"title": "One", "entries": [first]})).await,
+        1
+    );
+    assert_eq!(
+        finished_job(&owner, &id, 1, 15).await["status"],
+        "succeeded"
+    );
+    let list = format!("/content/v1/{id}/production/articles");
+    cdn.get(&list).await;
+    let (status, hit, _) = cdn.get(&list).await;
+    assert_eq!((status, hit), (200, true), "the CDN holds the listing");
+
+    let second = create_article(&owner, &id, "Second").await;
+    assert_eq!(
+        release(&owner, &id, &json!({"title": "Two", "entries": [second]})).await,
+        2
+    );
+    let job = finished_job(&owner, &id, 2, 15).await;
+    assert_eq!(job["status"], "succeeded", "{job}");
+    assert_eq!(purge_state(&owner, &id, 2).await, "accepted");
+    let tags = cdn.purges().last().expect("a purge").0.clone();
+    assert!(
+        tags.iter().any(|tag| tag.ends_with(":c:articles")),
+        "the purge names the collection: {tags:?}"
+    );
+
+    let (status, hit, listed) = cdn.get(&list).await;
+    assert_eq!((status, hit), (200, false), "the old listing was purged");
+    let mut titles: Vec<&str> = listed["data"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|item| item["title"].as_str())
+        .collect();
+    titles.sort_unstable();
+    assert_eq!(titles, ["First", "Second"]);
+}
