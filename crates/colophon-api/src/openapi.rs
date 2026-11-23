@@ -24,10 +24,10 @@ use axum::{
 use serde_json::{Map, Value, json};
 
 use crate::{
-    AppState, BuildInfo, assets, audience, audit, auth, bulk, changesets, collaboration,
+    AppState, BuildInfo, accounts, assets, audience, audit, auth, bulk, changesets, collaboration,
     components, content_types, delivery, destinations, device, entries, graphql, health, mcp,
-    members, migrations, preview, projects, receipts, rich_text, roles, schedules, setup, tokens,
-    undo, version,
+    me_usage, members, migrations, preview, projects, receipts, rich_text, roles, schedules, setup,
+    tokens, undo, version,
 };
 
 /// A verb Colophon's routes use. Naming them in a small enum keeps the table total: the
@@ -725,14 +725,28 @@ pub(crate) static TABLE: &[Route] = &[
                 body: Some(json("SignUp")),
                 ok: Res {
                     status: 201,
-                    shape: Shape::Empty,
+                    shape: Shape::Data("SignedUp"),
                     headers: &["Set-Cookie"],
                     media: "",
-                    note: "the session's `Set-Cookie` pair",
+                    note: "the session's `Set-Cookie` pair, and the project joined when the sign-up claimed an invitation",
                 },
                 extra: &[
+                    refusal(
+                        403,
+                        "registration_closed, invitation_required",
+                        "this installation admits no sign-up (`closed`), or admits one only with a valid, unclaimed project invitation (`invite`; also the one first-run account before setup)",
+                    ),
                     refusal(409, "email_taken", "an account with this email exists"),
-                    refusal(422, "invalid_email, weak_password", "the fields refused"),
+                    refusal(
+                        422,
+                        "invalid_email, weak_password, bot_check_failed",
+                        "the fields refused, or (where the installation checks one) the Turnstile token: missing, expired, replayed, for another host, or unverifiable",
+                    ),
+                    refusal(
+                        429,
+                        "rate_limited",
+                        "past the sign-ups one address may attempt in an hour (`COLOPHON_SIGNUPS_PER_ADDRESS_HOUR`), refused attempts included; `Retry-After` says when the window ends",
+                    ),
                 ],
                 body_limit: Some(PUBLIC_FORM_BYTES),
                 ..MIN
@@ -867,6 +881,70 @@ pub(crate) static TABLE: &[Route] = &[
         )],
     ),
     route(
+        ("", "/api/v1/accounts/{identity}/disable"),
+        &[op(
+            Verb::Post,
+            |f| on(f, accounts::disable),
+            OpDoc {
+                id: "disableAccount",
+                summary: "Disable an account: every session and API token it made is revoked, and it can't sign in (D-235)",
+                tag: "auth",
+                ok: ok(204, Shape::Empty, "disabled, or it already was"),
+                extra: &[
+                    NOT_FOUND,
+                    refusal(
+                        403,
+                        "administrators_only",
+                        "only an administrator can disable an account",
+                    ),
+                    refusal(
+                        409,
+                        "own_account, last_administrator",
+                        "your own account, or the last enabled administrator",
+                    ),
+                ],
+                ..MIN
+            },
+        )],
+    ),
+    route(
+        ("", "/api/v1/accounts/{identity}/enable"),
+        &[op(
+            Verb::Post,
+            |f| on(f, accounts::enable),
+            OpDoc {
+                id: "enableAccount",
+                summary: "Enable a disabled account again; it signs in afresh (D-235)",
+                tag: "auth",
+                ok: ok(204, Shape::Empty, "enabled, or it already was"),
+                extra: &[
+                    NOT_FOUND,
+                    refusal(
+                        403,
+                        "administrators_only",
+                        "only an administrator can enable an account",
+                    ),
+                    refusal(409, "own_account", "your own account"),
+                ],
+                ..MIN
+            },
+        )],
+    ),
+    route(
+        ("", "/api/v1/me/usage"),
+        &[op(
+            Verb::Get,
+            |f| on(f, me_usage::usage),
+            OpDoc {
+                id: "myUsage",
+                summary: "What the caller's account uses against its limits, across the projects it owns (D-235)",
+                tag: "auth",
+                ok: data("Usage"),
+                ..MIN
+            },
+        )],
+    ),
+    route(
         ("", "/api/v1/installation"),
         &[op(
             Verb::Get,
@@ -930,7 +1008,7 @@ pub(crate) static TABLE: &[Route] = &[
                 |f| on(f, projects::create),
                 OpDoc {
                     id: "createProject",
-                    summary: "Create a project (administrators only)",
+                    summary: "Create a project (administrators; any account where registration is open, up to the per-account cap)",
                     tag: "projects",
                     body: Some(json("NewProject")),
                     ok: created("ProjectView"),
@@ -938,9 +1016,13 @@ pub(crate) static TABLE: &[Route] = &[
                         refusal(
                             403,
                             "administrators_only, not_set_up",
-                            "only an administrator creates projects",
+                            "only an administrator creates projects here",
                         ),
-                        refusal(409, "project_exists", "a project with this slug exists"),
+                        refusal(
+                            409,
+                            "project_exists, project_limit",
+                            "a project with this slug exists, or the account owns as many projects as it may",
+                        ),
                         refusal(422, "invalid_slug, invalid_name", "the fields refused"),
                     ],
                     ..MIN
@@ -4507,8 +4589,8 @@ pub(crate) fn document(build: &BuildInfo) -> Value {
                 "sessionCookie": {
                     "type": "apiKey",
                     "in": "cookie",
-                    "name": "colophon_session",
-                    "description": "a browser session. Cookie-authenticated writes (anything but GET, HEAD, OPTIONS) also need an `Origin` the server trusts exactly and an `X-CSRF-Token` header matching the session's CSRF token, which lives in the readable `colophon_csrf` cookie."
+                    "name": "__Host-colophon_session",
+                    "description": "a browser session. Cookie-authenticated writes (anything but GET, HEAD, OPTIONS) also need an `Origin` the server trusts exactly and an `X-CSRF-Token` header matching the session's CSRF token, which lives in the readable `__Host-colophon_csrf` cookie."
                 },
                 "bearerToken": {
                     "type": "http",
@@ -5220,8 +5302,37 @@ fn identity() -> Value {
         },
         "AuthProviders": {
             "type": "object",
-            "required": ["sso"],
-            "properties": { "sso": { "type": "boolean", "description": "an external identity provider is configured" } },
+            "required": ["sso", "turnstile_site_key", "registration"],
+            "properties": {
+                "sso": { "type": "boolean", "description": "an external identity provider is configured" },
+                "turnstile_site_key": {
+                    "type": ["string", "null"],
+                    "description": "Cloudflare Turnstile's site key when sign-ups must carry a token (D-235); null when none is checked",
+                },
+                "registration": {
+                    "type": "string",
+                    "enum": ["open", "invite", "closed"],
+                    "description": "who may sign up (D-235): anyone, only with an invitation, or nobody",
+                },
+            },
+        },
+        "Meter": {
+            "type": "object",
+            "required": ["used", "limit"],
+            "properties": {
+                "used": { "type": "integer", "minimum": 0 },
+                "limit": { "type": ["integer", "null"], "minimum": 0, "description": "null: unbounded (an administrator, or no quota configured)" },
+            },
+        },
+        "Usage": {
+            "type": "object",
+            "required": ["projects", "entries", "assets", "storage_bytes"],
+            "properties": {
+                "projects": { "$ref": "#/components/schemas/Meter" },
+                "entries": { "$ref": "#/components/schemas/Meter" },
+                "assets": { "$ref": "#/components/schemas/Meter" },
+                "storage_bytes": { "$ref": "#/components/schemas/Meter", "description": "stored plus still-quarantined upload bytes" },
+            },
         },
         "SignedOut": {
             "type": "object",
@@ -5281,6 +5392,30 @@ fn identity() -> Value {
                 "email": { "type": "string", "format": "email" },
                 "password": { "type": "string", "minLength": 8 },
                 "display_name": { "type": "string" },
+                "turnstile_token": {
+                    "type": "string",
+                    "maxLength": 2048,
+                    "description": "Cloudflare Turnstile's token from the sign-up form; required where the installation checks one (`GET /auth/providers`)",
+                },
+                "invitation": {
+                    "type": "string",
+                    "description": "A project invitation's token: the sign-up claims it and joins its project (D-235). Required on an invite-only installation (but for its first-run account); on an open one an invalid token is ignored",
+                },
+            },
+        },
+        "SignedUp": {
+            "type": "object",
+            "required": ["joined"],
+            "properties": {
+                "joined": {
+                    "type": ["object", "null"],
+                    "description": "the project the sign-up joined by claiming its invitation (D-235); null when it claimed none",
+                    "required": ["project_id", "role"],
+                    "properties": {
+                        "project_id": { "type": "string", "format": "uuid" },
+                        "role": { "type": "string" },
+                    },
+                },
             },
         },
         "PasswordSignIn": {

@@ -40,6 +40,28 @@ pub async fn record_sign_in(
     Ok(row.id)
 }
 
+/// [`record_sign_in`] for an identity that already exists only: closed registration (D-235)
+/// admits no first sign-in through the provider either. `None` if `(issuer, subject)` has never
+/// signed in, and nothing is written.
+pub async fn record_existing_sign_in(
+    pool: &PgPool,
+    issuer: &str,
+    subject: &str,
+    display_name: Option<&str>,
+) -> Result<Option<Uuid>, DbError> {
+    sqlx::query_scalar!(
+        "UPDATE identities SET display_name = $3, last_sign_in_at = now()
+         WHERE issuer = $1 AND subject = $2
+         RETURNING id",
+        issuer,
+        subject,
+        display_name
+    )
+    .fetch_optional(pool)
+    .await
+    .map_err(DbError::from_query)
+}
+
 /// The `issuer` for email-and-password accounts (docs/modules/03-auth.md, D-084).
 pub const PASSWORD_ISSUER: &str = "password";
 
@@ -47,24 +69,117 @@ pub const PASSWORD_ISSUER: &str = "password";
 /// (D-154): the counts live in `sign_in_throttle`, see [`crate::throttle`].
 pub use crate::throttle::{LOCK_AFTER, LOCK_FOR};
 
+/// The project a sign-up joined by claiming its invitation.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Joined {
+    /// The project.
+    pub project: Uuid,
+    /// The role the invitation gave.
+    pub role: String,
+}
+
 /// What signing up did.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SignedUp {
     /// A new identity with a password credential.
-    Made(Uuid),
+    Made {
+        /// The new identity.
+        identity: Uuid,
+        /// The project it joined, when it claimed an invitation.
+        joined: Option<Joined>,
+    },
     /// That email already has an account.
     Taken,
+    /// Invite-only registration admitted nothing: no invitation, or one that is unknown,
+    /// expired, revoked or already claimed, and the installation's one first-run account is
+    /// taken (or it is set up). One answer for all of them, so a token's state isn't told.
+    InvitationRequired,
+}
+
+/// What a sign-up may admit under the installation's registration (D-235). `closed` admits
+/// nothing and is refused before any work, so it has no variant here.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Admission<'a> {
+    /// Open registration: any new email. A valid invitation is claimed too (the account joins
+    /// its project in the same transaction); one that isn't valid doesn't stop the sign-up.
+    Open {
+        /// The SHA-256 of the invitation token the sign-up presented, if any.
+        invitation: Option<&'a [u8; 32]>,
+    },
+    /// Invite-only: the invitation with this token hash, claimed for the new account in the same
+    /// transaction (one invitation, one account); without one, only the installation's first-run
+    /// account (see [`first_run_open`]).
+    Invite {
+        /// The SHA-256 of the invitation token the sign-up presented, if any.
+        invitation: Option<&'a [u8; 32]>,
+    },
+}
+
+/// Whether an invite-only installation still admits its one first-run account without an
+/// invitation: nobody is an administrator yet and no person has an account (system and API-token
+/// identities, `urn:colophon:*`, don't count). That's the account the Studio's first run creates
+/// before the setup code is entered. [`sign_up`] decides it again under its lock; this is the
+/// cheap check a handler makes before hashing a password it would only refuse.
+pub async fn first_run_open(pool: &PgPool) -> Result<bool, DbError> {
+    sqlx::query_scalar!(
+        r#"SELECT NOT EXISTS (SELECT 1 FROM administrators)
+              AND NOT EXISTS (SELECT 1 FROM identities WHERE issuer NOT LIKE 'urn:colophon:%')
+              AS "open!""#
+    )
+    .fetch_one(pool)
+    .await
+    .map_err(DbError::from_query)
 }
 
 /// Creates an email-and-password account: `('password', email)` with the Argon2id hash and a
-/// display name. `Taken` if the email already has one.
+/// display name, if `admission` admits it, in one transaction. `Taken` if the email already has
+/// an account and the sign-up was otherwise admitted (open registration, or a valid invitation,
+/// which stays unclaimed); invite-only registration without a valid invitation answers
+/// `InvitationRequired` whether the email is taken or not.
+///
+/// Under [`Admission::Invite`] with an invitation, the account and the invitation's claim commit
+/// together: concurrent sign-ups with one token make exactly one account. Without one, the
+/// first-run rule is decided under an installation-wide advisory lock, so concurrent first
+/// sign-ups make exactly one account. The account's `signed_up` line in the staff auth log
+/// (marked `pre_setup` or `invitation`) commits with it, from `address`.
 pub async fn sign_up(
     pool: &PgPool,
     email: &str,
     password_hash: &str,
     display_name: Option<&str>,
+    admission: Admission<'_>,
+    address: &str,
 ) -> Result<SignedUp, DbError> {
-    let row = sqlx::query_scalar!(
+    let mut transaction = scope::begin(
+        pool,
+        Scope {
+            identity: None,
+            project: None,
+        },
+    )
+    .await?;
+    if let Admission::Invite { invitation: None } = admission {
+        sqlx::query!(
+            r#"SELECT 1 AS "locked!" FROM pg_advisory_xact_lock(hashtext('colophon:first-run-account'), 0)"#
+        )
+        .fetch_one(&mut *transaction)
+        .await
+        .map_err(DbError::from_query)?;
+        let open = sqlx::query_scalar!(
+            r#"SELECT NOT EXISTS (SELECT 1 FROM administrators)
+                  AND NOT EXISTS (SELECT 1 FROM identities WHERE issuer NOT LIKE 'urn:colophon:%')
+                  AS "open!""#
+        )
+        .fetch_one(&mut *transaction)
+        .await
+        .map_err(DbError::from_query)?;
+        if !open {
+            // Whether the email is taken or not: invite-only registration tells someone without
+            // an invitation nothing about who has an account.
+            return Ok(SignedUp::InvitationRequired);
+        }
+    }
+    let made = sqlx::query_scalar!(
         "INSERT INTO identities (id, issuer, subject, display_name, email, password_hash)
          VALUES ($1, $2, $3, $4, $3, $5)
          ON CONFLICT DO NOTHING
@@ -75,12 +190,59 @@ pub async fn sign_up(
         display_name,
         password_hash
     )
-    .fetch_optional(pool)
+    .fetch_optional(&mut *transaction)
     .await
     .map_err(DbError::from_query)?;
-    Ok(match row {
-        Some(id) => SignedUp::Made(id),
-        None => SignedUp::Taken,
+    let Some(id) = made else {
+        return Ok(SignedUp::Taken);
+    };
+    let (invitation, required) = match admission {
+        Admission::Open { invitation } => (invitation, false),
+        Admission::Invite { invitation } => (invitation, true),
+    };
+    let mut joined = None;
+    if let Some(token_hash) = invitation {
+        // A brand-new identity is never already a member, so anything but `Joined` means the
+        // invitation wasn't there to claim.
+        match crate::members::accept_in(&mut transaction, id, token_hash).await? {
+            crate::members::Accepted::Joined { project_id, role } => {
+                joined = Some(Joined {
+                    project: project_id,
+                    role,
+                });
+            }
+            crate::members::Accepted::AlreadyMember | crate::members::Accepted::Gone => {
+                if required {
+                    // Dropping the transaction un-makes the account.
+                    return Ok(SignedUp::InvitationRequired);
+                }
+                // Open registration admits the account without it; the claim's failed
+                // statements wrote nothing (it only reads before finding the invitation).
+            }
+        }
+    }
+    // The staff auth log, in the same transaction (D-235): which account took the first-run
+    // slot is something the operator must be able to see.
+    let detail = if joined.is_some() {
+        Some("invitation")
+    } else if admission == (Admission::Invite { invitation: None }) {
+        Some("pre_setup")
+    } else {
+        None
+    };
+    crate::staff_auth::record_in(
+        &mut transaction,
+        crate::staff_auth::Line {
+            identity: Some(id),
+            detail,
+            ..crate::staff_auth::Line::new(crate::staff_auth::Event::SignedUp, address)
+        },
+    )
+    .await?;
+    transaction.commit().await.map_err(DbError::from_query)?;
+    Ok(SignedUp::Made {
+        identity: id,
+        joined,
     })
 }
 
@@ -152,7 +314,8 @@ pub async fn password_sign_in(
         return Ok(PasswordSignIn::Refused);
     }
     let row = sqlx::query!(
-        "SELECT id, password_hash FROM identities WHERE issuer = $1 AND subject = $2",
+        "SELECT id, password_hash FROM identities
+         WHERE issuer = $1 AND subject = $2 AND disabled_at IS NULL",
         PASSWORD_ISSUER,
         email
     )
@@ -204,8 +367,10 @@ pub async fn create_session(
     expires_at: OffsetDateTime,
 ) -> Result<Uuid, DbError> {
     let id = Uuid::now_v7();
-    sqlx::query!(
-        "INSERT INTO sessions (id, token_hash, csrf_hash, identity_id, expires_at) VALUES ($1, $2, $3, $4, $5)",
+    // A disabled account (D-235) gets no session, whichever route asks.
+    let made = sqlx::query!(
+        "INSERT INTO sessions (id, token_hash, csrf_hash, identity_id, expires_at)
+         SELECT $1, $2, $3, i.id, $5 FROM identities i WHERE i.id = $4 AND i.disabled_at IS NULL",
         id,
         &token_hash[..],
         &csrf_hash[..],
@@ -215,7 +380,71 @@ pub async fn create_session(
     .execute(pool)
     .await
     .map_err(DbError::from_query)?;
+    if made.rows_affected() == 0 {
+        return Err(DbError::AccountDisabled);
+    }
     Ok(id)
+}
+
+/// What [`set_disabled`] did.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SetDisabled {
+    /// The account is now as asked: disabled, with every session and API token it made revoked,
+    /// or enabled again; the staff auth log has its row.
+    Done,
+    /// It already was.
+    Unchanged,
+    /// No such account (an API token's identity isn't one).
+    NotFound,
+    /// The caller isn't an enabled administrator.
+    NotAdministrator,
+    /// Nobody disables their own account.
+    OwnAccount,
+    /// The last enabled administrator stays enabled.
+    LastAdministrator,
+}
+
+/// Disables or enables `target` as `actor` (D-235), in one transaction run as `actor`'s
+/// identity: `colophon_account_set_disabled` takes the actor from it, never from an argument.
+///
+/// # Errors
+///
+/// The database's.
+pub async fn set_disabled(
+    pool: &PgPool,
+    actor: Uuid,
+    target: Uuid,
+    disable: bool,
+) -> Result<SetDisabled, DbError> {
+    let mut tx = crate::scope::begin(
+        pool,
+        crate::scope::Scope {
+            identity: Some(actor),
+            project: None,
+        },
+    )
+    .await?;
+    let outcome: String = sqlx::query_scalar("SELECT colophon_account_set_disabled($1, $2, $3)")
+        .bind(target)
+        .bind(disable)
+        .bind(Uuid::now_v7())
+        .fetch_one(&mut *tx)
+        .await
+        .map_err(DbError::from_query)?;
+    tx.commit().await.map_err(DbError::from_query)?;
+    Ok(match outcome.as_str() {
+        "done" => SetDisabled::Done,
+        "unchanged" => SetDisabled::Unchanged,
+        "not_found" => SetDisabled::NotFound,
+        "not_admin" => SetDisabled::NotAdministrator,
+        "self" => SetDisabled::OwnAccount,
+        "last_admin" => SetDisabled::LastAdministrator,
+        _ => {
+            return Err(DbError::Corrupt(
+                "an unknown answer from colophon_account_set_disabled",
+            ));
+        }
+    })
 }
 
 /// The session with this token hash, if it exists, isn't revoked and hasn't expired.
@@ -258,6 +487,53 @@ pub async fn revoke_session(pool: &PgPool, id: Uuid) -> Result<(), DbError> {
     .await
     .map_err(DbError::from_query)?;
     Ok(())
+}
+
+/// Revokes the live session whose token hashes to `token_hash`, if there is one: what a browser
+/// presented when it signs in again (D-235, session rotation). The session's identity, if it was
+/// live.
+pub async fn revoke_session_by_token(
+    pool: &PgPool,
+    token_hash: &[u8; 32],
+) -> Result<Option<Uuid>, DbError> {
+    sqlx::query_scalar!(
+        "UPDATE sessions SET revoked_at = now()
+         WHERE token_hash = $1 AND revoked_at IS NULL AND expires_at > now()
+         RETURNING identity_id",
+        &token_hash[..]
+    )
+    .fetch_optional(pool)
+    .await
+    .map_err(DbError::from_query)
+}
+
+/// Swaps a session presented under the cookie name before D-235's rename for a new one, in one
+/// statement: only a live session made before the rename was deployed
+/// (`session_cookie_rename`), so one planted under the old name later is never accepted. The new
+/// session keeps the old one's identity, CSRF token, expiry and last use; the old one ends. The
+/// identity, if it was swapped.
+pub async fn upgrade_legacy_session(
+    pool: &PgPool,
+    old_token_hash: &[u8; 32],
+    new_token_hash: &[u8; 32],
+) -> Result<Option<(Uuid, OffsetDateTime)>, DbError> {
+    let row = sqlx::query!(
+        "WITH old AS (
+             UPDATE sessions SET revoked_at = now()
+             WHERE token_hash = $1 AND revoked_at IS NULL AND expires_at > now()
+               AND created_at < (SELECT at FROM session_cookie_rename)
+             RETURNING identity_id, csrf_hash, expires_at, last_seen_at)
+         INSERT INTO sessions (id, token_hash, csrf_hash, identity_id, expires_at, last_seen_at)
+         SELECT $2, $3, csrf_hash, identity_id, expires_at, last_seen_at FROM old
+         RETURNING identity_id, expires_at",
+        &old_token_hash[..],
+        Uuid::now_v7(),
+        &new_token_hash[..]
+    )
+    .fetch_optional(pool)
+    .await
+    .map_err(DbError::from_query)?;
+    Ok(row.map(|row| (row.identity_id, row.expires_at)))
 }
 
 /// The state kept between leaving for the identity provider and coming back.

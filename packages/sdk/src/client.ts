@@ -81,10 +81,10 @@ export function newIdempotencyKey(): string {
 
 /** How the caller proves who it is. Exactly one of `ClientOptions.token` / `.session`. */
 export interface SessionCredential {
-	/** The readable `colophon_csrf` cookie's value, echoed as `X-CSRF-Token` on every write —
+	/** The readable `__Host-colophon_csrf` cookie's value, echoed as `X-CSRF-Token` on every write —
 	 *  cookie-authenticated writes are refused without it. */
 	csrf: string;
-	/** Outside a browser only: the `colophon_session` cookie's value, sent as the `Cookie`
+	/** Outside a browser only: the `__Host-colophon_session` cookie's value, sent as the `Cookie`
 	 *  header. Omit it in a browser — the session cookie travels by itself there (and the header
 	 *  can't be set). */
 	cookie?: string;
@@ -157,7 +157,7 @@ function generationOf(header: string | null): number | null {
 }
 
 /** The session cookie's name (the OpenAPI `sessionCookie` scheme). */
-const SESSION_COOKIE = 'colophon_session';
+const SESSION_COOKIE = '__Host-colophon_session';
 
 const segment = encodeURIComponent;
 

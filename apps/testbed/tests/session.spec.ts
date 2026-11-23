@@ -31,12 +31,17 @@ test('sign in, create a project, and it stays invisible to someone else', async 
 	const other = await otherContext.newPage();
 	await signIn(other, 'dev-editor');
 	await expect(other.locator(`[data-slug="${slug}"]`)).toHaveCount(0);
-	// Nor can they create projects: only administrators can (D-043).
+	// On an open installation (the development stack, D-235) they may create projects of their
+	// own, up to the per-account cap: a project of theirs, or the cap's refusal once the shared
+	// development database already holds their three. Either way the first stays invisible.
 	await expect(other.getByTestId('standing')).toContainText('not an administrator');
 	await other.getByLabel('Slug').fill(`${slug}-x`);
-	await other.getByLabel('Name').fill('Not allowed');
+	await other.getByLabel('Name').fill('Their own');
 	await other.getByRole('button', { name: 'Create project' }).click();
-	await expect(other.getByTestId('message')).toContainText('403 forbidden: only an administrator can create projects');
+	await expect(other.getByTestId('message')).toContainText(
+		new RegExp(`created ${slug}-x|409 conflict: this account already owns \\d+ of the \\d+ projects`),
+	);
+	await expect(other.locator(`[data-slug="${slug}"]`)).toHaveCount(0);
 	const status = await other.evaluate(async (id) => (await fetch(`/server/api/v1/projects/${id}`)).status, projectId);
 	expect(status).toBe(404);
 

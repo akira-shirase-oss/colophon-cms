@@ -49,7 +49,7 @@ export function setup() {
   const signedIn = http.post(`${PUBLIC_URL}/auth/signin`, JSON.stringify({ email: 'dev-owner@colophon.test', password: 'colophon-dev' }), { headers: { 'Content-Type': 'application/json' } });
   if (signedIn.status !== 204) fail(`sign-in failed: HTTP ${signedIn.status}`);
   const jar = http.cookieJar().cookiesForURL(PUBLIC_URL);
-  const session = { cookie: `colophon_session=${jar.colophon_session[0]}`, csrf: jar.colophon_csrf[0] };
+  const session = { cookie: `__Host-colophon_session=${jar['__Host-colophon_session'][0]}`, csrf: jar['__Host-colophon_csrf'][0] };
   const write = { Cookie: session.cookie, 'X-CSRF-Token': session.csrf, Origin: PUBLIC_URL, 'Content-Type': 'application/json' };
   const project = http.post(`${BASE_URL}/api/v1/projects`, JSON.stringify({ slug: `k6-failover-${Date.now().toString(36)}`, name: 'k6 failover' }), { headers: write });
   if (project.status !== 201) fail(`project: HTTP ${project.status} ${project.body}`);

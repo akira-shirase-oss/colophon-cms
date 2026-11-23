@@ -123,6 +123,10 @@ if [[ "$code" == 0 ]]; then pass "admin init-roles again"; else fail "admin init
 cli admin migrate
 if [[ "$code" == 0 ]]; then pass "admin migrate again"; else fail "admin migrate again (exit $code): $(tail -3 <<<"$out")"; fi
 grants_after "after a second run"
+# D-235: 0092 lifts FORCE on projects and memberships for its backfill; it must be back on.
+expect "row security forced again on memberships and projects" "memberships|t,projects|t" "$(super -c "
+  SELECT string_agg(relname || '|' || CASE WHEN relforcerowsecurity THEN 't' ELSE 'f' END, ',' ORDER BY relname)
+  FROM pg_class WHERE relname IN ('projects', 'memberships') AND relkind = 'r'")"
 expect "no app.* setting is pinned on the two functions" "0" "$(super -c "
   SELECT count(*) FROM pg_proc, unnest(proconfig) AS setting
   WHERE proname IN ('delivery_environment', 'media_object') AND setting LIKE 'app.%'")"

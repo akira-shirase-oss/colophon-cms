@@ -7,7 +7,7 @@ import { signIn } from './sign-in.ts';
 
 async function setup(page: Page): Promise<{ project: string; first: string }> {
 	return page.evaluate(async (slug) => {
-		const csrf = document.cookie.split('; ').find((pair) => pair.startsWith('colophon_csrf='))?.slice('colophon_csrf='.length) ?? '';
+		const csrf = document.cookie.split('; ').find((pair) => pair.startsWith('__Host-colophon_csrf='))?.slice('__Host-colophon_csrf='.length) ?? '';
 		const json = { 'Content-Type': 'application/json', 'X-CSRF-Token': csrf };
 		const created = await fetch('/server/api/v1/projects', { method: 'POST', headers: json, body: JSON.stringify({ slug, name: 'Changesets testbed' }) });
 		const project = ((await created.json()) as { data: { id: string } }).data.id;
@@ -50,7 +50,7 @@ test('pin, submit, refuse a stale hash, approve, and go stale after an edit', as
 	// An edit through the API makes it stale; a refresh gives it a new hash and awaits review again.
 	const saved = await page.evaluate(
 		async ([project, entry]) => {
-			const csrf = document.cookie.split('; ').find((pair) => pair.startsWith('colophon_csrf='))?.slice('colophon_csrf='.length) ?? '';
+			const csrf = document.cookie.split('; ').find((pair) => pair.startsWith('__Host-colophon_csrf='))?.slice('__Host-colophon_csrf='.length) ?? '';
 			const path = `/server/api/v1/projects/${project}/environments/production/collections/articles/entries/${entry}`;
 			const current = await fetch(path);
 			const draft = ((await current.json()) as { data: { content: Record<string, unknown> } }).data;

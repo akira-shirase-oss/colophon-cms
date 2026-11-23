@@ -89,12 +89,12 @@ describe('reads and replies', () => {
 		await env.createEntry('articles', { title: 'Hi' }, { idempotencyKey: 'k-abcdefghijklmnop' });
 		const write = calls[0]!.init.headers as Record<string, string>;
 		expect(write['x-csrf-token']).toBe('csrf-value');
-		expect(write['cookie']).toBe('colophon_session=session-value');
+		expect(write['cookie']).toBe('__Host-colophon_session=session-value');
 		expect(write['authorization']).toBeUndefined();
 		await env.listEntries('articles');
 		const read = calls[1]!.init.headers as Record<string, string>;
 		expect(read['x-csrf-token']).toBeUndefined();
-		expect(read['cookie']).toBe('colophon_session=session-value');
+		expect(read['cookie']).toBe('__Host-colophon_session=session-value');
 		expect(read['content-type']).toBeUndefined();
 	});
 

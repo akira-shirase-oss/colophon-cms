@@ -44,7 +44,7 @@ test('a destination added in Settings gets each release, once', async ({ page })
 
 		// An approved changeset of one article, published through the API.
 		const published = await page.evaluate(async (project) => {
-			const csrf = document.cookie.split('; ').find((pair) => pair.startsWith('colophon_csrf='))?.slice('colophon_csrf='.length) ?? '';
+			const csrf = document.cookie.split('; ').find((pair) => pair.startsWith('__Host-colophon_csrf='))?.slice('__Host-colophon_csrf='.length) ?? '';
 			const headers = { 'Content-Type': 'application/json', 'X-CSRF-Token': csrf };
 			const key = () => crypto.randomUUID().replaceAll('-', '');
 			const base = `/api/v1/projects/${project}/environments/production`;
@@ -108,7 +108,7 @@ test('a CDN added in Settings is asked to purge what each release changed', asyn
 		expect(await violations(page)).toEqual([]);
 
 		const entry = await page.evaluate(async (project) => {
-			const csrf = document.cookie.split('; ').find((pair) => pair.startsWith('colophon_csrf='))?.slice('colophon_csrf='.length) ?? '';
+			const csrf = document.cookie.split('; ').find((pair) => pair.startsWith('__Host-colophon_csrf='))?.slice('__Host-colophon_csrf='.length) ?? '';
 			const headers = { 'Content-Type': 'application/json', 'X-CSRF-Token': csrf };
 			const key = () => crypto.randomUUID().replaceAll('-', '');
 			const base = `/api/v1/projects/${project}/environments/production`;
@@ -170,7 +170,7 @@ test('a probe added in Settings verifies a release, and its receipt shows what i
 
 		checked.serve(1);
 		const published = await page.evaluate(async (project) => {
-			const csrf = document.cookie.split('; ').find((pair) => pair.startsWith('colophon_csrf='))?.slice('colophon_csrf='.length) ?? '';
+			const csrf = document.cookie.split('; ').find((pair) => pair.startsWith('__Host-colophon_csrf='))?.slice('__Host-colophon_csrf='.length) ?? '';
 			const headers = { 'Content-Type': 'application/json', 'X-CSRF-Token': csrf };
 			const key = () => crypto.randomUUID().replaceAll('-', '');
 			const base = `/api/v1/projects/${project}/environments/production`;

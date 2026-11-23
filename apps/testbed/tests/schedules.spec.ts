@@ -9,7 +9,7 @@ import { signIn } from './sign-in.ts';
 async function setup(page: Page, title: string): Promise<{ project: string; changeset: string; hash: string }> {
 	return page.evaluate(
 		async ({ slug, title }) => {
-			const csrf = document.cookie.split('; ').find((pair) => pair.startsWith('colophon_csrf='))?.slice('colophon_csrf='.length) ?? '';
+			const csrf = document.cookie.split('; ').find((pair) => pair.startsWith('__Host-colophon_csrf='))?.slice('__Host-colophon_csrf='.length) ?? '';
 			const json = { 'Content-Type': 'application/json', 'X-CSRF-Token': csrf };
 			const post = async (path: string, body: unknown, headers: Record<string, string> = {}) => {
 				const reply = await fetch(`/server${path}`, { method: 'POST', headers: { ...json, ...headers }, body: JSON.stringify(body) });

@@ -8,6 +8,28 @@ through `--version` and `GET /version`.
 
 ## [Unreleased]
 
+### Added
+
+- **A signed-in hint for sites on the same domain** (D-235): with `COLOPHON_SIGNED_IN_HINT_DOMAIN` set, a readable
+  `colophon_signed_in=1` cookie follows the session (set on sign-in, refreshed with use, cleared on sign-out or a
+  refused session), so a landing page can show "Open the Studio". It grants nothing: every request is still judged
+  by its session.
+- **Administrators disable and enable accounts** (D-235, migration 0096): `POST /api/v1/accounts/{identity}/disable`
+  revokes every session the account holds and every API token it made in one transaction and logs it; the
+  account then signs in like a wrong password until `/enable`. Nobody can disable their own account, and the last
+  enabled administrator stays enabled.
+- **The caller's usage** (D-235): `GET /api/v1/me/usage` answers projects, entries, files and storage, each with its
+  limit (`null` when unbounded), and the Studio has a Usage page. `GET /auth/providers` also says whether
+  registration is `open`, `invite` or `closed`, so the Studio's new `/studio/signin` and `/studio/signup` pages
+  show a closed or invite-only installation before anyone fills a form.
+- **Self-serve projects and per-account quotas** (D-235). `COLOPHON_REGISTRATION=open` lets any signed-in account
+  create up to `COLOPHON_PROJECTS_PER_ACCOUNT` (3) projects it owns; `invite` (the default) and `closed` keep project
+  creation to administrators. Each account's entries, assets and stored bytes are counted in the database by
+  triggers, so every write path is bounded the same way (`COLOPHON_ACCOUNT_MAX_ENTRIES`, `_ASSETS`,
+  `_STORAGE_BYTES`; 409 `quota_exceeded`), and an upload past the storage quota is refused before any of its bytes
+  reach the object store. Administrators are exempt. `colophon admin usage-reconcile [--check]` recounts usage;
+  the droplet's smoke check runs it.
+
 ### Removed
 
 - **The 24-hour soak test** (D-240), by the maintainer's decision: `scripts/soak.sh`, `scripts/soak-sidecar.sh`
@@ -15,6 +37,38 @@ through `--version` and `GET /version`.
 
 ### Security
 
+- **No login CSRF, no session fixation, `__Host-` session cookies** (D-235). Sign-up and sign-in refuse a
+  cross-site browser and any `Origin` but the installation's (`403 origin_not_allowed`); a request with neither
+  `Origin` nor `Sec-Fetch-Site`, as a CLI sends, still works. Signing in, signing up and coming back from the
+  identity provider rotate the session and end the one the browser presented; becoming the administrator with
+  the setup code rotates it too. The session cookies are now `__Host-colophon_session` and
+  `__Host-colophon_csrf`. **Upgrading:** nobody is signed out. The old names (`colophon_session`,
+  `colophon_csrf`) are read in this release only, for sessions made before the upgrade, and swapped for new-name
+  ones on first use. The release after this one stops reading them. Scripts that set the cookie by
+  name must use the new names.
+- **Sign-up guards and a staff sign-in log** (D-235, migration 0095). Sign-ups are capped per client address
+  (`COLOPHON_SIGNUPS_PER_ADDRESS_HOUR`, default 10 an hour; every attempt counts, refused ones included; `429
+  rate_limited` with `Retry-After`), and with `COLOPHON_TURNSTILE_SITE_KEY` and `COLOPHON_TURNSTILE_SECRET` set,
+  must carry a Cloudflare Turnstile token, checked server-side and failing closed (`422 bot_check_failed`).
+  `staff_auth_events` records sign-ups, refusals, sign-ins and sign-outs without passwords, tokens or emails
+  (failures carry an HMAC of the email under `COLOPHON_AUTH_EVENT_KEY`), append-only, kept 90 days.
+- **`COLOPHON_REGISTRATION` now decides who may sign up** (D-235). Until now it only decided who may create
+  projects: `POST /auth/signup` made an account on every installation, `invite` and `closed` included. Now `closed`
+  refuses every sign-up (`403 registration_closed`) and every first sign-in through the identity provider;
+  `invite` takes a sign-up only with a valid, unclaimed project invitation (`invitation` in the body), claimed for
+  exactly one account in the same transaction (`403 invitation_required` otherwise, alike for every reason), plus
+  the one first-run account a new installation makes before its setup code is entered. The sign-up's `201` now
+  says which project a claimed invitation joined, and the Studio's invitation page uses it. **Upgrading:** an
+  installation that never set `COLOPHON_REGISTRATION` is invite-only after this upgrade; set `open` deliberately
+  if anyone should be able to sign up. With a public identity provider (anyone can hold an account there), use
+  `closed`: under `invite` a first sign-in through the provider still makes an (inert) identity.
+- **Row security no longer lets an account create a project for another** (D-235): a new project's owner is the
+  account creating it, enforced by a row policy and immutable afterwards. Only listed code may set the project
+  context (`crates/colophon-db/context-writers.allow`, checked by a test), and SECURITY.md describes the threat model.
+- **A site's public audience routes run as their own database role** (D-235, migration 0094). Sign-up, sign-in,
+  magic links and sign-out take the project from the site's URL; they now switch to `colophon_audience`, which can
+  reach only the audience's own tables, so the database itself refuses them any project's entries, revisions,
+  assets, tokens, members or environments. Before, only review kept those statements to the audience tables.
 - `cookie` 0.18.3 (RUSTSEC-2026-0594). Not reachable: Colophon uses no private cookie jar and doesn't
   fork.
 

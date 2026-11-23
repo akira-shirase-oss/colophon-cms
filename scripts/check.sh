@@ -88,6 +88,8 @@ SMOKES=(
   "DURATION=8s P99_MS=500 noisy-agent"
   # D-213's smoke: one address floods sign-in beside anonymous readers; DURATION is per phase.
   "DURATION=8s P99_MS=250 password-flood"
+  # D-235's smoke: open sign-up with no Turnstile; each fresh account reads its own usage.
+  "TOTAL=2000 P99_MS=700 signup"
   "TOTAL=20000 P99_MS=200 schedules"
   "TOTAL=20000 P99_MS=200 projects"
   "TOTAL=20000 P99_MS=200 changesets"

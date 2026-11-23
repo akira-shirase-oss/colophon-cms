@@ -30,7 +30,7 @@ async function retitle(page: Page, project: string, entry: string, title: string
 	const path = `${env(project)}/collections/articles/entries/${entry}`;
 	const status = await page.evaluate(
 		async ({ path, title }) => {
-			const csrf = document.cookie.split('; ').find((pair) => pair.startsWith('colophon_csrf='))?.slice('colophon_csrf='.length) ?? '';
+			const csrf = document.cookie.split('; ').find((pair) => pair.startsWith('__Host-colophon_csrf='))?.slice('__Host-colophon_csrf='.length) ?? '';
 			const current = await fetch(path);
 			const draft = ((await current.json()) as { data: { content: Record<string, unknown> } }).data;
 			const saved = await fetch(path, {

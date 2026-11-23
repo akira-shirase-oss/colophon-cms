@@ -172,11 +172,11 @@ async fn sign_in(user: &str) -> Person {
         created
     };
     let (session, csrf) = (
-        set_cookie(&done, "colophon_session"),
-        set_cookie(&done, "colophon_csrf"),
+        set_cookie(&done, "__Host-colophon_session"),
+        set_cookie(&done, "__Host-colophon_csrf"),
     );
     Person {
-        cookie: format!("colophon_session={session}; colophon_csrf={csrf}"),
+        cookie: format!("__Host-colophon_session={session}; __Host-colophon_csrf={csrf}"),
         csrf,
     }
 }

@@ -31,7 +31,7 @@ test('a document typed by hand gets the server verdict', async ({ page }) => {
 test('an image inside rich text is a tracked upload, delivered at the version its release published', async ({ page }) => {
 	await signIn(page, 'dev-owner');
 	const project = await page.evaluate(async (slug) => {
-		const csrf = document.cookie.split('; ').find((pair) => pair.startsWith('colophon_csrf='))?.slice('colophon_csrf='.length) ?? '';
+		const csrf = document.cookie.split('; ').find((pair) => pair.startsWith('__Host-colophon_csrf='))?.slice('__Host-colophon_csrf='.length) ?? '';
 		const created = await fetch('/server/api/v1/projects', {
 			method: 'POST',
 			headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrf },

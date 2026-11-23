@@ -33,12 +33,20 @@ async fn as_member(pool: &PgPool, identity: Uuid, project: Uuid) -> MemberTransa
 
 async fn made(pool: &PgPool, email: &str, password: &str) -> Uuid {
     let hash = passwords::hashed(password).await.expect("hashed");
-    match identity::sign_up(pool, email, &hash, Some("Bob"))
-        .await
-        .expect("sign-up")
+    match identity::sign_up(
+        pool,
+        email,
+        &hash,
+        Some("Bob"),
+        identity::Admission::Open { invitation: None },
+        "203.0.113.9",
+    )
+    .await
+    .expect("sign-up")
     {
-        SignedUp::Made(id) => id,
+        SignedUp::Made { identity, .. } => identity,
         SignedUp::Taken => panic!("{email} was not taken before"),
+        SignedUp::InvitationRequired => panic!("open registration needs no invitation"),
     }
 }
 
@@ -58,9 +66,16 @@ async fn an_account_signs_up_once_signs_in_and_never_shows_its_password() {
     );
     let again = passwords::hashed("another password").await.expect("hashed");
     assert_eq!(
-        identity::sign_up(&db.app, "bob@example.com", &again, None)
-            .await
-            .expect("sign-up"),
+        identity::sign_up(
+            &db.app,
+            "bob@example.com",
+            &again,
+            None,
+            identity::Admission::Open { invitation: None },
+            "203.0.113.9"
+        )
+        .await
+        .expect("sign-up"),
         SignedUp::Taken
     );
 

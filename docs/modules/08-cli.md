@@ -146,6 +146,9 @@ colophon export --env production --out export-directory
   before `admin migrate`. Every admin command reads the migrator's URL from `--database-url` /
   `COLOPHON_MIGRATION_DATABASE_URL` or from a file holding it, `--database-url-file` /
   `COLOPHON_MIGRATION_DATABASE_URL_FILE` (both set is a usage error).
+- `colophon admin usage-reconcile [--check] [--json]` (D-235): recounts every account's entries, assets, stored and
+  quarantined bytes from the rows and, without `--check`, writes the recount where the kept totals drifted. With
+  `--check` it changes nothing and exits 4 on any drift (the smoke check's alarm that a write escaped the triggers).
 - It is the only path with direct infrastructure access, and it requires a distinct mode.
 - Normal commands never need a production database password.
 

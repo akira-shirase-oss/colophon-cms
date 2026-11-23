@@ -144,8 +144,11 @@ pub(crate) struct NewProject {
     name: String,
 }
 
-/// `POST /api/v1/projects`: creates a project; the caller, who must be an administrator (D-043),
-/// becomes its owner. The database refuses anyone else too.
+/// `POST /api/v1/projects`: creates a project; the caller becomes its owner, and the account it
+/// counts against. An administrator may always (D-043), with no cap; on an installation with
+/// open registration any signed-in account may, up to `COLOPHON_PROJECTS_PER_ACCOUNT` (D-235);
+/// otherwise only administrators. The database refuses a project counted against anyone but
+/// the caller.
 pub(crate) async fn create(
     State(state): State<AppState>,
     caller: SignedIn,
@@ -162,11 +165,14 @@ pub(crate) async fn create(
     };
     let slug = Slug::parse(&body.slug).map_err(|error| invalid(error, "/slug"))?;
     let name = ProjectName::parse(&body.name).map_err(|error| invalid(error, "/name"))?;
-    match administrators::standing(&services.pool, caller.identity)
+    let cap = match administrators::standing(&services.pool, caller.identity)
         .await
         .map_err(ApiError::from_db)?
     {
-        Standing::Administrator => {}
+        Standing::Administrator => None,
+        Standing::Member if services.selfserve.registration.self_serve_projects() => {
+            Some(services.selfserve.projects_per_account)
+        }
         Standing::Member => {
             return Err(ApiError::forbidden(
                 "administrators_only",
@@ -179,12 +185,13 @@ pub(crate) async fn create(
                 "this installation has no administrator yet: enter the setup code its server printed when it started, or its operator runs `colophon admin bootstrap`",
             ));
         }
-    }
-    let project = projects::create(
+    };
+    let project = projects::create_capped(
         &services.pool,
         caller.identity,
         slug.as_str(),
         name.as_str(),
+        cap,
     )
     .await
     .map_err(|error| match error {

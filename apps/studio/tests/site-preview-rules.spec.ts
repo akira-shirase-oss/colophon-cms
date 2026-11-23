@@ -65,7 +65,7 @@ const GRANT: PreviewGrant = {
 };
 
 test.beforeAll(() => {
-	(globalThis as { document?: unknown }).document = { cookie: 'colophon_csrf=tok-1' };
+	(globalThis as { document?: unknown }).document = { cookie: '__Host-colophon_csrf=tok-1' };
 });
 
 test.describe('the management calls', () => {

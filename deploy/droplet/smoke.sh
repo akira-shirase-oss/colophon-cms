@@ -93,6 +93,17 @@ if command -v colophon >/dev/null && [[ -r "$creds/migration_database_url" ]]; t
   fi
 fi
 
+# Per-account usage (D-235) is kept by triggers; a recount from the rows must agree. Drift means a
+# write path the triggers missed: --check changes nothing and exits 4, and the output names it.
+if command -v colophon >/dev/null && [[ -r "$creds/migration_database_url" ]]; then
+  usage=$(colophon admin usage-reconcile --check --database-url-file "$creds/migration_database_url" --json 2>/dev/null || true)
+  case "$(jq -r '.data.status // empty' <<<"$usage" 2>/dev/null || true)" in
+    in_step) ok "account usage agrees with a recount of the rows" ;;
+    drift) bad "account usage drifted from the rows: $(jq -c '.data.drift' <<<"$usage") (colophon admin usage-reconcile, run without --check, repairs it; find the write path the triggers missed)" ;;
+    *) bad "couldn't read account usage from colophon admin usage-reconcile --check" ;;
+  esac
+fi
+
 echo "the Studio and delivery, on loopback"
 headers=$(curl -sSI --max-time 5 "$local_url/studio/" || true)
 grep -qiE '^HTTP/[0-9.]+ 200' <<<"$headers" && ok "the Studio answers 200" || bad "the Studio: $(head -1 <<<"$headers")"

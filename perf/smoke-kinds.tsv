@@ -24,6 +24,7 @@ publishing	write	publishes
 rich-text-media	write	saves with media references
 roles	write	custom role edits
 schedules	write	schedules made and cancelled
+signup	write	self-serve sign-ups (Argon2) and a usage read
 site-starter	write	saves while publishing
 smoke	write	a user walk with saves and publishes
 stages	write	stage-gated publishes

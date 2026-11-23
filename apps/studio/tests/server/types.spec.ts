@@ -18,7 +18,7 @@ const status = (page: Page) => page.getByTestId('save-status');
 async function api(page: Page, method: string, path: string, body?: unknown, headers: Record<string, string> = {}) {
 	return page.evaluate(
 		async ({ method, path, body, headers }) => {
-			const csrf = document.cookie.split('; ').find((pair) => pair.startsWith('colophon_csrf='))?.slice('colophon_csrf='.length) ?? '';
+			const csrf = document.cookie.split('; ').find((pair) => pair.startsWith('__Host-colophon_csrf='))?.slice('__Host-colophon_csrf='.length) ?? '';
 			const response = await fetch(path, {
 				method,
 				headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrf, 'Idempotency-Key': crypto.randomUUID(), ...headers },

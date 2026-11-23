@@ -21,7 +21,7 @@ export async function signIn(page: Page, user = 'dev-owner') {
 export async function newProject(page: Page, name = 'Studio test'): Promise<string> {
 	return page.evaluate(
 		async ({ slug, name }) => {
-			const csrf = document.cookie.split('; ').find((pair) => pair.startsWith('colophon_csrf='))?.slice('colophon_csrf='.length) ?? '';
+			const csrf = document.cookie.split('; ').find((pair) => pair.startsWith('__Host-colophon_csrf='))?.slice('__Host-colophon_csrf='.length) ?? '';
 			const response = await fetch('/api/v1/projects', {
 				method: 'POST',
 				headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrf },
@@ -84,7 +84,7 @@ export async function api(
 ): Promise<{ status: number; body: Record<string, any> | null }> {
 	return page.evaluate(
 		async ({ method, path, body, headers }) => {
-			const csrf = document.cookie.split('; ').find((pair) => pair.startsWith('colophon_csrf='))?.slice('colophon_csrf='.length) ?? '';
+			const csrf = document.cookie.split('; ').find((pair) => pair.startsWith('__Host-colophon_csrf='))?.slice('__Host-colophon_csrf='.length) ?? '';
 			const response = await fetch(path, {
 				method,
 				headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrf, ...headers },

@@ -100,8 +100,81 @@ operation, and the cross-project and identity test families from spec §27 pass.
   (≤255), `failed_sign_ins` and `locked_until`, and grants the application role UPDATE on them. A hash is
   selected only to verify against — never returned; `/me` doesn't read it.
 - The Studio's welcome page and `/studio/invite` share `AuthForm`: email and password, sign-in or create-account
-  mode, and "Sign in with your organisation" for the provider. Signing up grants nothing — a project still needs
-  an invitation, and only an administrator creates projects.
+  mode, and "Sign in with your organisation" for the provider. On `/studio/invite` a new account sends the
+  invitation's token with the sign-up and lands in the project straight away. Otherwise signing up grants
+  nothing: a project still needs an invitation, and only an administrator creates projects (or, where
+  registration is open, the account itself, within the per-account cap; D-235).
+- **Registration (D-235).** `COLOPHON_REGISTRATION` decides who may sign up, in the handler and again in the
+  sign-up's own transaction:
+  - `closed`: every `POST /auth/signup` is `403 registration_closed` before any work, an invitation
+    included, and a first sign-in through the OIDC provider makes no identity (the same refusal; an existing
+    identity signs in as before). Accounts come from `colophon admin account`.
+  - `invite` (the default): a sign-up must carry a valid, unclaimed project invitation (`invitation`, the
+    token from the link). The account is made and the invitation claimed in one transaction, on the
+    invitation's row lock, so one invitation makes exactly one account however many race; anything else (no
+    token, an unknown, expired, revoked or already claimed one) is one answer, `403 invitation_required`,
+    whether or not the email has an account, so the refusal tells nothing about who signed up. The one
+    exception is the first-run account: while nobody is an administrator and no person has an account
+    (system and token identities don't count), one sign-up without an invitation is admitted, decided under
+    an installation-wide advisory lock so concurrent first sign-ups make exactly one. A handler that already
+    sees the window closed refuses before Argon2 runs. A first OIDC sign-in is still admitted under
+    `invite`: the provider decides who exists, and the identity holds nothing until invited. With a public
+    provider (anyone can hold an account there) that admits strangers' identities, inert but real, so such an
+    installation should run `closed`; an allowlist of provider accounts is not built.
+  - `open`: any new email. A valid invitation sent along is claimed the same way; an invalid one doesn't stop
+    the sign-up.
+  - `201` answers `{"data": {"joined": {"project_id", "role"} | null}}`: the project a claimed invitation
+    joined. A taken email is `409 email_taken` only where the sign-up was otherwise admitted.
+- **Sign-up guards (D-235, migration 0095).** In order, each before the next costs anything:
+  1. registration (`closed` refuses at once);
+  2. the cap per client address: `COLOPHON_SIGNUPS_PER_ADDRESS_HOUR` (default 10) attempts an hour from the
+     address admission believes (the peer, or the nearest untrusted `X-Forwarded-For` hop behind
+     `COLOPHON_TRUSTED_PROXIES`; on the droplet, the Cf-Connecting-Ip Caddy passes on; an IPv6 address by its /64).
+     Every attempt counts, refused ones included, in `signup_throttle` through `colophon_signup_attempt` (owned
+     by `colophon_accounts`, one statement, so racing attempts never miss a count). Past it, `429 rate_limited`
+     with `Retry-After` until the window ends. A header the client writes (`Cf-Connecting-Ip`,
+     `X-Forwarded-For`, `X-Real-Ip`, `Forwarded`) never chooses the key;
+  3. the fields (email, password);
+  4. Cloudflare Turnstile, where `COLOPHON_TURNSTILE_SITE_KEY` and `COLOPHON_TURNSTILE_SECRET` are set
+     (`colophon_auth::turnstile`): the token (`turnstile_token`, at most 2048 bytes) goes to `siteverify` with
+     the secret and the client's whole address as `remoteip`, under a 3-second deadline and a 16 KiB answer
+     bound, no redirects, no transaction open. It passes only on `success` for the configured public host
+     (never the request's `Host` or `Origin`). Missing, expired or replayed (`timeout-or-duplicate`), for
+     another host, and a verifier that is down, slow, failing or answering anything else are all
+     `422 bot_check_failed`: fail closed. `COLOPHON_TURNSTILE_VERIFY_URL` exists for tests and is refused at boot
+     unless it is Cloudflare's endpoint or a loopback address. `GET /auth/providers` publishes the site key
+     (`turnstile_site_key`) for the form;
+  5. invite-only's early refusal, then Argon2, then the sign-up's transaction.
+- **The signed-in hint (D-235).** With `COLOPHON_SIGNED_IN_HINT_DOMAIN` set (the public host or a parent, two
+  labels at least), responses carry `colophon_signed_in=1; Domain=<it>; Path=/; Secure; SameSite=Lax`, not
+  `HttpOnly`, so a static site under that domain can offer "Open the Studio" without calling the API. One
+  middleware (`hint.rs`) owns it: set with every new session (sign-in, sign-up, the provider's callback, setup),
+  `Max-Age` the idle timeout, refreshed when a session is touched (at most once a minute), and cleared when a
+  response ends the session or refuses (401) a request that carried a session or the hint. It authorises nothing:
+  a request with only the hint is 401 everywhere. Unset, no response carries it.
+- **Disabling an account (D-235, migration 0096).** `POST /api/v1/accounts/{identity}/disable` and `/enable`,
+  administrators only, answer 204 whether or not anything changed. Disabling is one transaction in
+  `colophon_account_set_disabled` (owned by `colophon_accounts`; the acting administrator is the transaction's own
+  identity, never an argument): `identities.disabled_at` is set, every session the account holds and every API
+  token it made are revoked, and `staff_auth_events` gets `account_disabled` with the actor (enabling writes
+  `account_enabled`; revoked tokens stay revoked). A disabled account's password answers exactly like a wrong one,
+  and `identity::create_session` makes no session for it by any route. Nobody disables their own account
+  (409 `own_account`); one advisory lock serialises every change and each re-checks that its actor is still an
+  enabled administrator, so two administrators disabling each other at once leave one enabled
+  (409 `last_administrator` guards the rest).
+- **The staff auth log (D-235, migration 0095).** `staff_auth_events`: `signed_up` (marked `pre_setup` for the
+  first-run account, `invitation` when it claimed one; written in the sign-up's own transaction),
+  `sign_up_refused` (`bot_check_failed`, `invitation_required`, `email_taken`; written only past the cap, so a
+  flood is bounded by it), `signed_in` (`password` or `provider`), `sign_in_failed` (at most 20 from one address
+  an hour, counted by `colophon_sign_in_log_admit` in `sign_in_log_budget`; the 21st is marked `log_capped` and
+  the rest of the hour isn't recorded, while every miss is still refused and throttled as before) and
+  `signed_out` (only with a live session), with the
+  client address as the throttles key it. No password, token or email: an event without an account to name
+  carries the normalized email's HMAC-SHA256 under `COLOPHON_AUTH_EVENT_KEY` (or nothing when unset), and a
+  failed sign-in is always recorded that way, so the log says no more about who has an account than the answer
+  does. `detail` is a short word by CHECK, never free text. Append-only: the API's role may only INSERT, a
+  trigger refuses UPDATE, DELETE and TRUNCATE from everyone, the owner included, and the retention sweep keeps
+  the audit age (90 days) through `colophon_staff_auth_sweep`, owned by `colophon_retention`.
 - The provider itself is optional (D-141): the built-in accounts carry an installation on their own.
   `GET /auth/providers` is public and answers `{sso}` — whether an external provider is configured — so
   `AuthForm` hides the organisation button instead of offering a route that can only answer 503.
@@ -144,9 +217,11 @@ operation, and the cross-project and identity test families from spec §27 pass.
   - the Studio's home page shows a signed-in person on such an installation where to find the code, a field for
     it, and the bootstrap command with their own subject.
 - Sign-up is built in: `POST /auth/signup` makes a password account, and `/auth/login?start=create` with an OIDC
-  provider asks it for its sign-up form instead (`prompt=create`, when its discovery document lists it). A new
-  account grants nothing either way: it has no projects until someone invites it, and creates none unless it is an
-  administrator.
+  provider asks it for its sign-up form instead (`prompt=create`, when its discovery document lists it). Who may
+  is `COLOPHON_REGISTRATION` ("Registration" above). A new account grants nothing either way: it has no projects
+  until someone invites it, and creates none unless it is an administrator (or registration is open). On an
+  invite-only installation the Studio's first run makes the one account admitted without an invitation; if
+  someone else took it, the operator sets up from the host (`colophon admin account --admin`, install.md).
 - A development-only OIDC identity exists for the opt-in profile and refuses to run on a publicly bound install:
   the Keycloak realm in `deploy/keycloak` has a public client secret, and the server refuses to start with it on a
   non-loopback listen address (D-031).
@@ -155,6 +230,24 @@ operation, and the cross-project and identity test families from spec §27 pass.
 - Rust issues opaque, random, revocable session tokens and stores only their hash in Postgres.
 - Cookies are `Secure`, `HttpOnly`, with `SameSite`; sessions have expiry and idle timeout.
 - Cookie-authenticated writes need a CSRF token **and** a matching `Origin`.
+- **Writes without a session yet (D-235): sign-up and sign-in** have no CSRF token to check, so the `Origin` rule
+  alone stops another site signing a visitor in to an account of its choosing (login CSRF): a browser's
+  `Sec-Fetch-Site: cross-site` is refused whatever else comes with it; an `Origin` must be trusted exactly (`null`,
+  another scheme, host or port refused); with no `Origin`, `Sec-Fetch-Site` must be `same-origin` or `none`; a
+  request with neither header (a CLI, a script) passes, since no browser sends a cross-site write without them.
+  `403 origin_not_allowed`. Sign-out with a session goes through the session's own rule above (tested).
+- **Rotation (D-235).** Signing in, signing up and coming back from the provider issue a new session and end any
+  session the browser presented, under either cookie name, so a session planted beforehand (fixation) never
+  becomes the signed-in one. Becoming the administrator with the setup code is a change of standing: the session
+  that asked ends and the answer carries a new one. Each is `session_rotated` in the staff auth log.
+- **Cookie names (D-235).** `__Host-colophon_session` (`HttpOnly`, `SameSite=Lax`) and `__Host-colophon_csrf`
+  (readable, `SameSite=Strict`), both `Secure`, `Path=/`, no `Domain`: the browser refuses a `__Host-` cookie
+  otherwise, so a sibling subdomain can neither set nor shadow them. For one release the old names
+  (`colophon_session`, `colophon_csrf`) are still read (`colophon_api::legacy_cookie`), but only for a session made
+  before the rename was deployed (`session_cookie_rename`, recorded by migration 0095): its first use swaps it, in
+  one statement, for a new session under the new name with the same identity, CSRF token, expiry and last use, and
+  expires the old cookies. An old-name cookie for a session made after the rename (planted, say) is dropped from
+  the request and cleared. Every sign-in, sign-up and sign-out clears the old names too.
 - Defaults: a session ends 12 hours after sign-in or after 2 hours unused. Its last use is written at most once a
   minute, decided from the row just read, so most requests only read.
 - The CSRF token is per session, stored hashed, and sent to the page in a readable `SameSite=Strict` cookie; writes

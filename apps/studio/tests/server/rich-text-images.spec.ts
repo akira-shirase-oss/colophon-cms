@@ -55,7 +55,7 @@ function png(width: number, height: number, hue: [number, number, number]): Buff
 async function uploaded(page: Page, project: string, name: string, bytes: Buffer): Promise<string> {
 	const made = await page.evaluate(
 		async ({ project, name, data }) => {
-			const csrf = document.cookie.split('; ').find((pair) => pair.startsWith('colophon_csrf='))?.slice('colophon_csrf='.length) ?? '';
+			const csrf = document.cookie.split('; ').find((pair) => pair.startsWith('__Host-colophon_csrf='))?.slice('__Host-colophon_csrf='.length) ?? '';
 			const response = await fetch(`/api/v1/projects/${project}/environments/production/assets`, {
 				method: 'POST',
 				headers: { 'Content-Type': 'image/png', 'X-CSRF-Token': csrf, 'X-Colophon-File-Name': name, 'Idempotency-Key': crypto.randomUUID() },

@@ -104,8 +104,8 @@ export async function listProjects<T>(): Promise<{ status: number; projects: T[]
 
 /** The session's CSRF token, which cookie-authenticated writes echo in `X-CSRF-Token`. */
 export function csrfToken(): string {
-	const match = document.cookie.split('; ').find((pair) => pair.startsWith('colophon_csrf='));
-	return match?.slice('colophon_csrf='.length) ?? '';
+	const match = document.cookie.split('; ').find((pair) => pair.startsWith('__Host-colophon_csrf='));
+	return match?.slice('__Host-colophon_csrf='.length) ?? '';
 }
 
 /** The `details` of an error envelope, when the server gave them. */

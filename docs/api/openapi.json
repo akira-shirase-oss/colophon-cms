@@ -381,13 +381,31 @@
       },
       "AuthProviders": {
         "properties": {
+          "registration": {
+            "description": "who may sign up (D-235): anyone, only with an invitation, or nobody",
+            "enum": [
+              "open",
+              "invite",
+              "closed"
+            ],
+            "type": "string"
+          },
           "sso": {
             "description": "an external identity provider is configured",
             "type": "boolean"
+          },
+          "turnstile_site_key": {
+            "description": "Cloudflare Turnstile's site key when sign-ups must carry a token (D-235); null when none is checked",
+            "type": [
+              "string",
+              "null"
+            ]
           }
         },
         "required": [
-          "sso"
+          "sso",
+          "turnstile_site_key",
+          "registration"
         ],
         "type": "object"
       },
@@ -1997,6 +2015,27 @@
           "identity_id",
           "role",
           "joined_at"
+        ],
+        "type": "object"
+      },
+      "Meter": {
+        "properties": {
+          "limit": {
+            "description": "null: unbounded (an administrator, or no quota configured)",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "used": {
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "used",
+          "limit"
         ],
         "type": "object"
       },
@@ -4150,8 +4189,17 @@
             "format": "email",
             "type": "string"
           },
+          "invitation": {
+            "description": "A project invitation's token: the sign-up claims it and joins its project (D-235). Required on an invite-only installation (but for its first-run account); on an open one an invalid token is ignored",
+            "type": "string"
+          },
           "password": {
             "minLength": 8,
+            "type": "string"
+          },
+          "turnstile_token": {
+            "description": "Cloudflare Turnstile's token from the sign-up form; required where the installation checks one (`GET /auth/providers`)",
+            "maxLength": 2048,
             "type": "string"
           }
         },
@@ -4170,6 +4218,34 @@
             ]
           }
         },
+        "type": "object"
+      },
+      "SignedUp": {
+        "properties": {
+          "joined": {
+            "description": "the project the sign-up joined by claiming its invitation (D-235); null when it claimed none",
+            "properties": {
+              "project_id": {
+                "format": "uuid",
+                "type": "string"
+              },
+              "role": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "project_id",
+              "role"
+            ],
+            "type": [
+              "object",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "joined"
+        ],
         "type": "object"
       },
       "SiteSession": {
@@ -4693,6 +4769,30 @@
         "format": "binary",
         "type": "string"
       },
+      "Usage": {
+        "properties": {
+          "assets": {
+            "$ref": "#/components/schemas/Meter"
+          },
+          "entries": {
+            "$ref": "#/components/schemas/Meter"
+          },
+          "projects": {
+            "$ref": "#/components/schemas/Meter"
+          },
+          "storage_bytes": {
+            "$ref": "#/components/schemas/Meter",
+            "description": "stored plus still-quarantined upload bytes"
+          }
+        },
+        "required": [
+          "projects",
+          "entries",
+          "assets",
+          "storage_bytes"
+        ],
+        "type": "object"
+      },
       "VersionReport": {
         "description": "the shape never changes: fields may be added, none removed or renamed",
         "properties": {
@@ -4750,9 +4850,9 @@
         "type": "http"
       },
       "sessionCookie": {
-        "description": "a browser session. Cookie-authenticated writes (anything but GET, HEAD, OPTIONS) also need an `Origin` the server trusts exactly and an `X-CSRF-Token` header matching the session's CSRF token, which lives in the readable `colophon_csrf` cookie.",
+        "description": "a browser session. Cookie-authenticated writes (anything but GET, HEAD, OPTIONS) also need an `Origin` the server trusts exactly and an `X-CSRF-Token` header matching the session's CSRF token, which lives in the readable `__Host-colophon_csrf` cookie.",
         "in": "cookie",
-        "name": "colophon_session",
+        "name": "__Host-colophon_session",
         "type": "apiKey"
       }
     }
@@ -4765,6 +4865,194 @@
   "jsonSchemaDialect": "https://json-schema.org/draft/2020-12/schema",
   "openapi": "3.1.0",
   "paths": {
+    "/api/v1/accounts/{identity}/disable": {
+      "post": {
+        "operationId": "disableAccount",
+        "parameters": [
+          {
+            "description": "the member's identity id",
+            "in": "path",
+            "name": "identity",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "disabled, or it already was"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "`unauthorized` — not signed in, the credential is invalid, or the token was revoked"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "`administrators_only` — only an administrator can disable an account"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "`not_found` — no such resource — or one the caller may not see, which looks the same"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "`own_account, last_administrator` — your own account, or the last enabled administrator"
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "`rate_limited` — over the per-credential or per-address limit; `Retry-After`"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "any other failure, in the one error envelope"
+          }
+        },
+        "security": [
+          {
+            "sessionCookie": []
+          },
+          {
+            "bearerToken": []
+          }
+        ],
+        "summary": "Disable an account: every session and API token it made is revoked, and it can't sign in (D-235)",
+        "tags": [
+          "auth"
+        ]
+      }
+    },
+    "/api/v1/accounts/{identity}/enable": {
+      "post": {
+        "operationId": "enableAccount",
+        "parameters": [
+          {
+            "description": "the member's identity id",
+            "in": "path",
+            "name": "identity",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "enabled, or it already was"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "`unauthorized` — not signed in, the credential is invalid, or the token was revoked"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "`administrators_only` — only an administrator can enable an account"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "`not_found` — no such resource — or one the caller may not see, which looks the same"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "`own_account` — your own account"
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "`rate_limited` — over the per-credential or per-address limit; `Retry-After`"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "any other failure, in the one error envelope"
+          }
+        },
+        "security": [
+          {
+            "sessionCookie": []
+          },
+          {
+            "bearerToken": []
+          }
+        ],
+        "summary": "Enable a disabled account again; it signs in afresh (D-235)",
+        "tags": [
+          "auth"
+        ]
+      }
+    },
     "/api/v1/installation": {
       "get": {
         "operationId": "installation",
@@ -4999,6 +5287,73 @@
         ]
       }
     },
+    "/api/v1/me/usage": {
+      "get": {
+        "operationId": "myUsage",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "data": {
+                      "$ref": "#/components/schemas/Usage"
+                    }
+                  },
+                  "required": [
+                    "data"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "ok"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "`unauthorized` — not signed in, the credential is invalid, or the token was revoked"
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "`rate_limited` — over the per-credential or per-address limit; `Retry-After`"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "any other failure, in the one error envelope"
+          }
+        },
+        "security": [
+          {
+            "sessionCookie": []
+          },
+          {
+            "bearerToken": []
+          }
+        ],
+        "summary": "What the caller's account uses against its limits, across the projects it owns (D-235)",
+        "tags": [
+          "auth"
+        ]
+      }
+    },
     "/api/v1/projects": {
       "get": {
         "operationId": "listProjects",
@@ -5155,7 +5510,7 @@
                 }
               }
             },
-            "description": "`administrators_only, not_set_up` — only an administrator creates projects"
+            "description": "`administrators_only, not_set_up` — only an administrator creates projects here"
           },
           "409": {
             "content": {
@@ -5165,7 +5520,7 @@
                 }
               }
             },
-            "description": "`project_exists` — a project with this slug exists"
+            "description": "`project_exists, project_limit` — a project with this slug exists, or the account owns as many projects as it may"
           },
           "422": {
             "content": {
@@ -5206,7 +5561,7 @@
             "bearerToken": []
           }
         ],
-        "summary": "Create a project (administrators only)",
+        "summary": "Create a project (administrators; any account where registration is open, up to the per-account cap)",
         "tags": [
           "projects"
         ]
@@ -22416,7 +22771,22 @@
         },
         "responses": {
           "201": {
-            "description": "the session's `Set-Cookie` pair",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "data": {
+                      "$ref": "#/components/schemas/SignedUp"
+                    }
+                  },
+                  "required": [
+                    "data"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "the session's `Set-Cookie` pair, and the project joined when the sign-up claimed an invitation",
             "headers": {
               "Set-Cookie": {
                 "schema": {
@@ -22424,6 +22794,16 @@
                 }
               }
             }
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "`registration_closed, invitation_required` — this installation admits no sign-up (`closed`), or admits one only with a valid, unclaimed project invitation (`invite`; also the one first-run account before setup)"
           },
           "409": {
             "content": {
@@ -22443,7 +22823,7 @@
                 }
               }
             },
-            "description": "`invalid_email, weak_password` — the fields refused"
+            "description": "`invalid_email, weak_password, bot_check_failed` — the fields refused, or (where the installation checks one) the Turnstile token: missing, expired, replayed, for another host, or unverifiable"
           },
           "429": {
             "content": {
@@ -22453,7 +22833,7 @@
                 }
               }
             },
-            "description": "`rate_limited` — over the per-credential or per-address limit; `Retry-After`"
+            "description": "`rate_limited` — past the sign-ups one address may attempt in an hour (`COLOPHON_SIGNUPS_PER_ADDRESS_HOUR`), refused attempts included; `Retry-After` says when the window ends; over the per-credential or per-address limit; `Retry-After`"
           },
           "default": {
             "content": {

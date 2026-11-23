@@ -10,6 +10,7 @@
 	import InfoIcon from '@lucide/svelte/icons/info';
 	import LayoutGridIcon from '@lucide/svelte/icons/layout-grid';
 	import LogOutIcon from '@lucide/svelte/icons/log-out';
+	import GaugeIcon from '@lucide/svelte/icons/gauge';
 	import { resolve } from '$app/paths';
 	import { createQuery } from '@tanstack/svelte-query';
 	import { toast } from 'svelte-sonner';
@@ -63,6 +64,9 @@
 			<DropdownMenu.Separator />
 			<DropdownMenu.Item>
 				{#snippet child({ props })}<a {...props} href={resolve('/')}><LayoutGridIcon />Your work and projects</a>{/snippet}
+			</DropdownMenu.Item>
+			<DropdownMenu.Item>
+				{#snippet child({ props })}<a {...props} href={resolve('/usage')} data-testid="open-usage"><GaugeIcon />Usage</a>{/snippet}
 			</DropdownMenu.Item>
 			<DropdownMenu.Item onSelect={() => (about = true)} data-testid="about-colophon"><InfoIcon />About Colophon</DropdownMenu.Item>
 			<DropdownMenu.Separator />

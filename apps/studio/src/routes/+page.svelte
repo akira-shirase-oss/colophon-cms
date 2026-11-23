@@ -147,7 +147,7 @@
 					This Colophon is new. Create the first account; you'll become its administrator with the setup code the server printed.
 				</p>
 				<div class="mt-8 text-left">
-					<AuthForm start="signup" returnTo={page.url.searchParams.get('return_to') ?? resolve('/')} navigateAfter={page.url.searchParams.has('return_to')} />
+					<AuthForm start="signup" firstRun returnTo={page.url.searchParams.get('return_to') ?? resolve('/')} navigateAfter={page.url.searchParams.has('return_to')} />
 				</div>
 				<p class="mt-6 text-sm text-pretty text-muted-foreground">
 					{#if kept !== null}
@@ -170,7 +170,15 @@
 			<div class="mt-8 text-left">
 				<AuthForm returnTo={page.url.searchParams.get('return_to') ?? resolve('/')} navigateAfter={page.url.searchParams.has('return_to')} />
 			</div>
-			<p class="mt-6 text-sm text-muted-foreground">New here? Create an account, then ask the person who runs this Colophon to invite you to a project.</p>
+			<p class="mt-6 text-sm text-muted-foreground">
+				{#if providers.data?.registration === 'open'}
+					New here? Create an account and start your first project.
+				{:else if providers.data?.registration === 'closed'}
+					Need an account? Ask the person who runs this Colophon.
+				{:else}
+					New here? Open the invitation link you were sent to create your account.
+				{/if}
+			</p>
 		{/if}
 	</div>
 {:else if !who.data.installation.has_administrator}

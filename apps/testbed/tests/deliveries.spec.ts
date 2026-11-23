@@ -21,7 +21,7 @@ test('add a destination, publish, and see the job delivered', async ({ page }) =
 	try {
 		await signIn(page, 'dev-owner');
 		const project = await page.evaluate(async (slug) => {
-			const csrf = document.cookie.split('; ').find((pair) => pair.startsWith('colophon_csrf='))?.slice('colophon_csrf='.length) ?? '';
+			const csrf = document.cookie.split('; ').find((pair) => pair.startsWith('__Host-colophon_csrf='))?.slice('__Host-colophon_csrf='.length) ?? '';
 			const created = await fetch('/server/api/v1/projects', {
 				method: 'POST',
 				headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrf },
@@ -43,7 +43,7 @@ test('add a destination, publish, and see the job delivered', async ({ page }) =
 		await expect(page.getByTestId('destinations')).toContainText('Receiver');
 
 		const status = await page.evaluate(async (project) => {
-			const csrf = document.cookie.split('; ').find((pair) => pair.startsWith('colophon_csrf='))?.slice('colophon_csrf='.length) ?? '';
+			const csrf = document.cookie.split('; ').find((pair) => pair.startsWith('__Host-colophon_csrf='))?.slice('__Host-colophon_csrf='.length) ?? '';
 			const headers = { 'Content-Type': 'application/json', 'X-CSRF-Token': csrf };
 			const base = `/server/api/v1/projects/${project}/environments/production`;
 			const body = { title: 'Announced', body: { schema: 'colophon/rich-text', version: 1, doc: { type: 'doc', content: [{ type: 'paragraph' }] } } };
@@ -89,7 +89,7 @@ test('a CDN destination is sent a purge by tag, and the release shows it accepte
 	try {
 		await signIn(page, 'dev-owner');
 		const project = await page.evaluate(async (slug) => {
-			const csrf = document.cookie.split('; ').find((pair) => pair.startsWith('colophon_csrf='))?.slice('colophon_csrf='.length) ?? '';
+			const csrf = document.cookie.split('; ').find((pair) => pair.startsWith('__Host-colophon_csrf='))?.slice('__Host-colophon_csrf='.length) ?? '';
 			const created = await fetch('/server/api/v1/projects', {
 				method: 'POST',
 				headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrf },
@@ -109,7 +109,7 @@ test('a CDN destination is sent a purge by tag, and the release shows it accepte
 		await expect(page.getByTestId('destinations')).toContainText('Edge (cdn)');
 
 		const status = await page.evaluate(async (project) => {
-			const csrf = document.cookie.split('; ').find((pair) => pair.startsWith('colophon_csrf='))?.slice('colophon_csrf='.length) ?? '';
+			const csrf = document.cookie.split('; ').find((pair) => pair.startsWith('__Host-colophon_csrf='))?.slice('__Host-colophon_csrf='.length) ?? '';
 			const headers = { 'Content-Type': 'application/json', 'X-CSRF-Token': csrf };
 			const base = `/server/api/v1/projects/${project}/environments/production`;
 			const body = { title: 'Purged', body: { schema: 'colophon/rich-text', version: 1, doc: { type: 'doc', content: [{ type: 'paragraph' }] } } };
@@ -156,7 +156,7 @@ test('a probe verifies a release once its site shows it, and the receipt says fr
 	try {
 		await signIn(page, 'dev-owner');
 		const project = await page.evaluate(async (slug) => {
-			const csrf = document.cookie.split('; ').find((pair) => pair.startsWith('colophon_csrf='))?.slice('colophon_csrf='.length) ?? '';
+			const csrf = document.cookie.split('; ').find((pair) => pair.startsWith('__Host-colophon_csrf='))?.slice('__Host-colophon_csrf='.length) ?? '';
 			const created = await fetch('/server/api/v1/projects', {
 				method: 'POST',
 				headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrf },
@@ -180,7 +180,7 @@ test('a probe verifies a release once its site shows it, and the receipt says fr
 
 		generation = 1;
 		const status = await page.evaluate(async (project) => {
-			const csrf = document.cookie.split('; ').find((pair) => pair.startsWith('colophon_csrf='))?.slice('colophon_csrf='.length) ?? '';
+			const csrf = document.cookie.split('; ').find((pair) => pair.startsWith('__Host-colophon_csrf='))?.slice('__Host-colophon_csrf='.length) ?? '';
 			const headers = { 'Content-Type': 'application/json', 'X-CSRF-Token': csrf };
 			const base = `/server/api/v1/projects/${project}/environments/production`;
 			const body = { title: 'Seen', body: { schema: 'colophon/rich-text', version: 1, doc: { type: 'doc', content: [{ type: 'paragraph' }] } } };

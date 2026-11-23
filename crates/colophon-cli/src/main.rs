@@ -651,6 +651,20 @@ enum AdminCommand {
         #[arg(long)]
         json: bool,
     },
+    /// Recount every account's usage (D-235: entries, assets, stored and quarantined bytes)
+    /// from the rows themselves, as the migrator role. Without --check, writes the recount
+    /// where it drifted. With --check, changes nothing and exits 4 on any drift: the smoke
+    /// check's alarm that the usage triggers missed a write.
+    UsageReconcile {
+        #[command(flatten)]
+        database: admin::MigratorUrl,
+        /// Report drift only; exit 4 if there is any.
+        #[arg(long)]
+        check: bool,
+        /// Print one versioned JSON result instead of text.
+        #[arg(long)]
+        json: bool,
+    },
     /// Report applied and pending migrations without applying anything (the upgrade
     /// runbook's pre-check and rollback gate). Exits 4 when the database holds a migration
     /// this binary doesn't know: the schema is newer than the code.
@@ -935,6 +949,17 @@ fn run_admin(runtime: &Runtime, command: AdminCommand) -> ExitCode {
                 out::Out::new("admin migrate", out::Format::of(json, false)),
             ))
             .into(),
+        AdminCommand::UsageReconcile {
+            database,
+            check,
+            json,
+        } => runtime
+            .block_on(admin::usage_reconcile(
+                &database,
+                check,
+                out::Out::new("admin usage-reconcile", out::Format::of(json, false)),
+            ))
+            .into(),
         AdminCommand::MigrateStatus { database, json } => runtime
             .block_on(admin::migrate_status(
                 &database,
@@ -1011,13 +1036,16 @@ fn run_admin(runtime: &Runtime, command: AdminCommand) -> ExitCode {
             ))
             .into(),
         AdminCommand::Restore { step } => run_restore(runtime, step),
-        AdminCommand::MediaKey {
-            step:
-                MediaKeyStep::Rotate {
-                    database,
-                    retire_previous,
-                    json,
-                },
+        AdminCommand::MediaKey { step } => run_media_key(runtime, step),
+    }
+}
+
+fn run_media_key(runtime: &Runtime, step: MediaKeyStep) -> ExitCode {
+    match step {
+        MediaKeyStep::Rotate {
+            database,
+            retire_previous,
+            json,
         } => runtime
             .block_on(admin::media_key_rotate(
                 &database,

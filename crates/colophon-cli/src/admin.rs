@@ -143,6 +143,50 @@ pub(crate) async fn migrate(database: &MigratorUrl, out: Out) -> Exit {
     }
 }
 
+/// `colophon admin usage-reconcile [--check]`: recounts every account's usage (D-235) and,
+/// unless checking, writes the recount; with `--check`, any drift exits 4 (`conflict`).
+pub(crate) async fn usage_reconcile(database: &MigratorUrl, check: bool, out: Out) -> Exit {
+    let pool = match connect(database, &out).await {
+        Ok(pool) => pool,
+        Err(exit) => return exit,
+    };
+    let drift = match colophon_db::usage::reconcile(&pool, !check).await {
+        Ok(drift) => drift,
+        Err(error) => return fail(&out, Exit::Internal, &chain(&error)),
+    };
+    if out.format.machine() {
+        out.print_data(&json!({
+            "status": if drift.is_empty() { "in_step" } else if check { "drift" } else { "repaired" },
+            "drift": drift.iter().map(|d| json!({
+                "account": d.account, "field": d.field, "stored": d.stored, "counted": d.counted,
+            })).collect::<Vec<_>>(),
+        }));
+    } else if drift.is_empty() {
+        println!("account usage is in step with the rows");
+    } else {
+        for d in &drift {
+            println!(
+                "{} {}: stored {}, counted {}",
+                d.account, d.field, d.stored, d.counted
+            );
+        }
+        println!(
+            "{} drifted total(s) {}",
+            drift.len(),
+            if check {
+                "found (nothing changed)"
+            } else {
+                "repaired"
+            }
+        );
+    }
+    if check && !drift.is_empty() {
+        Exit::Conflict
+    } else {
+        Exit::Success
+    }
+}
+
 /// `colophon admin migrate-status`: the schema check the upgrade runbook gates on. Reports
 /// the applied migrations and the ones this binary knows but the database lacks (`behind`;
 /// `admin migrate` applies them deliberately), and exits 4 on any the database holds that

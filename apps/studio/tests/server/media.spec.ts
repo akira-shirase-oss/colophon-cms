@@ -58,7 +58,7 @@ const NOT_AN_IMAGE = Buffer.from('this is not an image');
 async function uploadAll(page: Page, project: string, files: { name: string; bytes: Buffer }[]): Promise<string[]> {
 	const made = await page.evaluate(
 		async ({ path, files }) => {
-			const csrf = document.cookie.split('; ').find((pair) => pair.startsWith('colophon_csrf='))?.slice('colophon_csrf='.length) ?? '';
+			const csrf = document.cookie.split('; ').find((pair) => pair.startsWith('__Host-colophon_csrf='))?.slice('__Host-colophon_csrf='.length) ?? '';
 			const ids: string[] = [];
 			for (const file of files) {
 				const response = await fetch(path, {

@@ -176,8 +176,8 @@ what the caller meant.
 `new Client({ baseUrl, token })` takes a credential and attaches it; minting one is not this
 package's job (one API, no bypass). Pass a personal access token from `colophon login`, a project
 API token (`colophon_api_…`), or a session descriptor:
-`session: { csrf, cookie? }` — the readable `colophon_csrf` value echoed on writes, plus the
-`colophon_session` cookie's value **outside a browser only** (in a browser the cookie travels by
+`session: { csrf, cookie? }` — the readable `__Host-colophon_csrf` value echoed on writes, plus the
+`__Host-colophon_session` cookie's value **outside a browser only** (in a browser the cookie travels by
 itself and can't be set as a header; cookie-authed writes from non-browser contexts also need an
 `Origin` the server trusts — `headers: { origin }`).
 
