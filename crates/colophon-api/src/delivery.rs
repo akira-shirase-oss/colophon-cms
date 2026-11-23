@@ -169,7 +169,7 @@ pub(crate) struct MediaBase {
     origin: String,
     path: String,
     signer: Option<(
-        std::sync::Arc<aws_lc_rs::hmac::Key>,
+        std::sync::Arc<crate::media_sign::KeySet>,
         i64,
         crate::media_sign::Purpose,
     )>,
@@ -192,7 +192,7 @@ impl MediaBase {
         services: &crate::state::Services,
         purpose: crate::media_sign::Purpose,
     ) -> Result<Self, ApiError> {
-        let key = std::sync::Arc::clone(services.media_keys.key(&services.pool).await?);
+        let key = services.media_keys.current(&services.pool).await?;
         let expires =
             time::OffsetDateTime::now_utc().unix_timestamp() + crate::media_sign::SIGNED_FOR_SECS;
         self.signer = Some((key, expires, purpose));
@@ -214,7 +214,7 @@ impl MediaBase {
             Some((key, expires, purpose)) => format!(
                 "{}{path}?{}",
                 self.origin,
-                crate::media_sign::query(key, *purpose, path, *expires)
+                crate::media_sign::query(key.current(), *purpose, path, *expires)
             ),
         }
     }
@@ -972,12 +972,9 @@ mod tests {
     /// alone opens (it serves the newest upload, published or not).
     #[test]
     fn a_member_s_media_addresses_name_only_recorded_versions() {
-        use crate::media_sign::{Purpose, verifies};
+        use crate::media_sign::{KeySet, Purpose, Verdict, verifies};
 
-        let key = std::sync::Arc::new(aws_lc_rs::hmac::Key::new(
-            aws_lc_rs::hmac::HMAC_SHA256,
-            &[7; 32],
-        ));
+        let key = std::sync::Arc::new(KeySet::new(vec![(3, vec![7; 32])]).expect("a key"));
         let expires = 1_800_000_060;
         let asset = "0199f0a2-6c1e-7b3a-9d42-5e8f1a2b3c4d";
         let sha = "ab".repeat(32);
@@ -1001,7 +998,10 @@ mod tests {
                 .and_then(|rest| rest.split_once('?'))
                 .expect("a signed address");
             assert_eq!(path, current, "{purpose:?}");
-            assert!(verifies(&key, &[purpose], path, Some(query), expires - 60));
+            assert_eq!(
+                verifies(&key, &[purpose], path, Some(query), expires - 60),
+                Verdict::Valid
+            );
             if purpose == Purpose::Member {
                 assert_eq!(view[asset]["current_url"], view[asset]["url"]);
                 // Every address it names is a version's: none is the bare address.

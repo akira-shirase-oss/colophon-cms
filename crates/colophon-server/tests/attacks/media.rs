@@ -4,7 +4,10 @@
 //! as one that never existed, and kept by no cache), a member sees it privately, a signed address works
 //! for its path until it expires, and publishing makes it public.
 
-use std::time::{Duration, Instant};
+use std::{
+    fmt::Write as _,
+    time::{Duration, Instant},
+};
 
 use aws_lc_rs::hmac;
 use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
@@ -79,24 +82,35 @@ async fn get(path: &str, viewer: Option<&Session>) -> reqwest::Response {
     request.send().await.expect("request")
 }
 
-/// `path` signed until `expires` with the installation's key for `purpose`: `preview` as a preview answer
-/// signs it, `member` as a site member's delivery answer does (D-229).
-async fn signed_for(purpose: &str, path: &str, expires: i64) -> String {
+/// The installation's current media signing key (the highest id, D-233): its id and bytes.
+async fn current_key() -> (i16, Vec<u8>) {
     let database = owner_database().await;
-    let bytes: Vec<u8> = sqlx::query_scalar("SELECT key FROM media_signing_keys WHERE id = 1")
-        .fetch_one(&database)
-        .await
-        .expect("the signing key");
+    let key: (i16, Vec<u8>) =
+        sqlx::query_as("SELECT id, key FROM media_signing_keys ORDER BY id DESC LIMIT 1")
+            .fetch_one(&database)
+            .await
+            .expect("the signing key");
     database.close().await;
-    let key = hmac::Key::new(hmac::HMAC_SHA256, &bytes);
+    key
+}
+
+/// `path` signed until `expires` with key `kid` for `purpose`, as the server signs (D-229, D-233).
+fn sign_with(kid: i16, key: &[u8], purpose: &str, path: &str, expires: i64) -> String {
     let tag = hmac::sign(
-        &key,
-        format!("colophon-media-v1\n{purpose}\n{path}\n{expires}").as_bytes(),
+        &hmac::Key::new(hmac::HMAC_SHA256, key),
+        format!("colophon-media-v2\n{kid}\n{purpose}\n{path}\n{expires}").as_bytes(),
     );
     format!(
-        "{path}?expires={expires}&signature={}",
+        "{path}?kid={kid}&expires={expires}&signature={}",
         URL_SAFE_NO_PAD.encode(tag.as_ref())
     )
+}
+
+/// `path` signed until `expires` with the current key for `purpose`: `preview` as a preview answer signs it,
+/// `member` as a site member's delivery answer does (D-229).
+async fn signed_for(purpose: &str, path: &str, expires: i64) -> String {
+    let (kid, key) = current_key().await;
+    sign_with(kid, &key, purpose, path, expires)
 }
 
 /// `path` signed as a preview answer signs it.
@@ -197,15 +211,9 @@ async fn an_unpublished_upload_is_private_until_a_release_names_it() {
         // A member's signature is for a version a release named, never the bare address that follows
         // the newest upload (review S1, 2026-11-21).
         signed_for("member", &path, now() + 300).await,
-        // The message without a purpose, as addresses were signed before.
+        // The message without a purpose or a key id, as addresses were signed before D-229's fix and D-233.
         {
-            let database = owner_database().await;
-            let bytes: Vec<u8> =
-                sqlx::query_scalar("SELECT key FROM media_signing_keys WHERE id = 1")
-                    .fetch_one(&database)
-                    .await
-                    .expect("the signing key");
-            database.close().await;
+            let (_, bytes) = current_key().await;
             let expires = now() + 300;
             let tag = hmac::sign(
                 &hmac::Key::new(hmac::HMAC_SHA256, &bytes),
@@ -215,6 +223,11 @@ async fn an_unpublished_upload_is_private_until_a_release_names_it() {
                 "{path}?expires={expires}&signature={}",
                 URL_SAFE_NO_PAD.encode(tag.as_ref())
             )
+        },
+        // The same signature without its key id: never read as some default key.
+        {
+            let (kid, _) = current_key().await;
+            good.replacen(&format!("kid={kid}&"), "", 1)
         },
     ] {
         let refused = get(&bad, None).await;
@@ -481,4 +494,403 @@ async fn a_site_member_s_answer_never_links_an_unpublished_replacement() {
             assert_eq!(bytes, published, "{address} serves the published version");
         }
     }
+}
+
+/// D-233 (the review's S2-2): the signing key rotates. A link signed with the previous key still works, one with a
+/// key the server hasn't read yet works at once (another server rotated), and after `--retire-previous` the old
+/// key's links are refused once the server reads the keys again (here: a server started afresh; the minute's
+/// bound is the unit tests').
+#[tokio::test]
+#[ignore = "needs the stack and scripts/migrate.sh"]
+async fn a_rotated_key_s_links_live_one_rotation_and_a_retired_key_s_die() {
+    let server = Server::start_with(&[("COLOPHON_WORKER_POLL_MS", "50")]).await;
+    let owner = sign_in("dev-owner").await;
+    let project = project(&owner).await;
+    let asset = usable(&owner, &project).await;
+    let path = format!("/media/v1/{project}/production/{asset}");
+    let rotate = |retire: bool| async move {
+        let database = owner_database().await;
+        let kid: i16 = sqlx::query_scalar("SELECT colophon_rotate_media_key($1, 'admin')")
+            .bind(retire)
+            .fetch_one(&database)
+            .await
+            .expect("rotated");
+        database.close().await;
+        kid
+    };
+    let status = |address: String| async move { get(&address, None).await.status() };
+
+    let (old_kid, old_key) = current_key().await;
+    let old = sign_with(old_kid, &old_key, "preview", &path, now() + 300);
+    assert_eq!(
+        status(old.clone()).await,
+        StatusCode::OK,
+        "the current key's link"
+    );
+
+    // Rotated (by an operator, as another server would see it): the server hasn't read the new key, but a link
+    // naming it makes it read the keys once, and the old key still verifies.
+    let new_kid = rotate(false).await;
+    assert_eq!(new_kid, old_kid + 1);
+    let (current, new_key) = current_key().await;
+    assert_eq!(current, new_kid);
+    let new = sign_with(new_kid, &new_key, "preview", &path, now() + 300);
+    assert_eq!(
+        status(new.clone()).await,
+        StatusCode::OK,
+        "a just-made key's link"
+    );
+    assert_eq!(
+        status(old.clone()).await,
+        StatusCode::OK,
+        "the previous key still verifies"
+    );
+    // A key id nobody holds, and one from the old key under the new id: refused.
+    assert_eq!(
+        status(sign_with(
+            new_kid + 5,
+            &new_key,
+            "preview",
+            &path,
+            now() + 300
+        ))
+        .await,
+        StatusCode::NOT_FOUND
+    );
+    assert_eq!(
+        status(sign_with(new_kid, &old_key, "preview", &path, now() + 300)).await,
+        StatusCode::NOT_FOUND
+    );
+
+    // Retired: a leaked key. Once the keys are read again, its links are refused and the new one's work.
+    let newest = rotate(true).await;
+    drop(server);
+    let _server = Server::start_with(&[("COLOPHON_WORKER_POLL_MS", "50")]).await;
+    assert_eq!(
+        status(old).await,
+        StatusCode::NOT_FOUND,
+        "a retired key's link"
+    );
+    assert_eq!(status(new).await, StatusCode::NOT_FOUND, "retired with it");
+    let (current, newest_key) = current_key().await;
+    assert_eq!(current, newest);
+    assert_eq!(
+        status(sign_with(
+            newest,
+            &newest_key,
+            "preview",
+            &path,
+            now() + 300
+        ))
+        .await,
+        StatusCode::OK
+    );
+}
+
+/// Every media signing key the installation holds now, current first.
+async fn all_keys() -> Vec<(i16, Vec<u8>)> {
+    let database = owner_database().await;
+    let keys = sqlx::query_as("SELECT id, key FROM media_signing_keys ORDER BY id DESC")
+        .fetch_all(&database)
+        .await
+        .expect("the keys");
+    database.close().await;
+    keys
+}
+
+/// A rotation as `colophon admin media-key rotate [--retire-previous]` runs it; the new key's id.
+async fn rotate(retire: bool) -> i16 {
+    let database = owner_database().await;
+    let kid = sqlx::query_scalar("SELECT colophon_rotate_media_key($1, 'admin')")
+        .bind(retire)
+        .fetch_one(&database)
+        .await
+        .expect("rotated");
+    database.close().await;
+    kid
+}
+
+/// The ways a key's bytes could be printed, whole or its first part: hex either case, base64 (standard, padded or
+/// not, and URL-safe), and Rust's `Debug` of the bytes.
+fn printed_as(key: &[u8]) -> Vec<String> {
+    use base64::engine::general_purpose::{STANDARD, STANDARD_NO_PAD};
+    let hex = |bytes: &[u8]| {
+        bytes.iter().fold(String::new(), |mut out, b| {
+            let _ = write!(out, "{b:02x}");
+            out
+        })
+    };
+    let mut forms = Vec::new();
+    for part in [key, &key[..12]] {
+        forms.push(hex(part));
+        forms.push(hex(part).to_uppercase());
+        forms.push(STANDARD.encode(part));
+        forms.push(STANDARD_NO_PAD.encode(part));
+        forms.push(URL_SAFE_NO_PAD.encode(part));
+    }
+    forms.push(
+        key[..8]
+            .iter()
+            .map(u8::to_string)
+            .collect::<Vec<_>>()
+            .join(", "),
+    );
+    forms
+}
+
+/// White-hat (D-233): a key id is read strictly over HTTP too. Junk, an overlong id, a sign, a leading zero, a
+/// decimal point, an encoded NUL, a non-ASCII digit, an id past a `u32`, a second `kid`, none at all, and a
+/// well-formed id no key has: each the same private 404 as a forgery, around a real signature that works.
+#[tokio::test]
+#[ignore = "needs the stack and scripts/migrate.sh"]
+async fn junk_overlong_and_missing_key_ids_are_refused_like_a_forgery() {
+    let _server = Server::start_with(&[("COLOPHON_WORKER_POLL_MS", "50")]).await;
+    let owner = sign_in("dev-owner").await;
+    let project = project(&owner).await;
+    let asset = usable(&owner, &project).await;
+    let path = format!("/media/v1/{project}/production/{asset}");
+    let (kid, key) = current_key().await;
+    let expires = now() + 300;
+    let good = sign_with(kid, &key, "preview", &path, expires);
+    assert_eq!(
+        get(&good, None).await.status(),
+        StatusCode::OK,
+        "the real link"
+    );
+
+    let id = format!("kid={kid}&");
+    let with_id = |replacement: &str| good.replacen(&id, &format!("kid={replacement}&"), 1);
+    let unheld = i64::from(i16::MAX) + 1;
+    for bad in [
+        with_id(&format!("0{kid}")),
+        with_id(&format!("+{kid}")),
+        with_id(&format!("%2B{kid}")),
+        with_id(&format!("-{kid}")),
+        with_id(&format!("{kid}.0")),
+        with_id(&format!("{kid}%00")),
+        with_id("%00"),
+        with_id("%D9%A1"),
+        with_id(""),
+        with_id("abc"),
+        with_id(&format!("{kid} ")),
+        with_id(&"9".repeat(1000)),
+        with_id("4294967296"),
+        good.replacen(&id, &format!("kid={kid}&kid={kid}&"), 1),
+        good.replacen(&id, "", 1),
+        // Well formed, signed with the real key over that id, but no key has it: one read of the keys, then 404.
+        sign_with(i16::MAX, &key, "preview", &path, expires).replacen(
+            &format!("kid={}&", i16::MAX),
+            &format!("kid={unheld}&"),
+            1,
+        ),
+        sign_with(kid + 1, &key, "preview", &path, expires),
+    ] {
+        let refused = get(&bad, None).await;
+        assert_eq!(refused.status(), StatusCode::NOT_FOUND, "{bad}");
+        assert_eq!(
+            refused.headers()[header::CACHE_CONTROL],
+            "private, no-store",
+            "{bad}"
+        );
+    }
+    assert_eq!(
+        get(&good, None).await.status(),
+        StatusCode::OK,
+        "still works"
+    );
+}
+
+/// White-hat (D-233), a rotation racing signed requests: once a server has read a `--retire-previous` rotation
+/// (here a link with the new key's id makes it read at once), the retired key's links are refused at once, the
+/// links it signed in the minute before included, and no burst of forged ids brings it back.
+#[tokio::test]
+#[ignore = "needs the stack and scripts/migrate.sh"]
+async fn a_retired_key_dies_as_soon_as_the_server_reads_the_rotation() {
+    let _server = Server::start_with(&[("COLOPHON_WORKER_POLL_MS", "50")]).await;
+    let owner = sign_in("dev-owner").await;
+    let project = project(&owner).await;
+    let asset = usable(&owner, &project).await;
+    let path = format!("/media/v1/{project}/production/{asset}");
+    let (old_kid, old_key) = current_key().await;
+    let old = sign_with(old_kid, &old_key, "preview", &path, now() + 300);
+    assert_eq!(
+        get(&old, None).await.status(),
+        StatusCode::OK,
+        "read and kept"
+    );
+
+    let newest = rotate(true).await;
+    let (current, newest_key) = current_key().await;
+    assert_eq!(current, newest);
+    let new = sign_with(newest, &newest_key, "preview", &path, now() + 300);
+    assert_eq!(
+        get(&new, None).await.status(),
+        StatusCode::OK,
+        "the new key's link"
+    );
+    assert_eq!(
+        get(&old, None).await.status(),
+        StatusCode::NOT_FOUND,
+        "the retired key's link, within its minute"
+    );
+    for forged in 1..=5 {
+        let forged = sign_with(newest + forged, &newest_key, "preview", &path, now() + 300);
+        assert_eq!(get(&forged, None).await.status(), StatusCode::NOT_FOUND);
+        tokio::time::sleep(Duration::from_millis(250)).await;
+    }
+    assert_eq!(
+        get(&old, None).await.status(),
+        StatusCode::NOT_FOUND,
+        "still dead"
+    );
+    assert_eq!(get(&new, None).await.status(), StatusCode::OK);
+}
+
+/// White-hat (D-233): no key, whole or in part, in any form, reaches the server's log at its most verbose level,
+/// or `/version`, `/livez` and `/readyz` (body or headers), through signing, verifying, unknown and junk ids, and
+/// two rotations, every key that lived during the test checked.
+#[tokio::test]
+#[ignore = "needs the stack and scripts/migrate.sh"]
+async fn no_media_key_reaches_the_log_or_the_status_answers() {
+    let log_path =
+        std::env::temp_dir().join(format!("colophon-media-key-log-{}.jsonl", Uuid::now_v7()));
+    let file = std::fs::File::create(&log_path).expect("a log file");
+    let server = Server::start_logged_to(
+        file,
+        &[("COLOPHON_WORKER_POLL_MS", "50"), ("COLOPHON_LOG", "trace")],
+    )
+    .await;
+    let mut seen: Vec<Vec<u8>> = all_keys().await.into_iter().map(|(_, key)| key).collect();
+    let owner = sign_in("dev-owner").await;
+    let project = project(&owner).await;
+    let asset = usable(&owner, &project).await;
+    let path = format!("/media/v1/{project}/production/{asset}");
+    let mut answers = String::new();
+    let mut fetch = async |address: String| {
+        let response = get(&address, None).await;
+        let status = response.status();
+        let _ = writeln!(answers, "{:?}", response.headers());
+        if !address.starts_with("/media/") {
+            answers.push_str(&response.text().await.expect("text"));
+        }
+        status
+    };
+
+    for round in [None, Some(false), Some(true)] {
+        if let Some(retire) = round {
+            rotate(retire).await;
+            // The last round's forged id spent this second's read of the keys (D-233: one a second per server).
+            tokio::time::sleep(Duration::from_millis(1100)).await;
+            seen.extend(all_keys().await.into_iter().map(|(_, key)| key));
+        }
+        let (kid, key) = current_key().await;
+        assert_eq!(
+            fetch(sign_with(kid, &key, "preview", &path, now() + 300)).await,
+            StatusCode::OK
+        );
+        fetch(sign_with(kid + 3, &key, "preview", &path, now() + 300)).await;
+        fetch(format!("{path}?kid=junk&expires=1&signature=AAAA")).await;
+        for status_path in ["/version", "/livez", "/readyz"] {
+            fetch(status_path.to_owned()).await;
+        }
+    }
+    drop(server);
+
+    let log = std::fs::read_to_string(&log_path).expect("the log");
+    let _ = std::fs::remove_file(&log_path);
+    assert!(
+        log.lines().count() > 100 && log.contains("/media/v1/"),
+        "the trace log recorded the requests ({} lines)",
+        log.lines().count()
+    );
+    seen.sort();
+    seen.dedup();
+    assert!(seen.len() >= 3, "three keys lived: {}", seen.len());
+    for key in &seen {
+        // Which form, by its place in `printed_as`, never the form itself: a failure mustn't print the key.
+        for (form, printed) in printed_as(key).iter().enumerate() {
+            assert!(
+                !log.contains(printed),
+                "a media key reached the log (form {form})"
+            );
+            assert!(
+                !answers.contains(printed),
+                "a media key reached a status answer (form {form})"
+            );
+        }
+    }
+}
+
+/// White-hat (D-233): a rotation is the migrator's alone, run from the CLI against the database; nothing over
+/// HTTP rotates or reads a key. The route table's own document names no such path, and the likeliest ones, asked
+/// by the installation's administrator, by a full-access project token and by no one, change nothing.
+#[tokio::test]
+#[ignore = "needs the stack and scripts/migrate.sh"]
+async fn no_session_or_token_rotates_or_reads_a_key_over_http() {
+    let _server = Server::start().await;
+    let owner = sign_in("dev-owner").await;
+    let project = project(&owner).await;
+    let secret = super::token(
+        &owner,
+        &project,
+        &json!({"name": "Rotator", "kind": "full-access", "expires_in_days": 1}),
+    )
+    .await;
+    let before = all_keys().await;
+
+    let document: Value = app()
+        .get(format!("{ORIGIN}/openapi.json"))
+        .send()
+        .await
+        .expect("request")
+        .json()
+        .await
+        .expect("the document");
+    let paths = document["paths"].as_object().expect("paths");
+    assert!(
+        paths.len() > 20,
+        "the real route table ({} paths)",
+        paths.len()
+    );
+    for path in paths.keys() {
+        let lower = path.to_lowercase();
+        assert!(
+            !["media-key", "media_key", "signing", "rotate", "kid"]
+                .iter()
+                .any(|word| lower.contains(word)),
+            "a key path is served: {path}"
+        );
+    }
+
+    let base = base(&project);
+    for path in [
+        "/api/v1/admin/media-key/rotate".to_owned(),
+        "/api/v1/admin/media-keys".to_owned(),
+        "/admin/media-key/rotate".to_owned(),
+        format!("/api/v1/projects/{project}/media-key/rotate"),
+        format!("{base}/media-keys"),
+        format!("{base}/media-key/rotate"),
+    ] {
+        for method in [Method::GET, Method::POST] {
+            let body = json!({"retire_previous": true});
+            let tries = [
+                (
+                    "the administrator",
+                    send(&owner, method.clone(), &path, Some(&body)).await,
+                ),
+                (
+                    "a full-access token",
+                    super::as_token(&secret, method.clone(), &path, Some(&body)).await,
+                ),
+                (
+                    "no one",
+                    super::anonymous(method.clone(), &path, Some(&body)).await,
+                ),
+            ];
+            for (who, reply) in tries {
+                super::refused(&reply, &format!("{who}: {method} {path}"));
+            }
+        }
+    }
+    assert_eq!(all_keys().await, before, "the keys are as they were");
 }
