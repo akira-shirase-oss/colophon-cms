@@ -35,7 +35,7 @@ are on.
 ### Upgrades, rollbacks and the two channels
 
 ```sh
-/opt/colophon-src/deploy/droplet/upgrade.sh 0.1.0-alpha.4      # a tagged release
+/opt/colophon-src/deploy/droplet/upgrade.sh 0.1.0-alpha.5      # a tagged release
 /opt/colophon-src/deploy/droplet/upgrade.sh --channel edge     # the newest build of main (once edge.yml lands)
 /opt/colophon-src/deploy/droplet/upgrade.sh --rollback         # back to the release before
 /opt/colophon-src/deploy/droplet/upgrade.sh --status
@@ -72,7 +72,7 @@ The commands run on the droplet as root unless they say otherwise. `$CHECKOUT` i
 repository on the droplet (step 2). **The version is in one place:**
 
 ```sh
-export COLOPHON_VERSION=0.1.0-alpha.4    # the release this guide installs; change only this to upgrade
+export COLOPHON_VERSION=0.1.0-alpha.5    # the release this guide installs; change only this to upgrade
 ```
 
 ## 1. The host
@@ -154,7 +154,7 @@ git clone --depth 1 --branch v$v https://github.com/akira-shirase-oss/colophon-c
 CHECKOUT=/opt/colophon-src
 ```
 
-> The release `v0.1.0-alpha.4` carries the checksummed musl archives this step installs. Building
+> The release `v0.1.0-alpha.5` carries the checksummed musl archives this step installs. Building
 > from source on a 2 GB droplet is not recommended (the Rust build needs more memory than the host has).
 
 ## 3. Neon: the roles and the schema

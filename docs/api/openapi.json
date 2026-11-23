@@ -4760,7 +4760,7 @@
   "info": {
     "description": "Colophon's HTTP API: the /api/v1 management surface the Studio, CLI, SDK and agents share, the public /content/v1 delivery and /media/v1 origins, and the server's own meta routes. Emitted from the route table the server itself is built from (D-110), so the document and the routes cannot drift.",
     "title": "Colophon",
-    "version": "0.1.0-alpha.4"
+    "version": "0.1.0-alpha.5"
   },
   "jsonSchemaDialect": "https://json-schema.org/draft/2020-12/schema",
   "openapi": "3.1.0",
