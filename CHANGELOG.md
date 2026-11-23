@@ -8,6 +8,8 @@ through `--version` and `GET /version`.
 
 ## [Unreleased]
 
+## [0.1.0-alpha.6] — 2026-11-23
+
 ### Added
 
 - **A signed-in hint for sites on the same domain** (D-235): with `COLOPHON_SIGNED_IN_HINT_DOMAIN` set, a readable

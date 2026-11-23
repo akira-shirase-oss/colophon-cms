@@ -5,7 +5,7 @@ resolver = "3"
 [workspace.package]
 # One semantic version for the server, worker, CLI, SDK and MCP server (D-062); the policy is in
 # docs/modules/19-oss.md, "Versions". The release workflow refuses a tag that doesn't match it.
-version = "0.1.0-alpha.5"
+version = "0.1.0-alpha.6"
 edition = "2024"
 rust-version = "1.99"
 repository = "https://github.com/akira-shirase-oss/colophon-cms"
