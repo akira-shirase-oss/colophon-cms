@@ -1,4 +1,4 @@
--- D-235: per-account counting across tenants, by colophon_accounts (0087).
+-- D-235: per-account counting across tenants, by colophon_accounts (0092).
 --
 -- colophon_projects_owned(account): how many projects the account owns, whether or not it is
 -- still a member of them (a project an account left still counts against it). A definer

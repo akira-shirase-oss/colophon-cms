@@ -142,7 +142,7 @@ pub enum DbError {
         /// Projects the account owns.
         used: u32,
     },
-    /// The write would take the owning account past one of its quotas (D-235; 0088's
+    /// The write would take the owning account past one of its quotas (D-235; 0093's
     /// `CQ001`): the statement was refused and nothing it wrote remains.
     #[error("the account holds {used} of the {limit} its {quota} quota allows")]
     QuotaExceeded {
@@ -278,7 +278,7 @@ impl std::fmt::Display for Quota {
 }
 
 impl DbError {
-    /// The quota refusal an error carries, if it is one: 0088's `CQ001`, whose detail is
+    /// The quota refusal an error carries, if it is one: 0093's `CQ001`, whose detail is
     /// `{"quota": …, "limit": …, "used": …}`. Raised inside a statement trigger, so it can
     /// reach the caller through any write path, including those that wrap errors as
     /// [`Self::Query`] directly.

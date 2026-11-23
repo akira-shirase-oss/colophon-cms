@@ -1,4 +1,4 @@
-//! `colophon_audience` against real PostgreSQL (D-235, migration 0089): the transaction the
+//! `colophon_audience` against real PostgreSQL (D-235, migration 0094): the transaction the
 //! public audience routes open ([`audience::project_tx`]) runs as a role that can reach the
 //! audience's own tables and nothing else. A visitor names the project by its site's URL, so
 //! the refusal must come from the database for the visitor's own project and any other one

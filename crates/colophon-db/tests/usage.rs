@@ -1,4 +1,4 @@
-//! Per-account quotas (D-235; migration 0088): the usage triggers count every write and refuse
+//! Per-account quotas (D-235; migration 0093): the usage triggers count every write and refuse
 //! one past a limit, concurrent writers that each fit alone can't both pass, multi-account
 //! statements don't deadlock, deleting a project returns exactly what it held, upload intake
 //! reserves bytes before any reach the store, and reconcile finds drift. Needs the local stack.

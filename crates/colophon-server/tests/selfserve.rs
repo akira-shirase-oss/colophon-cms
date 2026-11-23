@@ -195,8 +195,8 @@ async fn colophon_accounts_holds_exactly_the_grants_it_counts_with() {
         .expect("privilege");
         assert!(!can, "colophon_accounts may read projects.{column}");
     }
-    // Exactly the grants it counts and reconciles with (0087, 0088) and the sign-up cap's
-    // (0090), table and column, and no
+    // Exactly the grants it counts and reconciles with (0092, 0093) and the sign-up cap's
+    // (0095), table and column, and no
     // privilege on any other table by any route (PUBLIC included).
     let granted: Vec<String> = sqlx::query_scalar(
         "SELECT c.relname || ':' || a.privilege_type
@@ -293,12 +293,12 @@ async fn colophon_accounts_holds_exactly_the_grants_it_counts_with() {
     );
 }
 
-/// 0087 lifts row security's FORCE on projects and memberships for its backfill: it must be
+/// 0092 lifts row security's FORCE on projects and memberships for its backfill: it must be
 /// back on after the migration, or tenant isolation would be off for the owner role for good.
 /// (db-nonsuperuser-check.sh checks the same on the non-superuser path.)
 #[tokio::test]
 #[ignore = "needs the stack and scripts/migrate.sh"]
-async fn row_security_is_forced_again_on_projects_and_memberships_after_0087() {
+async fn row_security_is_forced_again_on_projects_and_memberships_after_0092() {
     let forced: Vec<(String, bool)> = sqlx::query_as(
         "SELECT relname::text, relforcerowsecurity FROM pg_class
          WHERE relname IN ('projects', 'memberships') AND relkind = 'r' ORDER BY relname",
@@ -555,7 +555,7 @@ async fn verified(db: &sqlx::PgPool, asset: &str) -> i64 {
         .expect("reservations")
 }
 
-/// A replacement's reservation ends with its verify job (0088's `asset_jobs` trigger), never at its
+/// A replacement's reservation ends with its verify job (0093's `asset_jobs` trigger), never at its
 /// expiry: an asset replaced again and again, each fitting, is never refused by a stale
 /// reservation, and no reservation is left once each verdict is in. The limit holds every
 /// version even if all are kept, plus one replacement in flight; a stale reservation per

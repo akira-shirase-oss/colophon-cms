@@ -25,7 +25,7 @@ crates/colophon-db/migrations-nonsuperuser/0082_private_media.sql media_object  
 # Paths that are not a staff member's, each with its own proof of the project.
 crates/colophon-db/src/delivery.rs begin   # public delivery as colophon_delivery: published rows only, by its own policies
 crates/colophon-db/src/content_types.rs current_definition   # a content type's current definition for delivery and populate: public schema metadata
-crates/colophon-db/src/audience.rs project_tx   # DB-enforced: colophon_audience (a site's audience routes take the project from its public URL; the role reaches only the audience tables, migration 0089)
+crates/colophon-db/src/audience.rs project_tx   # DB-enforced: colophon_audience (a site's audience routes take the project from its public URL; the role reaches only the audience tables, migration 0094)
 crates/colophon-db/src/previews.rs in_project   # a preview token's reads: the project its verified grant names
 crates/colophon-db/src/members.rs offer   # an invitation looked up by its secret: the project the invitation row names
 crates/colophon-db/src/members.rs accept_in   # accepting it (also a sign-up claiming it, D-235): the same, then the membership it grants
@@ -44,7 +44,7 @@ crates/colophon-db/src/projects.rs get   # one project, through the caller's mem
 crates/colophon-db/src/usage.rs of_identity   # the signed-in account's own usage (colophon_account_usage reads app.identity_id's row only)
 
 # A project that doesn't exist yet.
-crates/colophon-db/src/projects.rs create_capped   # the new project's own id, for the rows that make it; owner_account is the caller (0087's policy)
+crates/colophon-db/src/projects.rs create_capped   # the new project's own id, for the rows that make it; owner_account is the caller (0092's policy)
 
 # Not a writer: the D-234 guard's own test cases, as strings.
 crates/colophon-db/src/nonsuperuser.rs the_guard_finds_every_form_of_a_pinned_setting   # test input strings, never executed

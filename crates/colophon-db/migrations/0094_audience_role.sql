@@ -13,7 +13,7 @@
 -- Session lookups don't come here: colophon_audience_session (0052) is a definer function the
 -- server calls before any project context exists, and it is unchanged.
 
--- The role (as 0087 makes colophon_accounts). Fresh test databases migrate concurrently, so
+-- The role (as 0092 makes colophon_accounts). Fresh test databases migrate concurrently, so
 -- losing a race to create it is fine.
 DO $$
 BEGIN

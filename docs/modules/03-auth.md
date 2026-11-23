@@ -125,7 +125,7 @@ operation, and the cross-project and identity test families from spec §27 pass.
     the sign-up.
   - `201` answers `{"data": {"joined": {"project_id", "role"} | null}}`: the project a claimed invitation
     joined. A taken email is `409 email_taken` only where the sign-up was otherwise admitted.
-- **Sign-up guards (D-235, migration 0090).** In order, each before the next costs anything:
+- **Sign-up guards (D-235, migration 0095).** In order, each before the next costs anything:
   1. registration (`closed` refuses at once);
   2. the cap per client address: `COLOPHON_SIGNUPS_PER_ADDRESS_HOUR` (default 10) attempts an hour from the
      address admission believes (the peer, or the nearest untrusted `X-Forwarded-For` hop behind
@@ -145,7 +145,7 @@ operation, and the cross-project and identity test families from spec §27 pass.
      unless it is Cloudflare's endpoint or a loopback address. `GET /auth/providers` publishes the site key
      (`turnstile_site_key`) for the form;
   5. invite-only's early refusal, then Argon2, then the sign-up's transaction.
-- **The staff auth log (D-235, migration 0090).** `staff_auth_events`: `signed_up` (marked `pre_setup` for the
+- **The staff auth log (D-235, migration 0095).** `staff_auth_events`: `signed_up` (marked `pre_setup` for the
   first-run account, `invitation` when it claimed one; written in the sign-up's own transaction),
   `sign_up_refused` (`bot_check_failed`, `invitation_required`, `email_taken`; written only past the cap, so a
   flood is bounded by it), `signed_in` (`password` or `provider`), `sign_in_failed` (at most 20 from one address
@@ -227,7 +227,7 @@ operation, and the cross-project and identity test families from spec §27 pass.
   (readable, `SameSite=Strict`), both `Secure`, `Path=/`, no `Domain`: the browser refuses a `__Host-` cookie
   otherwise, so a sibling subdomain can neither set nor shadow them. For one release the old names
   (`colophon_session`, `colophon_csrf`) are still read (`colophon_api::legacy_cookie`), but only for a session made
-  before the rename was deployed (`session_cookie_rename`, recorded by migration 0090): its first use swaps it, in
+  before the rename was deployed (`session_cookie_rename`, recorded by migration 0095): its first use swaps it, in
   one statement, for a new session under the new name with the same identity, CSRF token, expiry and last use, and
   expires the old cookies. An old-name cookie for a session made after the rename (planted, say) is dropped from
   the request and cleared. Every sign-in, sign-up and sign-out clears the old names too.

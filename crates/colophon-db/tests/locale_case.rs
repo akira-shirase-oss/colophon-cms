@@ -110,7 +110,7 @@ async fn seed(owner: &PgPool, author: Uuid, project: Uuid, title: &str, locale: 
 }
 
 /// A project with its production environment, the built-in articles content type, its roles
-/// and `owner` as its owner: what `projects::create` wrote before 0087 added `owner_account`.
+/// and `owner` as its owner: what `projects::create` wrote before 0092 added `owner_account`.
 async fn old_schema_project(pool: &sqlx::PgPool, owner: Uuid) -> Uuid {
     let project = Uuid::now_v7();
     let environment = Uuid::now_v7();
@@ -166,8 +166,8 @@ async fn case_only_duplicates_stop_the_migration_until_one_is_deleted() {
     let db = TestDb::before(77).await;
     let alice = db.administrator("alice").await;
     // What an old binary wrote before 0077, in the old schema's shape: the project as
-    // projects::create made it then (no owner_account before 0087, D-235), and an entry and its
-    // draft revision each. Plain SQL, not today's Rust API: it needs a later schema (0079, 0087).
+    // projects::create made it then (no owner_account before 0092, D-235), and an entry and its
+    // draft revision each. Plain SQL, not today's Rust API: it needs a later schema (0079, 0092).
     let owner = db.owner().await;
     let project = old_schema_project(&owner, alice).await;
     let english = seed(&owner, alice, project, "Tides", "en").await;

@@ -22,13 +22,13 @@
 --                 D-135): SELECT and DELETE on the audit log and the private session and
 --                 flow tables, and nothing else; no login, and nothing logs in as it.
 --                 Migration 0050 also creates it if it is missing
---   colophon_accounts  owns the per-account counting functions (migrations 0087-0088, D-235):
+--   colophon_accounts  owns the per-account counting functions (migrations 0092-0093, D-235):
 --                 SELECT on every project's id and owner_account, and nothing else; no login,
---                 and nothing logs in as it. Migration 0087 also creates it if it is missing
---   colophon_audience  what the public audience routes may touch (migration 0089, D-235): the
+--                 and nothing logs in as it. Migration 0092 also creates it if it is missing
+--   colophon_audience  what the public audience routes may touch (migration 0094, D-235): the
 --                 audience's own tables in the entered project, and nothing else; no login.
 --                 colophon_app switches to it (SET LOCAL ROLE) like colophon_delivery. Migration
---                 0089 also creates it, and grants colophon_app the switch, if missing
+--                 0094 also creates it, and grants colophon_app the switch, if missing
 DO $$
 BEGIN
     IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'colophon_api') THEN

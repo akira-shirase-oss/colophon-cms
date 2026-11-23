@@ -1,4 +1,4 @@
-//! Per-account usage and quotas (D-235; migration 0088). Statement triggers on entries, assets
+//! Per-account usage and quotas (D-235; migration 0093). Statement triggers on entries, assets
 //! and asset versions keep each owning account's totals and refuse a write that takes one past
 //! its limit (`CQ001`, [`DbError::QuotaExceeded`]); uploads also reserve their bytes here
 //! before any reaches the object store. Administrators' projects are counted, never refused.

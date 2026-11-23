@@ -400,7 +400,7 @@ pub(crate) async fn replace(
     let environment = seen.environment;
     // The storage quota (D-235), before a byte is read, as for an upload. A replacement's bytes
     // are counted when its version is recorded at verification, so its reservation carries the
-    // verify job's id and ends with that job, in the transaction that records the verdict (0088's
+    // verify job's id and ends with that job, in the transaction that records the verdict (0093's
     // asset_jobs trigger). If no job is queued, nothing will end it, so it goes here.
     let job = Uuid::now_v7();
     let mut seen = seen;

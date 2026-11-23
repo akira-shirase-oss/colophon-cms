@@ -19,7 +19,7 @@
 //! - `audit` (90 days, spec §27): `audit_events`, through `colophon_audit_sweep` — the only
 //!   delete the append-only trigger allows, run as `colophon_retention`, a role that can do
 //!   nothing else (migration 0050); and the staff auth log, `staff_auth_events`, the same way
-//!   through `colophon_staff_auth_sweep` (D-235, migration 0090).
+//!   through `colophon_staff_auth_sweep` (D-235, migration 0095).
 //! - `idempotency` (30 days; the spec floor is 7): `idempotency_records`. Past the age a
 //!   replayed key is a fresh write, which the spec's minimum makes honest.
 //! - `session` (90 days past `expires_at`): `sessions`, `access_tokens` — dead state, not

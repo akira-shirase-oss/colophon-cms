@@ -45,12 +45,12 @@ pub const MAX_SITE_USERS: i64 = 100_000;
 pub use crate::throttle::{LOCK_AFTER, LOCK_FOR};
 
 /// The shared `('urn:colophon:system','audience-auth')` identity (migration 0054) that visitor
-/// auth events are recorded as; `colophon_audience` may append audit rows only as it (0089).
+/// auth events are recorded as; `colophon_audience` may append audit rows only as it (0094).
 pub const AUDIENCE_ACTOR: Uuid = Uuid::from_u128(0xa1b2c3d4_0000_4000_8000_0000000000a1);
 
 /// A project-scoped transaction with no person in it: what the public audience endpoints
 /// open. The project comes from the site's public URL, so any visitor opens one for any
-/// project: it switches to `colophon_audience` first (D-235, migration 0089), which drops
+/// project: it switches to `colophon_audience` first (D-235, migration 0094), which drops
 /// every `colophon_api` privilege until the transaction ends and holds only the audience's own
 /// tables (site users, their sessions, magic links, audience roles and origins, the project's
 /// throttle keys, and appending the audience actor's audit rows), each confined to the project

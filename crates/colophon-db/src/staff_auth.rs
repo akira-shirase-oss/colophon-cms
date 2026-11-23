@@ -1,4 +1,4 @@
-//! The staff auth log and the sign-up cap (D-235, migration 0090).
+//! The staff auth log and the sign-up cap (D-235, migration 0095).
 //!
 //! `staff_auth_events` records who signed up, signed in, failed to, signed out or had a session
 //! rotated on the staff side, append-only, kept for the audit age. It never holds a password, a
@@ -36,7 +36,7 @@ pub enum Event {
 }
 
 impl Event {
-    /// The stored name (migration 0090's CHECK).
+    /// The stored name (migration 0095's CHECK).
     pub fn as_str(self) -> &'static str {
         match self {
             Self::SignedUp => "signed_up",

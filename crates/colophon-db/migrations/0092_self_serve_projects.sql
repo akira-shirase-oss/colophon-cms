@@ -7,7 +7,7 @@
 --    holds no UPDATE on projects, so it never changes; ownership transfer is out of scope.
 -- 2. The restrictive "administrators only" INSERT policy (0006) becomes "for yourself only".
 -- 3. colophon_accounts: a NOLOGIN role that reads every project's id and owner_account and
---    nothing else, and owns the definer functions that count across tenants (0088: the projects
+--    nothing else, and owns the definer functions that count across tenants (0093: the projects
 --    an account owns, and account_usage's triggers). It holds no other privilege. Its functions
 --    come in the next migration: a role owns an object in public only with CREATE there, which
 --    D-234's prologue grants a non-superuser's migration for its own transaction, and the role

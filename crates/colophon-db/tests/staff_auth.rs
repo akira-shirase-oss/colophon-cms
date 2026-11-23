@@ -1,4 +1,4 @@
-//! The staff auth log and the sign-up cap (D-235, migration 0090) against real PostgreSQL: the
+//! The staff auth log and the sign-up cap (D-235, migration 0095) against real PostgreSQL: the
 //! log is append-only for everyone but its retention sweep, which keeps the audit age; the
 //! application role may only insert into it; the cap counts every attempt from one address in
 //! an hour, under concurrency too, and starts over when the window ends. Needs the local stack.

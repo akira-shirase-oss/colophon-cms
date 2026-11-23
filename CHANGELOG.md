@@ -29,7 +29,7 @@ through `--version` and `GET /version`.
   `colophon_csrf`) are read in this release only, for sessions made before the upgrade, and swapped for new-name
   ones on first use. The release after this one stops reading them. Scripts that set the cookie by
   name must use the new names.
-- **Sign-up guards and a staff sign-in log** (D-235, migration 0090). Sign-ups are capped per client address
+- **Sign-up guards and a staff sign-in log** (D-235, migration 0095). Sign-ups are capped per client address
   (`COLOPHON_SIGNUPS_PER_ADDRESS_HOUR`, default 10 an hour; every attempt counts, refused ones included; `429
   rate_limited` with `Retry-After`), and with `COLOPHON_TURNSTILE_SITE_KEY` and `COLOPHON_TURNSTILE_SECRET` set,
   must carry a Cloudflare Turnstile token, checked server-side and failing closed (`422 bot_check_failed`).
@@ -48,7 +48,7 @@ through `--version` and `GET /version`.
 - **Row security no longer lets an account create a project for another** (D-235): a new project's owner is the
   account creating it, enforced by a row policy and immutable afterwards. Only listed code may set the project
   context (`crates/colophon-db/context-writers.allow`, checked by a test), and SECURITY.md describes the threat model.
-- **A site's public audience routes run as their own database role** (D-235, migration 0089). Sign-up, sign-in,
+- **A site's public audience routes run as their own database role** (D-235, migration 0094). Sign-up, sign-in,
   magic links and sign-out take the project from the site's URL; they now switch to `colophon_audience`, which can
   reach only the audience's own tables, so the database itself refuses them any project's entries, revisions,
   assets, tokens, members or environments. Before, only review kept those statements to the audience tables.
