@@ -653,3 +653,77 @@ async fn the_deadline_sweep_reads_the_expired_not_the_table() {
     owner.close().await;
     db.drop().await;
 }
+
+/// The expiry enqueue (`assets::enqueue_expired`, the asset retention sweep's first half) counts
+/// each project's open work once a pass, not once per asset (D-237). At 23,000 collectable assets
+/// in a project with 3,000 open asset jobs, the count ran for every asset before the limit
+/// applied: 4.7 million buffers and 7.5 s a pass, past the background units' 4 s statement bound
+/// (D-236), so the sweep could never enqueue an expiry at that size. Counted once per project, a
+/// pass reads its per-asset checks and the project's open work once.
+#[tokio::test]
+#[ignore = "needs the local stack: scripts/stack.sh up"]
+async fn the_expiry_enqueue_counts_a_project_s_open_work_once() {
+    const ASSETS: i64 = 23_000;
+    const WAITING: i64 = 3_000;
+    /// The most one pass enqueueing 200 may read: about 3 a collectable asset and the
+    /// project's open work once (77,000 measured at this size), against 4.7 million before.
+    const MAX_ENQUEUE_BLOCKS: i64 = 150_000;
+    let db = TestDb::new().await;
+    one_upload(&db).await;
+    let owner = db.owner().await;
+    sqlx::query(
+        "INSERT INTO assets (project_id, environment_id, id, file_name, declared_type, size_bytes,
+                             quarantine_key, created_by, created_at)
+         SELECT a.project_id, a.environment_id, gen_random_uuid(), 'f' || n || '.png', 'image/png',
+                1024, 'quarantine/f' || n, a.created_by, now() - interval '2 days'
+         FROM assets a, generate_series(1, $1) n",
+    )
+    .bind(ASSETS)
+    .execute(&owner)
+    .await
+    .expect("old assets");
+    sqlx::query(
+        "INSERT INTO asset_jobs (project_id, environment_id, id, asset_id, kind, idempotency_key,
+                                 next_attempt_at, deadline_at, status, finished_at)
+         SELECT a.project_id, a.environment_id, gen_random_uuid(), a.id, 'verify',
+                'job:' || a.file_name, now() - interval '2 days', now() + interval '1 hour',
+                CASE WHEN row_number() OVER (ORDER BY a.file_name) <= $1 THEN 'pending'
+                     ELSE 'succeeded' END,
+                CASE WHEN row_number() OVER (ORDER BY a.file_name) <= $1 THEN NULL
+                     ELSE now() - interval '1 day' END
+         FROM assets a WHERE a.file_name LIKE 'f%'",
+    )
+    .bind(WAITING)
+    .execute(&owner)
+    .await
+    .expect("one job each, 3,000 still open");
+    sqlx::raw_sql("VACUUM ANALYZE assets, asset_jobs")
+        .execute(&owner)
+        .await
+        .expect("vacuum");
+    let pid: i32 = sqlx::query_scalar("SELECT pg_backend_pid()")
+        .fetch_one(&db.app)
+        .await
+        .expect("the sweep's backend");
+    flush_app(&db).await;
+    let before = own_reads(&owner, pid).await;
+    let enqueued = assets::enqueue_expired(
+        &db.app,
+        OffsetDateTime::now_utc() - time::Duration::days(1),
+        OffsetDateTime::now_utc() + HOUR,
+        200,
+        i64::MAX,
+        colophon_db::Stop::NEVER,
+    )
+    .await;
+    flush_app(&db).await;
+    let read = own_reads(&owner, pid).await - before;
+    eprintln!("one expiry enqueue at {ASSETS} collectable assets: {read} blocks");
+    assert_eq!(enqueued.expect("the enqueue, inside its bounds"), 200);
+    assert!(
+        read <= MAX_ENQUEUE_BLOCKS,
+        "an expiry enqueue read {read} blocks at {ASSETS} assets"
+    );
+    owner.close().await;
+    db.drop().await;
+}

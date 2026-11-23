@@ -280,3 +280,90 @@ async fn a_claim_reads_a_handful_of_blocks_across_a_large_installation() {
     owner.close().await;
     db.drop().await;
 }
+
+/// What `run` reads on the app connection's backend (its single pooled connection).
+async fn reads_of<F, Fut, T>(db: &TestDb, owner: &PgPool, run: F) -> (T, i64)
+where
+    F: FnOnce() -> Fut,
+    Fut: std::future::Future<Output = T>,
+{
+    let pid: i32 = sqlx::query_scalar("SELECT pg_backend_pid()")
+        .fetch_one(&db.app)
+        .await
+        .expect("the backend");
+    {
+        let mut app = db.app.acquire().await.expect("the app connection");
+        flush(&mut app).await;
+    }
+    let before = own_reads(owner, pid).await;
+    let out = run().await;
+    {
+        let mut app = db.app.acquire().await.expect("the app connection");
+        flush(&mut app).await;
+    }
+    (out, own_reads(owner, pid).await - before)
+}
+
+/// The deadline sweep and the lapsed release update each row they take by its key and generation
+/// (D-237): the planner, assuming a job's project and environment independent, found each row
+/// through `jobs_by_generation` on the environment alone and read every job of the environment
+/// for every row it updated. At 400 projects and 180 jobs an environment, 50 lapsed jobs and 20
+/// out of time stay a few dozen blocks a row, not a few hundred.
+#[tokio::test]
+#[ignore = "needs the local stack: scripts/stack.sh up"]
+async fn the_sweeps_update_each_row_by_its_key_not_its_environment() {
+    /// The most a sweep may read for each row it updates (finding it, its index entries, its
+    /// triggers): measured about 37 for the release and 31 for the deadline sweep.
+    const MAX_BLOCKS_A_ROW: i64 = 60;
+    let db = TestDb::new().await;
+    // 400 projects: enough that the planner's estimate for one environment's jobs, taking a
+    // project and an environment as independent, falls under one row; 60 releases each, so an
+    // environment has 180 jobs to read through when it is wrong.
+    let owner = installation(&db, 400, 60, 10).await;
+    // Warm the plans and caches on the app connection with passes that find nothing.
+    jobs::expire(&db.app, colophon_db::Stop::NEVER)
+        .await
+        .expect("warm");
+    jobs::release_lapsed(&db.app, colophon_db::Stop::NEVER)
+        .await
+        .expect("warm");
+    sqlx::raw_sql(
+        "UPDATE jobs SET status = 'running', lease_owner = 'gone', attempts = 1,
+                         lease_expires_at = now() - interval '1 minute'
+         WHERE id IN (SELECT id FROM jobs WHERE status = 'pending' ORDER BY id LIMIT 50);
+         UPDATE jobs SET deadline_at = now() - interval '1 minute'
+         WHERE id IN (SELECT id FROM jobs WHERE status = 'pending' ORDER BY id DESC LIMIT 20);",
+    )
+    .execute(&owner)
+    .await
+    .expect("lapsed and out of time");
+    sqlx::raw_sql("ANALYZE jobs")
+        .execute(&owner)
+        .await
+        .expect("analyze");
+    let (released, released_reads) = reads_of(&db, &owner, || async {
+        jobs::release_lapsed(&db.app, colophon_db::Stop::NEVER).await
+    })
+    .await;
+    let (expired, expired_reads) = reads_of(&db, &owner, || async {
+        jobs::expire(&db.app, colophon_db::Stop::NEVER).await
+    })
+    .await;
+    eprintln!(
+        "lapsed release: 50 rows in {released_reads} blocks; deadline sweep: 20 rows in {expired_reads}"
+    );
+    assert_eq!(
+        (released.expect("release"), expired.expect("expire")),
+        (50, 20)
+    );
+    assert!(
+        released_reads <= 50 * MAX_BLOCKS_A_ROW,
+        "the release read {released_reads} blocks for 50 rows"
+    );
+    assert!(
+        expired_reads <= 20 * MAX_BLOCKS_A_ROW,
+        "the deadline sweep read {expired_reads} blocks for 20 rows"
+    );
+    owner.close().await;
+    db.drop().await;
+}
