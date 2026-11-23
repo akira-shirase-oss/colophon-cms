@@ -1,17 +1,36 @@
 name: ci
 
+# Per push (D-241): the tests (rust, integration's shards, frontend) and cargo-deny, after the
+# `changes` job decides what a push touched (scripts/ci-scope.sh): docs alone run the docs check; a
+# change only to the Studio, the testbed or their UI packages skips the Rust jobs. Nightly (the
+# schedule), by hand (workflow_dispatch) and from release.yml (workflow_call, full): everything,
+# adding fuzz, the load smokes, quick start, distribution, the Next.js demo and the benchmarks.
 on:
   push:
   pull_request:
   schedule:
-    # Daily: new security advisories appear without any code change.
+    # Daily: new security advisories appear without any code change, and the nightly jobs run.
     - cron: "17 6 * * *"
+  workflow_dispatch:
+    inputs:
+      full:
+        description: Run every job, the nightly ones included
+        type: boolean
+        default: true
+  workflow_call:
+    inputs:
+      full:
+        description: Run every job, the nightly ones included
+        type: boolean
+        default: true
 
 permissions:
   contents: read
 
 concurrency:
-  group: ci-${{ github.ref }}
+  # The workflow's name in the group: called from release.yml, this run must not cancel (or be
+  # cancelled by) the push run of the same tag.
+  group: ci-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 env:
@@ -23,8 +42,47 @@ env:
 # on (the stack's and its test servers', 53900 and up). k6 took 58090 first ("address in use", twice), and a
 # loopback client took the credential test's 56398 (CI 44868206132). scripts/test-ci-ports.sh keeps it so.
 jobs:
+  changes:
+    name: changes (what this push touched, and so which jobs run)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      full: ${{ steps.scope.outputs.full }}
+      code: ${{ steps.scope.outputs.code }}
+      rust: ${{ steps.scope.outputs.rust }}
+      shards: ${{ steps.scope.outputs.shards }}
+    steps:
+      - name: Keep outgoing ports below the stack's
+        run: sudo sysctl -w net.ipv4.ip_local_port_range="20000 50999"
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - name: Which jobs this change needs (scripts/ci-scope.sh)
+        id: scope
+        env:
+          EVENT: ${{ github.event_name }}
+          FULL_INPUT: ${{ inputs.full }}
+          PR_BASE: ${{ github.event.pull_request.base.sha }}
+          BEFORE: ${{ github.event.before }}
+        run: scripts/ci-scope.sh
+
+  docs:
+    name: docs (home directories, merge markers, relative links)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Keep outgoing ports below the stack's
+        run: sudo sysctl -w net.ipv4.ip_local_port_range="20000 50999"
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - run: scripts/check-docs.sh
+
   rust:
     name: rust (toolchain, fmt, clippy, test, docs, architecture)
+    needs: changes
+    if: needs.changes.outputs.rust == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
@@ -63,8 +121,9 @@ jobs:
   # that is also why pushes to main run nothing here. Fails when a benchmark is slower in every
   # round by more than 15% and 25 ns; the report is in the job summary and the artifact.
   benchmarks:
-    name: benchmarks (this pull request against its base, on one runner)
-    if: github.event_name == 'pull_request'
+    name: benchmarks (this commit against main as it was a day earlier, on one runner)
+    needs: changes
+    if: needs.changes.outputs.full == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
@@ -80,10 +139,14 @@ jobs:
           channel=$(sed -n 's/^channel = "\(.*\)"$/\1/p' rust-toolchain.toml)
           rustup toolchain install "$channel" --profile minimal
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
-      - name: Time the base and this pull request (scripts/bench.sh compare)
-        env:
-          BASE_SHA: ${{ github.event.pull_request.base.sha }}
-        run: scripts/bench.sh compare "$BASE_SHA"
+      - name: Time main as it was a day earlier and this commit (scripts/bench.sh compare)
+        run: |
+          base=$(git rev-list -1 --before="24 hours ago" origin/main)
+          if [[ -z "$base" || "$base" == "$(git rev-parse HEAD)" ]]; then
+            echo "No earlier main to compare with; skipped."
+            exit 0
+          fi
+          scripts/bench.sh compare "$base"
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: always()
         with:
@@ -97,6 +160,8 @@ jobs:
 
   frontend:
     name: frontend (types, editor unit tests, Studio in Chromium)
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -128,6 +193,8 @@ jobs:
   # verifies before it installs, and the Homebrew formula gets each platform's hash.
   distribution:
     name: distribution (npm launcher and packages, install script, Homebrew formula)
+    needs: changes
+    if: needs.changes.outputs.full == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -198,15 +265,27 @@ jobs:
   # The testing rule (D-018) from a clean clone: the real stack, the real binary, real outages,
   # the testbed in a browser, and a load smoke run.
   integration:
-    name: integration (stack, outage tests, testbed in Chromium, load smoke)
+    name: integration (${{ matrix.shard }})
+    needs: changes
+    if: needs.changes.outputs.shards != '[]'
     runs-on: ubuntu-latest
+    # D-241: the one job became shards, each on its own runner with its own stack, chosen by
+    # `changes`. server: colophon-server's stack tests and the crash tests; workspace: every other
+    # crate's, ShellCheck, and the database TLS and non-superuser checks; studio-1 and studio-2: the
+    # Studio's real-server suite in halves (studio-1 also the testbed); smokes (nightly only): the
+    # load smoke runs. Before: one job, 44 to 60 minutes on green runs (stack tests 16, the Studio
+    # 14, the load smokes 8.5).
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: ${{ fromJSON(needs.changes.outputs.shards) }}
     # Measured on main at 94e63c0 (run 44005647998): about 25 minutes to the load smoke runs,
     # which take about 7 more; 30 cancelled the job mid-smoke. Room for the suite to grow, not
     # for a hang: every step below has deadlines of its own. 50 → 65 after CI 44680118124 ran out at
     # 50.5 minutes, still passing (16 of 19 load smokes in): the job took 40–47 minutes on green runs
     # once the publishing flow's Studio specs came in (stack tests up to 1,127 s, the Studio up to
     # 1,051 s). Splitting it into two jobs is the follow-up.
-    timeout-minutes: 65
+    timeout-minutes: 45
     steps:
       - name: Keep outgoing ports below the stack's
         run: sudo sysctl -w net.ipv4.ip_local_port_range="20000 50999"
@@ -214,6 +293,7 @@ jobs:
         with:
           persist-credentials: false
       - name: ShellCheck
+        if: matrix.shard == 'workspace'
         run: >-
           docker run --rm -v "$PWD:/mnt:ro" -w /mnt
           koalaman/shellcheck:v0.11.0@sha256:61862eba1fcf09a484ebcc6feea46f1782532571a34ed51fedf90dd25f925a8d
@@ -225,18 +305,22 @@ jobs:
           channel=$(sed -n 's/^channel = "\(.*\)"$/\1/p' rust-toolchain.toml)
           rustup toolchain install "$channel" --profile minimal
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          key: ${{ matrix.shard }}
       - name: Migrate the stack's database
         run: scripts/migrate.sh
       # D-156 against a real server: a TLS-only postgres of the script's own with a private CA,
       # the real CLI connecting (verify-full connects; a wrong name, an unknown issuer and plain
       # text fail; require, verify-ca and channel_binding=require are refused before connecting).
       - name: Database TLS against a private CA (scripts/db-tls-check.sh)
+        if: matrix.shard == 'workspace'
         run: scripts/db-tls-check.sh
       # D-234: Neon's database owner is not a superuser. A fresh postgres of the script's own whose
       # owner has CREATEROLE and CREATEDB only, and the real CLI as that owner: init-roles, migrate and
       # migrate-status, twice; the run's grants undone; the four substituted migrations' functions keep
       # the caller's context after a call and after an error caught by a savepoint.
       - name: Installed by a non-superuser owner, as on Neon (scripts/db-nonsuperuser-check.sh)
+        if: matrix.shard == 'workspace'
         run: scripts/db-nonsuperuser-check.sh
       # Before the stack tests: the site test runs the reference site's runner (apps/web) with Node.
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
@@ -245,28 +329,41 @@ jobs:
           cache: npm
       - run: npm ci
       - name: Tests that need the stack (they stop and restart its services)
+        if: matrix.shard == 'server' || matrix.shard == 'workspace'
         # Compiled against the live, migrated schema rather than .sqlx/: catches stale query data.
         # --no-fail-fast: every test binary runs, so a red in one (the attack suite's, D-231) can't hide another's.
         env:
           SQLX_OFFLINE: "false"
           DATABASE_URL: postgres://colophon:colophon-dev@127.0.0.1:55432/colophon
+          SHARD: ${{ matrix.shard }}
         run: |
           scripts/sweep-test-databases.sh
-          cargo test --workspace --locked --no-fail-fast -- --ignored --test-threads=1
+          if [[ "$SHARD" == server ]]; then
+            cargo test -p colophon-server --locked --no-fail-fast -- --ignored --test-threads=1
+          else
+            cargo test --workspace --exclude colophon-server --locked --no-fail-fast -- --ignored --test-threads=1
+          fi
       - name: Crash tests F01, F02 and F03 (the server killed before and after a commit, the worker after announcing)
+        if: matrix.shard == 'server'
         env:
           SQLX_OFFLINE: "false"
           DATABASE_URL: postgres://colophon:colophon-dev@127.0.0.1:55432/colophon
         run: cargo test -p colophon-server --features fault-injection --test faults --locked -- --ignored --test-threads=1
       - name: Chromium and its system packages (retried — Ubuntu's mirrors fail intermittently)
+        if: startsWith(matrix.shard, 'studio-')
         run: |
           echo 'Acquire::Retries "5";' | sudo tee /etc/apt/apt.conf.d/80-retries >/dev/null
           RETRY_DELAY=45 scripts/retry.sh 3 npx -w @colophon/testbed playwright install --with-deps chromium
       - name: Testbed in Chromium (scripts/testbed.sh)
+        if: matrix.shard == 'studio-1'
         run: scripts/testbed.sh
-      - name: The Studio against the real server (scripts/studio.sh)
-        run: scripts/studio.sh
+      - name: The Studio against the real server (scripts/studio.sh), this shard's half
+        if: startsWith(matrix.shard, 'studio-')
+        env:
+          SHARD: ${{ matrix.shard }}
+        run: scripts/studio.sh "--shard=${SHARD#studio-}/2"
       - name: Log the plans of slow queries during the load smoke runs
+        if: matrix.shard == 'smokes'
         # Sampled, so it costs the smoke runs almost nothing; printed below if a step fails. Plans
         # don't cover COMMIT or lock waits, so statements over 100 ms (COMMIT included) and waits
         # for a lock over 50 ms are logged too: the stalls these runs have hit queued on a row lock
@@ -284,6 +381,7 @@ jobs:
             -c "ALTER SYSTEM SET log_autovacuum_min_duration = 0" \
             -c "SELECT pg_reload_conf()"
       - name: Load smoke runs (health, rich-text validation, signed-in and bearer requests, members, custom roles, API tokens, schedules, who may create projects, changesets, public delivery, draft preview, publishing with the worker, drafts, content types, content modelling, deleting entries, the Studio)
+        if: matrix.shard == 'smokes'
         # Endpoints that never touch the database run back to back (throughput): their p99 has
         # threefold headroom even on the slowest runner seen, and health's requests a second say
         # how fast this runner is. Database-backed endpoints run at a fixed rate (steady), about
@@ -418,12 +516,12 @@ jobs:
           SMOKE_SCOPE=integration scripts/smoke-verdict.sh perf/expected-smoke-failures.tsv "${ran[*]}" "${failed[*]:-}" "$logs/metrics.tsv" \
             | tee -a "$logs/verdict.txt" "$GITHUB_STEP_SUMMARY"
       - name: Keep the load smokes' evidence (per-smoke server logs with slow requests, Postgres's checkpoints, autovacuum, lock waits and slow statements)
-        if: always()
+        if: always() && matrix.shard == 'smokes'
         run: |
           mkdir -p "$RUNNER_TEMP/integration-logs"
           docker compose -f deploy/compose.yaml logs --no-color --timestamps postgres >"$RUNNER_TEMP/integration-logs/postgres.log" 2>&1 || true
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
-        if: always()
+        if: always() && matrix.shard == 'smokes'
         with:
           name: integration-smoke-logs
           path: ${{ runner.temp }}/integration-logs/
@@ -444,7 +542,7 @@ jobs:
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: failure()
         with:
-          name: playwright-traces
+          name: playwright-traces-${{ matrix.shard }}
           # The testbed's and the Studio's server specs' (playwright.server.config.ts keeps a trace
           # for each failed test): a UI failure in CI is then read from its trace, not rebuilt from
           # the server's log.
@@ -458,6 +556,8 @@ jobs:
 
   smokes:
     name: load smokes (every check.sh scenario integration doesn't run, outage drills included)
+    needs: changes
+    if: needs.changes.outputs.full == 'true'
     runs-on: ubuntu-latest
     # Beside integration, not after it: its own runner and its own stack, so the full check's wall
     # time doesn't grow. These are check.sh's other 23 scenarios at check.sh's own settings
@@ -676,6 +776,8 @@ jobs:
   # browser check; the install itself needs Docker alone.
   quickstart:
     name: quick start (image from source, compose up, Studio journey)
+    needs: changes
+    if: needs.changes.outputs.full == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
@@ -802,6 +904,8 @@ jobs:
     # its own lockfile). A smoke, not a campaign: each target runs a bounded time on every push, so a parser change
     # that panics, overflows or stalls on hostile input fails the build; a crash's input is uploaded to reproduce.
     name: fuzz (each parser, bounded, from its seed corpus)
+    needs: changes
+    if: needs.changes.outputs.full == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 25
     env:
@@ -849,6 +953,8 @@ jobs:
 
   supply-chain:
     name: supply chain (cargo-deny)
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -871,6 +977,8 @@ jobs:
     # The Next.js demo site (D-220) lives outside the CMS's npm workspaces, with its own package-lock.json. This job
     # installs it on its own and runs only when it or the API contract it reads changes, and on main.
     name: Next.js demo (its own install, types, tests, an unseeded build)
+    needs: changes
+    if: needs.changes.outputs.full == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
