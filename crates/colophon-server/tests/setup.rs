@@ -139,6 +139,16 @@ struct Fresh {
 
 impl Fresh {
     async fn start(database: &FreshDatabase, dir: &Path, run: usize) -> Self {
+        Self::start_with(database, dir, run, &[]).await
+    }
+
+    /// [`Self::start`] with extra environment variables (`COLOPHON_REGISTRATION`, say).
+    async fn start_with(
+        database: &FreshDatabase,
+        dir: &Path,
+        run: usize,
+        extra: &[(&str, &str)],
+    ) -> Self {
         let stdout = dir.join(format!("stdout-{run}.log"));
         let stderr = dir.join(format!("stderr-{run}.log"));
         let mut command = Command::new(env!("CARGO_BIN_EXE_colophon-server"));
@@ -159,6 +169,7 @@ impl Fresh {
             // none of it.
             .env("COLOPHON_LOG", "debug")
             .env("COLOPHON_LOG_FORMAT", "json")
+            .envs(extra.iter().copied())
             .stdout(Stdio::from(File::create(&stdout).expect("stdout file")))
             .stderr(Stdio::from(File::create(&stderr).expect("stderr file")));
         let child = command.spawn().expect("the server starts");
@@ -558,4 +569,79 @@ async fn setup_codes_need_a_signed_in_caller_expire_and_are_rate_limited() {
     printed_only_to_the_terminal(&fresh, &[first, second], &seen);
     database.drop().await;
     let _cleaned = std::fs::remove_dir_all(dir);
+}
+
+/// Sign-up `email` with the development password and nothing else; the reply.
+async fn sign_up_bare(email: &str) -> Reply {
+    let response = common::app()
+        .post(format!("{ORIGIN}/auth/signup"))
+        .json(&json!({"email": email, "password": "colophon-dev"}))
+        .send()
+        .await
+        .expect("request");
+    let status = response.status();
+    let headers = response.headers().clone();
+    let body = response.json::<Value>().await.unwrap_or(Value::Null);
+    Reply {
+        status,
+        headers,
+        body,
+    }
+}
+
+/// Invite-only registration (D-235) on a fresh installation admits exactly one sign-up without an
+/// invitation, the first-run account the Studio creates before the setup code is entered, however
+/// many race for it; once an account exists, and after setup, the token-less path is closed. That
+/// such an account still can't become the administrator without the printed code is
+/// `a_setup_code_from_the_terminal_makes_the_first_administrator_once` and
+/// `setup_codes_need_a_signed_in_caller_expire_and_are_rate_limited`.
+#[tokio::test]
+#[ignore = "needs the stack: a database of its own, never bootstrapped"]
+async fn invite_only_admits_exactly_one_first_run_account_however_many_race() {
+    let database = FreshDatabase::new().await;
+    let dir = scratch("first-run");
+    let server =
+        Fresh::start_with(&database, &dir, 0, &[("COLOPHON_REGISTRATION", "invite")]).await;
+    let run = uuid::Uuid::now_v7().simple().to_string();
+    let mut racing = tokio::task::JoinSet::new();
+    for n in 0..8 {
+        let email = format!("first-{n}-{run}@colophon.test");
+        racing.spawn(async move { sign_up_bare(&email).await });
+    }
+    let replies = racing.join_all().await;
+    let made = replies
+        .iter()
+        .filter(|reply| reply.status == StatusCode::CREATED)
+        .count();
+    let refused = replies
+        .iter()
+        .filter(|reply| {
+            reply.status == StatusCode::FORBIDDEN && reason(reply) == Some("invitation_required")
+        })
+        .count();
+    let summary: Vec<_> = replies
+        .iter()
+        .map(|reply| (reply.status, reply.body.to_string()))
+        .collect();
+    assert_eq!((made, refused), (1, 7), "{summary:?}");
+    let owner = database.owner().await;
+    let people: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM identities WHERE issuer NOT LIKE 'urn:colophon:%'",
+    )
+    .fetch_one(&owner)
+    .await
+    .expect("count");
+    assert_eq!(people, 1, "exactly one account was made");
+
+    // The slot is taken: a later token-less sign-up is refused alike, a taken email included.
+    let later = sign_up_bare(&format!("later-{run}@colophon.test")).await;
+    assert_eq!(
+        (later.status, reason(&later)),
+        (StatusCode::FORBIDDEN, Some("invitation_required")),
+        "{}",
+        later.body
+    );
+    owner.close().await;
+    drop(server);
+    database.drop().await;
 }

@@ -3406,10 +3406,20 @@ export interface components {
             display_name?: string;
             /** Format: email */
             email: string;
+            /** @description A project invitation's token: the sign-up claims it and joins its project (D-235). Required on an invite-only installation (but for its first-run account); on an open one an invalid token is ignored */
+            invitation?: string;
             password: string;
         };
         SignedOut: {
             provider_sign_out?: string | null;
+        };
+        SignedUp: {
+            /** @description the project the sign-up joined by claiming its invitation (D-235); null when it claimed none */
+            joined: {
+                /** Format: uuid */
+                project_id: string;
+                role: string;
+            } | null;
         };
         SiteSession: {
             /** Format: date-time */
@@ -14644,13 +14654,26 @@ export interface operations {
             };
         };
         responses: {
-            /** @description the session's `Set-Cookie` pair */
+            /** @description the session's `Set-Cookie` pair, and the project joined when the sign-up claimed an invitation */
             201: {
                 headers: {
                     "Set-Cookie"?: string;
                     [name: string]: unknown;
                 };
-                content?: never;
+                content: {
+                    "application/json": {
+                        data: components["schemas"]["SignedUp"];
+                    };
+                };
+            };
+            /** @description `registration_closed, invitation_required` — this installation admits no sign-up (`closed`), or admits one only with a valid, unclaimed project invitation (`invite`; also the one first-run account before setup) */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
             };
             /** @description `email_taken` — an account with this email exists */
             409: {

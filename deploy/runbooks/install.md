@@ -57,6 +57,25 @@ later just starts what is there.
    Colophon (`docker compose restart colophon`) for a new one while nobody is an administrator.
 4. Enter it: you are now the administrator. Create a project, invite people from its settings.
 
+Who may make an account is `COLOPHON_REGISTRATION` (D-235): `invite` (the default) takes a
+sign-up only with a project invitation's link, `open` takes anyone, `closed` takes no sign-up at
+all. On an invite-only installation the account in step 2 is the one exception: before anyone
+is an administrator, exactly one account may be made without an invitation, and the setup code
+then makes it the administrator. Until the code is entered that account can do nothing.
+
+If someone else reached the Studio first and took that one account, finish the setup from the
+host instead; nothing on the page is needed:
+
+```sh
+docker compose exec -e COLOPHON_ACCOUNT_PASSWORD colophon \
+  colophon admin account --email you@example.com --admin
+```
+
+(Set `COLOPHON_ACCOUNT_PASSWORD` in your shell first, so the password stays out of its history.)
+On a `closed` installation this is the only way in. The account someone else made stays inert:
+no project and no way to make one. Colophon has no command yet to see or remove such an account;
+that is owed, and arrives with the staff sign-in log and account disabling.
+
 ## What is running
 
 | Service | What it does | Lifetime |

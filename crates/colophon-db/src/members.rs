@@ -511,13 +511,30 @@ pub async fn accept(
         },
     )
     .await?;
+    let accepted = accept_in(&mut transaction, identity, token_hash).await?;
+    if matches!(accepted, Accepted::Joined { .. }) {
+        transaction.commit().await.map_err(DbError::from_query)?;
+    }
+    Ok(accepted)
+}
+
+/// [`accept`]'s work inside the caller's transaction, so a sign-up under invite-only
+/// registration (D-235) creates the account and claims the invitation together, or neither. The
+/// invitation's row is locked (`FOR UPDATE`) and claimed only while unused, so of any number of
+/// concurrent claims exactly one joins; the others find it `Gone`. Sets the transaction's
+/// project to the one the invitation names. The caller commits.
+pub(crate) async fn accept_in(
+    transaction: &mut sqlx::Transaction<'static, sqlx::Postgres>,
+    identity: Uuid,
+    token_hash: &[u8; 32],
+) -> Result<Accepted, DbError> {
     let found = sqlx::query!(
         "SELECT id, project_id, role FROM invitations
          WHERE token_hash = $1 AND accepted_at IS NULL AND revoked_at IS NULL AND expires_at > now()
          FOR UPDATE",
         &token_hash[..]
     )
-    .fetch_optional(&mut *transaction)
+    .fetch_optional(&mut **transaction)
     .await
     .map_err(DbError::from_query)?;
     let Some(found) = found else {
@@ -527,7 +544,7 @@ pub async fn accept(
         "SELECT set_config('app.project_id', $1, true) AS project_scope",
         found.project_id.to_string()
     )
-    .fetch_one(&mut *transaction)
+    .fetch_one(&mut **transaction)
     .await
     .map_err(DbError::from_query)?;
     let joined = sqlx::query!(
@@ -536,7 +553,7 @@ pub async fn accept(
         identity,
         found.role
     )
-    .execute(&mut *transaction)
+    .execute(&mut **transaction)
     .await
     .map_err(DbError::from_write)?;
     if joined.rows_affected() == 0 {
@@ -547,13 +564,13 @@ pub async fn accept(
         found.id,
         identity
     )
-    .execute(&mut *transaction)
+    .execute(&mut **transaction)
     .await
     .map_err(DbError::from_query)?;
     // Recorded as the person who joined (D-063). Role keys are lowercase letters, digits and
     // hyphens (migration 0017), so they need no escaping in the JSON.
     crate::audit::record_in(
-        &mut transaction,
+        transaction,
         found.project_id,
         identity,
         "invitation.accepted",
@@ -561,7 +578,6 @@ pub async fn accept(
         &format!(r#"{{"role":"{}"}}"#, found.role),
     )
     .await?;
-    transaction.commit().await.map_err(DbError::from_query)?;
     Ok(Accepted::Joined {
         project_id: found.project_id,
         role: found.role,

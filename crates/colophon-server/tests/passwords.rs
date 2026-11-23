@@ -10,9 +10,33 @@
 
 mod common;
 
-use common::{ORIGIN, Server, Session, app, cookie, get, post, unique_slug};
-use reqwest::{StatusCode, header};
+use common::{
+    ORIGIN, Server, Session, app, call, cookie, get, post, project, sign_in, unique_slug,
+};
+use reqwest::{Method, StatusCode, header};
 use serde_json::{Value, json};
+
+/// A fresh invitation's token to one of dev-owner's projects: what an invite-only installation
+/// takes a sign-up with (D-235).
+async fn an_invitation() -> String {
+    let owner = sign_in("dev-owner").await;
+    let project = project(&owner).await;
+    let invited = call(
+        &owner,
+        Method::POST,
+        &format!("/api/v1/projects/{project}/invitations"),
+        Some(&json!({"role": "editor", "label": "Erin"})),
+        &[],
+    )
+    .await
+    .expect("request");
+    assert_eq!(invited.status, StatusCode::CREATED, "{}", invited.body);
+    let link = invited.body["data"]["link"].as_str().expect("a link");
+    link.split_once('#')
+        .expect("the token after #")
+        .1
+        .to_owned()
+}
 
 /// `POST` a JSON body to an `/auth` route with no session, as a browser arriving fresh does:
 /// status, headers (the `Set-Cookie`s) and the body.
@@ -109,10 +133,16 @@ async fn an_email_account_signs_up_and_uses_its_session() {
         "{body}"
     );
 
-    // Signing up makes the account and starts its session at once, for an invitation's join.
+    // Signing up makes the account and starts its session at once; on this invite-only
+    // installation it claims an invitation as it does (D-235).
     let (status, response, _) = post_auth(
         "/auth/signup",
-        &json!({"email": email, "password": password, "display_name": "Erin"}),
+        &json!({
+            "email": email,
+            "password": password,
+            "display_name": "Erin",
+            "invitation": an_invitation().await,
+        }),
     )
     .await;
     assert_eq!(status, StatusCode::CREATED);
@@ -167,10 +197,14 @@ async fn an_email_account_signs_up_and_uses_its_session() {
         "the write reached authorization: {body}"
     );
 
-    // The email can't sign up a second account, in any casing.
+    // The email can't sign up a second account, in any casing, even with a valid invitation.
     let (status, _, body) = post_auth(
         "/auth/signup",
-        &json!({"email": email.to_uppercase(), "password": "a different password"}),
+        &json!({
+            "email": email.to_uppercase(),
+            "password": "a different password",
+            "invitation": an_invitation().await,
+        }),
     )
     .await;
     assert_eq!(

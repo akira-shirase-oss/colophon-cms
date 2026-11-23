@@ -100,8 +100,29 @@ operation, and the cross-project and identity test families from spec §27 pass.
   (≤255), `failed_sign_ins` and `locked_until`, and grants the application role UPDATE on them. A hash is
   selected only to verify against — never returned; `/me` doesn't read it.
 - The Studio's welcome page and `/studio/invite` share `AuthForm`: email and password, sign-in or create-account
-  mode, and "Sign in with your organisation" for the provider. Signing up grants nothing — a project still needs
-  an invitation, and only an administrator creates projects.
+  mode, and "Sign in with your organisation" for the provider. On `/studio/invite` a new account sends the
+  invitation's token with the sign-up and lands in the project straight away. Otherwise signing up grants
+  nothing: a project still needs an invitation, and only an administrator creates projects (or, where
+  registration is open, the account itself, within the per-account cap; D-235).
+- **Registration (D-235).** `COLOPHON_REGISTRATION` decides who may sign up, in the handler and again in the
+  sign-up's own transaction:
+  - `closed`: every `POST /auth/signup` is `403 registration_closed` before any work, an invitation
+    included, and a first sign-in through the OIDC provider makes no identity (the same refusal; an existing
+    identity signs in as before). Accounts come from `colophon admin account`.
+  - `invite` (the default): a sign-up must carry a valid, unclaimed project invitation (`invitation`, the
+    token from the link). The account is made and the invitation claimed in one transaction, on the
+    invitation's row lock, so one invitation makes exactly one account however many race; anything else (no
+    token, an unknown, expired, revoked or already claimed one) is one answer, `403 invitation_required`,
+    whether or not the email has an account, so the refusal tells nothing about who signed up. The one
+    exception is the first-run account: while nobody is an administrator and no person has an account
+    (system and token identities don't count), one sign-up without an invitation is admitted, decided under
+    an installation-wide advisory lock so concurrent first sign-ups make exactly one. A handler that already
+    sees the window closed refuses before Argon2 runs. A first OIDC sign-in is still admitted under
+    `invite`: the provider decides who exists, and the identity holds nothing until invited.
+  - `open`: any new email. A valid invitation sent along is claimed the same way; an invalid one doesn't stop
+    the sign-up.
+  - `201` answers `{"data": {"joined": {"project_id", "role"} | null}}`: the project a claimed invitation
+    joined. A taken email is `409 email_taken` only where the sign-up was otherwise admitted.
 - The provider itself is optional (D-141): the built-in accounts carry an installation on their own.
   `GET /auth/providers` is public and answers `{sso}` — whether an external provider is configured — so
   `AuthForm` hides the organisation button instead of offering a route that can only answer 503.
@@ -144,9 +165,11 @@ operation, and the cross-project and identity test families from spec §27 pass.
   - the Studio's home page shows a signed-in person on such an installation where to find the code, a field for
     it, and the bootstrap command with their own subject.
 - Sign-up is built in: `POST /auth/signup` makes a password account, and `/auth/login?start=create` with an OIDC
-  provider asks it for its sign-up form instead (`prompt=create`, when its discovery document lists it). A new
-  account grants nothing either way: it has no projects until someone invites it, and creates none unless it is an
-  administrator.
+  provider asks it for its sign-up form instead (`prompt=create`, when its discovery document lists it). Who may
+  is `COLOPHON_REGISTRATION` ("Registration" above). A new account grants nothing either way: it has no projects
+  until someone invites it, and creates none unless it is an administrator (or registration is open). On an
+  invite-only installation the Studio's first run makes the one account admitted without an invitation; if
+  someone else took it, the operator sets up from the host (`colophon admin account --admin`, install.md).
 - A development-only OIDC identity exists for the opt-in profile and refuses to run on a publicly bound install:
   the Keycloak realm in `deploy/keycloak` has a public client secret, and the server refuses to start with it on a
   non-loopback listen address (D-031).

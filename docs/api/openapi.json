@@ -4150,6 +4150,10 @@
             "format": "email",
             "type": "string"
           },
+          "invitation": {
+            "description": "A project invitation's token: the sign-up claims it and joins its project (D-235). Required on an invite-only installation (but for its first-run account); on an open one an invalid token is ignored",
+            "type": "string"
+          },
           "password": {
             "minLength": 8,
             "type": "string"
@@ -4170,6 +4174,34 @@
             ]
           }
         },
+        "type": "object"
+      },
+      "SignedUp": {
+        "properties": {
+          "joined": {
+            "description": "the project the sign-up joined by claiming its invitation (D-235); null when it claimed none",
+            "properties": {
+              "project_id": {
+                "format": "uuid",
+                "type": "string"
+              },
+              "role": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "project_id",
+              "role"
+            ],
+            "type": [
+              "object",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "joined"
+        ],
         "type": "object"
       },
       "SiteSession": {
@@ -22416,7 +22448,22 @@
         },
         "responses": {
           "201": {
-            "description": "the session's `Set-Cookie` pair",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "data": {
+                      "$ref": "#/components/schemas/SignedUp"
+                    }
+                  },
+                  "required": [
+                    "data"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "the session's `Set-Cookie` pair, and the project joined when the sign-up claimed an invitation",
             "headers": {
               "Set-Cookie": {
                 "schema": {
@@ -22424,6 +22471,16 @@
                 }
               }
             }
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "`registration_closed, invitation_required` — this installation admits no sign-up (`closed`), or admits one only with a valid, unclaimed project invitation (`invite`; also the one first-run account before setup)"
           },
           "409": {
             "content": {

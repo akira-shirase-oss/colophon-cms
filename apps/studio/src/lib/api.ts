@@ -390,9 +390,28 @@ export function signInUrl(returnTo: string): string {
 	return `/auth/login?return_to=${encodeURIComponent(returnTo)}`;
 }
 
-/** Creates an email-and-password account and starts its session in one step (D-084). */
-export async function signUp(email: string, password: string, display_name?: string): Promise<void> {
-	await send('POST', '/auth/signup', { email, password, ...(display_name ? { display_name } : {}) });
+/** The project a sign-up joined by claiming its invitation (D-235). */
+export type JoinedBySignUp = { project_id: string; role: string };
+
+/**
+ * Creates an email-and-password account and starts its session in one step (D-084). With an
+ * invitation's token the sign-up claims it (D-235: an invite-only installation takes sign-ups only
+ * this way) and answers the project it joined; `null` when it joined none.
+ */
+export async function signUp(
+	email: string,
+	password: string,
+	display_name?: string,
+	invitation?: string
+): Promise<JoinedBySignUp | null> {
+	const response = await send('POST', '/auth/signup', {
+		email,
+		password,
+		...(display_name ? { display_name } : {}),
+		...(invitation ? { invitation } : {})
+	});
+	const answer = (await response.json().catch(() => null)) as { data?: { joined?: JoinedBySignUp | null } } | null;
+	return answer?.data?.joined ?? null;
 }
 
 /** Signs in with an email and a password; the session cookie is set by the response itself. */

@@ -11,7 +11,7 @@
 	import { createQuery, useQueryClient } from '@tanstack/svelte-query';
 	import { Button } from '@colophon/ui/ui/button';
 	import { Input } from '@colophon/ui/ui/input';
-	import { ApiError, signInPassword, signInUrl, signUp } from '#lib/api.ts';
+	import { ApiError, signInPassword, signInUrl, signUp, type JoinedBySignUp } from '#lib/api.ts';
 	import { providersQuery } from '#lib/queries.ts';
 
 	/**
@@ -20,12 +20,22 @@
 	 * degrades with no provider (D-146): the front door signs you in, then sends you on.
 	 * `start`: the mode the card opens in. A new installation's front door opens it on
 	 * creating an account, because that is what its first visitor has to do (D-147).
+	 * `invitation`: an invitation's token a new account claims as it is made (D-235); the
+	 * project it joined goes to `onJoined`, which then decides where the page goes.
 	 */
 	let {
 		returnTo = '/',
 		navigateAfter = false,
-		start = 'signin'
-	}: { returnTo?: string; navigateAfter?: boolean; start?: 'signin' | 'signup' } = $props();
+		start = 'signin',
+		invitation = undefined,
+		onJoined = undefined
+	}: {
+		returnTo?: string;
+		navigateAfter?: boolean;
+		start?: 'signin' | 'signup';
+		invitation?: string;
+		onJoined?: (joined: JoinedBySignUp) => Promise<void> | void;
+	} = $props();
 
 	const queryClient = useQueryClient();
 	// Until the answer arrives the button stays: a slow fetch should not flash it away from a
@@ -52,9 +62,14 @@
 		busy = true;
 		error = '';
 		try {
-			if (mode === 'signup') await signUp(email, password, name.trim() || undefined);
+			let joined: JoinedBySignUp | null = null;
+			if (mode === 'signup') joined = await signUp(email, password, name.trim() || undefined, invitation);
 			else await signInPassword(email, password);
 			await queryClient.invalidateQueries({ queryKey: ['me'] });
+			if (joined && onJoined) {
+				await onJoined(joined);
+				return;
+			}
 			// Only same-site paths, ever (the server's safe_return_path makes the same rule).
 			if (navigateAfter && returnTo.startsWith('/') && !returnTo.startsWith('//')) await goto(returnTo);
 		} catch (failure) {

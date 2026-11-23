@@ -9,12 +9,13 @@ use axum::{
     response::{IntoResponse, Redirect, Response},
 };
 use colophon_auth::tokens;
-use colophon_db::identity;
+use colophon_db::identity::{self, Admission};
 use serde::{Deserialize, Serialize};
 use time::OffsetDateTime;
 
 use crate::{
     ApiError, AppState,
+    selfserve::Registration,
     session::{
         CSRF_COOKIE, SESSION_COOKIE, SIGN_IN_COOKIE, SignedIn, cookie, services, set_cookie,
     },
@@ -179,14 +180,34 @@ pub(crate) async fn callback(
         .exchange(code, &attempt.pkce_verifier, &attempt.nonce)
         .await
         .map_err(|error| failed(&error.to_string()))?;
-    let identity_id = identity::record_sign_in(
-        &services.pool,
-        &person.issuer,
-        &person.subject,
-        person.display_name.as_deref(),
-    )
-    .await
-    .map_err(ApiError::from_db)?;
+    // Closed registration (D-235) admits no first sign-in through the provider either; an
+    // identity that already exists signs in as before.
+    let identity_id = if services.selfserve.registration == Registration::Closed {
+        identity::record_existing_sign_in(
+            &services.pool,
+            &person.issuer,
+            &person.subject,
+            person.display_name.as_deref(),
+        )
+        .await
+        .map_err(ApiError::from_db)?
+        .ok_or_else(|| {
+            tracing::info!("sign-in refused: a new identity on a closed installation");
+            ApiError::forbidden(
+                "registration_closed",
+                "this Colophon doesn't take new accounts; ask its operator for one",
+            )
+        })?
+    } else {
+        identity::record_sign_in(
+            &services.pool,
+            &person.issuer,
+            &person.subject,
+            person.display_name.as_deref(),
+        )
+        .await
+        .map_err(ApiError::from_db)?
+    };
     let (session_token, csrf_token) = issue_session(services, identity_id).await?;
 
     let mut response = Redirect::to(&attempt.return_to).into_response();
@@ -243,6 +264,9 @@ pub(crate) struct SignUp {
     password: String,
     /// A name to show; optional, the email fills in.
     display_name: Option<String>,
+    /// A project invitation's token: what an invite-only installation admits a sign-up with
+    /// (D-235). The sign-up claims it and joins its project, or makes no account.
+    invitation: Option<String>,
 }
 
 /// What signing in asks for.
@@ -311,13 +335,42 @@ pub(crate) fn check_sign_in_password(password: &str) -> Result<(), ApiError> {
 
 /// `POST /auth/signup`: makes an email-and-password account and signs it in at once, so a
 /// person who followed an invitation can join right after.
+///
+/// Registration decides who may (D-235): `closed` refuses every sign-up before any work;
+/// `invite` admits one that claims a valid project invitation (made and joined in one
+/// transaction) or, before setup, the installation's one first-run account; `open` admits any
+/// new email.
 pub(crate) async fn sign_up(
     State(state): State<AppState>,
     Json(body): Json<SignUp>,
 ) -> Result<Response, ApiError> {
     let services = services(&state)?;
+    let invitation = body.invitation.as_deref().map(tokens::hash);
+    let admission = match services.selfserve.registration {
+        Registration::Closed => {
+            return Err(ApiError::forbidden(
+                "registration_closed",
+                "this Colophon doesn't take sign-ups; ask its operator for an account",
+            ));
+        }
+        Registration::Open => Admission::Open {
+            invitation: invitation.as_ref(),
+        },
+        Registration::Invite => Admission::Invite {
+            invitation: invitation.as_ref(),
+        },
+    };
     let email = clean_email(&body.email)?;
     check_password(&body.password)?;
+    // An invite-only sign-up with no invitation that can't be the first-run account is refused
+    // before Argon2 runs: the transaction below decides it again, under its lock.
+    if admission == (Admission::Invite { invitation: None })
+        && !identity::first_run_open(&services.pool)
+            .await
+            .map_err(ApiError::from_db)?
+    {
+        return Err(invitation_required());
+    }
     let phc = services
         .passwords
         .hash(&body.password)
@@ -328,18 +381,31 @@ pub(crate) async fn sign_up(
         .as_deref()
         .map(str::trim)
         .filter(|n| !n.is_empty());
-    let id = match identity::sign_up(&services.pool, &email, &phc, name).await {
-        Ok(identity::SignedUp::Made(id)) => id,
+    let (id, joined) = match identity::sign_up(&services.pool, &email, &phc, name, admission).await
+    {
+        Ok(identity::SignedUp::Made { identity, joined }) => (identity, joined),
         Ok(identity::SignedUp::Taken) => {
             return Err(ApiError::Conflict {
                 reason: "email_taken",
                 message: "that email already has an account",
             });
         }
+        Ok(identity::SignedUp::InvitationRequired) => return Err(invitation_required()),
         Err(error) => return Err(ApiError::from_db(error)),
     };
     let (session_token, csrf_token) = issue_session(services, id).await?;
-    let mut response = StatusCode::CREATED.into_response();
+    let mut response = (
+        StatusCode::CREATED,
+        Json(Data {
+            data: SignedUpView {
+                joined: joined.map(|joined| JoinedView {
+                    project_id: joined.project,
+                    role: joined.role,
+                }),
+            },
+        }),
+    )
+        .into_response();
     session_cookies(
         &mut response,
         &session_token,
@@ -347,6 +413,28 @@ pub(crate) async fn sign_up(
         services.sessions.lifetime.as_secs(),
     );
     Ok(response)
+}
+
+/// What a sign-up answers: the project it joined, when it claimed an invitation (D-235).
+#[derive(Serialize)]
+struct SignedUpView {
+    joined: Option<JoinedView>,
+}
+
+/// The project a sign-up joined, and the role it holds there.
+#[derive(Serialize)]
+struct JoinedView {
+    project_id: uuid::Uuid,
+    role: String,
+}
+
+/// Invite-only registration's one refusal: no invitation, or one that is unknown, expired,
+/// revoked or claimed, alike.
+const fn invitation_required() -> ApiError {
+    ApiError::forbidden(
+        "invitation_required",
+        "this Colophon takes sign-ups by invitation; open the invitation link you were sent",
+    )
 }
 
 /// `POST /auth/signin`: trades an email and password for a session. A wrong password, a

@@ -28,7 +28,9 @@ crates/colophon-db/src/content_types.rs current_definition   # a content type's 
 crates/colophon-db/src/audience.rs project_tx   # DB-enforced: colophon_audience (a site's audience routes take the project from its public URL; the role reaches only the audience tables, migration 0089)
 crates/colophon-db/src/previews.rs in_project   # a preview token's reads: the project its verified grant names
 crates/colophon-db/src/members.rs offer   # an invitation looked up by its secret: the project the invitation row names
-crates/colophon-db/src/members.rs accept   # accepting it: the same, then the membership it grants
+crates/colophon-db/src/members.rs accept_in   # accepting it (also a sign-up claiming it, D-235): the same, then the membership it grants
+crates/colophon-db/src/members.rs accept   # opens the caller's own identity context with no project; accept_in sets the project from the invitation row
+crates/colophon-db/src/identity.rs sign_up   # a sign-up (D-235): no identity and no project; accept_in sets the project only from a claimed invitation's row
 crates/colophon-db/src/tokens.rs touch   # a token's last-used mark: the project the authenticated token row names
 crates/colophon-db/src/ledger.rs apply   # the deletion ledger's replay as colophon_deleter (restore runbook): projects the ledger names
 crates/colophon-db/src/schedules.rs run   # due schedules: the project and identity the schedule row names

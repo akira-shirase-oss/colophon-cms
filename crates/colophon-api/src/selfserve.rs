@@ -4,7 +4,8 @@
 //!
 //! - `COLOPHON_REGISTRATION`: [`Registration`]. `open` lets anyone sign up and create projects
 //!   within the cap and quotas; `invite` (the default) admits a sign-up only with a project
-//!   invitation, and only administrators create projects; `closed` admits no sign-up at all.
+//!   invitation (or the one first-run account before setup), and only administrators create
+//!   projects; `closed` admits no sign-up at all.
 //! - `COLOPHON_PROJECTS_PER_ACCOUNT` (default 3): projects one account may own.
 //! - `COLOPHON_ACCOUNT_MAX_ENTRIES` / `_ASSETS` / `_STORAGE_BYTES` ([`Quotas`]; `0` = no bound).
 //! - `COLOPHON_SIGNUPS_PER_ADDRESS_HOUR` (default 10, an IPv6 address by its /64).
@@ -17,7 +18,9 @@
 pub enum Registration {
     /// Anyone signs up and creates projects, within the cap and the quotas.
     Open,
-    /// A sign-up needs a project invitation's token; administrators alone create projects.
+    /// A sign-up needs a valid, unclaimed project invitation's token (claimed for that one
+    /// account), except the installation's one first-run account before setup; administrators
+    /// alone create projects.
     #[default]
     Invite,
     /// No sign-up at all, a first OIDC sign-in included.

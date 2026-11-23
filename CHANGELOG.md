@@ -20,6 +20,13 @@ through `--version` and `GET /version`.
 
 ### Security
 
+- **`COLOPHON_REGISTRATION` now decides who may sign up** (D-235). Until now it only decided who may create
+  projects: `POST /auth/signup` made an account on every installation, `invite` and `closed` included. Now `closed`
+  refuses every sign-up (`403 registration_closed`) and every first sign-in through the identity provider;
+  `invite` takes a sign-up only with a valid, unclaimed project invitation (`invitation` in the body), claimed for
+  exactly one account in the same transaction (`403 invitation_required` otherwise, alike for every reason), plus
+  the one first-run account a new installation makes before its setup code is entered. The sign-up's `201` now
+  says which project a claimed invitation joined, and the Studio's invitation page uses it.
 - **Row security no longer lets an account create a project for another** (D-235): a new project's owner is the
   account creating it, enforced by a row policy and immutable afterwards. Only listed code may set the project
   context (`crates/colophon-db/context-writers.allow`, checked by a test), and SECURITY.md describes the threat model.

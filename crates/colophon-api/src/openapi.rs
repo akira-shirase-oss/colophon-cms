@@ -725,12 +725,17 @@ pub(crate) static TABLE: &[Route] = &[
                 body: Some(json("SignUp")),
                 ok: Res {
                     status: 201,
-                    shape: Shape::Empty,
+                    shape: Shape::Data("SignedUp"),
                     headers: &["Set-Cookie"],
                     media: "",
-                    note: "the session's `Set-Cookie` pair",
+                    note: "the session's `Set-Cookie` pair, and the project joined when the sign-up claimed an invitation",
                 },
                 extra: &[
+                    refusal(
+                        403,
+                        "registration_closed, invitation_required",
+                        "this installation admits no sign-up (`closed`), or admits one only with a valid, unclaimed project invitation (`invite`; also the one first-run account before setup)",
+                    ),
                     refusal(409, "email_taken", "an account with this email exists"),
                     refusal(422, "invalid_email, weak_password", "the fields refused"),
                 ],
@@ -5285,6 +5290,25 @@ fn identity() -> Value {
                 "email": { "type": "string", "format": "email" },
                 "password": { "type": "string", "minLength": 8 },
                 "display_name": { "type": "string" },
+                "invitation": {
+                    "type": "string",
+                    "description": "A project invitation's token: the sign-up claims it and joins its project (D-235). Required on an invite-only installation (but for its first-run account); on an open one an invalid token is ignored",
+                },
+            },
+        },
+        "SignedUp": {
+            "type": "object",
+            "required": ["joined"],
+            "properties": {
+                "joined": {
+                    "type": ["object", "null"],
+                    "description": "the project the sign-up joined by claiming its invitation (D-235); null when it claimed none",
+                    "required": ["project_id", "role"],
+                    "properties": {
+                        "project_id": { "type": "string", "format": "uuid" },
+                        "role": { "type": "string" },
+                    },
+                },
             },
         },
         "PasswordSignIn": {
