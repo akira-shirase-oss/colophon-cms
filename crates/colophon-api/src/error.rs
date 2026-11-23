@@ -858,8 +858,20 @@ impl ApiError {
     fn log(&self) {
         let code = self.code().as_str();
         if let Self::Internal(cause) = self {
+            let timed_out = statement_timed_out(cause.as_ref());
             let cause = error_chain(cause.as_ref());
-            tracing::error!(code, %cause, "request failed");
+            if timed_out {
+                // D-239: a statement slow at its own work (a lock wait fails sooner, as 503), named
+                // so it shows as what it is; the request span carries the route.
+                tracing::error!(
+                    code,
+                    fault = "statement_timeout",
+                    %cause,
+                    "request failed: statement timeout"
+                );
+            } else {
+                tracing::error!(code, %cause, "request failed");
+            }
         } else if matches!(self, Self::Busy) {
             // Operators need to see saturation, once per outage rather than once per request
             // (D-224): the first refusal at once, then a summary a window while it lasts.
@@ -895,6 +907,22 @@ impl ApiError {
 }
 
 /// `outer: inner: innermost`, the way `anyhow`'s `{:#}` prints a chain.
+/// Whether `error`, or any error it was caused by, is a statement the database cancelled at the
+/// statement timeout (D-239).
+fn statement_timed_out(error: &(dyn StdError + 'static)) -> bool {
+    let mut next = Some(error);
+    while let Some(error) = next {
+        if error
+            .downcast_ref::<DbError>()
+            .is_some_and(DbError::statement_timed_out)
+        {
+            return true;
+        }
+        next = error.source();
+    }
+    false
+}
+
 fn error_chain(error: &(dyn StdError + 'static)) -> String {
     let mut text = error.to_string();
     let mut source = error.source();
