@@ -202,7 +202,7 @@
 							{/each}
 							<DropdownMenu.Separator />
 							<DropdownMenu.Item>
-								{#snippet child({ props })}<a {...props} href={resolve('/')}>All projects</a>{/snippet}
+								{#snippet child({ props })}<a {...props} href={`${resolve('/')}?all`}>All projects</a>{/snippet}
 							</DropdownMenu.Item>
 						</DropdownMenu.Content>
 					</DropdownMenu.Root>
