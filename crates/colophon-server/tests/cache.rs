@@ -404,16 +404,18 @@ async fn a_flushed_or_full_cache_loses_answers_never_content() {
         1
     );
     let list = format!("/content/v1/{id}/production/articles");
-    let first = read(&list, None).await;
+    // A page holds 20 by default: every article on one page.
+    let all = format!("{list}?limit=100");
+    let first = read(&all, None).await;
     assert_eq!(first.served, "miss");
     let mut expected = titles(&first.body);
     expected.sort();
     assert_eq!(expected.len(), ARTICLES);
-    assert_eq!(read(&list, None).await.served, "hit");
+    assert_eq!(read(&all, None).await.served, "hit");
 
     // A flush: every answer gone at once.
     common::valkey_cli(&["FLUSHALL"]);
-    let flushed = read(&list, None).await;
+    let flushed = read(&all, None).await;
     assert_eq!(
         (flushed.status, flushed.served.as_str()),
         (StatusCode::OK, "miss")
@@ -421,7 +423,7 @@ async fn a_flushed_or_full_cache_loses_answers_never_content() {
     let mut after = titles(&flushed.body);
     after.sort();
     assert_eq!(after, expected, "the same release, read again");
-    assert_eq!(read(&list, None).await.served, "hit", "and cached again");
+    assert_eq!(read(&all, None).await.served, "hit", "and cached again");
 
     // A cap just above what Valkey holds now: answers past it evict the least recently used.
     let _restored = CapRestored;
@@ -446,7 +448,7 @@ async fn a_flushed_or_full_cache_loses_answers_never_content() {
         common::valkey_info("evicted_keys") > evicted,
         "the cap evicted answers"
     );
-    let mut finally = titles(&read(&list, None).await.body);
+    let mut finally = titles(&read(&all, None).await.body);
     finally.sort();
     assert_eq!(finally, expected, "content intact through the evictions");
 }
