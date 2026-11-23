@@ -505,7 +505,9 @@ async fn request(
 struct Answer {
     /// `approve` or `deny`.
     decision: String,
-    /// The project to approve it for; one the person belongs to.
+    /// Leave it out (D-248): the app acts in all the person's projects, with their role in each.
+    /// Named (D-246's one-project approval, an older Studio tab): that project alone, one the
+    /// person belongs to — never more than the page they answered offered.
     project: Option<Uuid>,
 }
 
@@ -516,9 +518,9 @@ struct Answered {
 }
 
 /// `POST /oauth/requests/{id}`: the person's answer. The session extractor holds it to the
-/// Studio's origin and CSRF token (a cross-site form can't approve). Approving needs a project
-/// the person belongs to; the code it makes is single use, ten minutes, bound to the client, its
-/// redirect URI and PKCE challenge, and that person and project.
+/// Studio's origin and CSRF token (a cross-site form can't approve). Approving connects the app in
+/// all the person's projects (D-248), or in the one project named; the code it makes is single
+/// use, ten minutes, bound to the client, its redirect URI and PKCE challenge, and that person.
 async fn answer(
     State(state): State<AppState>,
     caller: SignedIn,
@@ -541,15 +543,13 @@ async fn answer(
         }
     };
     let code = if approve {
-        let project = body.project.ok_or_else(|| ApiError::InvalidField {
-            reason: "project_required",
-            pointer: "/project",
-            message: "name the project to connect the app to".to_owned(),
-        })?;
-        projects::get(&services.pool, caller.identity, project)
-            .await
-            .map_err(ApiError::from_db)?
-            .ok_or(ApiError::NotFound)?;
+        let project = body.project;
+        if let Some(project) = project {
+            projects::get(&services.pool, caller.identity, project)
+                .await
+                .map_err(ApiError::from_db)?
+                .ok_or(ApiError::NotFound)?;
+        }
         let code = tokens::random_token()
             .map_err(|_| ApiError::internal(std::io::Error::other("no randomness")))?;
         Some((project, code))
@@ -571,7 +571,7 @@ async fn answer(
     let mut pairs: Vec<(&str, &str)> = vec![("iss", origin.as_str())];
     match &code {
         Some((project, code)) => {
-            tracing::info!(identity = %caller.identity, client = %answered.client.id, project = %project, "OAuth client approved");
+            tracing::info!(identity = %caller.identity, client = %answered.client.id, project = ?project, "OAuth client approved");
             pairs.push(("code", code));
         }
         None => pairs.extend([
@@ -753,8 +753,10 @@ async fn revoke(
 struct ConnectedView {
     id: Uuid,
     client_name: String,
-    project: Uuid,
-    project_name: String,
+    /// `null`: all the person's projects (D-248).
+    project: Option<Uuid>,
+    /// `null` with no project.
+    project_name: Option<String>,
     created_at: String,
     last_used_at: Option<String>,
 }

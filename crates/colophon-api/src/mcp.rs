@@ -126,7 +126,9 @@ struct Hosted {
     session: RemoteSession,
     dispatch: Dispatch,
     token: Uuid,
-    project: Uuid,
+    /// The project it was opened on; `None` for an OAuth connection in all its person's
+    /// projects (D-248), whose tool calls each name their project.
+    project: Option<Uuid>,
     environment: String,
     /// When a request last touched the session; `idle` past now forgets it. Locked because the
     /// session may be shared while one request refreshes it.
@@ -165,7 +167,13 @@ impl Shared {
 
     /// The session `id`, when it exists, belongs to `token` on this project and environment,
     /// and was touched inside `idle`. Stale sessions are forgotten on the way.
-    fn get(&self, id: Uuid, token: Uuid, project: Uuid, environment: &str) -> Option<Arc<Hosted>> {
+    fn get(
+        &self,
+        id: Uuid,
+        token: Uuid,
+        project: Option<Uuid>,
+        environment: &str,
+    ) -> Option<Arc<Hosted>> {
         let mut registry = lock(&self.registry);
         self.sweep(&mut registry);
         let hosted = registry.sessions.get(&id)?;
@@ -187,12 +195,10 @@ impl Shared {
         if registry.per_token.get(&hosted.token).copied().unwrap_or(0) >= self.limits.per_token {
             return Err(Refused::Token);
         }
-        if registry
-            .per_project
-            .get(&hosted.project)
-            .copied()
-            .unwrap_or(0)
-            >= self.limits.per_project
+        // A session in all its person's projects (D-248) counts against no one project; its
+        // token's cap still holds.
+        if let Some(project) = hosted.project
+            && registry.per_project.get(&project).copied().unwrap_or(0) >= self.limits.per_project
         {
             return Err(Refused::Project);
         }
@@ -201,7 +207,9 @@ impl Shared {
         }
         let id = Uuid::now_v7();
         *registry.per_token.entry(hosted.token).or_insert(0) += 1;
-        *registry.per_project.entry(hosted.project).or_insert(0) += 1;
+        if let Some(project) = hosted.project {
+            *registry.per_project.entry(project).or_insert(0) += 1;
+        }
         registry.sessions.insert(id, Arc::new(hosted));
         Ok(id)
     }
@@ -212,7 +220,7 @@ impl Shared {
         &self,
         id: Uuid,
         token: Uuid,
-        project: Uuid,
+        project: Option<Uuid>,
         environment: &str,
     ) -> Option<Arc<Hosted>> {
         let mut registry = lock(&self.registry);
@@ -226,7 +234,9 @@ impl Shared {
         let hosted = registry.sessions.remove(&id);
         if let Some(hosted) = &hosted {
             decrement(&mut registry.per_token, hosted.token);
-            decrement(&mut registry.per_project, hosted.project);
+            if let Some(project) = hosted.project {
+                decrement(&mut registry.per_project, project);
+            }
         }
         hosted
     }
@@ -248,7 +258,7 @@ impl Shared {
             live
         });
         // The counts are derived, so rebuild them rather than adjust under `retain`.
-        registry.per_token = count_by(&registry.sessions, |hosted| hosted.token);
+        registry.per_token = count_by(&registry.sessions, |hosted| Some(hosted.token));
         registry.per_project = count_by(&registry.sessions, |hosted| hosted.project);
     }
 
@@ -272,11 +282,11 @@ fn decrement(map: &mut HashMap<Uuid, usize>, key: Uuid) {
 /// The count map rebuilt from the sessions themselves, after a sweep.
 fn count_by(
     sessions: &HashMap<Uuid, Arc<Hosted>>,
-    key: impl Fn(&Hosted) -> Uuid,
+    key: impl Fn(&Hosted) -> Option<Uuid>,
 ) -> HashMap<Uuid, usize> {
     let mut counts = HashMap::new();
-    for hosted in sessions.values() {
-        *counts.entry(key(hosted)).or_insert(0) += 1;
+    for key in sessions.values().filter_map(|hosted| key(hosted)) {
+        *counts.entry(key).or_insert(0) += 1;
     }
     counts
 }
@@ -305,7 +315,16 @@ pub(crate) async fn post(
 ) -> Result<Response, ApiError> {
     let id = admitted(services(&state)?, &caller, &headers, false)?;
     let (project, environment) = target(&path)?;
-    post_on(&state, &caller, id, project, environment, &headers, &body).await
+    post_on(
+        &state,
+        &caller,
+        id,
+        Some(project),
+        environment,
+        &headers,
+        &body,
+    )
+    .await
 }
 
 /// `GET /mcp`: a browser opening the MCP address gets a page on how to connect (D-244). MCP
@@ -335,10 +354,7 @@ pub(crate) async fn post_public(
         Err(refused) => return Ok(challenged(&state, refused)),
     };
     let id = admitted(services(&state)?, &caller, &headers, false)?;
-    let project = caller
-        .project
-        .or(caller.oauth_project)
-        .ok_or(ApiError::NotFound)?;
+    let project = session_project(&caller)?;
     post_on(
         &state,
         &caller,
@@ -366,12 +382,22 @@ fn challenged(state: &AppState, refused: ApiError) -> Response {
     response
 }
 
+/// The project a `/mcp` session works in: an API token's own, or an OAuth grant's one project;
+/// `None` for an OAuth connection in all the person's projects (D-248). Anything else is 404.
+fn session_project(caller: &SignedIn) -> Result<Option<Uuid>, ApiError> {
+    match caller.project.or(caller.oauth_project) {
+        Some(project) => Ok(Some(project)),
+        None if caller.oauth_all_projects => Ok(None),
+        None => Err(ApiError::NotFound),
+    }
+}
+
 /// One message on `(project, environment)`, after the door checks.
 async fn post_on(
     state: &AppState,
     caller: &SignedIn,
     id: Option<Uuid>,
-    project: Uuid,
+    project: Option<Uuid>,
     environment: String,
     headers: &HeaderMap,
     body: &Bytes,
@@ -425,7 +451,7 @@ pub(crate) async fn delete(
 ) -> Result<Response, ApiError> {
     let id = admitted(services(&state)?, &caller, &headers, true)?;
     let (project, environment) = target(&path)?;
-    delete_on(&state, &caller, id, project, &environment)
+    delete_on(&state, &caller, id, Some(project), &environment)
 }
 
 /// `DELETE /mcp`: the public address's session end (D-244), on the token's project.
@@ -439,10 +465,7 @@ pub(crate) async fn delete_public(
         Err(refused) => return Ok(challenged(&state, refused)),
     };
     let id = admitted(services(&state)?, &caller, &headers, true)?;
-    let project = caller
-        .project
-        .or(caller.oauth_project)
-        .ok_or(ApiError::NotFound)?;
+    let project = session_project(&caller)?;
     delete_on(&state, &caller, id, project, "production")
 }
 
@@ -450,7 +473,7 @@ fn delete_on(
     state: &AppState,
     caller: &SignedIn,
     id: Option<Uuid>,
-    project: Uuid,
+    project: Option<Uuid>,
     environment: &str,
 ) -> Result<Response, ApiError> {
     let services = services(state)?;
@@ -611,7 +634,8 @@ struct Dispatch {
     state: AppState,
     /// The `Authorization` header value as it arrived: `Bearer colophon_api_…`.
     token: HeaderValue,
-    project: Uuid,
+    /// `None`: an OAuth connection in all its person's projects (D-248).
+    project: Option<Uuid>,
     environment: String,
 }
 
@@ -621,7 +645,7 @@ impl Dispatch {
     fn new(
         state: &AppState,
         headers: &HeaderMap,
-        project: Uuid,
+        project: Option<Uuid>,
         environment: &str,
     ) -> Result<Self, ApiError> {
         let token = headers
@@ -639,7 +663,8 @@ impl Dispatch {
 
 impl Backend for Dispatch {
     fn project(&self) -> Uuid {
-        self.project
+        // The nil id: all the person's projects (D-248); each tool call names its project.
+        self.project.unwrap_or_else(Uuid::nil)
     }
 
     /// One attempt, inside this process: the request's path under `{P}`, the same headers the
@@ -655,11 +680,11 @@ impl Backend for Dispatch {
         let router = services.mcp.router(&self.state);
         let mut uri = if request.path().starts_with("/api/") {
             // A project-level route given whole (D-247): only this session's own project.
-            colophon_mcp::api::full_path(self.project, request.path())?
+            colophon_mcp::api::full_path(self.project(), request.path())?
         } else {
             format!(
                 "/api/v1/projects/{}/environments/{}{}",
-                self.project,
+                self.project(),
                 self.environment,
                 request.path()
             )
@@ -729,7 +754,7 @@ impl Backend for Dispatch {
 mod tests {
     use super::*;
 
-    fn hosted(token: Uuid, project: Uuid) -> Hosted {
+    fn hosted(token: Uuid, project: Option<Uuid>) -> Hosted {
         let state = AppState::without_services(crate::Readiness::new("all", true));
         Hosted {
             session: RemoteSession::new(),
@@ -755,16 +780,16 @@ mod tests {
             max_sessions: 4,
             ..Limits::default()
         });
-        shared.register(hosted(token, project)).expect("room");
-        shared.register(hosted(token, project)).expect("room");
+        shared.register(hosted(token, Some(project))).expect("room");
+        shared.register(hosted(token, Some(project))).expect("room");
         assert_eq!(
-            shared.register(hosted(token, project)),
+            shared.register(hosted(token, Some(project))),
             Err(Refused::Token),
             "the token's own cap bites first"
         );
-        shared.register(hosted(other, project)).expect("room");
+        shared.register(hosted(other, Some(project))).expect("room");
         assert_eq!(
-            shared.register(hosted(other, project)),
+            shared.register(hosted(other, Some(project))),
             Err(Refused::Project),
             "then the project's cap"
         );
@@ -772,22 +797,56 @@ mod tests {
     }
 
     #[test]
+    fn a_session_in_all_projects_counts_against_its_token_alone() {
+        let (token, other, project) = (Uuid::now_v7(), Uuid::now_v7(), Uuid::now_v7());
+        let shared = Shared::new(Limits {
+            per_token: 2,
+            per_project: 1,
+            max_sessions: 8,
+            ..Limits::default()
+        });
+        shared.register(hosted(other, Some(project))).expect("room");
+        // The project is full, and an all-projects session (D-248) still opens: it is in no one
+        // project. Its token's cap holds as for any other.
+        let id = shared.register(hosted(token, None)).expect("room");
+        shared.register(hosted(token, None)).expect("room");
+        assert_eq!(shared.register(hosted(token, None)), Err(Refused::Token));
+        // And it is found only as what it is: not as a session of some project.
+        assert!(shared.get(id, token, None, "production").is_some());
+        assert!(shared.get(id, token, Some(project), "production").is_none());
+        assert!(
+            shared
+                .remove(id, token, Some(project), "production")
+                .is_none()
+        );
+        assert!(shared.remove(id, token, None, "production").is_some());
+    }
+
+    #[test]
     fn a_session_is_only_its_own_tokens() {
         let (token, other, project) = (Uuid::now_v7(), Uuid::now_v7(), Uuid::now_v7());
         let shared = Shared::new(Limits::default());
-        let id = shared.register(hosted(token, project)).expect("room");
-        assert!(shared.get(id, token, project, "production").is_some());
+        let id = shared.register(hosted(token, Some(project))).expect("room");
+        assert!(shared.get(id, token, Some(project), "production").is_some());
         assert!(
-            shared.get(id, other, project, "production").is_none(),
+            shared.get(id, other, Some(project), "production").is_none(),
             "another token's request is a 404, as if the id never existed"
         );
         assert!(
-            shared.get(id, token, project, "staging").is_none(),
+            shared.get(id, token, Some(project), "staging").is_none(),
             "another environment's path is a 404 too"
         );
-        assert!(shared.remove(id, other, project, "production").is_none());
-        assert!(shared.remove(id, token, project, "production").is_some());
-        assert!(shared.get(id, token, project, "production").is_none());
+        assert!(
+            shared
+                .remove(id, other, Some(project), "production")
+                .is_none()
+        );
+        assert!(
+            shared
+                .remove(id, token, Some(project), "production")
+                .is_some()
+        );
+        assert!(shared.get(id, token, Some(project), "production").is_none());
     }
 
     #[tokio::test(start_paused = true)]
@@ -797,15 +856,15 @@ mod tests {
             idle: Duration::from_secs(60),
             ..Limits::default()
         });
-        let id = shared.register(hosted(token, project)).expect("room");
+        let id = shared.register(hosted(token, Some(project))).expect("room");
         tokio::time::advance(Duration::from_secs(30)).await;
-        assert!(shared.get(id, token, project, "production").is_some());
+        assert!(shared.get(id, token, Some(project), "production").is_some());
         tokio::time::advance(Duration::from_secs(31)).await;
         // The last touch was the get, half an idle ago — still inside it.
-        assert!(shared.get(id, token, project, "production").is_some());
+        assert!(shared.get(id, token, Some(project), "production").is_some());
         tokio::time::advance(Duration::from_secs(61)).await;
         assert!(
-            shared.get(id, token, project, "production").is_none(),
+            shared.get(id, token, Some(project), "production").is_none(),
             "a full idle since the last touch forgets the session"
         );
         assert_eq!(shared.sessions(), 0);
