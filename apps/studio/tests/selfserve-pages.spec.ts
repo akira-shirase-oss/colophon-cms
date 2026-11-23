@@ -85,10 +85,10 @@ test('closed registration shows no sign-up form and no way to one', async ({ pag
 	await serve(page, { registration: 'closed' });
 	await page.goto('/studio/signup');
 	await expect(page.getByTestId('signup-closed')).toBeVisible();
-	await expect(page.locator('#signup-email')).toHaveCount(0);
+	await expect(page.locator('#auth-email')).toHaveCount(0);
 	await shoot(page, 'signup-closed');
 	await page.goto('/studio/signin');
-	await expect(page.locator('#signin-email')).toBeVisible();
+	await expect(page.locator('#auth-email')).toBeVisible();
 	await expect(page.getByTestId('to-signup')).toHaveCount(0);
 	await shoot(page, 'signin');
 });
@@ -97,7 +97,7 @@ test('invite-only asks for the link, and a link carrying a token signs up claimi
 	const sent = await serve(page, { registration: 'invite', signUp: { status: 201, body: { data: { joined: { project_id: 'p-1', role: 'editor' } } } } });
 	await page.goto('/studio/signup');
 	await expect(page.getByTestId('signup-invite-only')).toBeVisible();
-	await expect(page.locator('#signup-email')).toHaveCount(0);
+	await expect(page.locator('#auth-email')).toHaveCount(0);
 	await shoot(page, 'signup-invite-only');
 
 	// An invitation link opens as a page of its own, as from an email.
@@ -106,8 +106,8 @@ test('invite-only asks for the link, and a link carrying a token signs up claimi
 	await expect(page.getByTestId('signup-with-invitation')).toBeVisible();
 	await expect(page).not.toHaveURL(/inv-token-1/);
 	await shoot(page, 'signup-invite-link');
-	await page.locator('#signup-email').fill('ada@example.test');
-	await page.locator('#signup-password').fill('colophon-dev');
+	await page.locator('#auth-email').fill('ada@example.test');
+	await page.locator('#auth-password').fill('colophon-dev');
 	await page.getByTestId('password-submit').click();
 	await expect.poll(() => sent).toHaveLength(1);
 	expect(sent[0]).toMatchObject({ email: 'ada@example.test', invitation: 'inv-token-1' });
@@ -116,7 +116,7 @@ test('invite-only asks for the link, and a link carrying a token signs up claimi
 test('the first account of a new invite-only installation may sign up without an invitation', async ({ page }) => {
 	await serve(page, { registration: 'invite', hasAdministrator: false });
 	await page.goto('/studio/signup');
-	await expect(page.locator('#signup-email')).toBeVisible();
+	await expect(page.locator('#auth-email')).toBeVisible();
 });
 
 test("a 422 lands under its field in the Studio's words; editing clears it and the button stays usable", async ({ page }) => {
@@ -129,15 +129,15 @@ test("a 422 lands under its field in the Studio's words; editing clears it and t
 	});
 	await page.goto('/studio/signup');
 	await expect(page.getByTestId('turnstile')).toHaveText('Verified');
-	await page.locator('#signup-email').fill('ada@localhost');
-	await page.locator('#signup-password').fill('colophon-dev');
+	await page.locator('#auth-email').fill('ada@localhost');
+	await page.locator('#auth-password').fill('colophon-dev');
 	await page.getByTestId('password-submit').click();
 	await expect(page.getByTestId('field-error-email')).toHaveText('Enter an email address like name@example.com.');
-	await expect(page.locator('#signup-email')).toHaveAttribute('aria-invalid', 'true');
+	await expect(page.locator('#auth-email')).toHaveAttribute('aria-invalid', 'true');
 	await expect(page.getByTestId('password-submit')).toBeEnabled();
 	expect(sent[0]).toMatchObject({ turnstile_token: 'tok-1' });
 	await shoot(page, 'signup-field-error');
-	await page.locator('#signup-email').fill('ada@example.test');
+	await page.locator('#auth-email').fill('ada@example.test');
 	await expect(page.getByTestId('field-error-email')).toHaveCount(0);
 	await expect(page.getByTestId('password-submit')).toBeEnabled();
 });
@@ -155,8 +155,8 @@ test('sign-in with a wrong password says so plainly', async ({ page }) => {
 		route.fulfill({ status: 400, json: { error: { code: 'sign_in_failed', message: 'sign-in failed', details: { reason: 'sign_in_failed' } } } })
 	);
 	await page.goto('/studio/signin');
-	await page.locator('#signin-email').fill('ada@example.test');
-	await page.locator('#signin-password').fill('not-the-password');
+	await page.locator('#auth-email').fill('ada@example.test');
+	await page.locator('#auth-password').fill('not-the-password');
 	await page.getByTestId('password-submit').click();
 	await expect(page.getByTestId('auth-error')).toHaveText('That email and password did not match.');
 	await shoot(page, 'signin-error');
@@ -174,14 +174,14 @@ test('sign-up shows a skeleton while the server says what it offers', async ({ p
 	await expect(page.getByTestId('signup-loading')).toBeVisible();
 	await shoot(page, 'signup-loading');
 	answer();
-	await expect(page.locator('#signup-email')).toBeVisible();
+	await expect(page.locator('#auth-email')).toBeVisible();
 });
 
 test('no site key, no widget and no token', async ({ page }) => {
 	const sent = await serve(page, {});
 	await page.goto('/studio/signup');
-	await page.locator('#signup-email').fill('ada@example.test');
-	await page.locator('#signup-password').fill('colophon-dev');
+	await page.locator('#auth-email').fill('ada@example.test');
+	await page.locator('#auth-password').fill('colophon-dev');
 	await expect(page.getByTestId('turnstile')).toHaveCount(0);
 	await shoot(page, 'signup-empty');
 	await page.getByTestId('password-submit').click();
@@ -199,8 +199,8 @@ test('a 429 says when to try again and holds the button', async ({ page }) => {
 		}
 	});
 	await page.goto('/studio/signup');
-	await page.locator('#signup-email').fill('ada@example.test');
-	await page.locator('#signup-password').fill('colophon-dev');
+	await page.locator('#auth-email').fill('ada@example.test');
+	await page.locator('#auth-password').fill('colophon-dev');
 	await page.getByTestId('password-submit').click();
 	await expect(page.getByTestId('auth-error')).toContainText('Too many sign-ups from this network. Try again after');
 	await expect(page.getByTestId('auth-error')).toContainText(/14:30|02:30 PM|2:30 PM/);
@@ -259,9 +259,9 @@ test('usage signed out offers sign-in that comes back', async ({ page }) => {
 test('a display name is text, never markup', async ({ page }) => {
 	await serve(page, {});
 	await page.goto('/studio/signup');
-	await page.locator('#signup-name').fill(XSS);
-	await page.locator('#signup-email').fill('ada@example.test');
-	await page.locator('#signup-password').fill('colophon-dev');
+	await page.locator('#auth-name').fill(XSS);
+	await page.locator('#auth-email').fill('ada@example.test');
+	await page.locator('#auth-password').fill('colophon-dev');
 	await page.getByTestId('password-submit').click();
 	await page.goto('/studio/usage');
 	await page.getByTestId('account-menu').click();

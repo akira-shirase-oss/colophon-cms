@@ -104,21 +104,21 @@
 			<p class="text-sm text-muted-foreground" data-testid="signup-with-invitation">Your account joins the project you were invited to.</p>
 		{/if}
 		<div class="space-y-1">
-			<label for="signup-name" class="text-sm font-medium">Your name</label>
-			<Input id="signup-name" bind:value={name} oninput={() => edited('display_name')} maxlength={200} autocomplete="name" aria-invalid={fields.display_name ? true : undefined} aria-describedby="signup-name-note" />
-			<p id="signup-name-note" class={fields.display_name ? 'text-sm text-destructive' : 'text-sm text-muted-foreground'}>
+			<label for="auth-name" class="text-sm font-medium">Your name</label>
+			<Input id="auth-name" bind:value={name} oninput={() => edited('display_name')} maxlength={200} autocomplete="name" aria-invalid={fields.display_name ? true : undefined} aria-describedby="auth-name-note" />
+			<p id="auth-name-note" class={fields.display_name ? 'text-sm text-destructive' : 'text-sm text-muted-foreground'}>
 				{fields.display_name ?? 'Shown to the people you work with.'}
 			</p>
 		</div>
 		<div class="space-y-1">
-			<label for="signup-email" class="text-sm font-medium">Email</label>
-			<Input id="signup-email" type="email" bind:value={email} oninput={() => edited('email')} required maxlength={254} autocomplete="email" aria-invalid={fields.email ? true : undefined} aria-describedby={fields.email ? 'signup-email-note' : undefined} />
-			{#if fields.email}<p id="signup-email-note" class="text-sm text-destructive" data-testid="field-error-email">{fields.email}</p>{/if}
+			<label for="auth-email" class="text-sm font-medium">Email</label>
+			<Input id="auth-email" type="email" bind:value={email} oninput={() => edited('email')} required maxlength={254} autocomplete="email" aria-invalid={fields.email ? true : undefined} aria-describedby={fields.email ? 'auth-email-note' : undefined} />
+			{#if fields.email}<p id="auth-email-note" class="text-sm text-destructive" data-testid="field-error-email">{fields.email}</p>{/if}
 		</div>
 		<div class="space-y-1">
-			<label for="signup-password" class="text-sm font-medium">Password</label>
+			<label for="auth-password" class="text-sm font-medium">Password</label>
 			<Input
-				id="signup-password"
+				id="auth-password"
 				type="password"
 				bind:value={password}
 				oninput={() => edited('password')}
@@ -127,9 +127,9 @@
 				maxlength={512}
 				autocomplete="new-password"
 				aria-invalid={fields.password ? true : undefined}
-				aria-describedby="signup-password-note"
+				aria-describedby="auth-password-note"
 			/>
-			<p id="signup-password-note" class={fields.password ? 'text-sm text-destructive' : 'text-sm text-muted-foreground'} data-testid={fields.password ? 'field-error-password' : undefined}>
+			<p id="auth-password-note" class={fields.password ? 'text-sm text-destructive' : 'text-sm text-muted-foreground'} data-testid={fields.password ? 'field-error-password' : undefined}>
 				{fields.password ?? 'At least 8 characters.'}
 			</p>
 		</div>

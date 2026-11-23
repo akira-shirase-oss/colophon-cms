@@ -11,6 +11,7 @@
 		{ href: resolve('/contract'), label: 'API contract' },
 		{ href: resolve('/rich-text'), label: 'Rich text' },
 		{ href: resolve('/session'), label: 'Session' },
+		{ href: resolve('/signup'), label: 'Sign-up' },
 		{ href: resolve('/setup'), label: 'Setup' },
 		{ href: resolve('/projects'), label: 'Projects' },
 		{ href: resolve('/entries'), label: 'Entries' },

@@ -35,12 +35,12 @@
 
 <form onsubmit={submit} data-testid="password-auth" class="space-y-3">
 	<div class="space-y-1">
-		<label for="signin-email" class="text-sm font-medium">Email</label>
-		<Input id="signin-email" type="email" bind:value={email} required maxlength={254} autocomplete="email" />
+		<label for="auth-email" class="text-sm font-medium">Email</label>
+		<Input id="auth-email" type="email" bind:value={email} required maxlength={254} autocomplete="email" />
 	</div>
 	<div class="space-y-1">
-		<label for="signin-password" class="text-sm font-medium">Password</label>
-		<Input id="signin-password" type="password" bind:value={password} required minlength={8} maxlength={512} autocomplete="current-password" />
+		<label for="auth-password" class="text-sm font-medium">Password</label>
+		<Input id="auth-password" type="password" bind:value={password} required minlength={8} maxlength={512} autocomplete="current-password" />
 	</div>
 	{#if error}<p role="alert" class="pt-2 text-sm text-destructive" data-testid="auth-error">{error}</p>{/if}
 	<div class="pt-4">

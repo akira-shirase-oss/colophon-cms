@@ -105,8 +105,11 @@ against, and how far:
   check and before Argon2; the address is the one the server derives (the peer, or a trusted proxy's
   report), never a header the client writes. Argon2 work is bounded across the installation by the password
   gate (D-150), and sign-in by D-154's per-key pauses and per-account ceiling.
-- **Bots.** Cloudflare Turnstile, checked server-side, fails closed, bound to the configured host; the verify
-  URL can't be pointed anywhere but Cloudflare or loopback.
+- **Bots: optional, off at launch.** Cloudflare Turnstile is checked only where both its keys are set
+  (`COLOPHON_TURNSTILE_SITE_KEY`, `COLOPHON_TURNSTILE_SECRET`); then it runs server-side, fails closed, is bound
+  to the configured host, and its verify URL can't be pointed anywhere but Cloudflare or loopback. Without it,
+  an open installation rests on the per-address sign-up cap, the per-account project cap and quotas, and the
+  password gate: a bot with many addresses can still make accounts, each worth no more than those limits.
 - **Enumeration: reduced, not closed.** A taken email still answers `409 email_taken` where the sign-up was
   otherwise admitted (open registration, or a valid invitation), so the answer itself tells whether an email has
   an account. Its timing doesn't add to that (both arms pay Argon2 and a transaction; a test holds the medians
@@ -122,6 +125,11 @@ against, and how far:
   password or a live session, which an outsider doesn't have; a session signs out once. What stays: an
   attacker with many addresses still adds up to 21 lines an hour per address, a cost that grows with what they
   spend, not with what they send.
+- **An account that misbehaves** is disabled by an administrator: one transaction revokes every session it
+  holds and every API token it made, and it can't sign in again (its password answers like a wrong one) until
+  enabled. Nobody disables their own account, and the last enabled administrator stays enabled.
+- **The signed-in hint** (`colophon_signed_in`, optional) is readable by scripts on the hint domain by design;
+  it carries no secret and authorises nothing (a request with only the hint is 401 everywhere).
 - **Login CSRF and fixation.** Sign-up and sign-in refuse a cross-site browser and any `Origin` but the
   installation's; signing in, up or back from the provider rotates the session and ends the one presented; the
   session cookies are `__Host-` (no sibling subdomain can set or shadow them). The old cookie names are read for
