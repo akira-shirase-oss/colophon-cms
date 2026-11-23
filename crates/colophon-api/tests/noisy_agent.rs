@@ -101,6 +101,7 @@ async fn world(window_ms: u64) -> World {
             uploads: colophon_api::uploads::UploadGate::new(256, 21 * 1024 * 1024),
             magic_links: colophon_db::audience::MagicLinkLimits::DEFAULT,
             media_origin: "http://localhost:58000".to_owned(),
+            media_keys: colophon_api::media_sign::Keys::default(),
             install_kind: None,
         })),
         build: colophon_api::BuildInfo::unstamped("0.0.0-test"),

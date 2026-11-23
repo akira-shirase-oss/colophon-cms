@@ -280,7 +280,7 @@ describe("compat: 'warn', the default", () => {
 			await env.listEntries('articles');
 			expect(paths.filter((p) => p === '/version')).toHaveLength(1);
 			expect(warn).toHaveBeenCalledTimes(1);
-			expect(String(warn.mock.calls[0]![0])).toContain('@colophon-cms/sdk 0.1.0-alpha.1 is too old');
+			expect(String(warn.mock.calls[0]![0])).toContain(`@colophon-cms/sdk ${SDK_VERSION} is too old`);
 		} finally {
 			warn.mockRestore();
 		}

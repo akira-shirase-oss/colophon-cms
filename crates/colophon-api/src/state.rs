@@ -72,6 +72,9 @@ pub struct Services {
     /// The origin delivery's media URLs start with (`COLOPHON_MEDIA_URL`, default the public
     /// origin; D-178): `{media_origin}/media/v1/…`.
     pub media_origin: String,
+    /// The keys that sign and verify short-lived media addresses (D-229, D-233), read from the database
+    /// and kept a minute.
+    pub media_keys: crate::media_sign::Keys,
     /// The bounds on uploads in flight (D-215): a memory budget and a per-credential count.
     pub uploads: crate::uploads::UploadGate,
     /// How the server was installed (`COLOPHON_INSTALL_KIND`; `container` from the image,

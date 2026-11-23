@@ -1072,16 +1072,25 @@ fn link_for(return_to: &str, token: &str) -> String {
 
 /// An origin staff list for magic links, normalized: `scheme://host[:port]` as browsers
 /// serialize it (lowercase, default port dropped), with nothing after it but an optional `/`.
+///
+/// Only an http(s) URL with a host ever reaches `Url::origin()`: on any other scheme it may
+/// recurse (a `blob:` URL takes its inner URL's origin; url ≤ 2.5.8 did so without bound,
+/// RUSTSEC-2026-0592, a stack overflow that aborts the process), so the scheme is refused first.
 fn clean_origin(value: &str) -> Option<String> {
     let url = url::Url::parse(value.trim()).ok()?;
+    if !matches!(url.scheme(), "http" | "https") || url.host().is_none() {
+        return None;
+    }
     let bare = matches!(url.path(), "" | "/")
         && url.query().is_none()
         && url.fragment().is_none()
         && url.username().is_empty()
         && url.password().is_none();
-    let web = matches!(url.scheme(), "http" | "https") && url.host().is_some();
+    if !bare {
+        return None;
+    }
     let origin = url.origin().ascii_serialization();
-    (bare && web && origin.len() <= 255).then_some(origin)
+    (origin.len() <= 255).then_some(origin)
 }
 
 /// `POST /audience/v1/{project}/magic-link`: records a single-use link and answers `202`
@@ -1255,7 +1264,26 @@ pub(crate) async fn magic_link_sign_in(
 
 #[cfg(test)]
 mod tests {
-    use super::link_for;
+    use super::{clean_origin, link_for};
+
+    /// RUSTSEC-2026-0592: a deeply nested `blob:` URL is refused as an origin without ever
+    /// reaching `Url::origin()`, which recursed into it without bound on url ≤ 2.5.8 and
+    /// overflowed the stack (an abort, not a panic): 20,000 levels aborted it.
+    #[test]
+    fn a_nested_blob_url_is_refused_before_its_origin_is_taken() {
+        let nested = format!("{}https://site.test", "blob:".repeat(20_000));
+        assert_eq!(clean_origin(&nested), None);
+        assert_eq!(clean_origin("blob:https://site.test"), None);
+        assert_eq!(clean_origin("file:///etc"), None);
+        assert_eq!(
+            clean_origin("https://Site.Test/").as_deref(),
+            Some("https://site.test")
+        );
+        assert_eq!(
+            clean_origin("http://localhost:8080").as_deref(),
+            Some("http://localhost:8080")
+        );
+    }
 
     #[test]
     fn the_token_goes_in_the_query_even_when_return_to_has_a_fragment() {

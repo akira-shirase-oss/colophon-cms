@@ -18,12 +18,18 @@ env:
   CARGO_TERM_COLOR: always
   CARGO_BUILD_WARNINGS: deny
 
+# Every job's first step is the outgoing-port guard, ahead of checkout and before anything can open a socket:
+# Linux hands outgoing connections local ports from 32768 to 60999, which includes every fixed port CI listens
+# on (the stack's and its test servers', 53900 and up). k6 took 58090 first ("address in use", twice), and a
+# loopback client took the credential test's 56398 (CI 44868206132). scripts/test-ci-ports.sh keeps it so.
 jobs:
   rust:
     name: rust (toolchain, fmt, clippy, test, docs, architecture)
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
+      - name: Keep outgoing ports below the stack's
+        run: sudo sysctl -w net.ipv4.ip_local_port_range="20000 50999"
       # Third-party actions are pinned to commit SHAs (spec §35).
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -62,6 +68,8 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
+      - name: Keep outgoing ports below the stack's
+        run: sudo sysctl -w net.ipv4.ip_local_port_range="20000 50999"
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
@@ -92,6 +100,8 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
+      - name: Keep outgoing ports below the stack's
+        run: sudo sysctl -w net.ipv4.ip_local_port_range="20000 50999"
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
@@ -121,6 +131,8 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
+      - name: Keep outgoing ports below the stack's
+        run: sudo sysctl -w net.ipv4.ip_local_port_range="20000 50999"
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
@@ -142,8 +154,22 @@ jobs:
         run: deploy/droplet/test-backup-logical.sh
       - name: The droplet's Neon URL fix (deploy/droplet/test-neon-url.sh)
         run: deploy/droplet/test-neon-url.sh
+      - name: The droplet's hostname is one setting, odd values refused (deploy/droplet/test-public-host.sh)
+        run: deploy/droplet/test-public-host.sh
+      - name: The backups have their own R2 token, or share the media one only by the operator's choice (deploy/droplet/test-r2-keys.sh)
+        run: deploy/droplet/test-r2-keys.sh
       - name: The droplet's edge channel refuses what it can't prove (deploy/droplet/test-upgrade-edge.sh, D-211)
         run: deploy/droplet/test-upgrade-edge.sh
+      - name: The droplet's release channel installs only what release.yml built for the tag (deploy/droplet/test-upgrade-release.sh)
+        run: deploy/droplet/test-upgrade-release.sh
+      - name: The droplet's Caddy tells the server Cf-Connecting-Ip alone, admin on a 0600 socket (deploy/droplet/test-caddy.sh)
+        run: deploy/droplet/test-caddy.sh
+      - name: Our own origin-pull certificate, the token and key off every command line (deploy/droplet/test-custom-origin-pull.sh)
+        run: deploy/droplet/test-custom-origin-pull.sh
+      - name: Cloudflare's ranges go to Caddy and ufw, the server trusts loopback alone (deploy/droplet/test-cloudflare-ips.sh)
+        run: deploy/droplet/test-cloudflare-ips.sh
+      - name: smoke.sh's database password reaches psql through its environment only (deploy/droplet/test-pg-env.sh)
+        run: deploy/droplet/test-pg-env.sh
       - name: The leftover test database sweep (scripts/test-sweep-test-databases.sh, D-195)
         run: scripts/test-sweep-test-databases.sh
       - name: The shared-stack guard (scripts/test-stack-guard.sh, D-187)
@@ -154,6 +180,8 @@ jobs:
         run: scripts/test-backup-plaintext.sh
       - name: A restore whose payload fails its hash is blocked, with why (scripts/test-restore-blocked.sh, D-196)
         run: scripts/test-restore-blocked.sh
+      - name: Every job's first step keeps outgoing ports below CI's listeners (scripts/test-ci-ports.sh)
+        run: scripts/test-ci-ports.sh --self-test
       - name: Every load smoke check.sh runs, CI runs too (scripts/test-smoke-parity.sh, D-209)
         run: scripts/test-smoke-parity.sh
       - name: The smokes job's strict verdict on its expected failures (scripts/test-smoke-verdict.sh, D-209)
@@ -180,15 +208,11 @@ jobs:
     # 1,051 s). Splitting it into two jobs is the follow-up.
     timeout-minutes: 65
     steps:
+      - name: Keep outgoing ports below the stack's
+        run: sudo sysctl -w net.ipv4.ip_local_port_range="20000 50999"
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      # Linux hands outgoing connections ports from 32768 to 60999, which includes every port the
-      # stack and its test servers listen on (53900 and up); with a dozen servers started back to
-      # back and k6's thousands of connections, one eventually took 58090 first ("address in
-      # use", twice). Keep outgoing ports below them.
-      - name: Keep outgoing ports below the stack's
-        run: sudo sysctl -w net.ipv4.ip_local_port_range="20000 50999"
       - name: ShellCheck
         run: >-
           docker run --rm -v "$PWD:/mnt:ro" -w /mnt
@@ -208,6 +232,12 @@ jobs:
       # text fail; require, verify-ca and channel_binding=require are refused before connecting).
       - name: Database TLS against a private CA (scripts/db-tls-check.sh)
         run: scripts/db-tls-check.sh
+      # D-234: Neon's database owner is not a superuser. A fresh postgres of the script's own whose
+      # owner has CREATEROLE and CREATEDB only, and the real CLI as that owner: init-roles, migrate and
+      # migrate-status, twice; the run's grants undone; the four substituted migrations' functions keep
+      # the caller's context after a call and after an error caught by a savepoint.
+      - name: Installed by a non-superuser owner, as on Neon (scripts/db-nonsuperuser-check.sh)
+        run: scripts/db-nonsuperuser-check.sh
       # Before the stack tests: the site test runs the reference site's runner (apps/web) with Node.
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
@@ -216,12 +246,13 @@ jobs:
       - run: npm ci
       - name: Tests that need the stack (they stop and restart its services)
         # Compiled against the live, migrated schema rather than .sqlx/: catches stale query data.
+        # --no-fail-fast: every test binary runs, so a red in one (the attack suite's, D-231) can't hide another's.
         env:
           SQLX_OFFLINE: "false"
           DATABASE_URL: postgres://colophon:colophon-dev@127.0.0.1:55432/colophon
         run: |
           scripts/sweep-test-databases.sh
-          cargo test --workspace --locked -- --ignored --test-threads=1
+          cargo test --workspace --locked --no-fail-fast -- --ignored --test-threads=1
       - name: Crash tests F01, F02 and F03 (the server killed before and after a commit, the worker after announcing)
         env:
           SQLX_OFFLINE: "false"
@@ -435,11 +466,11 @@ jobs:
     # Valkey here and nowhere else.
     timeout-minutes: 60
     steps:
+      - name: Keep outgoing ports below the stack's
+        run: sudo sysctl -w net.ipv4.ip_local_port_range="20000 50999"
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - name: Keep outgoing ports below the stack's
-        run: sudo sysctl -w net.ipv4.ip_local_port_range="20000 50999"
       # Which runner these numbers come from: smoke results are pass/fail checks, never capacity
       # claims, and they differ across runner CPUs (D-186's host check gates on this once it lands).
       - name: Record the runner
@@ -648,6 +679,8 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
+      - name: Keep outgoing ports below the stack's
+        run: sudo sysctl -w net.ipv4.ip_local_port_range="20000 50999"
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
@@ -710,9 +743,10 @@ jobs:
             deploy/droplet/colophon-backup-logical.service deploy/droplet/colophon-backup-logical.timer
           caddy_dir=$(mktemp -d)
           cp deploy/droplet/Caddyfile deploy/droplet/cloudflare-origin-pull-ca.pem "$caddy_dir/"
-          openssl req -x509 -newkey rsa:2048 -nodes -subj /CN=app.colophon.404human.dev -days 1 \
+          openssl req -x509 -newkey rsa:2048 -nodes -subj /CN=colophonapp.404human.dev -days 1 \
             -keyout "$caddy_dir/origin.key" -out "$caddy_dir/origin.pem" 2>/dev/null
           echo 'trusted_proxies static 173.245.48.0/20 2400:cb00::/32' >"$caddy_dir/cloudflare-trusted.caddy"
+          ORIGIN_PULL_CADDY_DIR=$caddy_dir deploy/droplet/origin-pull-ca.sh >/dev/null
           docker run --rm -v "$caddy_dir:/etc/caddy:ro" \
             caddy:2.10.2@sha256:c3d7ee5d2b11f9dc54f947f68a734c84e9c9666c92c88a7f30b9cba5da182adb \
             caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile
@@ -734,6 +768,17 @@ jobs:
           docker cp "$id:/usr/local/bin/colophon" "$out/colophon"
           docker rm "$id" >/dev/null
           deploy/droplet/test-unit-commands.sh "$out/colophon"
+      # Last of the unit checks: it puts stand-ins at /usr/local/bin/colophon and a colophon.env of its own.
+      - name: The backup units get the backups' own R2 key and bucket, never the media ones (deploy/droplet/test-unit-backup-env.sh)
+        run: sudo CI=true deploy/droplet/test-unit-backup-env.sh
+      - name: smoke.sh's database checks over verify-full with system roots, the CLI in the same run (deploy/droplet/test-smoke-db.sh)
+        run: |
+          set -euo pipefail
+          out=$(mktemp -d)
+          id=$(docker create colophon:local)
+          docker cp "$id:/usr/local/bin/colophon" "$out/colophon"
+          docker rm "$id" >/dev/null
+          sudo CI=true deploy/droplet/test-smoke-db.sh "$out/colophon"
       - name: Timings and sizes
         if: always()
         run: |
@@ -752,11 +797,63 @@ jobs:
           if-no-files-found: ignore
           retention-days: 7
 
+  fuzz:
+    # Every parser of outside input, coverage-guided from its seed corpus (D-231; fuzz/, outside the workspace with
+    # its own lockfile). A smoke, not a campaign: each target runs a bounded time on every push, so a parser change
+    # that panics, overflows or stalls on hostile input fails the build; a crash's input is uploaded to reproduce.
+    name: fuzz (each parser, bounded, from its seed corpus)
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    env:
+      # The gnu host's: the runner's default rustup host is musl, whose static libc the sanitizers refuse.
+      FUZZ_TOOLCHAIN: nightly-2026-11-01-x86_64-unknown-linux-gnu
+      FUZZ_TARGET: x86_64-unknown-linux-gnu
+    steps:
+      - name: Keep outgoing ports below the stack's
+        run: sudo sysctl -w net.ipv4.ip_local_port_range="20000 50999"
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install a dated nightly (cargo-fuzz needs its sanitizer flags)
+        run: rustup toolchain install "$FUZZ_TOOLCHAIN" --profile minimal
+      - name: Install the pinned toolchain too (cargo-deny reads the fuzz lockfile with it)
+        run: |
+          channel=$(sed -n 's/^channel = "\(.*\)"$/\1/p' rust-toolchain.toml)
+          rustup toolchain install "$channel" --profile minimal
+      - uses: taiki-e/install-action@cfdb7ed4ccc7c7dce37759eae89dc5674b469b39 # v2.90.3
+        with:
+          tool: cargo-fuzz@0.13.2,cargo-deny@0.20.2
+      # The fuzz crate's own lockfile: outside the workspace, so the supply-chain job never sees it.
+      - name: Advisories and sources of the fuzz lockfile
+        run: cargo deny --manifest-path fuzz/Cargo.toml --locked --config deny.toml check advisories sources
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          workspaces: fuzz
+      - name: Build every target
+        run: cargo "+$FUZZ_TOOLCHAIN" fuzz build --fuzz-dir fuzz --target "$FUZZ_TARGET"
+      - name: Run each target for 60 s from its corpus (a 2 s input is a stall, a crash fails)
+        run: |
+          set -euo pipefail
+          for target in $(cargo "+$FUZZ_TOOLCHAIN" fuzz list --fuzz-dir fuzz); do
+            mkdir -p "fuzz/run-corpus/$target"
+            cargo "+$FUZZ_TOOLCHAIN" fuzz run --fuzz-dir fuzz --target "$FUZZ_TARGET" "$target" \
+              "fuzz/run-corpus/$target" "fuzz/corpus/$target" -- \
+              -max_total_time=60 -timeout=2 -rss_limit_mb=2048 -max_len=65536
+          done
+      - if: failure()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: fuzz-artifacts
+          path: fuzz/artifacts/
+          retention-days: 14
+
   supply-chain:
     name: supply chain (cargo-deny)
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
+      - name: Keep outgoing ports below the stack's
+        run: sudo sysctl -w net.ipv4.ip_local_port_range="20000 50999"
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
@@ -777,6 +874,8 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
+      - name: Keep outgoing ports below the stack's
+        run: sudo sysctl -w net.ipv4.ip_local_port_range="20000 50999"
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false

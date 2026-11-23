@@ -254,14 +254,15 @@ export function media(data) {
     const done = verdict(data, made.json('data.id'), 'usable');
     if (done === null) return;
     verified.add(1);
-    // What the decoder produced must actually serve: the original and a rendition.
+    // What the decoder produced must actually serve: the original and a rendition — to the member
+    // who uploaded it, privately, since no release names it yet (D-229).
     const at = `${data.media}/${done.json('data.id')}`;
     for (const url of [at, `${at}/w320`]) {
-      const object = http.get(url, { redirects: 0, tags: { arm: 'media', endpoint: 'media', name: 'media/v1/{asset}' } });
+      const object = http.get(url, { headers: { Cookie: data.session.cookie }, redirects: 0, tags: { arm: 'media', endpoint: 'media', name: 'media/v1/{asset}' } });
       if (check(object, {
         'media 200': (r) => r.status === 200,
-        // The bare address follows the current version, so it revalidates (D-157).
-        'media revalidates': (r) => r.headers['Cache-Control'] === 'public, max-age=60, must-revalidate',
+        // Unpublished: for this viewer only, kept by no cache.
+        'media private': (r) => r.headers['Cache-Control'] === 'private, no-store',
       })) mediaReads.add(1);
       else errors.add(1);
     }

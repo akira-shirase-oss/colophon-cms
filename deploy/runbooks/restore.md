@@ -39,7 +39,10 @@ silent rerun they exist to prevent.
 3. **epoch** — `colophon admin restore epoch` advances every environment's epoch exactly
    once. The recovery epoch is what invalidates the old timeline: cache generations,
    delivery scope keys and worker leases from before the incident can never collide with
-   what follows (D4).
+   what follows (D4). First it replaces the media signing key and retires every older one
+   (D-233): a restored copy never signs or verifies with its source's key, and the links
+   signed before the restore (15 minutes old at most) stop working. The stage marker records
+   the new key's id, never the key.
 4. **ledger** — for every `--ledger FILE` export, checks the file's header, then replays the
    interval the restored `deletion_ledger` lacks (anti-joined by row id, not `id > max` —
    ids drawn out of order would hide real rows beneath the watermark). Files are replayed

@@ -3243,7 +3243,7 @@
       "PublishedMedia": {
         "properties": {
           "current_url": {
-            "description": "follows replacements, without publishing again",
+            "description": "the bare address: the newest published version (D-229); in a site member's answer, the same version as url",
             "type": "string"
           },
           "height": {
@@ -4760,7 +4760,7 @@
   "info": {
     "description": "Colophon's HTTP API: the /api/v1 management surface the Studio, CLI, SDK and agents share, the public /content/v1 delivery and /media/v1 origins, and the server's own meta routes. Emitted from the route table the server itself is built from (D-110), so the document and the routes cannot drift.",
     "title": "Colophon",
-    "version": "0.1.0-alpha.1"
+    "version": "0.1.0-alpha.4"
   },
   "jsonSchemaDialect": "https://json-schema.org/draft/2020-12/schema",
   "openapi": "3.1.0",
@@ -23125,7 +23125,7 @@
         ],
         "responses": {
           "200": {
-            "description": "the stored `Content-Type`; `max-age=60, must-revalidate` with the version's `ETag` (a replace or delete moves this address, D-157) — a matching `If-None-Match` answers 304; a version's sha address is `immutable`"
+            "description": "the stored `Content-Type`; published: `max-age=60, must-revalidate` with the version's `ETag` (a publish or delete moves this address, D-157) — a matching `If-None-Match` answers 304; a version's sha address is `immutable`. Not yet published: only to a signed-in member or with `?kid=&expires=&signature=` (the addresses preview and members' delivery answers carry), `private, no-store`; anyone else gets 404"
           },
           "404": {
             "content": {
@@ -23159,7 +23159,7 @@
           }
         },
         "security": [],
-        "summary": "The asset's current version's verified bytes, publicly",
+        "summary": "The asset's verified bytes: its newest published version to anyone, its current one to a member or a signed address (D-229)",
         "tags": [
           "media"
         ]

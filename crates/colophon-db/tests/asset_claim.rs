@@ -332,3 +332,138 @@ async fn one_sweep_releases_every_lapsed_lease_a_bounded_pass_at_a_time() {
     owner.close().await;
     db.drop().await;
 }
+
+/// Blocks `asset_jobs` and `assets` were read for, heap and index, as the stats now say.
+async fn blocks(pool: &PgPool) -> i64 {
+    sqlx::query_scalar(
+        "SELECT coalesce(sum(coalesce(heap_blks_hit, 0) + coalesce(heap_blks_read, 0)
+                          + coalesce(idx_blks_hit, 0) + coalesce(idx_blks_read, 0)), 0)::int8
+         FROM pg_statio_user_tables WHERE relname IN ('asset_jobs', 'assets')",
+    )
+    .fetch_one(pool)
+    .await
+    .expect("pg_statio_user_tables")
+}
+
+/// A claim's reads stay a handful of blocks at the size the assets smoke reaches on a fast
+/// runner (main's CI 44868206132: 70,871 blocks a claim, 4.5 s at the end), under the plan the
+/// server runs it with after five calls. It failed first two ways: joining `assets` in the
+/// UPDATE read every asset of the environment for each claimed job and filtered on the id after
+/// (457,559 buffers measured at this size); and the generic plan, not knowing `LIMIT $3` is a
+/// handful, scanned all of `asset_jobs` for the UPDATE's join (1,130 blocks here, and 1,160 with
+/// the subqueries but without the claim's `force_custom_plan`: that setting carries the fix).
+/// With both, a claim reads only what the snapshot the smoke holds open makes it step over: the
+/// due-index entries of the jobs that finished under it (241 blocks for 500).
+///
+/// The lesson for every fixture: seed the cardinalities production has. Here that's many
+/// assets in one environment, each with its own jobs. The other tests in this file name a
+/// single asset from every job, which made the join to `assets` one row and hid this twice.
+#[tokio::test]
+#[ignore = "needs the local stack: scripts/stack.sh up"]
+async fn a_claim_reads_a_handful_of_blocks_at_a_fast_runners_scale() {
+    const ASSETS: i64 = 23_000;
+    const WAITING: i64 = 3_000;
+    /// Finished while the snapshot is open: a few seconds' worth on a fast runner.
+    const RECENT: i64 = 500;
+    let db = TestDb::new().await;
+    one_upload(&db).await;
+    let owner = db.owner().await;
+    let mut seed = owner.acquire().await.expect("an owner connection");
+    // Every job on an asset of its own: 20,000 finished uploads and 3,000 waiting, as the smoke
+    // has them, in the upload's project and environment.
+    sqlx::query(
+        "INSERT INTO assets (project_id, environment_id, id, file_name, declared_type, size_bytes,
+                             quarantine_key, created_by)
+         SELECT a.project_id, a.environment_id, gen_random_uuid(), 'f' || n || '.png', 'image/png',
+                1024, 'quarantine/f' || n, a.created_by
+         FROM assets a, generate_series(1, $1) n",
+    )
+    .bind(ASSETS)
+    .execute(&mut *seed)
+    .await
+    .expect("assets");
+    sqlx::query(
+        "INSERT INTO asset_jobs (project_id, environment_id, id, asset_id, kind, idempotency_key,
+                                 next_attempt_at, deadline_at)
+         SELECT a.project_id, a.environment_id, gen_random_uuid(), a.id, 'verify',
+                'job:' || a.file_name, now() - interval '2 hours'
+                    + row_number() OVER (ORDER BY a.file_name) * interval '1 ms',
+                now() + interval '1 hour'
+         FROM assets a WHERE a.file_name LIKE 'f%'",
+    )
+    .execute(&mut *seed)
+    .await
+    .expect("one job each");
+    // The long history finished before any snapshot now open: a first claim marks its dead
+    // entries in the due index dead, as the worker's claims do all day.
+    let finish = "UPDATE asset_jobs SET status = 'succeeded', finished_at = now()
+                  WHERE id IN (SELECT id FROM asset_jobs
+                               WHERE idempotency_key LIKE 'job:%' AND status = 'pending'
+                               ORDER BY next_attempt_at LIMIT $1)";
+    sqlx::query(finish)
+        .bind(ASSETS - WAITING - RECENT)
+        .execute(&mut *seed)
+        .await
+        .expect("the history finished");
+    assets::claim(&db.app, "worker-a", HOUR, 1)
+        .await
+        .expect("a first claim");
+    // A snapshot held through the claim, as the smoke's are (up to 3.7 s), and the uploads
+    // that finish under it: their dead entries can't be marked while it is open.
+    let mut snapshot = owner.begin().await.expect("begin");
+    sqlx::query("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ")
+        .execute(&mut *snapshot)
+        .await
+        .expect("repeatable read");
+    sqlx::query("SELECT count(*) FROM asset_jobs")
+        .execute(&mut *snapshot)
+        .await
+        .expect("the snapshot is taken");
+    sqlx::query(finish)
+        .bind(RECENT)
+        .execute(&mut *seed)
+        .await
+        .expect("the recent ones finished");
+    sqlx::query("ANALYZE asset_jobs, assets")
+        .execute(&mut *seed)
+        .await
+        .expect("analyze");
+    flush(&mut seed).await;
+    drop(seed);
+    // The server's plan: after five calls a prepared statement settles on a generic one.
+    {
+        let mut app = db.app.acquire().await.expect("the app connection");
+        sqlx::query("SET plan_cache_mode = force_generic_plan")
+            .execute(&mut *app)
+            .await
+            .expect("generic plans");
+    }
+    flush_app(&db).await;
+
+    let (scans_before, _) = reads(&owner).await;
+    let before = blocks(&owner).await;
+    let claimed = assets::claim(&db.app, "worker-a", HOUR, 4)
+        .await
+        .expect("claim");
+    flush_app(&db).await;
+    let (scans_after, _) = reads(&owner).await;
+    let read = blocks(&owner).await - before;
+
+    assert_eq!(claimed.len(), 4, "four waiting jobs claimed");
+    // The worker's own transaction set the plan for this call: generic is the session's.
+    eprintln!("one claim at {ASSETS} assets, {WAITING} waiting: {read} blocks");
+    assert_eq!(
+        scans_after - scans_before,
+        0,
+        "a claim scanned a whole table ({read} blocks)"
+    );
+    // What an open snapshot costs a claim: a step over each entry that died under it (they
+    // can't be marked dead until it closes), so at most one block each, and never the table's.
+    assert!(
+        read <= RECENT,
+        "a claim read {read} blocks for four jobs ({RECENT} finished under the snapshot)"
+    );
+    snapshot.rollback().await.expect("release the snapshot");
+    owner.close().await;
+    db.drop().await;
+}

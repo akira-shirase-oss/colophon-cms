@@ -26,6 +26,7 @@ base64.workspace = true
 [dev-dependencies]
 # Keeps fixture key order when re-serializing a fixture to compare it with the canonical form.
 serde_json = { workspace = true, features = ["preserve_order"] }
+proptest.workspace = true
 
 [lints]
 workspace = true

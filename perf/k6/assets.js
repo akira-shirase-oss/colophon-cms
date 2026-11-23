@@ -132,6 +132,26 @@ export function setup() {
     sleep(0.1);
   }
 
+  // Published, so the public origin serves it (D-229: an upload no release names is a member's,
+  // privately): a one-field type naming it, one entry, its changeset approved and released.
+  const base = `${BASE_URL}/api/v1/projects/${id}/environments/production`;
+  const keyed = () => Object.assign({ 'Idempotency-Key': idempotencyKey(`k6-pub-${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`, 'assets') }, write);
+  const type = http.post(`${base}/content-types`, JSON.stringify({ slug: 'covers', definition: { name: 'Covers', title_field: 'title', fields: [
+    { id: 'title', label: 'Title', type: 'text', required: true },
+    { id: 'photo', label: 'Photo', type: 'asset' },
+  ] } }), { headers: keyed() });
+  if (type.status !== 201) fail(`content type: HTTP ${type.status} ${type.body}`);
+  const cover = http.post(`${base}/collections/covers/entries`, JSON.stringify({ title: 'Warm', photo: mediaId }), { headers: keyed() });
+  if (cover.status !== 201) fail(`entry: HTTP ${cover.status} ${cover.body}`);
+  const set = http.post(`${base}/changesets`, JSON.stringify({ title: 'warm', entries: [cover.json('data.id')] }), { headers: keyed() });
+  if (set.status !== 201) fail(`changeset: HTTP ${set.status} ${set.body}`);
+  const path = `${base}/changesets/${set.json('data.id')}`;
+  const ifMatch = Object.assign({ 'If-Match': `"${set.json('data.hash')}"` }, write);
+  http.post(`${path}/submit`, null, { headers: ifMatch });
+  http.post(`${path}/reviews`, JSON.stringify({ decision: 'approve' }), { headers: ifMatch });
+  const released = http.post(`${path}/publish`, JSON.stringify({ base_generation: 0 }), { headers: Object.assign(keyed(), ifMatch) });
+  if (released.status !== 201) fail(`publish: HTTP ${released.status} ${released.body}`);
+
   return { session, sessions, assets, media: `${BASE_URL}/media/v1/${id}/production`, mediaId };
 }
 
@@ -233,8 +253,8 @@ export default function (data) {
       });
     }
   } else {
-    // M.1/M.3: the public origin serves the setup's verified object — the original half the
-    // time, its w320 rendition the other half — no sign-in, no row reads.
+    // M.1/M.3: the public origin serves the setup's verified, published object — the original
+    // half the time, its w320 rendition the other half — no sign-in.
     const at = exec.scenario.iterationInTest % 2 === 0 ? `${data.media}/${data.mediaId}` : `${data.media}/${data.mediaId}/w320`;
     const object = http.get(at, { tags: { endpoint: 'media', name: 'media/v1/{asset}' }, redirects: 0 });
     check(object, {

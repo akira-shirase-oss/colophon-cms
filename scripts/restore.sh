@@ -259,7 +259,7 @@ stage_epoch() {
   local out rc=0
   out=$(admin restore epoch --json) || rc=$?
   (( rc == 0 )) || { mark_blocked epoch "the epoch advance failed"; return 1; }
-  mark_done epoch "$(printf '%s' "$out" | jq '{environments: .data.environments}')"
+  mark_done epoch "$(printf '%s' "$out" | jq '{environments: .data.environments, media_key_id: .data.media_key_id}')"
 }
 
 stage_ledger() {
@@ -595,6 +595,12 @@ SQL
   epoch_before=$(jq -r .epoch_before <<<"$fixture")
   identity=$(compose exec -T postgres psql -U colophon -d "$live_db" -XAtq -c \
     "select id from identities order by created_at limit 1")
+  # The source's media signing keys, as digests held only in this shell (D-233): never the key, and never
+  # written to the result file. The restored copy must hold none of them.
+  local keys_before
+  keys_before=$(compose exec -T postgres psql -U colophon -d "$live_db" -XAtq -c \
+    "select string_agg(md5(key), ' ' order by id) from media_signing_keys")
+  [[ -n "$keys_before" ]] || die "the source holds no media signing key"
 
   # A fresh destination: the outbox already holds a job for every real destination on this
   # generation, and the idempotency key must be unique.
@@ -677,6 +683,16 @@ SQL
     "epoch $epoch_before → $epoch_after (advanced exactly once)" \
     "epoch is $epoch_after, expected $((epoch_before + 1))"
 
+  # D-233: the restore replaced the media signing key and retired the source's.
+  local keys_after shared=0 digest
+  keys_after=$(psql_scratch "select string_agg(md5(key), ' ' order by id) from media_signing_keys")
+  for digest in $keys_after; do
+    case " $keys_before " in *" $digest "*) shared=$((shared + 1)) ;; esac
+  done
+  check_eq "0 1" "$shared $(wc -w <<<"$keys_after" | tr -d ' ')" \
+    "the restored copy signs with a new media key, and holds none of the source's" \
+    "the restored copy shares $shared media key(s) with its source"
+
   victim_gone=$(psql_scratch "select deleted_at is not null from entries where id='$victim'")
   check_eq t "$victim_gone" \
     "the post-backup deletion is replayed (victim tombstoned)" \
@@ -723,7 +739,7 @@ SQL
 
   [[ "$KEEP" == 1 ]] || teardown
   (( fails == 0 )) || { echo "FAIL: $fails drill checks" >&2; exit 1; }
-  echo "PASS: restore drilled end to end — new epoch, ledger replayed, jobs held, serving"
+  echo "PASS: restore drilled end to end — new epoch, new media key, ledger replayed, jobs held, serving"
 }
 
 # --- dispatch -----------------------------------------------------------------------------------

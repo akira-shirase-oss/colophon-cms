@@ -214,7 +214,8 @@ impl Class {
     fn of(method: &Method, path: &str) -> Option<Self> {
         if *method == Method::POST && is_password_work(path) {
             Some(Self::Password)
-        } else if path.starts_with("/content/") {
+        } else if path.starts_with("/content/") || path.starts_with("/media/") {
+            // The media origin is delivery's (D-136): per address, at delivery's rate (D-231).
             Some(Self::Delivery)
         } else if path.starts_with("/api/")
             || path.starts_with("/auth/")
@@ -222,6 +223,8 @@ impl Class {
             // Preview reads and exchanges (D-172): per address and per bearer, like the
             // management API — a preview token is a credential, not anonymous delivery.
             || path.starts_with("/preview/")
+            // `/me` reads the session's identity from Postgres on every request (D-231).
+            || path == "/me"
         {
             Some(Self::Management)
         } else {
@@ -1072,6 +1075,53 @@ mod tests {
         assert_eq!(admission.client(None, &headers), None);
     }
 
+    /// The S0 droplet (deploy/droplet): Caddy tells the server one address, the visitor's
+    /// Cf-Connecting-Ip, replacing any X-Forwarded-For that came in, and the server trusts loopback
+    /// alone. Trusting Cloudflare's ranges here too (as S0 first did) let a request from a
+    /// Cloudflare address, such as another account's Worker, have its own address skipped as "a
+    /// proxy" and a forged one believed: a fresh address for every password attempt.
+    #[test]
+    fn behind_caddy_the_server_believes_caddys_one_address_and_no_forged_left_part() {
+        let settings = |proxies: &[&str]| AdmissionSettings {
+            trusted_proxies: proxies
+                .iter()
+                .map(|prefix| IpPrefix::parse(prefix).expect("valid"))
+                .collect(),
+            ..AdmissionSettings::default()
+        };
+        let caddy: IpAddr = "127.0.0.1".parse().expect("an address");
+        let worker: IpAddr = "2a06:98c0:3600::103".parse().expect("an address");
+        let droplet = Admission::new(settings(&["127.0.0.1/32"]), None).expect("no URL");
+
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            "x-forwarded-for",
+            HeaderValue::from_static("2a06:98c0:3600::103"),
+        );
+        assert_eq!(
+            droplet.client(Some(caddy), &headers),
+            Some(worker),
+            "Caddy's one address is the client, a Cloudflare address included"
+        );
+        // Were a forged left part to reach the server anyway, it still isn't believed.
+        headers.insert(
+            "x-forwarded-for",
+            HeaderValue::from_static("6.6.6.6, 2a06:98c0:3600::103"),
+        );
+        assert_eq!(droplet.client(Some(caddy), &headers), Some(worker));
+        // A request that doesn't come through Caddy is its own peer, whatever it says.
+        assert_eq!(droplet.client(Some(worker), &headers), Some(worker));
+
+        // What trusting Cloudflare's ranges here did: the forged address was believed.
+        let trusting_cloudflare =
+            Admission::new(settings(&["127.0.0.1/32", "2a06:98c0::/29"]), None).expect("no URL");
+        assert_eq!(
+            trusting_cloudflare.client(Some(caddy), &headers),
+            Some("6.6.6.6".parse().expect("an address")),
+            "the reason the droplet's server trusts loopback alone"
+        );
+    }
+
     #[test]
     fn an_ipv6_client_is_limited_by_its_slash_64_like_a_sign_in_key() {
         // One subscriber is handed a /64; rotating inside it must not reset the address limit
@@ -1148,6 +1198,17 @@ mod tests {
         );
         assert_eq!(
             Class::of(&Method::POST, "/preview/v1/p/production/exchange"),
+            Some(Class::Management)
+        );
+        // Every route that reads Postgres counts (D-231): the session's `/me`, the media origin,
+        // and a preview preflight.
+        assert_eq!(Class::of(&Method::GET, "/me"), Some(Class::Management));
+        assert_eq!(
+            Class::of(&Method::GET, "/media/v1/p/production/a"),
+            Some(Class::Delivery)
+        );
+        assert_eq!(
+            Class::of(&Method::OPTIONS, "/preview/v1/p/production/articles"),
             Some(Class::Management)
         );
     }
