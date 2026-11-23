@@ -330,16 +330,17 @@ async fn one_sweep_releases_every_lapsed_lease_a_bounded_pass_at_a_time() {
     db.drop().await;
 }
 
-/// Blocks `asset_jobs` and `assets` were read for, heap and index, as the stats now say.
-async fn blocks(pool: &PgPool) -> i64 {
+/// Blocks the backend `pid` read or found in shared buffers for relations, by its own I/O
+/// statistics: nothing another backend did (an autovacuum, another test) is counted.
+async fn own_reads(pool: &PgPool, pid: i32) -> i64 {
     sqlx::query_scalar(
-        "SELECT coalesce(sum(coalesce(heap_blks_hit, 0) + coalesce(heap_blks_read, 0)
-                          + coalesce(idx_blks_hit, 0) + coalesce(idx_blks_read, 0)), 0)::int8
-         FROM pg_statio_user_tables WHERE relname IN ('asset_jobs', 'assets')",
+        "SELECT coalesce(sum(coalesce(hits, 0) + coalesce(reads, 0)), 0)::int8
+         FROM pg_stat_get_backend_io($1) WHERE object = 'relation' AND context = 'normal'",
     )
+    .bind(pid)
     .fetch_one(pool)
     .await
-    .expect("pg_statio_user_tables")
+    .expect("pg_stat_get_backend_io")
 }
 
 /// A claim's reads stay a handful of blocks at the size the assets smoke reaches on a fast
@@ -349,19 +350,32 @@ async fn blocks(pool: &PgPool) -> i64 {
 /// (457,559 buffers measured at this size); and the generic plan, not knowing `LIMIT $3` is a
 /// handful, scanned all of `asset_jobs` for the UPDATE's join (1,130 blocks here, and 1,160 with
 /// the subqueries but without the claim's `force_custom_plan`: that setting carries the fix).
-/// With both, a claim reads only what the snapshot the smoke holds open makes it step over: the
-/// due-index entries of the jobs that finished under it (241 blocks for 500).
+/// With both, a claim reads its own work and a step over what died under the snapshot the
+/// smoke holds open.
+///
+/// Measured on the claim's backend alone (`pg_stat_get_backend_io`), after a warming claim, so
+/// nothing another session reads is counted: CI 44894906554 failed this at 708 blocks when the
+/// test still counted every backend's reads of the two tables (an autovacuum landing in the
+/// window is the likely reading). Another backend's read, flushed inside the window, now
+/// shows that: counted table-wide it made the claim 893 blocks; counted on the claim's backend
+/// it changes nothing (229-234 over six runs).
 ///
 /// The lesson for every fixture: seed the cardinalities production has. Here that's many
 /// assets in one environment, each with its own jobs. The other tests in this file name a
 /// single asset from every job, which made the join to `assets` one row and hid this twice.
 #[tokio::test]
 #[ignore = "needs the local stack: scripts/stack.sh up"]
+#[expect(
+    clippy::too_many_lines,
+    reason = "one fixture at production's cardinalities, then one measured claim"
+)]
 async fn a_claim_reads_a_handful_of_blocks_at_a_fast_runners_scale() {
     const ASSETS: i64 = 23_000;
     const WAITING: i64 = 3_000;
     /// Finished while the snapshot is open: a few seconds' worth on a fast runner.
     const RECENT: i64 = 500;
+    /// The most one claim of four may read on its own backend (see the assertion).
+    const MAX_CLAIM_BLOCKS: i64 = 500;
     let db = TestDb::new().await;
     one_upload(&db).await;
     let owner = db.owner().await;
@@ -437,14 +451,36 @@ async fn a_claim_reads_a_handful_of_blocks_at_a_fast_runners_scale() {
     }
     flush_app(&db).await;
 
+    let pid: i32 = sqlx::query_scalar("SELECT pg_backend_pid()")
+        .fetch_one(&db.app)
+        .await
+        .expect("the claim's backend");
+    // One unmeasured claim first, on this session's plan settings, after the ANALYZE: catalog,
+    // relation and plan caches are hot for the measured one, so what it reads is its own work.
+    assets::claim(&db.app, "worker-a", HOUR, 1)
+        .await
+        .expect("a warming claim");
+    flush_app(&db).await;
     let (scans_before, _) = reads(&owner).await;
-    let before = blocks(&owner).await;
+    let before = own_reads(&owner, pid).await;
+    // Another backend reads these tables inside the window, as an autovacuum may after a
+    // burst of updates, or any other session: the likely reading of CI 44894906554's 708
+    // blocks, when the test counted every backend's reads of both tables as the claim's. Only
+    // the claim's own backend is measured now, so this read changes nothing.
+    {
+        let mut other = owner.acquire().await.expect("another backend");
+        sqlx::query("SELECT sum(size_bytes) FROM assets WHERE file_name LIKE 'f%'")
+            .execute(&mut *other)
+            .await
+            .expect("another backend's read");
+        flush(&mut other).await;
+    }
     let claimed = assets::claim(&db.app, "worker-a", HOUR, 4)
         .await
         .expect("claim");
     flush_app(&db).await;
     let (scans_after, _) = reads(&owner).await;
-    let read = blocks(&owner).await - before;
+    let read = own_reads(&owner, pid).await - before;
 
     assert_eq!(claimed.len(), 4, "four waiting jobs claimed");
     // The worker's own transaction set the plan for this call: generic is the session's.
@@ -454,10 +490,13 @@ async fn a_claim_reads_a_handful_of_blocks_at_a_fast_runners_scale() {
         0,
         "a claim scanned a whole table ({read} blocks)"
     );
-    // What an open snapshot costs a claim: a step over each entry that died under it (they
-    // can't be marked dead until it closes), so at most one block each, and never the table's.
+    // The claim's own work, counted on its backend alone, its caches warm: about 214 blocks
+    // with nothing dead under the snapshot (planning, the four rows' index entries, the
+    // triggers), 229-234 with the 500 that finished under it (measured six times each). A
+    // whole-table read or a per-asset join is thousands to hundreds of thousands; 500 sits
+    // between with room on both sides.
     assert!(
-        read <= RECENT,
+        read <= MAX_CLAIM_BLOCKS,
         "a claim read {read} blocks for four jobs ({RECENT} finished under the snapshot)"
     );
     snapshot.rollback().await.expect("release the snapshot");
