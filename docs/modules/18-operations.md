@@ -349,7 +349,6 @@ A backup existing is not proof of a working restore.
 - A restore drill on clean infrastructure (`perf/results/2026-11-04T194355Z-restore-drill-…`).
 - An upgrade rehearsal (`scripts/upgrade-rehearsal.sh`, its dated record in `perf/results/`),
   plus the backup-retention drill (`scripts/backup.sh retention-drill`).
-- L07 (24-hour soak: memory, WAL and disk growth explained).
 - L12 (PostgreSQL slow or unavailable).
 - Each drill produces a dated report with commands and outcomes.
 

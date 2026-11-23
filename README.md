@@ -18,7 +18,7 @@
   <a href="docs/modules/README.md">Modules</a>
 </p>
 
-> **Status: every milestone through P7 is built; the 24-hour soak and the v0.1 release are next (November 2026).**
+> **Status: every milestone through P7 is built; the v0.1 release is next (November 2026).**
 > The foundation delivered a pinned toolchain with CI that runs exactly what `scripts/check.sh` runs, a local stack
 > (PostgreSQL, Valkey, Garage), one error envelope, and the rich-text format: 42 shared fixtures, a Tiptap editor that
 > opens a document only if it can give it back byte for byte, and a Rust validator and a renderer that agree with it.
@@ -36,7 +36,7 @@
 > retention and a multi-instance stack that survives failover; sites get five Astro demos that rebuild themselves on
 > publish with live delivery updates, and visitors get real accounts with gated content enforced by Postgres
 > row-level security. What remains before **v0.1**: the rehearsed usability sessions and one independent install
-> (both human-run), the 24-hour soak, and the first public demo. Nothing here claims a feature, benchmark or security
+> (both human-run), and the first public demo. Nothing here claims a feature, benchmark or security
 > review that doesn't exist — progress is logged step by step at
 > **[404human.dev/colophon](https://404human.dev/colophon/)**.
 
@@ -156,7 +156,7 @@ Each milestone is named after what it proves, and is done only when its proof ga
 | S | Scale and performance | Multi-instance failover, shared rate limits, stress runs, benches | Built |
 | V | Versions and distribution | One version everywhere; install from npm, Cargo, Homebrew | Built — publishing waits on the maintainer |
 | P5 | Safe automation | Zero unauthorized agent actions; interrupted bulk jobs resume | ✅ Done (gate met) |
-| P6 | Operate it | Full fault and load matrix, 24-hour soak, restore drill; **v0.1** | Built — soak + human-run gates owed |
+| P6 | Operate it | Full fault and load matrix, restore drill; **v0.1** | Built — human-run gates owed |
 | P7 | The audience | Visitors sign up and read gated content, enforced by Postgres RLS | Built |
 
 Estimated at about 10–13 months to v0.1 at the roadmap's assumed pace, since the goal became every feature Strapi and

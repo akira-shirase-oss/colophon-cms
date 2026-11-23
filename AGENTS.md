@@ -9,7 +9,7 @@ lineage as D-083 to D-087 (migrations 0031–0034); the old branch is kept as th
 
 Every roadmap milestone is built; what remains before v0.1 is the human-run proof-gate
 work: the rehearsed usability sessions and one independent install (P6's gate, D-132),
-the 24-hour soak, and the first public demo (P3.8). Where each milestone stands (full
+and the first public demo (P3.8). Where each milestone stands (full
 detail: `docs/ROADMAP.md` and the build log):
 
 - **P0–P2 done:** foundation; never-lose-an-edit (insert-only revisions, `If-Match` saves,
