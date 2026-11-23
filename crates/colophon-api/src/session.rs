@@ -239,7 +239,8 @@ async fn api_token(
     } else if path.starts_with("/api/v1/projects/") {
         // Another project: as unknown to the token as one a person isn't in.
         return Err(ApiError::NotFound);
-    } else if path != "/api/v1/rich-text/validate" {
+    } else if path != "/api/v1/rich-text/validate" && path != "/mcp" {
+        // `/mcp` is the public MCP address (D-244): the project is the token's own.
         return Err(not_for_tokens(
             "an API token works only with its project's content",
         ));
