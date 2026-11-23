@@ -10,7 +10,8 @@ test('the administrator creates a project from the home page; others may too whe
 	await signIn(page);
 	// With a project already, making another is the page's one action, in a dialog.
 	await newProject(page);
-	await page.reload();
+	// The list itself (?all), however many projects the account has by now.
+	await page.goto('/studio/?all');
 	await expect(page.getByTestId('signed-in')).toContainText('administrator');
 	await page.getByRole('button', { name: 'New project' }).click();
 	const name = `Field notes ${Date.now().toString(36)}`;

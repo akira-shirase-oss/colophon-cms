@@ -6,7 +6,7 @@
 // in rather than pretending.
 
 import { expect, test } from '@playwright/test';
-import { internalTerms, newProject, password, signIn, violations } from './helpers.ts';
+import { internalTerms, newProject, password, signedIn, signIn, violations } from './helpers.ts';
 
 test('signing out from the projects page ends the session', async ({ page }) => {
 	await signIn(page);
@@ -32,7 +32,7 @@ test('signing out from the projects page ends the session', async ({ page }) => 
 
 	// Signing in again needs the password — and works.
 	await password(page);
-	await expect(page.getByTestId('signed-in')).toBeVisible();
+	await expect(signedIn(page)).toBeVisible();
 });
 
 test('signing out from inside a project ends the session too', async ({ page }) => {
@@ -59,7 +59,7 @@ test('a leftover sign-in link lands on the password card, not an error', async (
 	await expect(page).toHaveURL(/\/studio\/\?return_to=/);
 	await expect(page.getByTestId('password-auth')).toBeVisible();
 	await password(page);
-	await expect(page.getByTestId('signed-in')).toBeVisible();
+	await expect(signedIn(page)).toBeVisible();
 });
 
 test('when the server can’t be reached, signing out says you are still signed in', async ({ page }) => {
@@ -68,6 +68,6 @@ test('when the server can’t be reached, signing out says you are still signed 
 	await page.getByTestId('account-menu').click();
 	await page.getByRole('menuitem', { name: 'Sign out' }).click();
 	await expect(page.getByText("You're still signed in.")).toBeVisible();
-	await expect(page.getByTestId('signed-in')).toBeVisible();
+	await expect(signedIn(page)).toBeVisible();
 	expect((await page.request.get('/me')).status()).toBe(200);
 });

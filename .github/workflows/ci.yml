@@ -374,6 +374,12 @@ jobs:
       - name: Testbed in Chromium (scripts/testbed.sh)
         if: matrix.shard == 'studio-1'
         run: scripts/testbed.sh
+      # The testbed's outage drills stop and restart the cache and the database; the Studio's suite
+      # starts right after them here (in one job other steps used to sit between), so it waits for
+      # every service to be healthy again first.
+      - name: The stack healthy again after the testbed's outage drills
+        if: matrix.shard == 'studio-1'
+        run: scripts/stack.sh up
       - name: The Studio against the real server (scripts/studio.sh), this shard's half
         if: startsWith(matrix.shard, 'studio-')
         env:
