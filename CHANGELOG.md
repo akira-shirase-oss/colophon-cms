@@ -8,6 +8,11 @@ through `--version` and `GET /version`.
 
 ## [Unreleased]
 
+### Removed
+
+- **The 24-hour soak test** (D-240), by the maintainer's decision: `scripts/soak.sh`, `scripts/soak-sidecar.sh`
+  and `scripts/load.sh`'s `DRILL_WINDOWS` are gone, and the soak is no longer part of v0.1.
+
 ### Security
 
 - `cookie` 0.18.3 (RUSTSEC-2026-0594). Not reachable: Colophon uses no private cookie jar and doesn't

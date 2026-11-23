@@ -29,7 +29,7 @@ Decisions already made (2026-11-13, by the maintainer):
   (`COLOPHON_CACHE_URL`, used by quotas), S3-compatible media (Garage in `deploy/compose.yaml`), optional Keycloak.
 - Postgres features in use: `LISTEN`/`pg_notify`, advisory locks, `FOR UPDATE SKIP LOCKED`.
 - Backups: `scripts/backup.sh` uses `pg_basebackup`/`pg_verifybackup` (D-130).
-- Readiness: the 24-hour soak and the v0.1 release are still ahead (see `ROADMAP.md`).
+- Readiness: the v0.1 release is still ahead (see `ROADMAP.md`).
 
 ## The gaps between "installable CMS" and "SaaS"
 
@@ -106,8 +106,6 @@ main rather than reviving the branch.
 | S3 Limits | Plan limits enforced and shown in the UI. | Tests at each limit edge; noisy-tenant run shows other tenants unaffected. |
 | S4 Load on the droplet | The existing load scenarios run against the droplet + Neon, ≥1M requests, load generated from another machine. | Results committed under `perf/results/` with droplet spec and commit hash; thresholds pass or failures recorded. |
 | S5 Friends beta | Invite codes go out. | Runbook for incidents, backup/restore and account deletion exercised once. |
-
-The 24-hour soak can run on the droplet during S4 and count as real-hardware evidence.
 
 ## Open questions
 
