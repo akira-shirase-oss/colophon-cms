@@ -898,6 +898,29 @@ impl axum::extract::FromRequestParts<AppState> for ClientAddress {
     }
 }
 
+/// The client's whole address, as admission believes it ([`ClientAddress`] without the /64):
+/// what Turnstile is told solved the challenge (D-235). `None` when the server can't tell.
+pub(crate) struct ClientIp(pub(crate) Option<IpAddr>);
+
+impl axum::extract::FromRequestParts<AppState> for ClientIp {
+    type Rejection = std::convert::Infallible;
+
+    fn from_request_parts(
+        parts: &mut axum::http::request::Parts,
+        state: &AppState,
+    ) -> impl Future<Output = Result<Self, Self::Rejection>> + Send {
+        let peer = parts
+            .extensions
+            .get::<ConnectInfo<SocketAddr>>()
+            .map(|info| info.0.ip());
+        let client = match &state.admission {
+            Some(admission) => admission.client(peer, &parts.headers),
+            None => peer,
+        };
+        std::future::ready(Ok(Self(client)))
+    }
+}
+
 /// An address as a sign-in key: IPv4 (and IPv4-mapped IPv6) whole, other IPv6 by its /64.
 fn keyed_address(address: IpAddr) -> String {
     match address {

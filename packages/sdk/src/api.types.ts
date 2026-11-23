@@ -2134,6 +2134,8 @@ export interface components {
         AuthProviders: {
             /** @description an external identity provider is configured */
             sso: boolean;
+            /** @description Cloudflare Turnstile's site key when sign-ups must carry a token (D-235); null when none is checked */
+            turnstile_site_key: string | null;
         };
         BulkAppendView: {
             appended?: number;
@@ -3409,6 +3411,8 @@ export interface components {
             /** @description A project invitation's token: the sign-up claims it and joins its project (D-235). Required on an invite-only installation (but for its first-run account); on an open one an invalid token is ignored */
             invitation?: string;
             password: string;
+            /** @description Cloudflare Turnstile's token from the sign-up form; required where the installation checks one (`GET /auth/providers`) */
+            turnstile_token?: string;
         };
         SignedOut: {
             provider_sign_out?: string | null;
@@ -14684,7 +14688,7 @@ export interface operations {
                     "application/json": components["schemas"]["Error"];
                 };
             };
-            /** @description `invalid_email, weak_password` — the fields refused */
+            /** @description `invalid_email, weak_password, bot_check_failed` — the fields refused, or (where the installation checks one) the Turnstile token: missing, expired, replayed, for another host, or unverifiable */
             422: {
                 headers: {
                     [name: string]: unknown;
@@ -14693,7 +14697,7 @@ export interface operations {
                     "application/json": components["schemas"]["Error"];
                 };
             };
-            /** @description `rate_limited` — over the per-credential or per-address limit; `Retry-After` */
+            /** @description `rate_limited` — past the sign-ups one address may attempt in an hour (`COLOPHON_SIGNUPS_PER_ADDRESS_HOUR`), refused attempts included; `Retry-After` says when the window ends; over the per-credential or per-address limit; `Retry-After` */
             429: {
                 headers: {
                     [name: string]: unknown;

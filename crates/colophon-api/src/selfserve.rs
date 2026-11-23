@@ -116,6 +116,34 @@ impl Default for SelfServe {
     }
 }
 
+/// The secrets the sign-up guards use (D-235), apart from [`SelfServe`] so they never print.
+#[derive(Clone, Default)]
+pub struct Guards {
+    /// Cloudflare Turnstile's verifier; `None` checks no token (and the Studio shows no widget).
+    pub turnstile: Option<std::sync::Arc<colophon_auth::turnstile::Turnstile>>,
+    /// The installation's key for the staff auth log's email digests
+    /// (`COLOPHON_AUTH_EVENT_KEY`); `None` records no digest.
+    pub event_key: Option<std::sync::Arc<[u8]>>,
+}
+
+impl std::fmt::Debug for Guards {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Guards")
+            .field("turnstile", &self.turnstile)
+            .field("event_key", &self.event_key.as_ref().map(|_| "<redacted>"))
+            .finish()
+    }
+}
+
+impl Guards {
+    /// The staff auth log's name for `email` (normalized), if the installation has a key.
+    pub fn digest(&self, email: &str) -> Option<[u8; 32]> {
+        self.event_key
+            .as_deref()
+            .map(|key| colophon_auth::tokens::keyed_digest(key, email))
+    }
+}
+
 /// Whether `domain` may carry a cookie for `host`: equal to it, or a parent of it on a label
 /// boundary (`404human.dev` for `colophonapp.404human.dev`), and itself at least two labels
 /// (never a public suffix like `dev`). Both compared lowercase; no port, no leading dot.

@@ -315,6 +315,33 @@ fn api_services(
         ),
         install_kind: config.install_kind,
         selfserve: config.selfserve.clone(),
+        guards: guards(config)?,
+    })
+}
+
+/// The sign-up guards' secrets (D-235): Turnstile's verifier for tokens solved on this
+/// installation's public host, and the staff auth log's digest key.
+fn guards(config: &Config) -> anyhow::Result<colophon_api::selfserve::Guards> {
+    let turnstile = match config.turnstile_secret.as_ref() {
+        None => None,
+        Some(secret) => {
+            let host = url::Url::parse(&config.public_origin)
+                .ok()
+                .and_then(|url| url.host_str().map(str::to_owned))
+                .ok_or_else(|| anyhow::anyhow!("COLOPHON_PUBLIC_URL has no host for Turnstile"))?;
+            Some(Arc::new(colophon_auth::turnstile::Turnstile::new(
+                secret.expose().to_owned(),
+                config.turnstile_verify_url.as_deref(),
+                host,
+            )?))
+        }
+    };
+    Ok(colophon_api::selfserve::Guards {
+        turnstile,
+        event_key: config
+            .auth_event_key
+            .as_ref()
+            .map(|key| Arc::from(key.expose().as_bytes())),
     })
 }
 

@@ -195,7 +195,8 @@ async fn colophon_accounts_holds_exactly_the_grants_it_counts_with() {
         .expect("privilege");
         assert!(!can, "colophon_accounts may read projects.{column}");
     }
-    // Exactly the grants it counts and reconciles with (0087, 0088), table and column, and no
+    // Exactly the grants it counts and reconciles with (0087, 0088) and the sign-up cap's
+    // (0090), table and column, and no
     // privilege on any other table by any route (PUBLIC included).
     let granted: Vec<String> = sqlx::query_scalar(
         "SELECT c.relname || ':' || a.privilege_type
@@ -233,12 +234,16 @@ async fn colophon_accounts_holds_exactly_the_grants_it_counts_with() {
             "entries.project_id:SELECT",
             "projects.id:SELECT",
             "projects.owner_account:SELECT",
+            "signup_throttle:INSERT",
+            "signup_throttle:SELECT",
+            "signup_throttle:UPDATE",
         ]
     );
     let others: Vec<String> = sqlx::query_scalar(
         "SELECT c.relname::text FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
          WHERE n.nspname = 'public' AND c.relkind IN ('r', 'p', 'v')
-           AND c.relname NOT IN ('account_quotas', 'account_upload_reservations', 'account_usage')
+           AND c.relname NOT IN ('account_quotas', 'account_upload_reservations', 'account_usage',
+                                 'signup_throttle')
            AND (has_table_privilege('colophon_accounts', c.oid, 'SELECT')
              OR has_table_privilege('colophon_accounts', c.oid, 'INSERT')
              OR has_table_privilege('colophon_accounts', c.oid, 'UPDATE')
@@ -256,7 +261,7 @@ async fn colophon_accounts_holds_exactly_the_grants_it_counts_with() {
     // The usage tables are written only through the definer functions: the API role holds
     // nothing on them.
     let api: Vec<String> = sqlx::query_scalar(
-        "SELECT t FROM unnest(ARRAY['account_quotas', 'account_upload_reservations', 'account_usage']) t
+        "SELECT t FROM unnest(ARRAY['account_quotas', 'account_upload_reservations', 'account_usage', 'signup_throttle']) t
          WHERE has_table_privilege('colophon_api', t, 'SELECT') OR has_table_privilege('colophon_api', t, 'INSERT')
             OR has_table_privilege('colophon_api', t, 'UPDATE') OR has_table_privilege('colophon_api', t, 'DELETE')",
     )

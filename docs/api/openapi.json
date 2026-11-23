@@ -384,10 +384,18 @@
           "sso": {
             "description": "an external identity provider is configured",
             "type": "boolean"
+          },
+          "turnstile_site_key": {
+            "description": "Cloudflare Turnstile's site key when sign-ups must carry a token (D-235); null when none is checked",
+            "type": [
+              "string",
+              "null"
+            ]
           }
         },
         "required": [
-          "sso"
+          "sso",
+          "turnstile_site_key"
         ],
         "type": "object"
       },
@@ -4156,6 +4164,11 @@
           },
           "password": {
             "minLength": 8,
+            "type": "string"
+          },
+          "turnstile_token": {
+            "description": "Cloudflare Turnstile's token from the sign-up form; required where the installation checks one (`GET /auth/providers`)",
+            "maxLength": 2048,
             "type": "string"
           }
         },
@@ -22500,7 +22513,7 @@
                 }
               }
             },
-            "description": "`invalid_email, weak_password` — the fields refused"
+            "description": "`invalid_email, weak_password, bot_check_failed` — the fields refused, or (where the installation checks one) the Turnstile token: missing, expired, replayed, for another host, or unverifiable"
           },
           "429": {
             "content": {
@@ -22510,7 +22523,7 @@
                 }
               }
             },
-            "description": "`rate_limited` — over the per-credential or per-address limit; `Retry-After`"
+            "description": "`rate_limited` — past the sign-ups one address may attempt in an hour (`COLOPHON_SIGNUPS_PER_ADDRESS_HOUR`), refused attempts included; `Retry-After` says when the window ends; over the per-credential or per-address limit; `Retry-After`"
           },
           "default": {
             "content": {

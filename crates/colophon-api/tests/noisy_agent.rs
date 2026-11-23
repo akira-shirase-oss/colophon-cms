@@ -104,6 +104,7 @@ async fn world(window_ms: u64) -> World {
             media_keys: colophon_api::media_sign::Keys::default(),
             install_kind: None,
             selfserve: colophon_api::selfserve::SelfServe::default(),
+            guards: colophon_api::selfserve::Guards::default(),
         })),
         build: colophon_api::BuildInfo::unstamped("0.0.0-test"),
         admission: Some(Arc::clone(&admission)),

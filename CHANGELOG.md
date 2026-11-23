@@ -20,6 +20,12 @@ through `--version` and `GET /version`.
 
 ### Security
 
+- **Sign-up guards and a staff sign-in log** (D-235, migration 0090). Sign-ups are capped per client address
+  (`COLOPHON_SIGNUPS_PER_ADDRESS_HOUR`, default 10 an hour; every attempt counts, refused ones included; `429
+  rate_limited` with `Retry-After`), and with `COLOPHON_TURNSTILE_SITE_KEY` and `COLOPHON_TURNSTILE_SECRET` set,
+  must carry a Cloudflare Turnstile token, checked server-side and failing closed (`422 bot_check_failed`).
+  `staff_auth_events` records sign-ups, refusals, sign-ins and sign-outs without passwords, tokens or emails
+  (failures carry an HMAC of the email under `COLOPHON_AUTH_EVENT_KEY`), append-only, kept 90 days.
 - **`COLOPHON_REGISTRATION` now decides who may sign up** (D-235). Until now it only decided who may create
   projects: `POST /auth/signup` made an account on every installation, `invite` and `closed` included. Now `closed`
   refuses every sign-up (`403 registration_closed`) and every first sign-in through the identity provider;

@@ -125,6 +125,36 @@ operation, and the cross-project and identity test families from spec §27 pass.
     the sign-up.
   - `201` answers `{"data": {"joined": {"project_id", "role"} | null}}`: the project a claimed invitation
     joined. A taken email is `409 email_taken` only where the sign-up was otherwise admitted.
+- **Sign-up guards (D-235, migration 0090).** In order, each before the next costs anything:
+  1. registration (`closed` refuses at once);
+  2. the cap per client address: `COLOPHON_SIGNUPS_PER_ADDRESS_HOUR` (default 10) attempts an hour from the
+     address admission believes (the peer, or the nearest untrusted `X-Forwarded-For` hop behind
+     `COLOPHON_TRUSTED_PROXIES`; on the droplet, the Cf-Connecting-Ip Caddy passes on; an IPv6 address by its /64).
+     Every attempt counts, refused ones included, in `signup_throttle` through `colophon_signup_attempt` (owned
+     by `colophon_accounts`, one statement, so racing attempts never miss a count). Past it, `429 rate_limited`
+     with `Retry-After` until the window ends. A header the client writes (`Cf-Connecting-Ip`,
+     `X-Forwarded-For`, `X-Real-Ip`, `Forwarded`) never chooses the key;
+  3. the fields (email, password);
+  4. Cloudflare Turnstile, where `COLOPHON_TURNSTILE_SITE_KEY` and `COLOPHON_TURNSTILE_SECRET` are set
+     (`colophon_auth::turnstile`): the token (`turnstile_token`, at most 2048 bytes) goes to `siteverify` with
+     the secret and the client's whole address as `remoteip`, under a 3-second deadline and a 16 KiB answer
+     bound, no redirects, no transaction open. It passes only on `success` for the configured public host
+     (never the request's `Host` or `Origin`). Missing, expired or replayed (`timeout-or-duplicate`), for
+     another host, and a verifier that is down, slow, failing or answering anything else are all
+     `422 bot_check_failed`: fail closed. `COLOPHON_TURNSTILE_VERIFY_URL` exists for tests and is refused at boot
+     unless it is Cloudflare's endpoint or a loopback address. `GET /auth/providers` publishes the site key
+     (`turnstile_site_key`) for the form;
+  5. invite-only's early refusal, then Argon2, then the sign-up's transaction.
+- **The staff auth log (D-235, migration 0090).** `staff_auth_events`: `signed_up` (marked `pre_setup` for the
+  first-run account, `invitation` when it claimed one; written in the sign-up's own transaction),
+  `sign_up_refused` (`bot_check_failed`, `invitation_required`, `email_taken`; written only past the cap, so a
+  flood is bounded by it), `signed_in` (`password` or `provider`), `sign_in_failed` and `signed_out`, with the
+  client address as the throttles key it. No password, token or email: an event without an account to name
+  carries the normalized email's HMAC-SHA256 under `COLOPHON_AUTH_EVENT_KEY` (or nothing when unset), and a
+  failed sign-in is always recorded that way, so the log says no more about who has an account than the answer
+  does. `detail` is a short word by CHECK, never free text. Append-only: the API's role may only INSERT, a
+  trigger refuses UPDATE, DELETE and TRUNCATE from everyone, the owner included, and the retention sweep keeps
+  the audit age (90 days) through `colophon_staff_auth_sweep`, owned by `colophon_retention`.
 - The provider itself is optional (D-141): the built-in accounts carry an installation on their own.
   `GET /auth/providers` is public and answers `{sso}` — whether an external provider is configured — so
   `AuthForm` hides the organisation button instead of offering a route that can only answer 503.

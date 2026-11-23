@@ -85,6 +85,8 @@ impl Server {
             // Every test signs its people up and in from loopback; the password limit (D-213)
             // is tested where a test sets its own, which `extra` then overrides.
             .env("COLOPHON_RATE_LIMIT_PASSWORD", "1000/2000")
+            // The same for the sign-up cap per address (D-235): every test signs up from loopback.
+            .env("COLOPHON_SIGNUPS_PER_ADDRESS_HOUR", "100000")
             .envs(extra.iter().copied());
         // The account quotas this server writes at boot (D-235), in the background: a test's
         // first request must see them, never a previous server's.

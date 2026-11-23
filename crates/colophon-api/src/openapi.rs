@@ -737,7 +737,16 @@ pub(crate) static TABLE: &[Route] = &[
                         "this installation admits no sign-up (`closed`), or admits one only with a valid, unclaimed project invitation (`invite`; also the one first-run account before setup)",
                     ),
                     refusal(409, "email_taken", "an account with this email exists"),
-                    refusal(422, "invalid_email, weak_password", "the fields refused"),
+                    refusal(
+                        422,
+                        "invalid_email, weak_password, bot_check_failed",
+                        "the fields refused, or (where the installation checks one) the Turnstile token: missing, expired, replayed, for another host, or unverifiable",
+                    ),
+                    refusal(
+                        429,
+                        "rate_limited",
+                        "past the sign-ups one address may attempt in an hour (`COLOPHON_SIGNUPS_PER_ADDRESS_HOUR`), refused attempts included; `Retry-After` says when the window ends",
+                    ),
                 ],
                 body_limit: Some(PUBLIC_FORM_BYTES),
                 ..MIN
@@ -5229,8 +5238,14 @@ fn identity() -> Value {
         },
         "AuthProviders": {
             "type": "object",
-            "required": ["sso"],
-            "properties": { "sso": { "type": "boolean", "description": "an external identity provider is configured" } },
+            "required": ["sso", "turnstile_site_key"],
+            "properties": {
+                "sso": { "type": "boolean", "description": "an external identity provider is configured" },
+                "turnstile_site_key": {
+                    "type": ["string", "null"],
+                    "description": "Cloudflare Turnstile's site key when sign-ups must carry a token (D-235); null when none is checked",
+                },
+            },
         },
         "SignedOut": {
             "type": "object",
@@ -5290,6 +5305,11 @@ fn identity() -> Value {
                 "email": { "type": "string", "format": "email" },
                 "password": { "type": "string", "minLength": 8 },
                 "display_name": { "type": "string" },
+                "turnstile_token": {
+                    "type": "string",
+                    "maxLength": 2048,
+                    "description": "Cloudflare Turnstile's token from the sign-up form; required where the installation checks one (`GET /auth/providers`)",
+                },
                 "invitation": {
                     "type": "string",
                     "description": "A project invitation's token: the sign-up claims it and joins its project (D-235). Required on an invite-only installation (but for its first-run account); on an open one an invalid token is ignored",

@@ -257,6 +257,10 @@ pub struct Config {
     /// Cloudflare Turnstile's secret key (`COLOPHON_TURNSTILE_SECRET[_FILE]`), with
     /// `COLOPHON_TURNSTILE_SITE_KEY`: both or neither.
     pub turnstile_secret: Option<Secret>,
+    /// Where Turnstile tokens are verified (`COLOPHON_TURNSTILE_VERIFY_URL`): Cloudflare's
+    /// `siteverify` unless set, and only ever set to a loopback address (a test's stub), so
+    /// configuration can't send the secret and visitors' addresses anywhere else.
+    pub turnstile_verify_url: Option<String>,
     /// The installation's key for keyed digests in the staff auth log (`COLOPHON_AUTH_EVENT_KEY[_FILE]`):
     /// a failed sign-in for an address with no account is recorded by HMAC-SHA256 under it, so
     /// the log can't confirm a guessed address without the key. `None` records no digest.
@@ -922,6 +926,16 @@ impl Config {
         );
         let mail = env.mail();
         let (selfserve, turnstile_secret) = env.selfserve(&public_origin);
+        let turnstile_verify_url = env.raw("COLOPHON_TURNSTILE_VERIFY_URL");
+        if let Some(raw) = turnstile_verify_url.as_deref()
+            && !url::Url::parse(raw)
+                .is_ok_and(|url| colophon_auth::turnstile::allowed_verify_url(&url))
+        {
+            env.problems.push(format!(
+                "COLOPHON_TURNSTILE_VERIFY_URL: {raw:?} must be Cloudflare's siteverify or a \
+                 loopback address (tests only)"
+            ));
+        }
         let auth_event_key = env.secret("COLOPHON_AUTH_EVENT_KEY", false);
         let install_kind = match env.raw("COLOPHON_INSTALL_KIND").as_deref() {
             None => None,
@@ -981,6 +995,7 @@ impl Config {
                 mail,
                 selfserve,
                 turnstile_secret,
+                turnstile_verify_url,
                 auth_event_key,
             })
         } else {

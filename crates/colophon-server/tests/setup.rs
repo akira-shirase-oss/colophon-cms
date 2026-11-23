@@ -632,6 +632,21 @@ async fn invite_only_admits_exactly_one_first_run_account_however_many_race() {
     .await
     .expect("count");
     assert_eq!(people, 1, "exactly one account was made");
+    // The staff auth log says who took the first-run slot (D-235), so the operator can see it.
+    let lines: Vec<(String, Option<String>, Option<String>)> = sqlx::query_as(
+        "SELECT event, detail, address FROM staff_auth_events WHERE event = 'signed_up'",
+    )
+    .fetch_all(&owner)
+    .await
+    .expect("the staff auth log");
+    assert_eq!(
+        lines,
+        [(
+            "signed_up".to_owned(),
+            Some("pre_setup".to_owned()),
+            Some("127.0.0.1".to_owned())
+        )]
+    );
 
     // The slot is taken: a later token-less sign-up is refused alike, a taken email included.
     let later = sign_up_bare(&format!("later-{run}@colophon.test")).await;

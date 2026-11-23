@@ -140,13 +140,15 @@ pub async fn first_run_open(pool: &PgPool) -> Result<bool, DbError> {
 /// Under [`Admission::Invite`] with an invitation, the account and the invitation's claim commit
 /// together: concurrent sign-ups with one token make exactly one account. Without one, the
 /// first-run rule is decided under an installation-wide advisory lock, so concurrent first
-/// sign-ups make exactly one account.
+/// sign-ups make exactly one account. The account's `signed_up` line in the staff auth log
+/// (marked `pre_setup` or `invitation`) commits with it, from `address`.
 pub async fn sign_up(
     pool: &PgPool,
     email: &str,
     password_hash: &str,
     display_name: Option<&str>,
     admission: Admission<'_>,
+    address: &str,
 ) -> Result<SignedUp, DbError> {
     let mut transaction = scope::begin(
         pool,
@@ -219,6 +221,24 @@ pub async fn sign_up(
             }
         }
     }
+    // The staff auth log, in the same transaction (D-235): which account took the first-run
+    // slot is something the operator must be able to see.
+    let detail = if joined.is_some() {
+        Some("invitation")
+    } else if admission == (Admission::Invite { invitation: None }) {
+        Some("pre_setup")
+    } else {
+        None
+    };
+    crate::staff_auth::record_in(
+        &mut transaction,
+        crate::staff_auth::Line {
+            identity: Some(id),
+            detail,
+            ..crate::staff_auth::Line::new(crate::staff_auth::Event::SignedUp, address)
+        },
+    )
+    .await?;
     transaction.commit().await.map_err(DbError::from_query)?;
     Ok(SignedUp::Made {
         identity: id,

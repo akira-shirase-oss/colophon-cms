@@ -62,6 +62,7 @@ async fn a_request_that_cannot_get_a_connection_is_told_to_retry() {
             uploads: colophon_api::uploads::UploadGate::new(256, 21 * 1024 * 1024),
             install_kind: None,
             selfserve: colophon_api::selfserve::SelfServe::default(),
+            guards: colophon_api::selfserve::Guards::default(),
         })),
         build: colophon_api::BuildInfo::unstamped("0.0.0-test"),
         admission: None,

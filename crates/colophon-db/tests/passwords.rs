@@ -39,6 +39,7 @@ async fn made(pool: &PgPool, email: &str, password: &str) -> Uuid {
         &hash,
         Some("Bob"),
         identity::Admission::Open { invitation: None },
+        "203.0.113.9",
     )
     .await
     .expect("sign-up")
@@ -70,7 +71,8 @@ async fn an_account_signs_up_once_signs_in_and_never_shows_its_password() {
             "bob@example.com",
             &again,
             None,
-            identity::Admission::Open { invitation: None }
+            identity::Admission::Open { invitation: None },
+            "203.0.113.9"
         )
         .await
         .expect("sign-up"),

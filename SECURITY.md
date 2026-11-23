@@ -82,3 +82,28 @@ Tenant isolation rests on PostgreSQL row-level security, keyed on a transaction-
   parameters, and dynamic SQL needs `AssertSqlSafe`, the marker reviews audit. An unforgeable
   context, recorded by the entry functions where only they can write it, is an open decision
   (O-018 in docs/DECISIONS.md).
+
+## Sign-up (threat model, D-235)
+
+Sign-up is a public form, open on installations that choose `COLOPHON_REGISTRATION=open`. What it defends
+against, and how far:
+
+- **Who may sign up** is decided in the handler and again in the sign-up's own transaction: `closed` takes no
+  sign-up and no first sign-in through the identity provider; `invite` takes one only with a valid, unclaimed
+  project invitation, claimed for exactly one account on the invitation's row lock, plus the one first-run
+  account before setup (under an installation-wide advisory lock).
+- **Flooding.** The sign-up cap per client address counts every attempt, refused ones included, before the bot
+  check and before Argon2; the address is the one the server derives (the peer, or a trusted proxy's
+  report), never a header the client writes. Argon2 work is bounded across the installation by the password
+  gate (D-150), and sign-in by D-154's per-key pauses and per-account ceiling.
+- **Bots.** Cloudflare Turnstile, checked server-side, fails closed, bound to the configured host; the verify
+  URL can't be pointed anywhere but Cloudflare or loopback.
+- **Enumeration: reduced, not closed.** A taken email still answers `409 email_taken` where the sign-up was
+  otherwise admitted (open registration, or a valid invitation), so the answer itself tells whether an email has
+  an account. Its timing doesn't add to that (both arms pay Argon2 and a transaction; a test holds the medians
+  within a band), and the cap and the bot check bound how fast anyone can ask. Invite-only registration without
+  a valid invitation answers `invitation_required` either way. Slice 2 closes it: every sign-up answers
+  `202` "check your email", and only the inbox learns which.
+- **The record.** `staff_auth_events` logs sign-ups, refusals, sign-ins and sign-outs with no password, token
+  or raw email (a keyed digest under `COLOPHON_AUTH_EVENT_KEY` instead), append-only, kept 90 days.
+

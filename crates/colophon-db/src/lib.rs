@@ -40,6 +40,7 @@ pub mod roles;
 pub mod schedules;
 pub mod scope;
 pub mod setup;
+pub mod staff_auth;
 pub mod throttle;
 pub mod tokens;
 pub mod transactions;

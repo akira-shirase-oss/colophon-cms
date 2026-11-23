@@ -55,6 +55,7 @@ async fn race(db: &TestDb, count: usize, invitation: Option<[u8; 32]>) -> Vec<Si
                 Admission::Invite {
                     invitation: invitation.as_ref(),
                 },
+                "203.0.113.9",
             )
             .await
             .expect("sign-up")
@@ -136,7 +137,8 @@ async fn invite_only_admits_one_first_run_account_however_many_race() {
                 email,
                 PHC,
                 None,
-                Admission::Invite { invitation: None }
+                Admission::Invite { invitation: None },
+                "203.0.113.9"
             )
             .await
             .expect("sign-up"),
@@ -162,7 +164,8 @@ async fn once_set_up_invite_only_refuses_a_sign_up_without_an_invitation() {
             "open@example.test",
             PHC,
             None,
-            Admission::Open { invitation: None }
+            Admission::Open { invitation: None },
+            "203.0.113.9"
         )
         .await
         .expect("sign-up"),
@@ -180,6 +183,19 @@ async fn one_invitation_makes_exactly_one_account_however_many_race() {
     let before = people(&db).await;
     let outcomes = race(&db, 8, Some(token)).await;
     assert_eq!(tally(&outcomes), (1, 7), "{outcomes:?}");
+    let owner = db.owner().await;
+    let details: Vec<Option<String>> = sqlx::query_scalar(
+        "SELECT detail FROM staff_auth_events WHERE event = 'signed_up' ORDER BY at",
+    )
+    .fetch_all(&owner)
+    .await
+    .expect("the staff auth log");
+    assert_eq!(
+        details.last().cloned().flatten().as_deref(),
+        Some("invitation"),
+        "the account that claimed the invitation is logged as such: {details:?}"
+    );
+    owner.close().await;
     assert_eq!(people(&db).await, before + 1, "the refused made no account");
     let joined = outcomes
         .iter()
@@ -214,9 +230,16 @@ async fn an_unknown_or_claimed_invitation_is_refused_alike_and_a_taken_email_lea
         invitation: Some(token),
     };
     assert_eq!(
-        identity::sign_up(&db.app, "a@example.test", PHC, None, invite(&[43_u8; 32]))
-            .await
-            .expect("sign-up"),
+        identity::sign_up(
+            &db.app,
+            "a@example.test",
+            PHC,
+            None,
+            invite(&[43_u8; 32]),
+            "203.0.113.9"
+        )
+        .await
+        .expect("sign-up"),
         SignedUp::InvitationRequired,
         "an unknown token"
     );
@@ -227,25 +250,47 @@ async fn an_unknown_or_claimed_invitation_is_refused_alike_and_a_taken_email_lea
         PHC,
         None,
         Admission::Open { invitation: None },
+        "203.0.113.9",
     )
     .await
     .expect("sign-up");
     assert_eq!(
-        identity::sign_up(&db.app, "taken@example.test", PHC, None, invite(&token))
-            .await
-            .expect("sign-up"),
+        identity::sign_up(
+            &db.app,
+            "taken@example.test",
+            PHC,
+            None,
+            invite(&token),
+            "203.0.113.9"
+        )
+        .await
+        .expect("sign-up"),
         SignedUp::Taken
     );
     assert!(matches!(
-        identity::sign_up(&db.app, "b@example.test", PHC, None, invite(&token))
-            .await
-            .expect("sign-up"),
+        identity::sign_up(
+            &db.app,
+            "b@example.test",
+            PHC,
+            None,
+            invite(&token),
+            "203.0.113.9"
+        )
+        .await
+        .expect("sign-up"),
         SignedUp::Made { .. }
     ));
     assert_eq!(
-        identity::sign_up(&db.app, "c@example.test", PHC, None, invite(&token))
-            .await
-            .expect("sign-up"),
+        identity::sign_up(
+            &db.app,
+            "c@example.test",
+            PHC,
+            None,
+            invite(&token),
+            "203.0.113.9"
+        )
+        .await
+        .expect("sign-up"),
         SignedUp::InvitationRequired,
         "a claimed token, refused like an unknown one"
     );
@@ -306,6 +351,7 @@ async fn a_first_run_sign_up_waits_for_a_competing_one_and_is_refused_after_it_c
             PHC,
             None,
             Admission::Invite { invitation: None },
+            "203.0.113.9",
         )
         .await
         .expect("sign-up")
@@ -348,6 +394,7 @@ async fn an_invitation_claim_waits_for_a_competing_one_and_is_refused_after_it_c
             Admission::Invite {
                 invitation: Some(&token),
             },
+            "203.0.113.9",
         )
         .await
         .expect("sign-up")
@@ -379,18 +426,32 @@ async fn open_registration_claims_a_valid_invitation_and_ignores_an_invalid_one(
     let SignedUp::Made {
         joined: Some(joined),
         ..
-    } = identity::sign_up(&db.app, "joins@example.test", PHC, None, open(&token))
-        .await
-        .expect("sign-up")
+    } = identity::sign_up(
+        &db.app,
+        "joins@example.test",
+        PHC,
+        None,
+        open(&token),
+        "203.0.113.9",
+    )
+    .await
+    .expect("sign-up")
     else {
         panic!("a valid invitation is claimed");
     };
     assert_eq!((joined.project, joined.role.as_str()), (project, "editor"));
     // Spent now: the next sign-up with it is still admitted, joining nothing.
     assert!(matches!(
-        identity::sign_up(&db.app, "later@example.test", PHC, None, open(&token))
-            .await
-            .expect("sign-up"),
+        identity::sign_up(
+            &db.app,
+            "later@example.test",
+            PHC,
+            None,
+            open(&token),
+            "203.0.113.9"
+        )
+        .await
+        .expect("sign-up"),
         SignedUp::Made { joined: None, .. }
     ));
     db.drop().await;
