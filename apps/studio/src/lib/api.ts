@@ -492,21 +492,35 @@ export async function send(method: string, path: string, body?: unknown, headers
 	const project = write ? null : projectOf(path);
 	if (project !== null) await readsMayStart(project);
 	// Every attempt is the same request: a write sent again keeps its Idempotency-Key.
+	// The deadline covers the whole exchange, the body included (D-245): headers that arrive while
+	// the body stalls (a flaky link to the edge) used to leave a caller's `.json()` waiting with the
+	// button still on "Sending it for review…". The body is read here, inside the deadline, and
+	// handed on in full, so no caller can wait past REQUEST_TIMEOUT_MS; one timer aborts both.
 	const attempt = async (): Promise<Response> => {
+		const deadline = new AbortController();
+		const timer = setTimeout(() => deadline.abort(), REQUEST_TIMEOUT_MS);
+		// Raced as well as aborted: the deadline holds even where an abort doesn't reach a body
+		// already streaming in.
+		const expired = new Promise<never>((_, reject) => deadline.signal.addEventListener('abort', () => reject(new Error('deadline'))));
+		const within = <T>(work: Promise<T>) => Promise.race([work, expired]);
 		try {
-			return await fetch(path, {
+			const response = await within(fetch(path, {
 				method,
 				cache: 'no-store',
-				signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+				signal: deadline.signal,
 				headers: {
 					Accept: 'application/json',
 					...(write ? { 'Content-Type': 'application/json', 'X-CSRF-Token': csrfToken() } : {}),
 					...headers
 				},
 				...(body === undefined ? {} : { body: JSON.stringify(body) })
-			});
+			}));
+			const text = await within(response.text());
+			return new Response(text === '' ? null : text, { status: response.status, statusText: response.statusText, headers: response.headers });
 		} catch {
 			throw new ApiError('retry', 'no answer from the server');
+		} finally {
+			clearTimeout(timer);
 		}
 	};
 	const refusal = async (response: Response) => ((await response.json().catch(() => ({}))) as Envelope).error;
