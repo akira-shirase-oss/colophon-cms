@@ -9,7 +9,7 @@ import { stackIsOurs } from './stack-owner.ts';
 
 const compose = fileURLToPath(new URL('../../../deploy/compose.yaml', import.meta.url));
 
-test.skip(!stackIsOurs(), 'stops Postgres and Valkey: CI only on a shared stack (D-187; COLOPHON_STACK_OWNER=1 if it is yours)');
+test.skip(!stackIsOurs(), 'stops Postgres and Valkey: CI only on a shared stack (D-187; or a COMPOSE_PROJECT_NAME of your own)');
 
 function docker(...args: string[]) {
 	execFileSync('docker', ['compose', '-f', compose, ...args], { stdio: 'ignore' });

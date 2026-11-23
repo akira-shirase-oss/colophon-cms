@@ -9,8 +9,9 @@ cd "$(dirname "$0")/.."
 # own, never the everyday `colophon` one (D-187).
 # shellcheck source=scripts/stack-guard.sh
 . scripts/stack-guard.sh
-if ! stack_is_ours && [[ -z "${COLOPHON_TEST_DATABASE:-}" || "${COLOPHON_TEST_DATABASE}" == colophon ]]; then
-  echo "error: refusing to migrate the shared stack's 'colophon' database (D-187): set COLOPHON_TEST_DATABASE to a database of your own, or COLOPHON_STACK_OWNER=1 if the stack is yours" >&2
+if ! stack_is_ours && [[ -z "${COLOPHON_TEST_DATABASE:-}" || "${COLOPHON_TEST_DATABASE}" == colophon ]] \
+  && ! operator_confirms "Migrating the everyday 'colophon' database"; then
+  echo "error: refusing to migrate the shared stack's 'colophon' database (D-187): set COLOPHON_TEST_DATABASE to a database of your own, or run it at a terminal and confirm (D-187c)" >&2
   exit 2
 fi
 scripts/check-toolchain.sh >/dev/null

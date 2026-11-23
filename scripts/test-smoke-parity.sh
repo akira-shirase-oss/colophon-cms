@@ -52,8 +52,9 @@ fi
 # The scenarios a text names as `scripts/load.sh <endpoint>`; nothing found is an empty list, not an exit.
 endpoints() { { grep -oE 'scripts/load\.sh [a-z][a-z-]*' || true; } | awk '{print $2}' | sort -u; }
 # check.sh's list is read from the plan it runs (its smokes are data, SMOKES=(...), not literal commands), as
-# the stack's owner sees it: on a shared stack it leaves the two that pause services out, to CI.
-local_list=$(COLOPHON_STACK_OWNER=1 scripts/check.sh --integration-plan | endpoints)
+# a stack of its own sees it (a project other than colophon: only the plan is printed, nothing runs): on a
+# shared stack it leaves the two that pause services out, to CI.
+local_list=$(COMPOSE_PROJECT_NAME=colophon-plan scripts/check.sh --integration-plan | endpoints)
 ci_list=$(endpoints <.github/workflows/ci.yml)
 [[ -n "$local_list" ]] || { echo "FAIL: no load.sh scenario found in scripts/check.sh" >&2; exit 1; }
 missing=$(comm -23 <(echo "$local_list") <(echo "$ci_list"))

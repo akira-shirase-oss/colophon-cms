@@ -69,13 +69,23 @@ moved). The bind address is deliberately not a setting.
 
 ## Whose stack is it? (D-187)
 
-**What changed for the stack's owner:** `scripts/stack.sh check|down|reset`, `check.sh`'s outage steps,
-`load.sh cache-down|postgres-trouble` and `migrate.sh` against `colophon` now need `COLOPHON_STACK_OWNER=1` on
-your own everyday stack; `stack.sh up` and everything else work as before.
+**What changed for the stack's owner (D-187c):** `scripts/stack.sh check|down|reset` and `migrate.sh` against
+`colophon` on your own everyday stack now ask you to type `colophon` to confirm when you run them at a terminal
+(`COLOPHON_STACK_OWNER=1` no longer counts); `check.sh`'s outage steps and `load.sh cache-down|postgres-trouble` run
+only in CI or on a stack of your own. `stack.sh up` and everything else work as before.
 
 The project is named `colophon`, so from any checkout or worktree on this machine `docker compose -f
-deploy/compose.yaml` reaches the same stack. Scripts and tests change it only when it is the run's own: in CI,
-under a `COMPOSE_PROJECT_NAME` of another project (with its own ports), or with `COLOPHON_STACK_OWNER=1`.
+deploy/compose.yaml` reaches the same stack. Scripts and tests change it only when it is the run's own: in CI on a
+GitHub runner (`CI=true` with `GITHUB_ACTIONS=true` and `RUNNER_NAME`; `CI=true` alone doesn't count), or under a
+`COMPOSE_PROJECT_NAME` of another project with its own ports, for example:
+
+```sh
+export COMPOSE_PROJECT_NAME=colophon-verify COLOPHON_PG_PORT=58220 COLOPHON_VALKEY_PORT=58221 \
+  COLOPHON_S3_PORT=58222 COLOPHON_S3_ADMIN_PORT=58223
+scripts/stack.sh up        # its own containers and volumes; scripts/local-env.sh and the tests follow the ports
+scripts/stack.sh down      # when done (a second stack costs memory)
+```
+
 Otherwise these refuse, before touching anything:
 
 | Step | What it would do |

@@ -6,8 +6,8 @@
 # untouched. Each drop is plain DROP DATABASE, without FORCE, so a database that gains a connection
 # between the look and the drop is skipped, not cut off.
 #
-# It changes the stack, so it runs only on a stack that is this run's own (D-187: CI, a
-# COMPOSE_PROJECT_NAME of its own, or COLOPHON_STACK_OWNER=1). check.sh and CI run it before the
+# It changes the stack, so it runs only on a stack that is this run's own (D-187, D-187c: CI on a
+# GitHub runner, or a COMPOSE_PROJECT_NAME of its own). check.sh and CI run it before the
 # stack tests.
 #
 #   scripts/sweep-test-databases.sh

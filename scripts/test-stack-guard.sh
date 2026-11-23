@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# Tests the shared-stack guard (D-187): on a stack this run didn't make (no CI, no
-# COMPOSE_PROJECT_NAME of its own, no COLOPHON_STACK_OWNER=1), nothing stops, pauses or
-# reconfigures a service, and nothing writes to the everyday database:
+# Tests the shared-stack guard (D-187, D-187c): on a stack this run didn't make (not CI on a GitHub
+# runner, no COMPOSE_PROJECT_NAME of its own), nothing stops, pauses or reconfigures a service, and
+# nothing writes to the everyday database, unless a person at a terminal confirms it:
 #
 #   - scripts/stack.sh check|down|reset refuse, before calling docker at all (up is allowed: it is
 #     idempotent and destroys nothing);
@@ -33,8 +33,11 @@ for tool in docker cargo k6; do
 done
 : >"$work/calls"
 
-# A shell with none of the "this stack is ours" signals.
-shared() { env -u CI -u COMPOSE_PROJECT_NAME -u COLOPHON_STACK_OWNER -u COLOPHON_TEST_DATABASE PATH="$work/bin:$PATH" "$@"; }
+# A shell with none of the "this stack is ours" signals. Its stdin is never a terminal here, so no
+# operator confirmation can be given.
+shared() { env -u CI -u GITHUB_ACTIONS -u RUNNER_NAME -u COMPOSE_PROJECT_NAME -u COLOPHON_STACK_OWNER -u COLOPHON_TEST_DATABASE PATH="$work/bin:$PATH" "$@"; }
+# A GitHub runner's environment, as Actions sets it.
+runner() { shared env CI=true GITHUB_ACTIONS=true RUNNER_NAME="GitHub Actions 7" "$@"; }
 
 # expect_refused WHAT COMMAND...: exit 2, a message naming the guard, and no docker or cargo call.
 expect_refused() {
@@ -47,31 +50,35 @@ expect_refused() {
   ! grep -qE '^(docker|cargo) ' "$work/calls" || fail "$what: called $(cat "$work/calls") before refusing"
 }
 
-# The maintainer's real situation: the project is `colophon`, no CI, no owner flag.
+# The maintainer's real situation: the project is `colophon`, no CI. And the slips D-187c closes:
+# the old owner flag, CI=true exported off a runner, and "colophon" piped in where no terminal is.
 for sub in check down reset; do
   expect_refused "stack.sh $sub" shared scripts/stack.sh "$sub"
   expect_refused "stack.sh $sub, project named colophon" shared env COMPOSE_PROJECT_NAME=colophon scripts/stack.sh "$sub"
+  expect_refused "stack.sh $sub, COLOPHON_STACK_OWNER=1" shared env COLOPHON_STACK_OWNER=1 scripts/stack.sh "$sub"
+  expect_refused "stack.sh $sub, CI=true off a runner" shared env CI=true scripts/stack.sh "$sub"
+  expect_refused "stack.sh $sub, confirmation piped in" shared bash -c "echo colophon | scripts/stack.sh $sub"
 done
 expect_refused "load.sh cache-down" shared scripts/load.sh cache-down throughput
 expect_refused "load.sh postgres-trouble" shared scripts/load.sh postgres-trouble throughput
 expect_refused "migrate.sh without a test database" shared scripts/migrate.sh
 expect_refused "migrate.sh naming the everyday database" shared env COLOPHON_TEST_DATABASE=colophon scripts/migrate.sh
+expect_refused "migrate.sh, COLOPHON_STACK_OWNER=1" shared env COLOPHON_STACK_OWNER=1 scripts/migrate.sh
+expect_refused "migrate.sh, confirmation piped in" shared bash -c "echo colophon | scripts/migrate.sh"
+expect_refused "load.sh cache-down, CI=true off a runner" shared env CI=true scripts/load.sh cache-down throughput
 
 # stack.sh up is allowed on a shared stack: it reaches docker.
 : >"$work/calls"
 shared scripts/stack.sh up >/dev/null 2>&1 || true
 grep -q '^docker compose .*up' "$work/calls" || fail "stack.sh up was refused on a shared stack: $(cat "$work/calls")"
 
-# CI, the owner, and a stack of one's own may: stack.sh down reaches docker.
+# CI on a GitHub runner, and a stack of one's own, may: stack.sh down reaches docker.
 : >"$work/calls"
-shared env CI=true scripts/stack.sh down >/dev/null 2>&1 || true
-grep -q '^docker compose .*down' "$work/calls" || fail "stack.sh down in CI didn't reach docker: $(cat "$work/calls")"
+runner scripts/stack.sh down >/dev/null 2>&1 || true
+grep -q '^docker compose .*down' "$work/calls" || fail "stack.sh down on a runner didn't reach docker: $(cat "$work/calls")"
 : >"$work/calls"
-shared env CI=true scripts/load.sh cache-down throughput >/dev/null 2>&1 || true
-! grep -q "D-187" <<<"$(shared env CI=true scripts/load.sh cache-down throughput 2>&1 || true)" || fail "load.sh cache-down was refused in CI"
-: >"$work/calls"
-shared env COLOPHON_STACK_OWNER=1 scripts/stack.sh down >/dev/null 2>&1 || true
-grep -q '^docker compose .*down' "$work/calls" || fail "the owner's stack.sh down didn't reach docker: $(cat "$work/calls")"
+runner scripts/load.sh cache-down throughput >/dev/null 2>&1 || true
+! grep -q "D-187" <<<"$(runner scripts/load.sh cache-down throughput 2>&1 || true)" || fail "load.sh cache-down was refused on a runner"
 : >"$work/calls"
 shared env COMPOSE_PROJECT_NAME=colophon-mine scripts/stack.sh down >/dev/null 2>&1 || true
 grep -q '^docker compose .*down' "$work/calls" || fail "stack.sh down on an own project didn't reach docker: $(cat "$work/calls")"
@@ -95,10 +102,10 @@ status=0
 out=$(shared scripts/check.sh --integration-plan 2>&1) || status=$?
 [[ "$status" == 2 ]] || fail "a shared plan without COLOPHON_TEST_DATABASE: exit $status, wanted 2 ($out)"
 
-plan_own=$(shared env COLOPHON_STACK_OWNER=1 scripts/check.sh --integration-plan)
-grep -qx 'scripts/stack.sh check' <<<"$plan_own" || fail "the owner's plan lacks stack.sh check: $plan_own"
-grep -q 'load.sh cache-down ' <<<"$plan_own" || fail "the owner's plan lacks the cache-down smoke: $plan_own"
-! grep -q -- '--skip ' <<<"$plan_own" || fail "the owner's plan skips tests: $plan_own"
+plan_own=$(shared env COMPOSE_PROJECT_NAME=colophon-mine scripts/check.sh --integration-plan)
+grep -qx 'scripts/stack.sh check' <<<"$plan_own" || fail "an own stack's plan lacks stack.sh check: $plan_own"
+grep -q 'load.sh cache-down ' <<<"$plan_own" || fail "an own stack's plan lacks the cache-down smoke: $plan_own"
+! grep -q -- '--skip ' <<<"$plan_own" || fail "an own stack's plan skips tests: $plan_own"
 
 # The testbed's outage spec stops Postgres and Valkey: it asks the same question in TypeScript
 # (apps/testbed/tests/stack-owner.ts) and must answer as stack_is_ours does, case by case.
@@ -106,27 +113,37 @@ grep -q 'load.sh cache-down ' <<<"$plan_own" || fail "the owner's plan lacks the
 grep -q "stackIsOurs" apps/testbed/tests/outage.spec.ts || fail "outage.spec.ts doesn't ask stackIsOurs before stopping services"
 verdicts() {
   local ts sh
-  ts=$(env -u CI -u COMPOSE_PROJECT_NAME -u COLOPHON_STACK_OWNER "$@" node --input-type=module \
+  ts=$(env -u CI -u GITHUB_ACTIONS -u RUNNER_NAME -u COMPOSE_PROJECT_NAME -u COLOPHON_STACK_OWNER "$@" node --input-type=module \
     -e "const { stackIsOurs } = await import('./apps/testbed/tests/stack-owner.ts'); console.log(stackIsOurs() ? 'ours' : 'shared')" 2>/dev/null)
-  sh=$(env -u CI -u COMPOSE_PROJECT_NAME -u COLOPHON_STACK_OWNER "$@" bash -c '. scripts/stack-guard.sh; stack_is_ours && echo ours || echo shared')
+  sh=$(env -u CI -u GITHUB_ACTIONS -u RUNNER_NAME -u COMPOSE_PROJECT_NAME -u COLOPHON_STACK_OWNER "$@" bash -c '. scripts/stack-guard.sh; stack_is_ours && echo ours || echo shared')
   [[ "$ts" == "$sh" ]] || fail "for '$*' the testbed says '$ts', the guard says '$sh'"
 }
-# Exact matches only (D-187b): CI=true, COLOPHON_STACK_OWNER=1, a project other than colophon.
-# CI=false, CI=0 or CI=1 doesn't say CI made this stack.
+# Exact matches only (D-187b, D-187c): CI=true on a GitHub runner, or a project other than colophon.
+# CI=false, CI=0 or CI=1 doesn't say CI made this stack; CI=true off a runner doesn't either, nor
+# does the owner's flag any more.
 verdict() { # <expected ours|shared> <env…>: the shell guard's own answer
   local want=$1 got
   shift
-  got=$(env -u CI -u COMPOSE_PROJECT_NAME -u COLOPHON_STACK_OWNER "$@" bash -c '. scripts/stack-guard.sh; stack_is_ours && echo ours || echo shared')
+  got=$(env -u CI -u GITHUB_ACTIONS -u RUNNER_NAME -u COMPOSE_PROJECT_NAME -u COLOPHON_STACK_OWNER "$@" bash -c '. scripts/stack-guard.sh; stack_is_ours && echo ours || echo shared')
   [[ "$got" == "$want" ]] || fail "stack_is_ours for '$*' says '$got', not '$want'"
 }
 verdict shared CI=false
 verdict shared CI=0
 verdict shared CI=1
-verdict ours CI=true
+verdict shared CI=true
+verdict shared CI=true GITHUB_ACTIONS=true
+verdict shared CI=true RUNNER_NAME=x
+verdict shared CI=true GITHUB_ACTIONS=true RUNNER_NAME=
+verdict ours CI=true GITHUB_ACTIONS=true RUNNER_NAME=x
+verdict shared COLOPHON_STACK_OWNER=1
 verdict shared COLOPHON_STACK_OWNER=yes
 verdict shared COMPOSE_PROJECT_NAME=
+verdict shared COMPOSE_PROJECT_NAME=colophon
+verdict ours COMPOSE_PROJECT_NAME=colophon-ci
 verdicts true
 verdicts CI=true
+verdicts CI=true GITHUB_ACTIONS=true
+verdicts CI=true GITHUB_ACTIONS=true RUNNER_NAME=x
 verdicts CI=false
 verdicts CI=0
 verdicts CI=1

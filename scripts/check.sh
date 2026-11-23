@@ -135,7 +135,7 @@ integration_plan() {
   stack_is_ours || own=0
   if (( own == 0 )); then
     if [[ ! "${COLOPHON_TEST_DATABASE:-}" =~ ^[a-z][a-z0-9_]{0,62}$ || "$COLOPHON_TEST_DATABASE" == colophon ]]; then
-      echo "error: this stack isn't this run's own (D-187): set COLOPHON_TEST_DATABASE to a database of your own (not colophon), or COLOPHON_STACK_OWNER=1 if the stack is yours" >&2
+      echo "error: this stack isn't this run's own (D-187): set COLOPHON_TEST_DATABASE to a database of your own (not colophon), or run under a COMPOSE_PROJECT_NAME of your own" >&2
       return 2
     fi
     echo "# CI only on a shared stack (D-187): scripts/stack.sh check; scripts/sweep-test-databases.sh; tests ${STOPS_SERVICES[*]}; smokes ${PAUSES_SERVICES[*]}; the testbed's outage spec (it skips itself)"

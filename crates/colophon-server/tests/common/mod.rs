@@ -140,25 +140,26 @@ impl Drop for Server {
     }
 }
 
-/// Whether this run may stop, pause or restart services of the local stack (D-187b): only a
-/// stack that is its own — CI (`CI=true`), a compose project other than `colophon`
-/// (`COMPOSE_PROJECT_NAME`), or `COLOPHON_STACK_OWNER=1` — never the maintainer's shared one.
+/// Whether this run may stop, pause, restart or flush services of the local stack (D-187b,
+/// D-187c): only a stack that is its own — CI on a GitHub runner (`CI=true`, `GITHUB_ACTIONS=true`
+/// and `RUNNER_NAME` set) or a compose project other than `colophon` (`COMPOSE_PROJECT_NAME`) —
+/// never the maintainer's shared one.
 /// The same rule `scripts/stack-guard.sh` applies to the scripts; `var` reads the environment.
 pub(crate) fn stack_guard(var: impl Fn(&str) -> Option<String>) -> Result<(), String> {
     let set = |key: &str, value: &str| var(key).is_some_and(|got| got == value);
     let project = var("COMPOSE_PROJECT_NAME").filter(|name| !name.is_empty());
-    if set("CI", "true")
-        || set("COLOPHON_STACK_OWNER", "1")
-        || project.is_some_and(|name| name != "colophon")
-    {
+    let github_runner = set("CI", "true")
+        && set("GITHUB_ACTIONS", "true")
+        && var("RUNNER_NAME").is_some_and(|name| !name.is_empty());
+    if github_runner || project.is_some_and(|name| name != "colophon") {
         return Ok(());
     }
     Err(
-        "refusing to stop, pause or restart a service of the shared local stack (compose \
-         project `colophon`, D-187b): this test would take it away from everyone using it. Run \
-         it in CI, under a stack of your own (COMPOSE_PROJECT_NAME=<another project>), or, if the \
-         stack is yours alone, with COLOPHON_STACK_OWNER=1. Locally, run the tests you mean by \
-         name: `cargo test --test <file> -- --ignored --exact <name>` (check with --list first)."
+        "refusing to stop, pause, restart or flush a service of the shared local stack (compose \
+         project `colophon`, D-187b, D-187c): this test would take it away from everyone using \
+         it. Run it in CI or under a stack of your own (COMPOSE_PROJECT_NAME=<another project>, \
+         its own ports). Locally, run the tests you mean by name: \
+         `cargo test --test <file> -- --ignored --exact <name>` (check with --list first)."
             .to_owned(),
     )
 }
@@ -218,9 +219,28 @@ pub(crate) fn local_env() -> Vec<(String, String)> {
                 }
                 _ => value.trim().to_owned(),
             };
-            (key.trim().to_owned(), value)
+            (key.trim().to_owned(), on_own_ports(&value))
         })
         .collect()
+}
+
+/// `value` with the everyday stack's published ports swapped for a stack of its own's
+/// (`COLOPHON_PG_PORT`, `COLOPHON_VALKEY_PORT`, `COLOPHON_S3_PORT`, D-187c), as
+/// `scripts/local-env.sh` does for the scripts.
+fn on_own_ports(value: &str) -> String {
+    let mut value = value.to_owned();
+    for (var, everyday) in [
+        ("COLOPHON_PG_PORT", "55432"),
+        ("COLOPHON_VALKEY_PORT", "56379"),
+        ("COLOPHON_S3_PORT", "53900"),
+    ] {
+        if let Ok(port) = std::env::var(var)
+            && port.parse::<u16>().is_ok_and(|port| port > 0)
+        {
+            value = value.replace(&format!(":{everyday}"), &format!(":{port}"));
+        }
+    }
+    value
 }
 
 /// The suite shares the dev database with any `colophon-server` already running: its

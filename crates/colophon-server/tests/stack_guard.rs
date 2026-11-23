@@ -1,6 +1,6 @@
 //! The outage helpers refuse the shared stack (D-187b). A test that stops, pauses or restarts a
-//! stack service runs only where the stack is its own: in CI, under a compose project other than
-//! `colophon`, or with `COLOPHON_STACK_OWNER=1` — the rule `scripts/stack-guard.sh` applies to the
+//! stack service runs only where the stack is its own: in CI on a GitHub runner, or under a compose
+//! project other than `colophon` (D-187c) — the rule `scripts/stack-guard.sh` applies to the
 //! scripts. Run directly (`cargo test --test admission -- --ignored`), an outage test once
 //! stopped the maintainer's Valkey twice; the decision is now made before any `docker` call.
 //! Needs nothing running: the decision is a function of the environment, and the second test
@@ -27,25 +27,47 @@ fn the_shared_stack_is_refused_and_an_owned_one_allowed() {
     // Nothing set: the maintainer's stack, project `colophon`.
     let refused = decide(&[]).expect_err("the shared stack is refused");
     assert!(
-        refused.contains("COLOPHON_STACK_OWNER=1") && refused.contains("--exact"),
+        refused.contains("COMPOSE_PROJECT_NAME") && refused.contains("--exact"),
         "the refusal says how to run it safely: {refused}"
+    );
+    assert!(
+        !refused.contains("COLOPHON_STACK_OWNER"),
+        "the owner's bypass is gone (D-187c): {refused}"
     );
     assert!(decide(&[("COMPOSE_PROJECT_NAME", "colophon")]).is_err());
     // Exact matches only: CI=false, 0 or 1 doesn't say CI made this stack.
     for ci in ["false", "0", "1", "TRUE", ""] {
         assert!(decide(&[("CI", ci)]).is_err(), "CI={ci:?}");
     }
-    assert!(decide(&[("COLOPHON_STACK_OWNER", "0")]).is_err());
-    assert!(decide(&[("COLOPHON_STACK_OWNER", "")]).is_err());
+    // D-187c: no owner's bypass, and CI=true alone (local tooling and agents export it) isn't CI.
+    for owner in ["1", "0", "", "yes"] {
+        assert!(
+            decide(&[("COLOPHON_STACK_OWNER", owner)]).is_err(),
+            "COLOPHON_STACK_OWNER={owner:?}"
+        );
+    }
+    assert!(decide(&[("CI", "true")]).is_err(), "CI=true off a runner");
+    assert!(decide(&[("CI", "true"), ("GITHUB_ACTIONS", "true")]).is_err());
     assert!(
-        decide(&[("COLOPHON_STACK_OWNER", "yes")]).is_err(),
-        "only 1 is the owner's word"
+        decide(&[
+            ("CI", "true"),
+            ("GITHUB_ACTIONS", "true"),
+            ("RUNNER_NAME", "")
+        ])
+        .is_err()
     );
+    assert!(decide(&[("CI", "true"), ("RUNNER_NAME", "GitHub Actions 7")]).is_err());
     assert!(decide(&[("COMPOSE_PROJECT_NAME", "")]).is_err());
 
-    // The three ways a stack is this run's own.
-    assert_eq!(decide(&[("CI", "true")]), Ok(()));
-    assert_eq!(decide(&[("COLOPHON_STACK_OWNER", "1")]), Ok(()));
+    // The two ways a stack is this run's own.
+    assert_eq!(
+        decide(&[
+            ("CI", "true"),
+            ("GITHUB_ACTIONS", "true"),
+            ("RUNNER_NAME", "GitHub Actions 7")
+        ]),
+        Ok(())
+    );
     assert_eq!(decide(&[("COMPOSE_PROJECT_NAME", "colophon-ci-7")]), Ok(()));
 }
 

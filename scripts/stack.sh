@@ -320,7 +320,9 @@ case "${1:-}" in
   check | down | reset)
     # shellcheck source=scripts/stack-guard.sh
     . scripts/stack-guard.sh
-    require_own_stack "run 'scripts/stack.sh $1' (it writes to the server, or removes the stack's containers or data)"
+    # A person who types it at a terminal may do it to the everyday stack; nothing else may (D-187c).
+    stack_is_ours || operator_confirms "scripts/stack.sh $1" \
+      || require_own_stack "run 'scripts/stack.sh $1' (it writes to the server, or removes the stack's containers or data)"
     ;;
 esac
 

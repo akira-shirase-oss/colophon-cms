@@ -14,8 +14,13 @@ pub(crate) fn gate() -> colophon_db::passwords::PasswordGate {
     colophon_db::passwords::PasswordGate::new(4)
 }
 
+/// The stack's Postgres: `COLOPHON_TEST_PG_HOST`, or loopback on `COLOPHON_PG_PORT` (a stack of
+/// its own on other ports, D-187c), or the everyday stack's 55432.
 pub(crate) fn host() -> String {
-    std::env::var("COLOPHON_TEST_PG_HOST").unwrap_or_else(|_| "127.0.0.1:55432".to_owned())
+    std::env::var("COLOPHON_TEST_PG_HOST").unwrap_or_else(|_| {
+        let port = std::env::var("COLOPHON_PG_PORT").unwrap_or_else(|_| "55432".to_owned());
+        format!("127.0.0.1:{port}")
+    })
 }
 
 /// A database a test made, dropped when this is dropped: at the end of the test, and also when
