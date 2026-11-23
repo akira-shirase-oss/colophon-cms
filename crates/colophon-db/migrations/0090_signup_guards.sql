@@ -11,6 +11,13 @@
 -- known account is recorded by its identity. The client address is the throttle's key (an IPv6
 -- address by its /64).
 --
+-- sign_in_log_budget: how many failed sign-ins from one client address the log records in an
+-- hour (D-235). Failed sign-ins aren't capped like sign-ups (D-154 pauses guessing per account and
+-- address instead), so without this a spray of many emails from many addresses would grow an
+-- append-only table at the attacker's rate for 90 days. The server records a miss only while
+-- colophon_sign_in_log_admit's count is within its budget, one more line marked log_capped when
+-- it runs out, and nothing more from that address until the hour ends.
+--
 -- signup_throttle: sign-ups one client address (the same key) may attempt in an hour,
 -- COLOPHON_SIGNUPS_PER_ADDRESS_HOUR. Every attempt counts, refused ones included (a flood that
 -- fails the bot check is not free), counted before the bot check and before Argon2, through
@@ -140,3 +147,60 @@ END $$;
 ALTER FUNCTION colophon_sweep_signup_throttle(timestamptz, bigint) OWNER TO colophon_retention;
 REVOKE ALL ON FUNCTION colophon_sweep_signup_throttle(timestamptz, bigint) FROM PUBLIC;
 GRANT EXECUTE ON FUNCTION colophon_sweep_signup_throttle(timestamptz, bigint) TO colophon_worker;
+
+CREATE TABLE sign_in_log_budget (
+    address text PRIMARY KEY CHECK (char_length(address) BETWEEN 1 AND 64),
+    window_started timestamptz NOT NULL,
+    misses integer NOT NULL CHECK (misses > 0)
+);
+CREATE INDEX sign_in_log_budget_by_age ON sign_in_log_budget (window_started);
+ALTER TABLE sign_in_log_budget ENABLE ROW LEVEL SECURITY;
+ALTER TABLE sign_in_log_budget FORCE ROW LEVEL SECURITY;
+CREATE POLICY sign_in_log_budget_by_accounts ON sign_in_log_budget TO colophon_accounts
+    USING (true) WITH CHECK (true);
+CREATE POLICY sign_in_log_budget_for_retention ON sign_in_log_budget TO colophon_retention
+    USING (true) WITH CHECK (true);
+GRANT SELECT, INSERT, UPDATE ON sign_in_log_budget TO colophon_accounts;
+GRANT SELECT, DELETE ON sign_in_log_budget TO colophon_retention;
+
+-- Counts one failed sign-in from `p_address` and answers its number within the current hour.
+CREATE FUNCTION colophon_sign_in_log_admit(p_address text) RETURNS integer
+    LANGUAGE plpgsql
+    VOLATILE
+    SECURITY DEFINER
+    SET search_path = pg_catalog, pg_temp
+AS $$
+DECLARE
+    n integer;
+BEGIN
+    INSERT INTO public.sign_in_log_budget AS b (address, window_started, misses)
+    VALUES (p_address, now(), 1)
+    ON CONFLICT (address) DO UPDATE SET
+        window_started = CASE WHEN b.window_started <= now() - interval '1 hour'
+                              THEN now() ELSE b.window_started END,
+        misses = CASE WHEN b.window_started <= now() - interval '1 hour'
+                      THEN 1 ELSE least(b.misses + 1, 1000000000) END
+    RETURNING b.misses INTO n;
+    RETURN n;
+END
+$$;
+ALTER FUNCTION colophon_sign_in_log_admit(text) OWNER TO colophon_accounts;
+REVOKE ALL ON FUNCTION colophon_sign_in_log_admit(text) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION colophon_sign_in_log_admit(text) TO colophon_api;
+
+CREATE FUNCTION colophon_sweep_sign_in_log_budget(cutoff timestamptz, batch bigint)
+    RETURNS bigint LANGUAGE plpgsql VOLATILE SECURITY DEFINER
+    SET search_path = pg_catalog, pg_temp
+AS $$
+DECLARE removed bigint;
+BEGIN
+    WITH doomed AS (
+        SELECT address FROM public.sign_in_log_budget
+        WHERE window_started < cutoff ORDER BY window_started LIMIT batch)
+    DELETE FROM public.sign_in_log_budget t USING doomed d WHERE t.address = d.address;
+    GET DIAGNOSTICS removed = ROW_COUNT;
+    RETURN removed;
+END $$;
+ALTER FUNCTION colophon_sweep_sign_in_log_budget(timestamptz, bigint) OWNER TO colophon_retention;
+REVOKE ALL ON FUNCTION colophon_sweep_sign_in_log_budget(timestamptz, bigint) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION colophon_sweep_sign_in_log_budget(timestamptz, bigint) TO colophon_worker;

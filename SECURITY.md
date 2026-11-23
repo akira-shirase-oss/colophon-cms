@@ -106,4 +106,11 @@ against, and how far:
   `202` "check your email", and only the inbox learns which.
 - **The record.** `staff_auth_events` logs sign-ups, refusals, sign-ins and sign-outs with no password, token
   or raw email (a keyed digest under `COLOPHON_AUTH_EVENT_KEY` instead), append-only, kept 90 days.
+- **The record can't be flooded.** Append-only means an operator can't trim it, so every line an outsider can
+  cause is bounded: refused sign-ups are logged only past the sign-up cap (at most that many an address an
+  hour); failed sign-ins at most 20 an address an hour (`sign_in_log_budget`), then one `log_capped` line and
+  nothing more until the hour ends, however many emails are tried. `signed_in` and `signed_out` need a correct
+  password or a live session, which an outsider doesn't have; a session signs out once. What stays: an
+  attacker with many addresses still adds up to 21 lines an hour per address, a cost that grows with what they
+  spend, not with what they send.
 

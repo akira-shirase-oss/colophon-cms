@@ -170,6 +170,8 @@ pub struct Swept {
     pub staff_auth: u64,
     /// `signup_throttle` windows over (an hour old, D-235).
     pub signup_throttle: u64,
+    /// `sign_in_log_budget` windows over (an hour old, D-235).
+    pub sign_in_log_budget: u64,
 }
 
 impl Swept {
@@ -198,6 +200,7 @@ impl Swept {
             + self.preview_grants
             + self.staff_auth
             + self.signup_throttle
+            + self.sign_in_log_budget
     }
 }
 
@@ -521,6 +524,13 @@ pub async fn sweep(pool: &PgPool, ages: &Retention, batch: i64) -> Result<Swept,
     let signup_cut = OffsetDateTime::now_utc() - SIGNUP_WINDOW;
     let signup_throttle =
         retained(&mut tx, "colophon_sweep_signup_throttle", signup_cut, hot).await?;
+    let sign_in_log_budget = retained(
+        &mut tx,
+        "colophon_sweep_sign_in_log_budget",
+        signup_cut,
+        hot,
+    )
+    .await?;
 
     tx.commit().await.map_err(DbError::from_query)?;
     Ok(Swept {
@@ -547,6 +557,7 @@ pub async fn sweep(pool: &PgPool, ages: &Retention, batch: i64) -> Result<Swept,
         preview_grants,
         staff_auth,
         signup_throttle,
+        sign_in_log_budget,
     })
 }
 

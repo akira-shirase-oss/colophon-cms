@@ -234,6 +234,9 @@ async fn colophon_accounts_holds_exactly_the_grants_it_counts_with() {
             "entries.project_id:SELECT",
             "projects.id:SELECT",
             "projects.owner_account:SELECT",
+            "sign_in_log_budget:INSERT",
+            "sign_in_log_budget:SELECT",
+            "sign_in_log_budget:UPDATE",
             "signup_throttle:INSERT",
             "signup_throttle:SELECT",
             "signup_throttle:UPDATE",
@@ -243,7 +246,7 @@ async fn colophon_accounts_holds_exactly_the_grants_it_counts_with() {
         "SELECT c.relname::text FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
          WHERE n.nspname = 'public' AND c.relkind IN ('r', 'p', 'v')
            AND c.relname NOT IN ('account_quotas', 'account_upload_reservations', 'account_usage',
-                                 'signup_throttle')
+                                 'signup_throttle', 'sign_in_log_budget')
            AND (has_table_privilege('colophon_accounts', c.oid, 'SELECT')
              OR has_table_privilege('colophon_accounts', c.oid, 'INSERT')
              OR has_table_privilege('colophon_accounts', c.oid, 'UPDATE')
@@ -261,7 +264,7 @@ async fn colophon_accounts_holds_exactly_the_grants_it_counts_with() {
     // The usage tables are written only through the definer functions: the API role holds
     // nothing on them.
     let api: Vec<String> = sqlx::query_scalar(
-        "SELECT t FROM unnest(ARRAY['account_quotas', 'account_upload_reservations', 'account_usage', 'signup_throttle']) t
+        "SELECT t FROM unnest(ARRAY['account_quotas', 'account_upload_reservations', 'account_usage', 'signup_throttle', 'sign_in_log_budget']) t
          WHERE has_table_privilege('colophon_api', t, 'SELECT') OR has_table_privilege('colophon_api', t, 'INSERT')
             OR has_table_privilege('colophon_api', t, 'UPDATE') OR has_table_privilege('colophon_api', t, 'DELETE')",
     )

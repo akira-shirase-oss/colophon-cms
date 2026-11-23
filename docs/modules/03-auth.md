@@ -148,7 +148,10 @@ operation, and the cross-project and identity test families from spec §27 pass.
 - **The staff auth log (D-235, migration 0090).** `staff_auth_events`: `signed_up` (marked `pre_setup` for the
   first-run account, `invitation` when it claimed one; written in the sign-up's own transaction),
   `sign_up_refused` (`bot_check_failed`, `invitation_required`, `email_taken`; written only past the cap, so a
-  flood is bounded by it), `signed_in` (`password` or `provider`), `sign_in_failed` and `signed_out`, with the
+  flood is bounded by it), `signed_in` (`password` or `provider`), `sign_in_failed` (at most 20 from one address
+  an hour, counted by `colophon_sign_in_log_admit` in `sign_in_log_budget`; the 21st is marked `log_capped` and
+  the rest of the hour isn't recorded, while every miss is still refused and throttled as before) and
+  `signed_out` (only with a live session), with the
   client address as the throttles key it. No password, token or email: an event without an account to name
   carries the normalized email's HMAC-SHA256 under `COLOPHON_AUTH_EVENT_KEY` (or nothing when unset), and a
   failed sign-in is always recorded that way, so the log says no more about who has an account than the answer

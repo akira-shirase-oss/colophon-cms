@@ -153,13 +153,17 @@ async fn start(env: &[(&'static str, String)]) -> Server {
     Server::start_with(&pairs).await
 }
 
-/// Every test here signs up from loopback: its count starts at zero.
+/// Every test here signs up and in from loopback: its counts start at zero.
 async fn forget_loopback_count() {
     let db = owner_database().await;
     sqlx::query("DELETE FROM signup_throttle WHERE address IN ('127.0.0.1', '-')")
         .execute(&db)
         .await
         .expect("reset the loopback count");
+    sqlx::query("DELETE FROM sign_in_log_budget WHERE address IN ('127.0.0.1', '-')")
+        .execute(&db)
+        .await
+        .expect("reset the loopback log budget");
     db.close().await;
 }
 
@@ -463,4 +467,46 @@ async fn a_taken_email_takes_about_as_long_to_refuse_as_a_new_one_to_make() {
         (0.67..=1.5).contains(&ratio),
         "a taken email's median {old:?} against a new one's {new:?} (ratio {ratio:.2})"
     );
+}
+
+/// A spray of failed sign-ins can't grow the append-only log at its own rate (D-235): one address
+/// gets `SIGN_IN_FAILURES_LOGGED_PER_HOUR` lines an hour, one more marked `log_capped`, then none,
+/// however many emails it tries. The misses are still refused as before.
+#[tokio::test]
+#[ignore = "needs the stack and scripts/migrate.sh"]
+async fn failed_sign_ins_past_the_log_budget_add_no_lines() {
+    forget_loopback_count().await;
+    let _server = Server::start_with(&[("COLOPHON_REGISTRATION", "open")]).await;
+    let db = owner_database().await;
+    let since: time::OffsetDateTime = sqlx::query_scalar("SELECT now()")
+        .fetch_one(&db)
+        .await
+        .expect("now");
+    let budget =
+        usize::try_from(colophon_db::staff_auth::SIGN_IN_FAILURES_LOGGED_PER_HOUR).expect("small");
+    for _ in 0..budget + 15 {
+        let reply = app()
+            .post(format!("{ORIGIN}/auth/signin"))
+            .json(&json!({"email": fresh_email(), "password": "a guess that misses"}))
+            .send()
+            .await
+            .expect("request");
+        assert_eq!(reply.status(), StatusCode::BAD_REQUEST, "still refused");
+    }
+    let lines: Vec<Option<String>> = sqlx::query_scalar(
+        "SELECT detail FROM staff_auth_events
+         WHERE event = 'sign_in_failed' AND at >= $1 ORDER BY at, id",
+    )
+    .bind(since)
+    .fetch_all(&db)
+    .await
+    .expect("lines");
+    assert_eq!(lines.len(), budget + 1, "{lines:?}");
+    assert!(
+        lines[..budget]
+            .iter()
+            .all(|d| d.as_deref() == Some("password"))
+    );
+    assert_eq!(lines[budget].as_deref(), Some("log_capped"));
+    db.close().await;
 }

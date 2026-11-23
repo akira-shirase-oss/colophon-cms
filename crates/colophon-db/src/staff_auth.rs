@@ -150,3 +150,33 @@ pub async fn signup_attempt(
     .map_err(DbError::from_query)?;
     Ok((!row.admitted).then(|| u32::try_from(row.retry_after).unwrap_or(1).max(1)))
 }
+
+/// Failed sign-ins from one address the log records in an hour (D-235): past it, one line marked
+/// `log_capped`, then none until the hour ends, so a spray can't grow the append-only log at
+/// its own rate.
+pub const SIGN_IN_FAILURES_LOGGED_PER_HOUR: i32 = 20;
+
+/// Whether a failed sign-in from `address` is recorded, and how: `Some(None)` as itself,
+/// `Some(Some("log_capped"))` as the line that says the budget ran out, `None` not at all. Counts
+/// the miss either way, in its own statement.
+///
+/// # Errors
+///
+/// The statement failing.
+pub async fn sign_in_failure_logged(
+    pool: &PgPool,
+    address: &str,
+) -> Result<Option<Option<&'static str>>, DbError> {
+    let misses = sqlx::query_scalar!(
+        r#"SELECT colophon_sign_in_log_admit($1) AS "misses!""#,
+        stored_address(address).unwrap_or("-")
+    )
+    .fetch_one(pool)
+    .await
+    .map_err(DbError::from_query)?;
+    Ok(match misses {
+        n if n <= SIGN_IN_FAILURES_LOGGED_PER_HOUR => Some(None),
+        n if n == SIGN_IN_FAILURES_LOGGED_PER_HOUR + 1 => Some(Some("log_capped")),
+        _ => None,
+    })
+}

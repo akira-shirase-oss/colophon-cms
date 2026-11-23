@@ -478,6 +478,35 @@ async fn staff_auth_line(
     }
 }
 
+/// A failed sign-in's line in the staff auth log (D-235), within the per-address budget: by the
+/// email's keyed digest, whether or not it has an account, so the log says no more about who
+/// exists than the answer does.
+async fn sign_in_failed(services: &crate::state::Services, address: &str, email: &str) {
+    let detail =
+        match colophon_db::staff_auth::sign_in_failure_logged(&services.pool, address).await {
+            Ok(Some(None)) => Some("password"),
+            Ok(Some(capped)) => capped,
+            Ok(None) => return,
+            Err(error) => {
+                tracing::warn!(error = %error, "the staff auth log's budget is unreadable");
+                return;
+            }
+        };
+    let digest = services.guards.digest(email);
+    staff_auth_line(
+        services,
+        colophon_db::staff_auth::Line {
+            email_digest: digest.as_ref(),
+            detail,
+            ..colophon_db::staff_auth::Line::new(
+                colophon_db::staff_auth::Event::SignInFailed,
+                address,
+            )
+        },
+    )
+    .await;
+}
+
 /// The bot check where the installation has one (D-235): `Err` with the reason a token was
 /// refused. No verifier configured, nothing to check.
 async fn bot_check(
@@ -581,21 +610,7 @@ pub(crate) async fn sign_in(
         // timing can tell a guesser they are paused — never whether the account exists, since
         // a missing account verifies against the dummy hash like a real one.
         Ok(identity::PasswordSignIn::Refused) => {
-            // By the email's keyed digest, whether or not it has an account: the log says no
-            // more about who exists than the answer does.
-            let digest = services.guards.digest(&email);
-            staff_auth_line(
-                services,
-                colophon_db::staff_auth::Line {
-                    email_digest: digest.as_ref(),
-                    detail: Some("password"),
-                    ..colophon_db::staff_auth::Line::new(
-                        colophon_db::staff_auth::Event::SignInFailed,
-                        &address,
-                    )
-                },
-            )
-            .await;
+            sign_in_failed(services, &address, &email).await;
             Err(ApiError::SignInFailed)
         }
         Err(error) => Err(ApiError::from_db(error)),
