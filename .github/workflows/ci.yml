@@ -338,9 +338,10 @@ jobs:
           SHARD: ${{ matrix.shard }}
         run: |
           scripts/sweep-test-databases.sh
-          # Each shard's tests run the other's binaries (the MCP tests the server, the server's the
-          # CLI): one unsharded run built them all; each shard now builds both first.
-          cargo build --locked -p colophon-server -p colophon-cli
+          # Tests run other crates' binaries (the MCP tests the server; the server's the CLI and the
+          # MCP server): the unsharded run built the whole workspace, so each shard builds every
+          # binary first.
+          cargo build --locked --workspace --bins
           if [[ "$SHARD" == server ]]; then
             cargo test -p colophon-server --locked --no-fail-fast -- --ignored --test-threads=1
           else
