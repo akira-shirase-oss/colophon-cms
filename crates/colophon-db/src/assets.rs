@@ -1029,6 +1029,11 @@ pub async fn finish(
 /// takes serializes two landings on one asset, so the second sees the first's version when it
 /// numbers its own. A verdict that finds no state left to land on supersedes the job and
 /// reports [`Finish::Orphaned`], so the caller removes the objects it already promoted.
+///
+/// Lock order (D-249): the asset row first — this UPDATE, a key update since `public_key` is
+/// unique — and only then the owner account's `account_usage` row, which its statement trigger
+/// moves. A save naming the asset takes the asset row first too (`colophon_lock_assets`, before
+/// its entry moves the same usage row), so the two never hold what the other waits for.
 async fn land_usable(
     transaction: &mut Transaction<'static, Postgres>,
     job: &Claimed,

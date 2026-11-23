@@ -2461,17 +2461,30 @@ impl Worker {
         } else {
             (status, None)
         };
-        match colophon_db::assets::finish(
-            &self.pool,
-            job,
-            &self.settings.owner,
-            status,
-            next_attempt_at,
-            error,
-            outcome,
-        )
-        .await
-        {
+        // A deadlock or serialization abort rolled the whole recording back, so it is safe to
+        // record it again at once rather than leave the work to the lease's running out (D-249).
+        let mut tries = 0_u32;
+        let recorded = loop {
+            let recorded = colophon_db::assets::finish(
+                &self.pool,
+                job,
+                &self.settings.owner,
+                status,
+                next_attempt_at,
+                error,
+                outcome,
+            )
+            .await;
+            match recorded {
+                Err(colophon_db::DbError::Contended) if tries < FINISH_RETRIES => {
+                    tries += 1;
+                    tracing::info!(job = %job.id, tries, "recording the asset attempt lost a lock conflict; recording it again");
+                    tokio::time::sleep(Duration::from_millis(25 * u64::from(tries))).await;
+                }
+                recorded => break recorded,
+            }
+        };
+        match recorded {
             Ok(landed) => {
                 if landed == colophon_db::assets::Finish::Lost {
                     tracing::debug!(job = %job.id, "asset lease was already gone");
@@ -2485,6 +2498,10 @@ impl Worker {
         }
     }
 }
+
+/// How many more times recording an asset attempt is tried after a deadlock or serialization
+/// abort (each rolled back whole) before the lease is left to run out.
+const FINISH_RETRIES: u32 = 3;
 
 /// At most this much of an error's text reaches a job's `last_error`.
 fn trim(error: &str) -> String {
