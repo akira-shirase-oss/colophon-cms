@@ -89,21 +89,22 @@ function key() {
 }
 
 export function setup() {
-  const signedIn = http.post(`${PUBLIC_URL}/auth/signin`, JSON.stringify({ email: 'dev-owner@colophon.test', password: 'colophon-dev' }), { headers: { 'Content-Type': 'application/json' } });
-  if (signedIn.status !== 204) fail(`sign-in failed: HTTP ${signedIn.status}`);
-  const jar = http.cookieJar().cookiesForURL(PUBLIC_URL);
-  const session = { cookie: `__Host-colophon_session=${jar['__Host-colophon_session'][0]}`, csrf: jar['__Host-colophon_csrf'][0] };
+  // Each sign-in in a jar of its own: a sign-in that presents a session ends it (D-235's rotation),
+  // so one shared jar would leave only the last of these sessions alive.
+  const signIn = (n) => {
+    const own = new http.CookieJar();
+    const res = http.post(`${PUBLIC_URL}/auth/signin`, JSON.stringify({ email: 'dev-owner@colophon.test', password: 'colophon-dev' }), { jar: own, headers: { 'Content-Type': 'application/json' } });
+    if (res.status !== 204) fail(`sign-in ${n} failed: HTTP ${res.status}`);
+    const cookies = own.cookiesForURL(PUBLIC_URL);
+    return { cookie: `__Host-colophon_session=${cookies['__Host-colophon_session'][0]}`, csrf: cookies['__Host-colophon_csrf'][0] };
+  };
+  const session = signIn(1);
   // One session per VU, as clients have (D-215): a session or token may have 4 uploads in flight and
   // the Studio sends 3 at a time, so 64 VUs sharing one session measured 429 too_many_uploads, not
   // uploads (CI 44608263509: 3,598 of 4,096 uploads refused). load.sh lifts the password limit.
   const vus = SCENARIO === 'steady' ? VUS * 2 : VUS;
   const sessions = [session];
-  for (let i = 1; i < vus; i++) {
-    const again = http.post(`${PUBLIC_URL}/auth/signin`, JSON.stringify({ email: 'dev-owner@colophon.test', password: 'colophon-dev' }), { headers: { 'Content-Type': 'application/json' } });
-    if (again.status !== 204) fail(`sign-in ${i + 1} of ${vus} failed: HTTP ${again.status}`);
-    const cookies = http.cookieJar().cookiesForURL(PUBLIC_URL);
-    sessions.push({ cookie: `__Host-colophon_session=${cookies['__Host-colophon_session'][0]}`, csrf: cookies['__Host-colophon_csrf'][0] });
-  }
+  for (let i = 1; i < vus; i++) sessions.push(signIn(i + 1));
 
   const write = { Cookie: session.cookie, 'X-CSRF-Token': session.csrf, Origin: PUBLIC_URL, 'Content-Type': 'application/json' };
   const slug = `k6-${Date.now().toString(36)}`;
