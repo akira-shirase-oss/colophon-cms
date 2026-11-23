@@ -1825,6 +1825,10 @@ fn mcp_surface(fx: &Fixture) -> RunFut {
             .as_str()
             .unwrap_or_default()
             .to_owned();
+        let revision = drafted["result"]["structuredContent"]["entry"]["revision"]["id"]
+            .as_str()
+            .unwrap_or_default()
+            .to_owned();
         let proposed = mcp
             .call(
                 "create_publish_request",
@@ -1876,7 +1880,7 @@ fn mcp_surface(fx: &Fixture) -> RunFut {
         let deleted = read_only
             .call(
                 "delete_entry",
-                json!({"environment": "production", "collection": "articles", "entry": entry, "confirm": true}),
+                json!({"environment": "production", "collection": "articles", "entry": entry, "if_match": revision, "confirm": true}),
             )
             .await;
         report.refused_tool(

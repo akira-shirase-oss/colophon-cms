@@ -167,8 +167,9 @@ fn build(document: &str) -> Vec<Op> {
                 .as_object()
                 .map(|schema| plain(&Value::Object(schema.clone()), &schemas, 0));
             let words = format!("{name} {}", path.to_ascii_lowercase().replace('-', "_"));
-            let destructive =
-                method == Method::DELETE || DESTRUCTIVE.iter().any(|w| words.contains(w));
+            // A read is never destructive, even one that previews a rollback.
+            let destructive = method != Method::GET
+                && (method == Method::DELETE || DESTRUCTIVE.iter().any(|w| words.contains(w)));
             let people = ["/members", "/roles", "/tokens", "/invitations", "/audience"]
                 .iter()
                 .any(|segment| path.contains(segment));
@@ -410,7 +411,8 @@ pub async fn call<B: Backend>(api: &B, op: &'static Op, arguments: Value) -> Out
     if op.if_match
         && let Some(Value::String(tag)) = args.get("if_match")
     {
-        request = request.if_match(tag);
+        // The bare value or the ETag as its header gave it, quotes and all: either names it.
+        request = request.if_match(tag.trim().trim_matches('"'));
     }
     if op.idempotency {
         request = request.idempotency_key(&key);
@@ -445,7 +447,13 @@ mod tests {
                 assert!(op.confirm && op.destructive, "{} must ask first", op.name);
             }
             if op.read_only {
-                assert!(!op.confirm, "{} only reads", op.name);
+                assert!(!op.confirm && !op.destructive, "{} only reads", op.name);
+                assert_eq!(
+                    op.definition()["annotations"]["destructiveHint"],
+                    false,
+                    "{}",
+                    op.name
+                );
             }
             let def = op.definition();
             assert!(

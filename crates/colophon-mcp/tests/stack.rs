@@ -695,7 +695,7 @@ async fn a_read_only_token_is_offered_no_writes_and_the_api_refuses_them() {
     let confirmed_delete = mcp
         .call(
             "delete_entry",
-            json!({"environment": "production", "collection": "articles", "entry": entry, "confirm": true}),
+            json!({"environment": "production", "collection": "articles", "entry": entry, "if_match": format!("\"{}\"", revision.as_str().expect("a revision")), "confirm": true}),
         )
         .await;
     assert_eq!(
