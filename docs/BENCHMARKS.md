@@ -173,7 +173,14 @@ than it said (see L03).
   bypass, 0 errors across 7 republished generations.
 - Two earlier iterations stored `held: false` (`...T204418Z-`, `...T204603Z-`).
 
-### L05, mixed reads, writes and publishing: held
+### L05, mixed reads, writes and publishing: held at smoke size only
+
+Every longer run stored since is red by its own record: a 1,440-minute run (2026-11-09; history
+in D-240), three 60-minute steady runs (2026-11-10 and 11-11, ~1.28M requests each, two failing
+"no errors"), two 30-minute steady runs (2026-11-11, `...T171030Z-` and `...T200341Z-`), two
+90-second runs and a 2-minute run, every one `thresholds_passed: false`. Commit 7b253e91 describes
+the last 30-minute run as held with every failure inside a drill window; its stored record does
+not say so, so it is not counted as held here. A run at the current commit settles it.
 
 - Command: `scripts/load.sh mixed throughput`
 - Read, write and publish arms over one project at once: ~30 s of measured traffic
@@ -194,15 +201,10 @@ than it said (see L03).
 - Two earlier iterations stored `held: false` on the recovery gate alone while the
   refusal shaping held (`...T211044Z-`, `...T211229Z-`).
 
-### L07, 24-hour soak: owed
+### L07: removed (D-240)
 
-- No run is stored. The nearest evidence is a 10-minute memory soak of the
-  entries endpoint, `2026-11-04T152955Z-entries-soak-apple-m2-pro-12c.json`
-  (278,667 requests at 500/s, RSS verdict "flat", slope -103 KB/min,
-  0 failures), a rehearsal for the real gate, not the gate. The case wants 24
-  hours of mixed load at 50% baseline with a correct final state and explained
-  growth; `scripts/soak.sh <endpoint> 1440` is the harness when it is
-  scheduled.
+- Removed from the matrix by the maintainer on 2026-11-23 (D-240); D-240 records the one stored run
+  as history.
 
 ### L08, noisy agent: held
 

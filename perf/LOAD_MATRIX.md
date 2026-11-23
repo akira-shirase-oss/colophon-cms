@@ -2,7 +2,7 @@
 
 Goal: concrete, committed evidence that every module holds under million-scale load, across
 success, error, overload and dependency-failure paths — the "can it take traffic" record for
-v0.1 (P6's proof gate: L01–L14, the fault matrix F01–F14, the 24-hour soak).
+v0.1 (P6's proof gate: L01–L14 without L07, which D-240 removed, and the fault matrix F01–F14).
 
 Rules (workspace standard): full runs are ≥1,000,000 requests (`scripts/load.sh <endpoint>
 throughput|steady|stress`); results land in `perf/results/` + `history.jsonl` with machine and
@@ -12,7 +12,7 @@ on one machine — evidence of behavior, saturation shape and failure handling, 
 production-capacity claim. `CLUSTER=1` runs measure the multi-instance topology separately.
 
 Run order: single-instance first (stack up, release build), then `CLUSTER=1` shapes, then the
-serial dependency-failure matrix, then the 24-hour mixed soak.
+serial dependency-failure matrix.
 
 | Module | Scenario (`perf/k6/`) | What it proves | Evidence status |
 |---|---|---|---|
@@ -38,7 +38,6 @@ serial dependency-failure matrix, then the 24-hour mixed soak.
 | **Dependency failure (serial only)** | `cache-down` (L11), `postgres-trouble` (L12), `purge-trouble` (L13) | Valkey pause → fallback, Postgres pause + worker SIGKILL → honest 5xx + resume, CDN 503 → bounded backoff | committed per D-127 — rerun on current commit |
 | Cluster topology | `failover`, `CLUSTER=1 <scenario>` | kill/drain a server under load through HAProxy — only in-flight requests lost | committed (D-075) — spot-rerun entries/delivery |
 | Micro-benchmarks | `scripts/bench.sh` + `compare main` | per-request hot-path medians, PR regression gate | on demand |
-| **24-hour soak** | mixed-weight run (warm baseline + entries + publishes + failure drills cycling) | P6 gate: no leak, no drift, honest behavior for 24 h | **OWED — the last evidence before v0.1** |
 
 ## Gaps to close this pass
 
@@ -47,10 +46,7 @@ serial dependency-failure matrix, then the 24-hour mixed soak.
 2. Confirm full ≥1M results exist for `modelling`, `deletion`, `roles`, `tokens`, `migrations`,
    `collaboration`, `live`, `audience` — several were "full load runs pending" in earlier status;
    run any missing.
-3. Define and run the P6 24-hour soak: weighted mix (reads 70%, saves 10%, publishes 5%,
-   audience/sign-in 5%, misc 10%) plus hourly failure drills; commit the run + RSS/connection
-   series.
-4. Update this table's Evidence column to the exact result filename after each run.
+3. Update this table's Evidence column to the exact result filename after each run.
 
 ## 2026-11-07 pass — first-time scenarios + fault drills on current commit
 
@@ -58,7 +54,6 @@ serial dependency-failure matrix, then the 24-hour mixed soak.
 - Fault trio pass: cache-down 77,898 (0 failed), postgres-trouble 24,061 (0 failed), purge-trouble 7,994 (0 failed)
 - Cluster pass: failover-kill + failover-drain (cluster3s2w) — 6,001 writes, 0 lost, both verdict pass
 - Kept misses: openapi p99 101ms (455KB doc), deletion p99 339ms, tokens p99 157ms; collection-delete 144 failed + 239 warnings — open, needs classification
-- Remaining: monitor-style 24h mixed soak (P6 gate) not yet started
 
 ## collection-delete classified (2026-11-07)
 
@@ -68,41 +63,3 @@ Verified by three clean reproductions on the same commit — 20k and 200k bounde
 full 1M-iteration rerun (1,800,125 requests, 0 failed, 0 warnings, p99 93.8ms). Evidence:
 `perf/results/2026-11-07T130953Z-collection-delete-throughput-apple-m2-pro-12c.json`.
 Rule confirmed: never run two load suites on one machine at once.
-
-## P6 24-hour soak — definition
-
-Run: `RATE=200 DURATION=1440m KEEP=1 SERVER_LOG=perf/results/soak-24h-server.log scripts/load.sh mixed steady`
-(mixed = L05: reads + If-Match writes + publishes at once — the closest shape to real editorial
-traffic; 200/s sustains ~17.3M requests/day). In parallel,
-`scripts/soak-sidecar.sh 24 <log> <windows.jsonl>` cycles one failure drill per hour
-(pause Valkey 60s, pause Postgres 30s, every sixth a session-expiry; the receiver 503
-window applies only to scenarios that configure delivery destinations — the mixed soak
-configures none) and appends each completed drill's window — pause/resume plus
-`SOAK_DRILL_GRACE_S` (default 120 s) of recovery — as a JSONL record. Pass the file to
-load.sh as `DRILL_WINDOWS=<path>`: mixed.js stamps every failed assertion
-`L05FAIL <epoch_s>` on k6's console (VU state cannot reach handleSummary — k6 metrics
-only aggregate, and open()/fs are init-stage only), load.sh tees that stream and
-re-weighs the stamps against the windows before gating —
-the L05 `no_errors` gate then means *zero failures outside the announced windows*, with
-the in/out split recorded under `l05.drills`. Server WARN/ERROR lines get the same
-treatment (`drills.warnings_in/outside_windows` in the result), and a missing or
-malformed window line counts its errors as outside — drills can excuse evidence, never
-hide it. `SOAK_DRILL_INTERVAL_S` compresses the cadence for shorter validations (the
-1 h proof runs used ~8 min drills so all three drill types fire inside the hour).
-Both against the same `load.sh` server, never two load suites at once.
-
-Measured: per-window p99 stays inside the gate, RSS/connection curves flat (the result's
-`resources` block now also carries k6's own RSS/CPU and a /readyz probe series per 5 s —
-added after the 2026-11-09 run failed L05 with 867,613 unexplained errors and left no
-client-side evidence), outbox drains after each drill, zero `uncertain` states left
-unresolved at end.
-
-Scenario fix that preceded the re-run (2026-11-11): the first soak's errors were the dev
-accounts' 12 h absolute session expiry expiring mid-run — the second half of the day
-collected 401s. `perf/k6/mixed.js` now snapshots credentials per VU and re-authenticates
-(dev-owner sign-in) on 401 with one retry, and publish/write VUs read `Colophon-Generation`
-and If-Match honestly instead of racing. A session-expiry drill is part of the sidecar's
-rotation so the re-auth path is exercised, not just the fault endpoints.
-
-Honest bound: this is one machine's development observation over a day — evidence of
-stability and failure behavior, not a production capacity claim.

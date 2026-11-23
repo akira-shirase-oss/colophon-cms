@@ -8,6 +8,11 @@ through `--version` and `GET /version`.
 
 ## [Unreleased]
 
+### Removed
+
+- **The 24-hour soak test** (D-240), by the maintainer's decision: `scripts/soak.sh`, `scripts/soak-sidecar.sh`
+  and `scripts/load.sh`'s `DRILL_WINDOWS` are gone, and the soak is no longer part of v0.1.
+
 ### Security
 
 - `cookie` 0.18.3 (RUSTSEC-2026-0594). Not reachable: Colophon uses no private cookie jar and doesn't
@@ -15,6 +20,12 @@ through `--version` and `GET /version`.
 
 ### Fixed
 
+- **A save behind a held row answers "try again", not an internal error** (D-239). A request
+  queued on a row or lock someone held for seconds used to wait out the 5 s statement timeout and
+  answer `500 internal`; it now gives up after 3 s with `503 unavailable` and `Retry-After`,
+  having committed nothing, so retrying with the same `Idempotency-Key` saves exactly once. A
+  statement that is slow on its own still answers `500` and is now logged by name
+  (`fault: "statement_timeout"`, with its route) so it can be fixed rather than retried.
 - **The worker's claims and sweeps no longer slow down as an installation grows** (D-237). Claiming
   deliveries read every waiting job, and every job of an environment, to take a handful; the asset
   jobs' deadline sweep read the whole table every 10 seconds; the delivery sweeps read an

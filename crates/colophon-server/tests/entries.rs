@@ -575,6 +575,251 @@ async fn a_list_says_what_is_live_and_the_live_revision_reads_back() {
     );
 }
 
+/// Holds `entry`'s row from a connection of the test's own until the returned transaction ends.
+async fn hold_row(
+    database: &sqlx::PgPool,
+    entry: &str,
+) -> sqlx::Transaction<'static, sqlx::Postgres> {
+    let mut holder = database.begin().await.expect("begin");
+    sqlx::query("SELECT 1 FROM entries WHERE id = $1::uuid FOR UPDATE")
+        .bind(entry)
+        .execute(&mut *holder)
+        .await
+        .expect("hold the entry");
+    holder
+}
+
+/// The entry's revision titles, newest first.
+async fn history(session: &Session, project: &str, id: &str) -> Vec<String> {
+    let reply = call(
+        session,
+        Method::GET,
+        &format!("{}/{id}/revisions", entries(project)),
+        None,
+        &[],
+    )
+    .await
+    .expect("request");
+    assert_eq!(reply.status, StatusCode::OK, "{}", reply.body);
+    reply.body["data"]
+        .as_array()
+        .expect("a list")
+        .iter()
+        .filter_map(|revision| revision["title"].as_str().map(str::to_owned))
+        .collect()
+}
+
+/// D-239: a save queued behind a row someone holds for longer than the request pool's lock
+/// timeout is refused as contention (503 with Retry-After) once that timeout passes, before the
+/// statement timeout: nothing was committed, so the same request sent again, same key, once the
+/// row is free, lands exactly once. Before D-239 it waited out the statement timeout and answered
+/// 500 internal (D-216's row says contention is "never a 500").
+#[tokio::test]
+#[ignore = "needs the local stack and migrations: scripts/stack.sh up && scripts/migrate.sh"]
+async fn a_save_behind_a_held_row_is_told_to_try_again_and_lands_once_retried() {
+    let _server = Server::start().await;
+    let editor = sign_in("dev-owner").await;
+    let project = project(&editor).await;
+    let (id, base) = create(&editor, &project, "Base").await;
+    let path = format!("{}/{id}", entries(&project));
+    let database = common::owner_database().await;
+    let holder = hold_row(&database, &id).await;
+
+    let idempotency = key();
+    let headers = [
+        ("if-match", base.as_str()),
+        ("idempotency-key", idempotency.as_str()),
+    ];
+    let body = article("Second", "B");
+    let started = std::time::Instant::now();
+    let refused = call(&editor, Method::PUT, &path, Some(&body), &headers)
+        .await
+        .expect("request");
+    let waited = started.elapsed();
+    assert_eq!(
+        (refused.status, refused.body["error"]["code"].as_str()),
+        (StatusCode::SERVICE_UNAVAILABLE, Some("unavailable")),
+        "{}",
+        refused.body
+    );
+    assert_eq!(
+        refused
+            .headers
+            .get("retry-after")
+            .and_then(|value| value.to_str().ok()),
+        Some("1")
+    );
+    let lock_timeout = colophon_db::REQUEST_LOCK_TIMEOUT;
+    assert!(
+        waited >= lock_timeout && waited < std::time::Duration::from_secs(5),
+        "refused at the lock timeout, not the statement timeout: {waited:?}"
+    );
+    holder.rollback().await.expect("release");
+    assert_eq!(
+        history(&editor, &project, &id).await,
+        ["Base"],
+        "nothing was committed"
+    );
+
+    let retried = call(&editor, Method::PUT, &path, Some(&body), &headers)
+        .await
+        .expect("request");
+    assert_eq!(retried.status, StatusCode::OK, "{}", retried.body);
+    let again = call(&editor, Method::PUT, &path, Some(&body), &headers)
+        .await
+        .expect("request");
+    assert_eq!(
+        (again.status, again.etag()),
+        (StatusCode::OK, retried.etag()),
+        "the same key replays the one save"
+    );
+    assert_eq!(history(&editor, &project, &id).await, ["Second", "Base"]);
+    database.close().await;
+}
+
+/// D-239's other half: a statement slow at its own work, no lock involved, still fails at the
+/// statement timeout as a 500, and the server names it a statement timeout on its route, so a
+/// bad plan or a missing index is seen rather than retried. A trigger on this one entry's row
+/// stands in for the slow statement.
+#[tokio::test]
+#[ignore = "needs the local stack and migrations: scripts/stack.sh up && scripts/migrate.sh"]
+async fn a_slow_statement_is_still_a_failure_named_as_a_statement_timeout() {
+    let log_path = std::env::temp_dir().join(format!("colophon-slow-{}.log", key()));
+    let log = std::fs::File::create(&log_path).expect("a log file");
+    let _server = Server::start_logged_to(
+        log,
+        // INFO keeps the request span, which carries the route; JSON prints it with each line.
+        &[("COLOPHON_LOG", "info"), ("COLOPHON_LOG_FORMAT", "json")],
+    )
+    .await;
+    let editor = sign_in("dev-owner").await;
+    let project = project(&editor).await;
+    let (id, base) = create(&editor, &project, "Base").await;
+    let database = common::owner_database().await;
+    let name = format!("colophon_test_slow_{}", id.replace('-', ""));
+    sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
+        "CREATE FUNCTION {name}() RETURNS trigger LANGUAGE plpgsql AS $$
+         BEGIN PERFORM pg_sleep(6); RETURN NEW; END $$;
+         CREATE TRIGGER {name} BEFORE UPDATE ON entries FOR EACH ROW
+         WHEN (OLD.id = '{id}'::uuid) EXECUTE FUNCTION {name}();"
+    )))
+    .execute(&database)
+    .await
+    .expect("the slow trigger");
+
+    let saved = call(
+        &editor,
+        Method::PUT,
+        &format!("{}/{id}", entries(&project)),
+        Some(&article("Second", "B")),
+        &[("if-match", &base), ("idempotency-key", &key())],
+    )
+    .await
+    .expect("request");
+    sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
+        "DROP TRIGGER {name} ON entries; DROP FUNCTION {name}();"
+    )))
+    .execute(&database)
+    .await
+    .expect("drop the slow trigger");
+    database.close().await;
+    assert_eq!(
+        (saved.status, saved.body["error"]["code"].as_str()),
+        (StatusCode::INTERNAL_SERVER_ERROR, Some("internal")),
+        "{}",
+        saved.body
+    );
+    let logged = std::fs::read_to_string(&log_path).expect("the log");
+    let _ = std::fs::remove_file(&log_path);
+    let line = logged
+        .lines()
+        .find(|line| line.contains("request failed: statement timeout"))
+        .unwrap_or_else(|| panic!("no statement timeout logged:\n{logged}"));
+    assert!(line.contains(r#""fault":"statement_timeout""#), "{line}");
+    assert!(
+        line.contains("/collections/{collection}/entries/{entry}"),
+        "the route: {line}"
+    );
+}
+
+/// D-239 doesn't turn ordinary contention into refusals: a save waiting on its collection's
+/// lock (held exclusively, as a content type change holds it) or on its row, for less than the
+/// lock timeout, still lands.
+#[tokio::test]
+#[ignore = "needs the local stack and migrations: scripts/stack.sh up && scripts/migrate.sh"]
+async fn a_save_waiting_less_than_the_lock_timeout_still_lands() {
+    let _server = Server::start().await;
+    let editor = sign_in("dev-owner").await;
+    let project = project(&editor).await;
+    let (id, base) = create(&editor, &project, "Base").await;
+    let path = format!("{}/{id}", entries(&project));
+    let database = common::owner_database().await;
+    let hold = std::time::Duration::from_millis(1_500);
+
+    // The collection's lock, exclusively: content_types::lock_for_change.
+    let mut change = database.begin().await.expect("begin");
+    sqlx::query(
+        "SELECT pg_advisory_xact_lock(x'4354'::int,
+                hashtext(project_id::text || '/' || environment_id::text || '/' || collection))
+         FROM entries WHERE id = $1::uuid",
+    )
+    .bind(&id)
+    .execute(&mut *change)
+    .await
+    .expect("hold the collection");
+    let released = tokio::spawn(async move {
+        tokio::time::sleep(hold).await;
+        change.rollback().await.expect("release");
+    });
+    let started = std::time::Instant::now();
+    let saved = call(
+        &editor,
+        Method::PUT,
+        &path,
+        Some(&article("Second", "B")),
+        &[("if-match", &base), ("idempotency-key", &key())],
+    )
+    .await
+    .expect("request");
+    released.await.expect("released");
+    assert_eq!(saved.status, StatusCode::OK, "{}", saved.body);
+    assert!(
+        started.elapsed() >= hold,
+        "it waited: {:?}",
+        started.elapsed()
+    );
+
+    // Its row, the same way.
+    let current = saved.etag().expect("an ETag");
+    let holder = hold_row(&database, &id).await;
+    let released = tokio::spawn(async move {
+        tokio::time::sleep(hold).await;
+        holder.rollback().await.expect("release");
+    });
+    let started = std::time::Instant::now();
+    let saved = call(
+        &editor,
+        Method::PUT,
+        &path,
+        Some(&article("Third", "C")),
+        &[("if-match", &current), ("idempotency-key", &key())],
+    )
+    .await
+    .expect("request");
+    released.await.expect("released");
+    assert_eq!(saved.status, StatusCode::OK, "{}", saved.body);
+    assert!(
+        started.elapsed() >= hold,
+        "it waited: {:?}",
+        started.elapsed()
+    );
+    assert_eq!(
+        history(&editor, &project, &id).await,
+        ["Third", "Second", "Base"]
+    );
+    database.close().await;
+}
+
 /// F04 on the real binary under real concurrency (module 17): two editors, signed in apart, save
 /// the same base revision at the same moment, fifty times over. Each time exactly one save lands
 /// and the other is refused `stale_revision` naming the revision that won; the loser retried with

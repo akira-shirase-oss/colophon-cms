@@ -86,10 +86,7 @@
 # Environment overrides: TOTAL, VUS, RATE, DURATION, P99_MS (the k6 latency threshold),
 # KEEP=0 (don't write a result file; for CI smoke runs), RECORD_OUT (also write the run's record there), LOAD_LOG (the server's log level, default
 # warn; the warning gate counts WARN and ERROR lines either way), LOAD_PORT (default 58090),
-# SERVER_LOG=<path> (keep the server's log there); DRILL_WINDOWS=<path> names the
-# soak-sidecar.sh windows JSONL — with it, mixed.js excuses failures inside the drill
-# windows and the run's error gate means "none outside them", and server warnings are
-# filtered the same way; for stress, START_RATE, STEP_SECONDS and
+# SERVER_LOG=<path> (keep the server's log there); for stress, START_RATE, STEP_SECONDS and
 # MAX_STEPS (below); CLUSTER=1 (run against the servers and
 # workers scripts/cluster.sh started, through its balancer, instead of one server of its own;
 # the result records how many, and is compared only with runs of the same shape: D-075).
@@ -478,8 +475,8 @@ case "$sample_resources" in
           conns=$(docker compose -f deploy/compose.yaml exec -T postgres psql -U colophon -XAtqc \
             "select count(*) from pg_stat_activity where datname = '$database'" 2>/dev/null || echo "")
           printf '%s\t%s\t%s\t%s\n' "$(date +%s)" "${rss:-}" "${cpu:-}" "${conns:-}" >>"$work/resources.tsv"
-          # The client half of the same window (the 2026-11-09 soak's unexplained read
-          # failures left no server-side trace): k6's own RSS/CPU — a client-side leak or
+          # The client half of the same window (a long run on 2026-11-09 left its read
+          # failures no server-side trace): k6's own RSS/CPU — a client-side leak or
           # stall shows here — and a /readyz probe, so a dead or wedged server is a row in
           # the evidence instead of a silence between request failures.
           k6pid=$(pgrep -f 'k6 run' | head -1 || true)
@@ -636,25 +633,13 @@ evicted_before=""
 
 echo "running k6: $endpoint $scenario"
 k6_status=0
-k6_drill_env=()
-if [[ -n "${DRILL_WINDOWS:-}" ]]; then
-  # Announce the sidecar's drill windows to the scenario: its zero-error thresholds move
-  # into handleSummary, which stamps each failed assertion `L05FAIL <epoch_s>` for the
-  # window split below. An absent or unreadable file leaves the strict gate standing —
-  # errors are never excused blind.
-  k6_drill_env=(-e "DRILL_WINDOWS=$DRILL_WINDOWS")
-fi
-# k6's console is teed to $work/k6-console.log: with drills announced, mixed.js
-# stamps every failed assertion there as `L05FAIL <epoch_s>` (VU state cannot
-# reach handleSummary — the v2b run's empty error_buckets proved it), and the
-# window split below reads the stamps back. pipefail keeps k6's exit status.
+# k6's console is teed to $work/k6-console.log. pipefail keeps k6's exit status.
 "$k6" run --quiet --no-color \
   --summary-export "$work/summary.json" \
   -e BASE_URL="$base_url" -e PUBLIC_URL="$public_url" -e SCENARIO="$scenario" \
   -e TOTAL="${TOTAL:-1000000}" -e VUS="$VUS" \
   -e RATE="$RATE" -e DURATION="${DURATION:-60s}" \
   -e P99_MS="$P99_MS" -e USERS="${USERS:-512}" -e RECEIVER_URL="http://127.0.0.1:$receiver_port" -e SITE_URL="http://127.0.0.1:$site_port" \
-  ${k6_drill_env[@]+"${k6_drill_env[@]}"} \
   "perf/k6/$endpoint.js" 2>&1 | tee "$work/k6-console.log" || k6_status=$?
 # When k6 stopped, to the second (UTC, as the server's JSON stamps its lines): L10's refill count must
 # include a window that closed after it, so the run's last seconds are counted too.
@@ -727,27 +712,6 @@ elif [[ "$endpoint" == "cache-down" || "$endpoint" == "postgres-trouble" ]]; the
     warnings_outside=$(cat "${warn_logs[@]}" | jq -Rsc '[split("\n")[] | fromjson? | '"$counted_jq"']')
   fi
   server_warnings=$(jq 'length' <<<"$warnings_outside")
-elif [[ -n "${DRILL_WINDOWS:-}" && -f "$DRILL_WINDOWS" ]]; then
-  # Sidecar drill windows (soak-sidecar.sh's JSONL: {start_epoch,end_epoch} per drill,
-  # end already carrying recovery grace). WARN/ERROR lines stamped inside any window —
-  # two seconds of lead for requests in flight when the pause lands — are the drills
-  # doing their job, the same contract the fault scenarios get from their receiver
-  # stamps; anything outside still fails. A missing file falls through to the strict
-  # count: warnings are never excused without their windows on record.
-  warn_logs=("$work/server.log")
-  [[ -f "$work/worker.log" ]] && warn_logs+=("$work/worker.log")
-  wins_json=$(jq -Rsc 'split("\n") | map(select(length > 0) | fromjson?
-    | {s: ((.start_epoch // 0) - 2), e: (.end_epoch // 0)}) | map(select(.e > .s))' "$DRILL_WINDOWS")
-  warnings_outside=$(cat "${warn_logs[@]}" | jq -Rsc --argjson ws "$wins_json" '
-    def epoch: try ((.timestamp[0:19] + "Z") | fromdateiso8601) catch -1;
-    [split("\n")[] | fromjson? | select(.level == "WARN" or .level == "ERROR")
-     | . as $l | ($l | epoch) as $t
-     | select($t == -1 or ([$ws[] | select($t >= .s and $t <= .e)] | length) == 0) | '"$counted_jq"']')
-  server_warnings=$(jq 'length' <<<"$warnings_outside")
-  warnings_all=$(cat "${warn_logs[@]}" | jq -Rsc \
-    '[split("\n")[] | fromjson? | '"$counted_jq"'] | length')
-  warnings_in=$(( warnings_all - server_warnings ))
-  drills_windows=1
 else
   server_warnings=$(count_logged <"$work/server.log")
 fi
@@ -803,53 +767,6 @@ if [[ "$endpoint" == "cdn-warm" && -f "$work/summary.json" ]] && jq -e '.l10 | t
   echo "    duplicate fills (the server's count, D-232): $(jq -c '.l10.fills.duplicate_fills' "$work/summary.json"); Valkey evicted keys during the run: $evicted"
 fi
 
-# mixed.js cannot read the windows file itself — open() is init-stage only — so
-# with drills announced it stamps every failed assertion `L05FAIL <epoch_s>` on
-# k6's console (teed to $work/k6-console.log above) and its no_errors gate is the
-# strict reading whose stdout verdict is provisional. Re-weigh the stamps
-# against the sidecar's windows now and rewrite the gate before the record and
-# the lNN gate loop read summary.json. A stamp inside a window — two seconds of
-# lead for requests in flight when the pause lands — is drill evidence; outside
-# fails. Failsafe both ways: stamps the scenario counted but never logged
-# (error_events > stamps) count as outside, and a missing console log leaves the
-# strict gate standing — errors are never excused blind.
-if [[ "${drills_windows:-0}" == "1" ]]; then
-  # Every stamp counts — same-second failures share an epoch but are separate
-  # events, so no uniq: the stamp total must reconcile with l05.error_events.
-  # The epochs go through a file, never argv: a heavy drill hour stamped 320,724
-  # failures (~3.5 MB), over macOS's ARG_MAX — jq never launched, the && mv chain
-  # is exempt from set -e, and the strict gate failed closed (2026-11-11 v3).
-  # A failed rewrite is therefore loud now; the un-rewritten strict gate is the
-  # conservative verdict either way — errors are never excused blind.
-  { grep -oE 'L05FAIL [0-9]+' "$work/k6-console.log" 2>/dev/null || true; } \
-    | awk '{print $2}' | sort -n > "$work/fail-epochs.txt"
-  if jq --rawfile eps "$work/fail-epochs.txt" --rawfile wins "$DRILL_WINDOWS" --arg wf "$DRILL_WINDOWS" '
-    ($wins | split("\n") | map(select(length > 0) | fromjson? | select(type == "object")
-      | select((.start_epoch | type) == "number" and (.end_epoch | type) == "number")
-      | {dep: (.dep // "?"), kind: (.kind // "drill"), start: (.start // ""), end: (.end // ""),
-         s: (.start_epoch - 2), e: .end_epoch}
-      | select(.e > .s))) as $ws
-    | ($eps | split("\n") | map(select(length > 0) | tonumber)) as $ts
-    | . as $doc
-    | if ($doc.l05? | type) == "object" then
-        (reduce $ts[] as $t ({inn: 0, out: 0};
-           if ([$ws[] | select($t >= .s and $t <= .e)] | length) > 0
-           then .inn += 1 else .out += 1 end)) as $placed
-        | (($doc.l05.error_events // 0) - ($placed.inn + $placed.out)) as $unlogged
-        | $doc
-          | .l05.gates.no_errors = (($placed.out + ($unlogged | if . > 0 then . else 0 end)) == 0)
-          | .l05.drills = {windows_file: $wf,
-                           windows: [$ws[] | {dep, kind, start, end}],
-                           errors_in_windows: $placed.inn,
-                           errors_outside_windows: ($placed.out + ($unlogged | if . > 0 then . else 0 end))}
-          | .l05.gate = ((.l05.gate // "") + " — drill-aware: zero failures outside the announced windows")
-          | .l05.held = ([.l05.gates[]] | all)
-      else $doc end' "$work/summary.json" > "$work/summary.drilled.json"; then
-    mv "$work/summary.drilled.json" "$work/summary.json"
-  else
-    echo "warning: drill-window rewrite failed — the strict gate stands, no failure excused" >&2
-  fi
-fi
 
 commit=$(git rev-parse --short HEAD)
 dirty=$([[ -n "$(git status --porcelain -- crates Cargo.lock perf/k6)" ]] && echo true || echo false)
@@ -887,7 +804,7 @@ if [[ -s "$work/resources.tsv" ]]; then
 fi
 # The client half of the same window: k6's RSS/CPU trend and the /readyz answers. A run whose
 # requests failed while the server stayed ready and the client grew without bound reads very
-# differently from one where the server stopped answering — the 2026-11-09 soak could not
+# differently from one where the server stopped answering — the long run of 2026-11-09 could not
 # tell them apart because neither series existed.
 if [[ -s "$work/client.tsv" ]]; then
   client=$(jq -Rsc '
@@ -910,14 +827,6 @@ if [[ -s "$work/client.tsv" ]]; then
   fi
 fi
 
-# When the run announced drill windows, record the split beside the gates: warnings
-# inside them are the drills' evidence; server_warnings counted only the outside ones.
-drills_json=null
-if [[ "${drills_windows:-0}" == "1" ]]; then
-  drills_json=$(jq -nc --arg f "$DRILL_WINDOWS" --argjson in "${warnings_in:-0}" \
-    --argjson out "$server_warnings" \
-    '{windows_file: $f, warnings_in_windows: $in, warnings_outside_windows: $out}')
-fi
 
 record=$(jq -c \
   --arg scenario "$scenario" --arg endpoint "$endpoint" --arg stamp "$stamp" --arg commit "$commit" --argjson dirty "$dirty" \
@@ -925,7 +834,6 @@ record=$(jq -c \
   --arg os "$(uname -s) $(uname -r)" --arg k6 "$("$k6" version | awk '{print $2}')" \
   --argjson tx "$(( tx_after - tx_before ))" --argjson warnings "$server_warnings" --argjson slow "${slow_statements:-null}" \
   --argjson k6_status "$k6_status" --argjson topology "$topology" --argjson resources "$resources" \
-  --argjson drills "$drills_json" \
   --arg total "${TOTAL:-1000000}" --arg vus "$VUS" --arg rate "$RATE" --arg duration "${DURATION:-60s}" \
   '{
     scenario: $scenario, endpoint: $endpoint, date: $stamp, commit: $commit, dirty: $dirty,
@@ -966,7 +874,6 @@ record=$(jq -c \
     slow_statements: $slow,
     thresholds_passed: ($k6_status == 0)
   } + (if $resources then {resources: $resources} else {} end)
-    + (if $drills then {drills: $drills} else {} end)
     # Every `lNN` object a scenario computed lands in the record — the gate loop below
     # fails the run on any whose `held` is false (a new case self-registers: name the
     # object after its spec ID and it is stored and gated like the rest).
@@ -1011,9 +918,7 @@ if (( server_warnings > 0 )); then
   echo "FAIL: the server logged $server_warnings warning(s) or error(s) under load" >&2
   # The lines, so a real fault-window miss is diagnosable from the output, not just a count.
   if declare -p warnings_outside >/dev/null 2>&1; then
-    if [[ "${drills_windows:-0}" == "1" ]]; then
-      echo "  drill windows came from $DRILL_WINDOWS — $warnings_in warning(s) inside them, these are outside" >&2
-    elif [[ -n "$down_at" ]]; then
+    if [[ -n "$down_at" ]]; then
       echo "  fault window was down $down_at up ${up_at:-never}" >&2
     else
       echo "  no 'fault <dep> down' stamp in the receiver's log — no window, every warning counts" >&2

@@ -14,10 +14,11 @@ v0.1 is done when every box below is checked with stored evidence (commit, comma
       followed by a checker proving no accepted edit was lost, no release ran twice, and no reader saw a mixed release.
 - [ ] The deterministic simulator runs in CI on every pull request; any failing seed replays exactly; a deliberately
       broken invariant is caught (the simulator is shown to have teeth).
-- [ ] All fault cases F01–F14 and load cases L01–L14 pass (L15 is commerce, parked), as defined in
+- [ ] All fault cases F01–F14 and load cases L01–L14 pass (L15 is commerce, parked; L07 removed, D-240), as defined in
       [verification](modules/17-verification.md). Every fault case F01–F15 is in place;
       F04 and F06–F08 completed 2026-11-23 with stored evidence (`docs/evidence/F04.md`, `F06.md`, `F07.md`,
-      `F08.md`: commit, exact commands, raw output, mutants). The box stays open until every load case L01–L14 has its own.
+      `F08.md`: commit, exact commands, raw output, mutants). The box stays open until every remaining load case
+      (L01–L14 without L07) has its own.
 - [x] A benchmark report on the reference profile is committed with commands, dataset seed and raw results:
       [BENCHMARKS.md](BENCHMARKS.md), over the stored runs in `perf/results/`.
 - [x] A backup-and-restore drill onto clean infrastructure is documented, including a new recovery epoch and the

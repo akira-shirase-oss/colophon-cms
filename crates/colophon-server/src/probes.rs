@@ -50,6 +50,7 @@ impl DatabaseProbe {
                 max_connections: 1,
                 acquire_timeout: deadline,
                 statement_timeout: deadline,
+                lock_timeout: None,
             },
         )?;
         Ok(Self { pool, deadline })

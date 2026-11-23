@@ -44,27 +44,9 @@ const CORPUS = parseInt(__ENV.CORPUS || '400', 10);
 const stale = new Counter('l05_stale');
 const torn = new Counter('l05_torn');
 const errors = new Counter('l05_errors');
-// DRILL_WINDOWS announces that soak-sidecar.sh drills will fire during the run. k6 cannot
-// read files after init, so the scenario cannot weigh failures against the windows
-// itself: it stamps every failed assertion `L05FAIL <epoch_s>` on the console and
-// load.sh splits the stamps against the windows file when it builds the record.
-// With DRILL_WINDOWS set the zero-error k6 thresholds below are dropped (a paused
-// dependency must refuse load); the stamps are what the gate is actually made of.
-const DRILL_WINDOWS = __ENV.DRILL_WINDOWS || '';
-// VU runtimes are isolated and k6 metrics only aggregate — nothing carries
-// per-failure timestamps into handleSummary (tagged sub-metrics materialize only
-// for thresholded names; open()/fs are init-stage only; the 2026-11-11 v2b run
-// proved an in-scenario object stays empty there). With drills announced,
-// bucket() therefore stamps each failed assertion on the console as
-// `L05FAIL <epoch_s>`; load.sh tees k6's output and weighs the stamps against
-// the windows file itself. l05_fail_events keeps the honest total — and the
-// failsafe: fewer stamps than events means unplaceable failures, counted outside.
+// Every failed assertion, counted: the no_errors gate is made of it.
 const failEvents = new Counter('l05_fail_events');
-function bucket(res, checks) {
-  if (DRILL_WINDOWS !== '') {
-    const bad = Object.keys(checks).filter((name) => !checks[name](res)).join('+');
-    console.log(`L05FAIL ${Math.floor(Date.now() / 1000)} ${bad} status=${res.status}`);
-  }
+function bucket() {
   failEvents.add(1);
 }
 const readAnswers = new Counter('l05_reads');
@@ -106,12 +88,10 @@ const thresholds = {
   'http_reqs{arm:write}': ['count>0'],
   'http_reqs{arm:publish}': ['count>0'],
 };
-if (DRILL_WINDOWS === '') {
-  // No drills announced: the strict contract — every check passes, nothing fails.
-  thresholds.checks = ['rate==1'];
-  thresholds.http_req_failed = ['rate==0'];
-  thresholds.l05_errors = ['count==0'];
-}
+// The strict contract: every check passes, nothing fails.
+thresholds.checks = ['rate==1'];
+thresholds.http_req_failed = ['rate==0'];
+thresholds.l05_errors = ['count==0'];
 if (SCENARIO === 'steady') {
   const scheduled = RATE * durationSeconds(DURATION) + WRITE_RATE * durationSeconds(DURATION);
   thresholds.dropped_iterations = [`count<=${Math.max(1, Math.floor(scheduled * 0.0001))}`];
@@ -137,9 +117,9 @@ function key() {
   return idempotencyKey(`k6-l05-${__VU}-${__ITER}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`, 'mixed');
 }
 
-// A session lives 12 hours absolute however busy (SessionSettings::default), so a 24 h soak
-// must re-authenticate at the boundary instead of collecting 401s — the 2026-11-09 run's
-// entire second half was exactly that. Each VU keeps its own credential snapshot: `data` is
+// A session lives 12 hours absolute however busy (SessionSettings::default), so a run longer
+// than that must re-authenticate at the boundary instead of collecting 401s — the 2026-11-09
+// run's entire second half was exactly that. Each VU keeps its own credential snapshot: `data` is
 // per-VU already, and a re-login here signs in as the same dev-owner the setup() session did.
 // per-VU state: set once on first use and only read after; no step order.
 let creds = null;
@@ -169,13 +149,11 @@ function authed(data, fn) {
   if (res.status === 401 && reauth(data)) res = fn();
   return res;
 }
-// check() plus drill bookkeeping: every failed assertion is stamped `L05FAIL
-// <epoch_s>` on the console (drill runs only) so load.sh can split failures
-// inside a drill window from the ones that must never happen. k6's own
+// check() plus the failed-assertion count the no_errors gate reads. k6's own
 // checks/http_req_failed metrics are untouched.
 function verify(res, checks) {
   const held = check(res, checks);
-  if (!held) bucket(res, checks);
+  if (!held) bucket();
   return held;
 }
 
@@ -376,33 +354,25 @@ export function publishes(data) {
 
 /** Computes the L05 verdict: every class ran inside its own budget, releases climbed by
  *  one, and the consistency counters — stale refills, torn pages, lost saves — stayed at
- *  zero while all three arms were running. `no_errors` here is the strict reading —
- *  zero failed assertions anywhere. When DRILL_WINDOWS announced sidecar drills,
- *  load.sh cannot be consulted from k6 (open() is init-stage only), so it re-weighs
- *  the `L05FAIL` console stamps against the windows file and rewrites this gate
- *  before recording: the stored verdict then means "no failures outside the
- *  announced windows". */
+ *  zero while all three arms were running, with zero failed assertions anywhere. */
 export function handleSummary(data) {
   const metric = (name) => (data.metrics[name] ? data.metrics[name].values : null);
   const count = (name) => (metric(name) ? metric(name).count || 0 : 0);
   const arm = (which) => metric(`http_req_duration{arm:${which}}`) || {};
   const readArm = arm('read'); const writeArm = arm('write'); const publishArm = arm('publish');
   const failEventTotal = count('l05_fail_events');
-  const drillsAnnounced = DRILL_WINDOWS !== '';
   const gates = {
     reads_held: (readArm['p(99)'] || Infinity) < READ_P99_MS && count('l05_reads') > 0,
     writes_held: (writeArm['p(95)'] || Infinity) < P99_MS && count('l05_saves') > 0 && count('l05_write_backs') > 0,
     publishes_held: (publishArm['p(99)'] || Infinity) < P99_MS && count('l05_publishes') > 0,
     no_stale_refills: count('l05_stale') === 0,
     no_torn_pages: count('l05_torn') === 0,
-    // Every failed assertion, wherever it landed — the strict reading. With drills
-    // announced, load.sh replaces this with "none outside the windows" before gating.
+    // Every failed assertion, wherever it landed.
     no_errors: failEventTotal === 0,
   };
   data.l05 = {
     spec: 'L05: mixed reads, writes and publishing — each operation class meets its target; content stays consistent',
-    gate: `read arm p99 <${READ_P99_MS} ms (warm gate), write arm p95 <${P99_MS} ms, publish requests p99 <${P99_MS} ms — all with reads, saves, read-backs and publishes actually counted; zero stale refills, torn pages or failed assertions` +
-      (drillsAnnounced ? ' — drills announced: load.sh re-weighs error_buckets against the windows and requires zero failures outside them' : ''),
+    gate: `read arm p99 <${READ_P99_MS} ms (warm gate), write arm p95 <${P99_MS} ms, publish requests p99 <${P99_MS} ms — all with reads, saves, read-backs and publishes actually counted; zero stale refills, torn pages or failed assertions`,
     requests: {
       reads: count('l05_reads'),
       saves: count('l05_saves'),
@@ -421,13 +391,8 @@ export function handleSummary(data) {
       torn_pages: count('l05_torn'),
       errors: count('l05_errors'),
     },
-    // Total failed-assertion events — the count load.sh cross-checks against the
-    // `L05FAIL <epoch_s>` console stamps it parses from k6's output. Emitted
-    // whether or not drills ran.
+    // Total failed-assertion events.
     error_events: failEventTotal,
-    drills_announced: drillsAnnounced,
-    // Filled by load.sh from the windows file; null here because k6 cannot re-read it.
-    drills: null,
     served: { hit: count('l05_hit'), miss: count('l05_miss'), coalesced: count('l05_coalesced'), bypass: count('l05_bypass') },
     gates,
     held: Object.values(gates).every(Boolean),
@@ -437,8 +402,8 @@ export function handleSummary(data) {
       '',
       '  L05 — mixed reads, writes and publishing',
       `    ${count('l05_reads')} reads (p99 ${(readArm['p(99)'] || 0).toFixed(1)} ms, gate ${READ_P99_MS}), ${count('l05_saves')} saves + ${count('l05_write_backs')} verified read-backs (p95 ${(writeArm['p(95)'] || 0).toFixed(1)} ms), ${count('l05_publishes')} publishes (${count('l05_conflicts')} conflicts retried, ${count('l05_reauths')} session re-auths, p99 ${(publishArm['p(99)'] || 0).toFixed(1)} ms)`,
-      `    stale ${count('l05_stale')}, torn ${count('l05_torn')}, errors ${count('l05_errors')}${drillsAnnounced ? ' (pre-window; load.sh re-weighs against drill windows)' : ''}`,
-      `    verdict: ${data.l05.held ? 'HELD' : 'BROKE'}${drillsAnnounced ? ' — provisional until load.sh applies the drill windows' : ''}`,
+      `    stale ${count('l05_stale')}, torn ${count('l05_torn')}, errors ${count('l05_errors')}`,
+      `    verdict: ${data.l05.held ? 'HELD' : 'BROKE'}`,
       '',
     ].join('\n'),
   };

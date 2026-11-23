@@ -160,6 +160,13 @@ on clean infrastructure and an independent install, so operations are a module w
   database pools/locks and WAL size, cache memory/eviction, the dropped-record counter and
   the in-app log budget are infra queries or unbuilt slices; OTLP export is unbuilt (the spec
   marks it optional — the request span is already the trace root it would hang off).
+- **Lock waits and slow statements (D-239):** a request waits at most 3 s for any lock (a row,
+  a collection's or a project's advisory lock) and then answers `503 unavailable` with
+  `Retry-After`: nothing it did is committed, so a client retries, the same `Idempotency-Key`
+  making it exactly once. A statement slow at its own work still runs to the 5 s statement
+  timeout and answers `500`, logged `"request failed: statement timeout"` with
+  `fault: "statement_timeout"` on the request's `route`: a plan or an index to fix, never to
+  retry. Background units keep their own 3 s lock / 4 s statement bounds (D-236).
 - **Log budgets:** the 7-day/1 GiB/16 KiB-record spec is a platform log-driver duty today;
   the in-app counter and cap are not built — the synchronous writer means pressure shows as
   latency, not silent loss, which is honest but not the spec's shape.
@@ -333,6 +340,7 @@ A backup existing is not proof of a working restore.
 |---|---|
 | Restore without a complete deletion ledger | Public serving blocked until the gap is resolved |
 | Upgrade with an incompatible schema | Rollback refused; forward-fix or restore with a stated data-loss window |
+| A row or lock held for seconds (a stuck admin session, a long publish) | Requests queued on it answer `503` with `Retry-After` after 3 s, nothing committed (D-239); the holder is untouched |
 | Telemetry exporter down | Not applicable today: the synchronous writer has no exporter and drops nothing; log pressure shows as latency |
 
 ## Tests and evidence
@@ -341,7 +349,6 @@ A backup existing is not proof of a working restore.
 - A restore drill on clean infrastructure (`perf/results/2026-11-04T194355Z-restore-drill-…`).
 - An upgrade rehearsal (`scripts/upgrade-rehearsal.sh`, its dated record in `perf/results/`),
   plus the backup-retention drill (`scripts/backup.sh retention-drill`).
-- L07 (24-hour soak: memory, WAL and disk growth explained).
 - L12 (PostgreSQL slow or unavailable).
 - Each drill produces a dated report with commands and outcomes.
 
