@@ -999,3 +999,25 @@ pub(crate) async fn destination(owner: &Session, project: &str, url: &str) -> St
     assert_eq!(reply.status, StatusCode::CREATED, "{}", reply.body);
     reply.body["data"]["id"].as_str().expect("an id").to_owned()
 }
+
+/// Every MCP tool, in the order `tools/list` gives them (D-247): the hand-written tools, then the
+/// catalog's operations under names those don't take. Built from the crate the server links, so
+/// the expectation can't drift from what is offered.
+pub(crate) fn mcp_tools() -> Vec<String> {
+    let hand: Vec<&str> = colophon_mcp::tools::Tool::ALL
+        .iter()
+        .map(|tool| tool.name())
+        .collect();
+    hand.iter()
+        .map(|name| (*name).to_owned())
+        .chain(
+            colophon_mcp::catalog::definitions(&hand)
+                .iter()
+                .filter_map(|definition| definition["name"].as_str().map(str::to_owned)),
+        )
+        .collect()
+}
+
+/// Names MCP never offers, whoever asks: deleting a project (D-247), and verbs an agent might
+/// guess that no operation is called.
+pub(crate) const NEVER_TOOLS: [&str; 4] = ["delete_project", "approve", "publish", "unpublish"];

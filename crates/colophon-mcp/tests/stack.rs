@@ -35,27 +35,23 @@ const ORIGIN: &str = match option_env!("COLOPHON_TEST_ORIGIN") {
     None => "http://localhost:58092",
 };
 
-/// The eighteen tools, in the order `tools/list` gives them.
-const ALL_TOOLS: [&str; 18] = [
-    "list_content_types",
-    "list_entries",
-    "get_entry",
-    "query_entries",
-    "create_draft",
-    "update_draft",
-    "create_publish_request",
-    "request_review",
-    "get_publish_request",
-    "list_releases",
-    "get_release",
-    "list_migrations",
-    "get_migration",
-    "list_migration_items",
-    "list_comments",
-    "create_comment",
-    "list_tasks",
-    "create_task",
-];
+/// Every tool, in the order `tools/list` gives them (D-247): the hand-written ones, then the
+/// catalog's operations under names the hand-written ones don't take. Built from the crate, so the
+/// expectation can't drift from what the server offers.
+fn all_tools() -> Vec<String> {
+    let hand: Vec<&str> = colophon_mcp::tools::Tool::ALL
+        .iter()
+        .map(|tool| tool.name())
+        .collect();
+    hand.iter()
+        .map(|name| (*name).to_owned())
+        .chain(
+            colophon_mcp::catalog::definitions(&hand)
+                .iter()
+                .filter_map(|definition| definition["name"].as_str().map(str::to_owned)),
+        )
+        .collect()
+}
 
 fn port() -> u16 {
     ORIGIN
@@ -502,7 +498,7 @@ async fn a_custom_token_drafts_and_asks_for_review_and_nothing_more() {
     )
     .await;
     let mut mcp = Mcp::start(&secret, &project).await;
-    assert_eq!(mcp.tools().await, ALL_TOOLS);
+    assert_eq!(mcp.tools().await, all_tools());
     let (entry, revision) = draft_and_meet_a_stale_revision(&mut mcp).await;
     retry_with_the_same_key(&mut mcp).await;
     let listed = mcp
@@ -629,23 +625,35 @@ async fn a_read_only_token_is_offered_no_writes_and_the_api_refuses_them() {
     )
     .await;
     let mut mcp = Mcp::start(&secret, &project).await;
-    assert_eq!(
-        mcp.tools().await,
-        [
-            "list_content_types",
-            "list_entries",
-            "get_entry",
-            "query_entries",
-            "get_publish_request",
-            "list_releases",
-            "get_release",
-            "list_migrations",
-            "get_migration",
-            "list_migration_items",
-            "list_comments",
-            "list_tasks"
-        ]
-    );
+    // The hand-written tools it may use, then the whole catalog: the API decides each call.
+    let readable = [
+        "list_content_types",
+        "list_entries",
+        "get_entry",
+        "query_entries",
+        "get_publish_request",
+        "list_releases",
+        "get_release",
+        "list_migrations",
+        "get_migration",
+        "list_migration_items",
+        "list_comments",
+        "list_tasks",
+    ];
+    let hand: Vec<&str> = colophon_mcp::tools::Tool::ALL
+        .iter()
+        .map(|tool| tool.name())
+        .collect();
+    let offered: Vec<String> = readable
+        .iter()
+        .map(|name| (*name).to_owned())
+        .chain(
+            colophon_mcp::catalog::definitions(&hand)
+                .iter()
+                .filter_map(|definition| definition["name"].as_str().map(str::to_owned)),
+        )
+        .collect();
+    assert_eq!(mcp.tools().await, offered);
     let read = mcp
         .call("get_entry", json!({"collection": "articles", "id": entry}))
         .await;
@@ -675,6 +683,26 @@ async fn a_read_only_token_is_offered_no_writes_and_the_api_refuses_them() {
         )
         .await;
     assert_eq!(failed(&proposed)["status"], 403);
+    // The catalog's writes are offered too, and the API refuses them just the same, confirmed
+    // or not needing a yes at all.
+    let catalog_write = mcp
+        .call(
+            "create_entry",
+            json!({"environment": "production", "collection": "articles", "body": article("Sneaky", "x")}),
+        )
+        .await;
+    assert_eq!(failed(&catalog_write)["status"], 403, "{catalog_write}");
+    let confirmed_delete = mcp
+        .call(
+            "delete_entry",
+            json!({"environment": "production", "collection": "articles", "entry": entry, "confirm": true}),
+        )
+        .await;
+    assert_eq!(
+        failed(&confirmed_delete)["status"],
+        403,
+        "{confirmed_delete}"
+    );
     let (_, listed) = call(&owner, Method::GET, &entries, None).await;
     assert_eq!(
         listed["data"].as_array().map(Vec::len),
@@ -694,7 +722,7 @@ async fn a_read_only_token_is_offered_no_writes_and_the_api_refuses_them() {
 
 #[tokio::test]
 #[ignore = "needs the local stack and colophon-server; see the module docs"]
-async fn no_tool_approves_or_publishes_even_for_a_full_access_token() {
+async fn a_full_access_token_changes_nothing_live_until_the_person_says_yes() {
     let (_server, owner, project) = setup().await;
     let secret = token(
         &owner,
@@ -705,37 +733,18 @@ async fn no_tool_approves_or_publishes_even_for_a_full_access_token() {
     let mut mcp = Mcp::start(&secret, &project).await;
     assert_eq!(
         mcp.tools().await,
-        ALL_TOOLS,
-        "the same eighteen tools, whatever the token may do"
+        all_tools(),
+        "the same tools, whatever the token may do: the API decides each call"
     );
-    for name in [
-        "approve",
-        "approve_publish_request",
-        "review",
-        "review_publish_request",
-        "publish",
-        "publish_request",
-        "unpublish",
-        "schedule",
-        "schedule_publish",
-        "create_release",
-        "manage_roles",
-        "create_token",
-        "add_member",
-        "resolve_comment",
-        "reopen_comment",
-        "update_task",
-        "plan_migration",
-        "approve_migration",
-        "apply_migration",
-        "cancel_migration",
-        "resolve_migration",
-    ] {
-        let response = mcp
-            .request("tools/call", json!({"name": name, "arguments": {}}))
-            .await;
-        assert_eq!(response["error"]["code"], -32602, "{name}: {response}");
-    }
+    // Deleting a project is never offered: not listed, and calling it is the unknown-tool error.
+    let response = mcp
+        .request(
+            "tools/call",
+            json!({"name": "delete_project", "arguments": {}}),
+        )
+        .await;
+    assert_eq!(response["error"]["code"], -32602, "{response}");
+
     let created = mcp
         .call(
             "create_draft",
@@ -747,9 +756,9 @@ async fn no_tool_approves_or_publishes_even_for_a_full_access_token() {
         .expect("an id")
         .to_owned();
     let request = propose(&mut mcp, &entry).await;
-    // An approval can't be smuggled in through a tool's arguments either.
     let id = request["id"].as_str().expect("an id");
     let hash = request["hash"].as_str().expect("a hash");
+    // An approval can't be smuggled in through a hand-written tool's arguments either.
     let smuggled = mcp
         .call(
             "request_review",
@@ -757,10 +766,38 @@ async fn no_tool_approves_or_publishes_even_for_a_full_access_token() {
         )
         .await;
     assert_eq!(failed(&smuggled)["code"], "invalid_arguments");
+
+    // Every tool that publishes, approves, removes or manages access answers with what it would
+    // do, and does nothing, until it is called with confirm: true.
+    let listed = mcp.request("tools/list", json!({})).await;
+    let gated: Vec<String> = listed["result"]["tools"]
+        .as_array()
+        .expect("tools")
+        .iter()
+        .filter(|tool| tool["annotations"]["destructiveHint"] == json!(true))
+        .filter_map(|tool| tool["name"].as_str().map(str::to_owned))
+        .collect();
+    assert!(
+        gated.iter().any(|name| name == "publish_changeset"),
+        "{gated:?}"
+    );
+    assert!(
+        gated.iter().any(|name| name == "review_changeset"),
+        "{gated:?}"
+    );
+    for name in &gated {
+        let unconfirmed = mcp.call(name, json!({})).await;
+        assert_eq!(
+            unconfirmed["structuredContent"]["needs_confirmation"],
+            json!(true),
+            "{name}: {unconfirmed}"
+        );
+    }
     let read = mcp.call("get_publish_request", json!({"id": id})).await;
     assert_eq!(
         ok(&read)["publish_request"]["status"]["state"],
-        "awaiting_review"
+        "awaiting_review",
+        "nothing approved it"
     );
     assert_eq!(ok(&read)["publish_request"]["reviews"], json!([]));
     let (status, releases) = call(
@@ -796,7 +833,7 @@ async fn a_wrong_project_or_a_revoked_token_is_said_plainly() {
     );
     assert_eq!(elsewhere.close().await, Some(0));
     let mut mcp = Mcp::start(&secret, &project).await;
-    assert_eq!(mcp.tools().await, ALL_TOOLS);
+    assert_eq!(mcp.tools().await, all_tools());
     let (status, revoked) = call(
         &owner,
         Method::DELETE,

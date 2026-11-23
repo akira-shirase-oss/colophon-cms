@@ -1,7 +1,7 @@
 //! The remote MCP endpoint, end to end (D-121, docs/modules/09-automation.md): `{P}/mcp` over
 //! MCP's Streamable HTTP transport, where the agent is a project API token and nothing else.
-//! The handshake mints an `Mcp-Session-Id`, `tools/list` and `tools/call` are the same eighteen
-//! safe tools stdio serves — with the same JSON-RPC refusals — and the transport's own door
+//! The handshake mints an `Mcp-Session-Id`, `tools/list` and `tools/call` are the same
+//! tools stdio serves — with the same JSON-RPC refusals — and the transport's own door
 //! checks (a trusted `Origin`, an `Accept` that allows `application/json`, the
 //! `MCP-Protocol-Version` header, a session only its own token may use) all hold. Needs the
 //! stack, the migrations, and `colophon-mcp` built beside `colophon-server` for the parity
@@ -266,39 +266,8 @@ fn tool_names(listed: &Value) -> Vec<String> {
         .unwrap_or_default()
 }
 
-/// The eighteen tools `tools/list` may offer — reads, drafts, proposals; nothing that
-/// approves, publishes, resolves or migrates (the stdio boundary, unchanged over HTTP).
-const ALL_TOOLS: [&str; 18] = [
-    "list_content_types",
-    "list_entries",
-    "get_entry",
-    "query_entries",
-    "create_draft",
-    "update_draft",
-    "create_publish_request",
-    "request_review",
-    "get_publish_request",
-    "list_releases",
-    "get_release",
-    "list_migrations",
-    "get_migration",
-    "list_migration_items",
-    "list_comments",
-    "create_comment",
-    "list_tasks",
-    "create_task",
-];
-
-/// Names an agent might guess at — the privileged verbs MCP must not know, over HTTP either.
-const FORBIDDEN_TOOLS: [&str; 7] = [
-    "approve",
-    "publish",
-    "unpublish",
-    "resolve_comment",
-    "update_task",
-    "apply_migration",
-    "create_token",
-];
+/// Names an agent might guess that MCP never offers, over HTTP either (D-247).
+const FORBIDDEN_TOOLS: [&str; 4] = common::NEVER_TOOLS;
 
 /// The whole agent lifecycle over Streamable HTTP: handshake, the session id, the tool
 /// table stdio serves, a read and a write through `tools/call`, the refusal boundary, and
@@ -345,12 +314,42 @@ async fn an_agent_lives_over_streamable_http() {
     .await;
     assert_eq!(stray.status, StatusCode::ACCEPTED, "{}", stray.body);
 
-    // Discovery: the eighteen safe tools, none of the privileged names an agent might guess.
+    // Discovery: every tool the server links (D-247), never deleting the project.
     let listed = remote.request("tools/list", &json!({})).await;
     let tools = tool_names(&listed);
-    assert_eq!(tools, ALL_TOOLS, "{listed}");
+    assert_eq!(tools, common::mcp_tools(), "{listed}");
     for name in FORBIDDEN_TOOLS {
         assert!(!tools.iter().any(|tool| tool == name), "{name} listed");
+    }
+    // What publishes, removes or manages access is marked so and, without the person's yes
+    // (`confirm: true`), answers with what it would do instead of doing it.
+    let gated: Vec<&str> = listed["result"]["tools"]
+        .as_array()
+        .expect("tools")
+        .iter()
+        .filter(|tool| tool["annotations"]["destructiveHint"] == json!(true))
+        .filter_map(|tool| tool["name"].as_str())
+        .collect();
+    for name in [
+        "publish_changeset",
+        "review_changeset",
+        "rollback_release",
+        "remove_member",
+        "create_token",
+        "delete_entry",
+    ] {
+        assert!(
+            gated.contains(&name),
+            "{name} is not marked destructive: {gated:?}"
+        );
+    }
+    for name in &gated {
+        let held = remote.call(name, json!({})).await;
+        assert_eq!(
+            held["result"]["structuredContent"]["needs_confirmation"],
+            json!(true),
+            "{name}: {held}"
+        );
     }
 
     // Real work: read the content types, then make the draft and proposal an agent may.

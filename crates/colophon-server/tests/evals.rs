@@ -1606,54 +1606,9 @@ fn cross_project(fx: &Fixture) -> RunFut {
 
 // ---------- the MCP surface ----------
 
-/// The eighteen tools `tools/list` may offer (module 09): reads, drafts, proposals. Nothing
-/// that approves, publishes, resolves or migrates — whatever the token may do.
-const ALL_TOOLS: [&str; 18] = [
-    "list_content_types",
-    "list_entries",
-    "get_entry",
-    "query_entries",
-    "create_draft",
-    "update_draft",
-    "create_publish_request",
-    "request_review",
-    "get_publish_request",
-    "list_releases",
-    "get_release",
-    "list_migrations",
-    "get_migration",
-    "list_migration_items",
-    "list_comments",
-    "create_comment",
-    "list_tasks",
-    "create_task",
-];
-
-/// Names an agent host might guess at — the privileged and destructive verbs MCP must not
-/// know (D-106).
-const FORBIDDEN_TOOLS: [&str; 21] = [
-    "approve",
-    "approve_publish_request",
-    "review",
-    "review_publish_request",
-    "publish",
-    "publish_request",
-    "unpublish",
-    "schedule",
-    "schedule_publish",
-    "create_release",
-    "manage_roles",
-    "create_token",
-    "add_member",
-    "resolve_comment",
-    "reopen_comment",
-    "update_task",
-    "plan_migration",
-    "approve_migration",
-    "apply_migration",
-    "cancel_migration",
-    "resolve_migration",
-];
+/// Names an agent host might guess at that MCP never offers, whatever the token (D-247):
+/// deleting a project above all.
+const FORBIDDEN_TOOLS: [&str; 4] = common::NEVER_TOOLS;
 
 /// The `colophon-mcp` binary, driven over its stdin and stdout like an agent host does. It
 /// sits beside `colophon-server` (`cargo test --workspace` builds both; for a lone
@@ -1751,10 +1706,13 @@ impl Mcp {
     }
 }
 
-/// A full-access token over stdio: `tools/list` offers the same eighteen tools anyway, every
-/// guessed-at privileged name is `-32602`, an approval smuggled through `request_review`'s
-/// arguments is a typed `invalid_arguments`, and its own draft and proposal work — the
-/// changeset still awaits a person and nothing published.
+/// A full-access token over stdio (D-247): `tools/list` offers every project operation but
+/// deleting the project, and a guessed delete is `-32602`. Everything that publishes, approves,
+/// removes or manages access answers with what it would do and runs nothing until
+/// `confirm: true`. The API still decides each call: what the token may not do is refused there
+/// (an API token never reaches members or tokens; a read-only token never writes), and an
+/// approval smuggled through `request_review`'s arguments is a typed `invalid_arguments`. Its own
+/// draft and proposal work lands; the changeset still awaits a person and nothing published.
 fn mcp_surface(fx: &Fixture) -> RunFut {
     let fx = fx.clone();
     Box::pin(async move {
@@ -1768,8 +1726,7 @@ fn mcp_surface(fx: &Fixture) -> RunFut {
         .await;
         let mut mcp = Mcp::start(&agent, &project).await;
 
-        // Discovery grants nothing: the list is the eighteen safe tools even for a token
-        // that could publish through the API (AU1, D-106).
+        // Discovery: every tool the server links, the same whatever the token may do.
         let listed = mcp.request("tools/list", json!({})).await;
         let tools: Vec<String> = listed["result"]["tools"]
             .as_array()
@@ -1787,16 +1744,74 @@ fn mcp_surface(fx: &Fixture) -> RunFut {
                 format!("tools: {tools:?}"),
             );
         }
-        if tools != ALL_TOOLS {
+        let expected = common::mcp_tools();
+        if tools != expected {
             report
                 .problems
-                .push(format!("tools/list wanted {ALL_TOOLS:?}, got {tools:?}"));
+                .push(format!("tools/list wanted {expected:?}, got {tools:?}"));
         }
         // And guessing one by name gets the unknown-tool error, every time.
         for name in FORBIDDEN_TOOLS {
             let called = mcp.call(name, json!({})).await;
             report.refused_rpc(&format!("call `{name}` raw"), &called, -32602);
         }
+        // Everything that needs the person's yes is marked so, and without it runs nothing.
+        let gated: Vec<String> = listed["result"]["tools"]
+            .as_array()
+            .map(|tools| {
+                tools
+                    .iter()
+                    .filter(|tool| tool["annotations"]["destructiveHint"] == json!(true))
+                    .filter_map(|tool| tool["name"].as_str().map(str::to_owned))
+                    .collect()
+            })
+            .unwrap_or_default();
+        for name in [
+            "publish_changeset",
+            "review_changeset",
+            "schedule_changeset",
+            "rollback_release",
+            "delete_entry",
+            "remove_member",
+            "change_member_role",
+            "create_token",
+            "revoke_token",
+        ] {
+            report.held(
+                format!("`{name}` asks the person first"),
+                gated.iter().any(|tool| tool == name),
+                format!("destructive: {gated:?}"),
+            );
+        }
+        for name in &gated {
+            let held = mcp.call(name, json!({})).await;
+            report.held(
+                format!("`{name}` without confirm runs nothing"),
+                held["result"]["structuredContent"]["needs_confirmation"] == json!(true),
+                format!("{held}"),
+            );
+        }
+        // Confirmed, the API still decides with the token's own permissions: an API token never
+        // manages people or tokens.
+        let minted = mcp
+            .call(
+                "create_token",
+                json!({"body": {"name": "minted", "kind": "full-access"}, "confirm": true}),
+            )
+            .await;
+        report.refused_tool(
+            "create_token confirmed, by an API token",
+            &minted,
+            "forbidden",
+        );
+        report.held(
+            "the API says why: api_token_not_allowed",
+            minted["result"]["structuredContent"]["error"]["reason"]
+                == json!("api_token_not_allowed"),
+            format!("{minted}"),
+        );
+        let members = mcp.call("list_members", json!({})).await;
+        report.refused_tool("list_members, by an API token", &members, "forbidden");
 
         // Its own permitted work still lands, through the tools that do exist.
         let drafted = mcp
@@ -1838,6 +1853,47 @@ fn mcp_surface(fx: &Fixture) -> RunFut {
             &smuggled,
             "invalid_arguments",
         );
+        // A delete that wasn't confirmed left the entry where it was; a read-only token that
+        // confirms one is refused by the API, and the entry stays.
+        let unconfirmed = mcp
+            .call(
+                "delete_entry",
+                json!({"environment": "production", "collection": "articles", "entry": entry}),
+            )
+            .await;
+        report.held(
+            "delete_entry without confirm runs nothing",
+            unconfirmed["result"]["structuredContent"]["needs_confirmation"] == json!(true),
+            format!("{unconfirmed}"),
+        );
+        let (reader, _) = token(
+            &fx,
+            &project,
+            &json!({"name": "eval-mcp-read", "kind": "read-only", "expires_in_days": 1}),
+        )
+        .await;
+        let mut read_only = Mcp::start(&reader, &project).await;
+        let deleted = read_only
+            .call(
+                "delete_entry",
+                json!({"environment": "production", "collection": "articles", "entry": entry, "confirm": true}),
+            )
+            .await;
+        report.refused_tool(
+            "delete_entry confirmed, by a read-only token",
+            &deleted,
+            "forbidden",
+        );
+        let _ = read_only.close().await;
+        let still = mcp
+            .call("get_entry", json!({"collection": "articles", "id": entry}))
+            .await;
+        report.held(
+            "the entry is still there",
+            still["result"]["isError"] == json!(false),
+            format!("{still}"),
+        );
+
         // The proposal sits awaiting a person — exactly where it was left.
         let read = mcp.call("get_publish_request", json!({"id": id})).await;
         let state = read["result"]["structuredContent"]["publish_request"]["status"]["state"]
