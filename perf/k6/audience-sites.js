@@ -69,6 +69,7 @@ const COLLECTIONS = ['posts', 'guides', 'recipes', 'stories', 'photos'];
 
 // The seed's record (open() is init-stage only, so it is read here, and may legitimately not
 // exist: setup() then asks for DEMO_PROJECT).
+// per-VU state: set once on first use and only read after; no step order.
 let seeded = null;
 try {
   seeded = JSON.parse(open('../../apps/sites/.colophon.json'));

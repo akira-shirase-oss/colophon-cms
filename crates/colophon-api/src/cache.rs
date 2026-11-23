@@ -10,12 +10,21 @@
 //! one database read). When Valkey is down or slow, answers come from Postgres and are marked
 //! `bypass`: the cache is disposable, never a source of truth (DL7, L11, F08). Postgres stays
 //! bounded either way: fills go through its pool, and a full pool answers 503 with `Retry-After`.
+//!
+//! A key this process stored is filled again within its lifetime only if the cache lost the answer
+//! (an eviction, a flush, a lost store). Such fills are counted per kind of key ([`REFILLS`]) and said
+//! once a window by the server's summary task, outside any request, on the `colophon_api::cache_refill`
+//! target: at INFO when the window had any, at DEBUG when it had none (the load runs' proof the count
+//! was taken). L10 gates their count at zero (D-232).
 
 use std::{
     collections::HashMap,
     future::Future,
-    sync::{Arc, Mutex, PoisonError},
-    time::Duration,
+    sync::{
+        Arc, LazyLock, Mutex, PoisonError,
+        atomic::{AtomicU64, Ordering},
+    },
+    time::{Duration, Instant},
 };
 
 use tokio::sync::OnceCell;
@@ -29,6 +38,99 @@ const TTL: Duration = Duration::from_secs(300);
 const JITTER: Duration = Duration::from_secs(60);
 /// Larger answers are served but not cached, so a few huge pages can't evict everything else.
 const MAX_CACHED_BYTES: usize = 1 << 20;
+/// The most stored keys the duplicate-fill check remembers. Past it, it drops the ones whose lifetime
+/// has passed, and all of them when that leaves more than three quarters: it can miss a duplicate,
+/// never report one that wasn't.
+const MAX_TRACKED_FILLS: usize = 16_384;
+
+/// Fills of keys this process had stored less than a lifetime before (D-232), per kind of key, for
+/// the current window. Bounded: four counters.
+#[derive(Debug, Default)]
+pub struct Refills {
+    /// Every store Valkey kept in the window: the fill path's own count, so a window of zero refills
+    /// is a measured zero (D-232's positive control), not a path that stopped counting.
+    stored: AtomicU64,
+    /// Every answer a fill meant to store that Valkey didn't keep (too big, an error, past the
+    /// deadline): with `stored`, every fill of the window is accounted for.
+    unkept: AtomicU64,
+    list: AtomicU64,
+    entry: AtomicU64,
+    query: AtomicU64,
+    other: AtomicU64,
+}
+
+/// The process's refill counts: the cache adds to them, the server's summary task says them.
+pub static REFILLS: LazyLock<Refills> = LazyLock::new(Refills::default);
+
+impl Refills {
+    /// Counts one refill of `key`, by its kind. Logs nothing: a refill happens inside a request,
+    /// whose span names the project and entry, and in production each eviction would be a line.
+    pub fn note(&self, key: &str) {
+        let counter = match key_kind(key) {
+            "list" => &self.list,
+            "entry" => &self.entry,
+            "query" => &self.query,
+            _ => &self.other,
+        };
+        counter.fetch_add(1, Ordering::Relaxed);
+    }
+
+    /// Closes the window: one line with its counts, at INFO when there were any, at DEBUG when there
+    /// were none (so a load run can tell a count of zero from a count that wasn't taken).
+    pub fn close_window(&self) {
+        self.say(true);
+    }
+
+    /// At shutdown: says what the open window counted, if anything.
+    pub fn flush(&self) {
+        self.say(false);
+    }
+
+    /// Counts one store Valkey kept.
+    fn kept(&self) {
+        self.stored.fetch_add(1, Ordering::Relaxed);
+    }
+
+    /// Counts one answer a fill meant to store that Valkey didn't keep.
+    fn not_kept(&self) {
+        self.unkept.fetch_add(1, Ordering::Relaxed);
+    }
+
+    fn say(&self, even_none: bool) {
+        let stored = self.stored.swap(0, Ordering::Relaxed);
+        let unkept = self.unkept.swap(0, Ordering::Relaxed);
+        let list = self.list.swap(0, Ordering::Relaxed);
+        let entry = self.entry.swap(0, Ordering::Relaxed);
+        let query = self.query.swap(0, Ordering::Relaxed);
+        let other = self.other.swap(0, Ordering::Relaxed);
+        let total = list + entry + query + other;
+        if total > 0 {
+            tracing::info!(
+                target: "colophon_api::cache_refill",
+                stored,
+                unkept,
+                list,
+                entry,
+                query,
+                other,
+                total,
+                "delivery cache: keys filled again within their lifetime"
+            );
+        } else if even_none {
+            tracing::debug!(
+                target: "colophon_api::cache_refill",
+                stored,
+                unkept,
+                list,
+                entry,
+                query,
+                other,
+                total,
+                "delivery cache: keys filled again within their lifetime"
+            );
+        }
+    }
+}
 
 /// Where an answer came from, for the `Colophon-Cache` response header.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -111,6 +213,11 @@ pub struct DeliveryCache {
     /// Valkey, when configured; a call that fails or is slow falls back to Postgres.
     valkey: Valkey,
     flights: Mutex<HashMap<String, Flight>>,
+    /// When this process last stored each key it filled, to tell a fill the cache should have
+    /// answered (the key was stored less than a lifetime ago) from a first one (D-232).
+    stored: Mutex<HashMap<String, Instant>>,
+    /// Where its stores and refills are counted: the process's [`REFILLS`], or a test's own.
+    refills: &'static Refills,
     /// How long a stored answer lives.
     ttl: Duration,
     /// Up to this much extra each store draws, so entries made together don't expire together.
@@ -136,6 +243,8 @@ impl DeliveryCache {
         Self {
             valkey: Valkey::disabled(),
             flights: Mutex::new(HashMap::new()),
+            stored: Mutex::new(HashMap::new()),
+            refills: &REFILLS,
             ttl: TTL,
             jitter: JITTER,
         }
@@ -181,19 +290,19 @@ impl DeliveryCache {
         }
     }
 
-    /// Stores `value` under `key` for a jittered lifetime. Failures are ignored: the cache is
-    /// disposable.
-    async fn put(&self, key: &str, value: &Cached, jitter: u64) {
+    /// Stores `value` under `key` for a jittered lifetime. When Valkey took it, the moment the SET was
+    /// sent, which is no later than when its lifetime began there; `None` when it didn't (too big, no
+    /// connection, an error or the deadline), and a store that wasn't taken is never remembered.
+    async fn put(&self, key: &str, value: &Cached, jitter: u64) -> Option<Instant> {
         if value.body.len() > MAX_CACHED_BYTES {
-            return;
+            return None;
         }
-        let Some(mut connection) = self.valkey.connection().await else {
-            return;
-        };
+        let mut connection = self.valkey.connection().await?;
         // `PX`, not `EX`: the configured lifetimes are milliseconds (COLOPHON_CACHE_TTL_MS),
         // and a whole-second store would silently round a 1,500-ms TTL down to one.
         let lifetime = u64::try_from(self.ttl.as_millis().max(1)).unwrap_or(u64::MAX)
             + jitter % (u64::try_from(self.jitter.as_millis()).unwrap_or(u64::MAX) + 1);
+        let sent = Instant::now();
         let stored = tokio::time::timeout(
             DEADLINE,
             redis::cmd("SET")
@@ -204,8 +313,26 @@ impl DeliveryCache {
                 .query_async::<()>(&mut connection),
         )
         .await;
-        if !matches!(stored, Ok(Ok(()))) {
+        if matches!(stored, Ok(Ok(()))) {
+            Some(sent)
+        } else {
             self.valkey.fail();
+            None
+        }
+    }
+
+    /// Records that this process stored `key` at `at`, and counts a refill when it had already
+    /// stored it less than the shortest lifetime before: the cache lost an answer it was meant to keep.
+    fn stored(&self, key: &str, at: Instant) {
+        let (again, forgotten) = {
+            let mut stored = self.stored.lock().unwrap_or_else(PoisonError::into_inner);
+            record_fill(&mut stored, key, at, self.ttl)
+        };
+        // A full record is freed after the lock, not under it.
+        drop(forgotten);
+        self.refills.kept();
+        if again.is_some() {
+            self.refills.note(key);
         }
     }
 
@@ -240,7 +367,10 @@ impl DeliveryCache {
                 }
                 let filled = fill().await?;
                 if reachable && let Filled::Keep(cached) = &filled {
-                    self.put(key, cached, jitter).await;
+                    match self.put(key, cached, jitter).await {
+                        Some(at) => self.stored(key, at),
+                        None => self.refills.not_kept(),
+                    }
                 }
                 Ok((filled, Source::Database))
             })
@@ -267,6 +397,46 @@ impl DeliveryCache {
     }
 }
 
+/// Records a store of `key` at `now`: the age of the previous store when it was less than `lifetime`
+/// before (a fill the cache should have answered), and the whole record when it was full of live
+/// keys and had to be forgotten, for the caller to drop after its lock. Bounded by
+/// [`MAX_TRACKED_FILLS`].
+fn record_fill(
+    stored: &mut HashMap<String, Instant>,
+    key: &str,
+    now: Instant,
+    lifetime: Duration,
+) -> (Option<Duration>, Option<HashMap<String, Instant>>) {
+    if let Some(at) = stored.get_mut(key) {
+        let age = now.saturating_duration_since(*at);
+        *at = now;
+        return (Some(age).filter(|age| *age < lifetime), None);
+    }
+    let mut forgotten = None;
+    if stored.len() >= MAX_TRACKED_FILLS {
+        stored.retain(|_, at| now.saturating_duration_since(*at) < lifetime);
+        // Mostly live keys: forget them all rather than scan nearly every one again at the next key.
+        if stored.len() > MAX_TRACKED_FILLS / 4 * 3 {
+            forgotten = Some(std::mem::take(stored));
+        }
+    }
+    stored.insert(key.to_owned(), now);
+    (None, forgotten)
+}
+
+/// Which kind of answer a key holds, for the duplicate-fill line (never the key: it names projects).
+fn key_kind(key: &str) -> &'static str {
+    if key.contains(":list:") {
+        "list"
+    } else if key.contains(":entry:") {
+        "entry"
+    } else if key.contains(":query:") {
+        "query"
+    } else {
+        "other"
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::{
@@ -281,6 +451,101 @@ mod tests {
             etag: "\"e\"".to_owned(),
             body: body.to_owned(),
         }
+    }
+
+    /// The refill answer alone (the tests that don't reach the cap).
+    fn again(stored: &mut HashMap<String, Instant>, key: &str, now: Instant) -> Option<Duration> {
+        let (again, forgotten) = record_fill(stored, key, now, Duration::from_secs(300));
+        assert!(forgotten.is_none(), "nothing is forgotten below the cap");
+        again
+    }
+
+    #[test]
+    fn a_key_stored_again_within_its_lifetime_is_a_duplicate_fill_and_after_it_is_not() {
+        let start = Instant::now();
+        let mut stored = HashMap::new();
+        assert_eq!(again(&mut stored, "k", start), None, "a first fill");
+        let soon = start + Duration::from_secs(2);
+        assert_eq!(
+            again(&mut stored, "k", soon),
+            Some(Duration::from_secs(2)),
+            "refilled 2 s after it was stored: the cache lost it"
+        );
+        assert_eq!(again(&mut stored, "other", soon), None, "another key");
+        // Measured from the latest store: a lifetime after the 2-s refill, the key had expired.
+        let later = soon + Duration::from_secs(300);
+        assert_eq!(again(&mut stored, "k", later), None, "expired, not lost");
+    }
+
+    #[test]
+    fn the_fill_record_is_bounded_and_only_ever_forgets() {
+        let lifetime = Duration::from_secs(300);
+        let start = Instant::now();
+        let mut stored = HashMap::new();
+        for n in 0..MAX_TRACKED_FILLS {
+            assert_eq!(again(&mut stored, &format!("k{n}"), start), None);
+        }
+        assert_eq!(stored.len(), MAX_TRACKED_FILLS);
+        // Full of live keys: a new one forgets the record (handed back to drop after the lock).
+        let soon = start + Duration::from_secs(1);
+        let (refill, forgotten) = record_fill(&mut stored, "new", soon, lifetime);
+        assert_eq!(refill, None);
+        assert_eq!(forgotten.map(|all| all.len()), Some(MAX_TRACKED_FILLS));
+        assert_eq!(stored.len(), 1);
+        // Forgetting can miss a duplicate but never invents one: k0 was stored, now it reads as first.
+        assert_eq!(again(&mut stored, "k0", soon), None);
+        // Full again, of keys past their lifetime: retain drops those and nothing is forgotten.
+        let mut stored = HashMap::new();
+        for n in 0..MAX_TRACKED_FILLS {
+            again(&mut stored, &format!("old{n}"), start);
+        }
+        let stored_live = start + lifetime + Duration::from_millis(999);
+        let past = start + lifetime + Duration::from_secs(1);
+        let (refill, forgotten) = record_fill(&mut stored, "live", stored_live, lifetime);
+        assert_eq!((refill, forgotten.is_none()), (None, true));
+        assert_eq!(
+            stored.len(),
+            1,
+            "every old key expired, so retain dropped them"
+        );
+        assert_eq!(
+            again(&mut stored, "live", past),
+            Some(Duration::from_millis(1)),
+            "the live key is still remembered"
+        );
+    }
+
+    #[test]
+    fn refills_are_counted_by_kind_and_a_window_starts_from_zero() {
+        let scope = "colophon:delivery:r1:m0:p0:e0:x0:g3:u0";
+        let refills = Refills::default();
+        refills.note(&format!("{scope}:entry:00ff:articles"));
+        refills.note(&format!("{scope}:entry:0100:articles"));
+        refills.note(&format!("{scope}:list:50:-:articles"));
+        assert_eq!(refills.entry.load(Ordering::Relaxed), 2);
+        assert_eq!(refills.list.load(Ordering::Relaxed), 1);
+        refills.close_window();
+        for counter in [
+            &refills.list,
+            &refills.entry,
+            &refills.query,
+            &refills.other,
+        ] {
+            assert_eq!(
+                counter.load(Ordering::Relaxed),
+                0,
+                "the next window starts from zero"
+            );
+        }
+    }
+
+    #[test]
+    fn a_duplicate_fill_names_the_kind_of_key_never_the_key() {
+        let scope = "colophon:delivery:r1:m0:p0:e0:x0:g3:u0";
+        assert_eq!(key_kind(&format!("{scope}:list:50:-:articles")), "list");
+        assert_eq!(key_kind(&format!("{scope}:entry:00ff:articles")), "entry");
+        assert_eq!(key_kind(&format!("{scope}:query:ab:-:articles")), "query");
+        assert_eq!(key_kind("something else"), "other");
     }
 
     #[test]
@@ -366,6 +631,86 @@ mod tests {
             next,
             Ok((Filled::Missing, Served::Bypass)),
             "a new fill, not the old failure"
+        );
+    }
+
+    /// The local stack's Valkey (deploy/local.env), or `COLOPHON_CACHE_URL`.
+    fn stack_valkey() -> String {
+        std::env::var("COLOPHON_CACHE_URL")
+            .unwrap_or_else(|_| "redis://:colophon-dev@127.0.0.1:56379".to_owned())
+    }
+
+    /// Through `get_or_fill` against a real Valkey: a store is counted, a hit counts nothing, a key
+    /// Valkey lost within its lifetime is one refill, and an answer Valkey refuses to keep is counted
+    /// as not kept, never as a store (D-232).
+    #[tokio::test]
+    #[ignore = "needs the local stack: scripts/stack.sh up"]
+    async fn a_key_valkey_lost_is_counted_once_as_a_refill_and_a_hit_counts_nothing() {
+        let refills: &'static Refills = Box::leak(Box::default());
+        let mut cache = DeliveryCache::new(&stack_valkey()).expect("valid URL");
+        cache.refills = refills;
+        let key = format!(
+            "colophon:delivery:test:{}:entry:00ff:articles",
+            std::process::id()
+        );
+        let first = cache
+            .get_or_fill(&key, 0, || async { Ok(Filled::Keep(answer("a"))) })
+            .await;
+        assert_eq!(first, Ok((Filled::Keep(answer("a")), Served::Miss)));
+        assert_eq!(
+            refills.stored.load(Ordering::Relaxed),
+            1,
+            "the store is counted"
+        );
+        let hit = cache
+            .get_or_fill(&key, 0, || async { Ok(Filled::Keep(answer("never"))) })
+            .await;
+        assert_eq!(hit, Ok((Filled::Keep(answer("a")), Served::Hit)));
+        assert_eq!(
+            refills.stored.load(Ordering::Relaxed),
+            1,
+            "a hit stores nothing"
+        );
+        // Valkey loses the answer long before its lifetime (an eviction, a flush).
+        let mut connection = cache.valkey.connection().await.expect("the stack's Valkey");
+        redis::cmd("DEL")
+            .arg(&key)
+            .query_async::<()>(&mut connection)
+            .await
+            .expect("deleted");
+        let again = cache
+            .get_or_fill(&key, 0, || async { Ok(Filled::Keep(answer("b"))) })
+            .await;
+        assert_eq!(again, Ok((Filled::Keep(answer("b")), Served::Miss)));
+        assert_eq!(refills.stored.load(Ordering::Relaxed), 2);
+        assert_eq!(
+            refills.entry.load(Ordering::Relaxed),
+            1,
+            "one refill, of an entry key"
+        );
+        redis::cmd("DEL")
+            .arg(&key)
+            .query_async::<()>(&mut connection)
+            .await
+            .expect("cleaned up");
+        // An answer Valkey doesn't keep (over the 1 MiB it caches) is counted as not kept, never as
+        // a store: put is called with Valkey reachable, and says no.
+        let big = "x".repeat(MAX_CACHED_BYTES + 1);
+        let served = cache
+            .get_or_fill(&format!("{key}:big"), 0, || async {
+                Ok(Filled::Keep(answer(&big)))
+            })
+            .await;
+        assert_eq!(served, Ok((Filled::Keep(answer(&big)), Served::Miss)));
+        assert_eq!(
+            refills.stored.load(Ordering::Relaxed),
+            2,
+            "a store that wasn't kept is never counted"
+        );
+        assert_eq!(
+            refills.unkept.load(Ordering::Relaxed),
+            1,
+            "it is counted as not kept"
         );
     }
 

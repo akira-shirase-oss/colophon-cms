@@ -160,10 +160,39 @@ pub(crate) async fn migrate_status(database: &MigratorUrl, out: Out) -> Exit {
     };
     let versions: Vec<i64> = applied.iter().map(|row| row.version).collect();
     let known = colophon_db::MIGRATOR.iter().count();
+    // Grants that exist only inside a non-superuser migration's transaction, found outside one
+    // (D-234): reported, for smoke.sh and the operator; the status itself is the schema's.
+    let leftovers = {
+        let mut conn = match pool.acquire().await {
+            Ok(conn) => conn,
+            Err(error) => return fail(&out, Exit::Unavailable, &error.to_string()),
+        };
+        match colophon_db::nonsuperuser::grant_leftovers(&mut conn).await {
+            Ok(leftovers) => leftovers,
+            Err(error) => return fail(&out, Exit::Internal, &chain(&error)),
+        }
+    };
+    let grants = json!({
+        "create_on_public": leftovers.create_on_public,
+        "deleter_inherited": leftovers.deleter_inherited,
+    });
+    if !leftovers.is_clean() && !out.format.machine() {
+        if !leftovers.create_on_public.is_empty() {
+            eprintln!(
+                "warning: {} hold CREATE on schema public, which none may outside a migration (D-234); `admin migrate` removes it",
+                leftovers.create_on_public.join(", ")
+            );
+        }
+        if leftovers.deleter_inherited {
+            eprintln!(
+                "warning: this login inherits colophon_deleter, which migration 0048 turns off (D-234); `admin migrate` puts it back"
+            );
+        }
+    }
     match restore::check_schema(&applied) {
         restore::SchemaCheck::Current => {
             if out.format.machine() {
-                out.print_data(&json!({ "status": "current", "applied": versions, "pending": [] }));
+                out.print_data(&json!({ "status": "current", "applied": versions, "pending": [], "grants": grants }));
             } else {
                 println!(
                     "schema current: {} migrations applied, none of {known} pending",
@@ -175,7 +204,7 @@ pub(crate) async fn migrate_status(database: &MigratorUrl, out: Out) -> Exit {
         restore::SchemaCheck::Pending(pending) => {
             if out.format.machine() {
                 out.print_data(&json!({
-                    "status": "behind", "applied": versions, "pending": pending,
+                    "status": "behind", "applied": versions, "pending": pending, "grants": grants,
                 }));
             } else {
                 println!(
@@ -192,7 +221,7 @@ pub(crate) async fn migrate_status(database: &MigratorUrl, out: Out) -> Exit {
         restore::SchemaCheck::Unknown(unknown) => {
             if out.format.machine() {
                 out.print_data(&json!({
-                    "status": "unknown", "applied": versions, "unknown": unknown,
+                    "status": "unknown", "applied": versions, "unknown": unknown, "grants": grants,
                 }));
             } else {
                 eprintln!(
@@ -810,6 +839,20 @@ pub(crate) async fn restore_epoch(database: &MigratorUrl, out: Out) -> Exit {
         Ok(pool) => pool,
         Err(exit) => return exit,
     };
+    // A restored copy never keeps its source's media key (D-233): every older key retired, so a
+    // staging copy of production can't sign or verify production's links, nor production its.
+    // First: a failed step after it reruns the stage, and a second rotation is harmless where a
+    // second epoch advance is not.
+    let media_key = match colophon_db::delivery::rotate_media_key(
+        &pool,
+        true,
+        colophon_db::delivery::RotationReason::Restore,
+    )
+    .await
+    {
+        Ok(kid) => kid,
+        Err(error) => return fail(&out, Exit::Internal, &chain(&error)),
+    };
     let bumped = match restore::advance_epoch(&pool).await {
         Ok(bumped) => bumped,
         Err(error) => return fail(&out, Exit::Internal, &chain(&error)),
@@ -817,6 +860,7 @@ pub(crate) async fn restore_epoch(database: &MigratorUrl, out: Out) -> Exit {
     if out.format.machine() {
         out.print_data(&json!({
             "status": "advanced",
+            "media_key_id": media_key,
             "environments": bumped.iter().map(|env| json!({
                 "project_id": env.project_id, "environment_id": env.environment_id,
                 "slug": env.slug, "epoch": env.epoch,
@@ -827,13 +871,52 @@ pub(crate) async fn restore_epoch(database: &MigratorUrl, out: Out) -> Exit {
         epochs.sort_unstable();
         epochs.dedup();
         println!(
-            "recovery epoch registered: {} environment(s) now at epoch {}",
+            "recovery epoch registered: {} environment(s) now at epoch {}; new media signing key {media_key}, every older key retired",
             bumped.len(),
             epochs
                 .iter()
                 .map(i64::to_string)
                 .collect::<Vec<_>>()
                 .join(", ")
+        );
+    }
+    Exit::Success
+}
+
+/// `colophon admin media-key rotate`: a new current media signing key (D-233). Prints its id,
+/// never the key.
+pub(crate) async fn media_key_rotate(
+    database: &MigratorUrl,
+    retire_previous: bool,
+    out: Out,
+) -> Exit {
+    let pool = match connect(database, &out).await {
+        Ok(pool) => pool,
+        Err(exit) => return exit,
+    };
+    let kid = match colophon_db::delivery::rotate_media_key(
+        &pool,
+        retire_previous,
+        colophon_db::delivery::RotationReason::Admin,
+    )
+    .await
+    {
+        Ok(kid) => kid,
+        Err(error) => return fail(&out, Exit::Internal, &chain(&error)),
+    };
+    if out.format.machine() {
+        out.print_data(&json!({
+            "status": "rotated",
+            "media_key_id": kid,
+            "retired_previous": retire_previous,
+        }));
+    } else if retire_previous {
+        println!(
+            "new media signing key {kid}; every older key retired: their links stop working within a minute"
+        );
+    } else {
+        println!(
+            "new media signing key {kid}; the key before it still verifies, older keys retired"
         );
     }
     Exit::Success

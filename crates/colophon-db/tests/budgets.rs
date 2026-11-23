@@ -482,6 +482,10 @@ async fn hooks(db: &TestDb, alice: Uuid, project: Uuid, count: usize) {
 
 #[tokio::test]
 #[ignore = "needs the local stack: scripts/stack.sh up"]
+#[expect(
+    clippy::too_many_lines,
+    reason = "one release's jobs from reservation to outcome, in order"
+)]
 async fn a_release_reserves_a_slot_per_job_and_the_outcome_closes_it() {
     let db = TestDb::new().await;
     let (alice, project) = project(&db).await;
@@ -548,9 +552,16 @@ async fn a_release_reserves_a_slot_per_job_and_the_outcome_closes_it() {
 
     // A release while both slots are held by running jobs is refused — the worker claims
     // them first, since a pending job would only be superseded, which frees its slot.
-    let claimed = jobs::claim(&db.app, "worker-a", "local", Duration::from_secs(30), 10)
-        .await
-        .expect("claim");
+    let claimed = jobs::claim(
+        &db.app,
+        "worker-a",
+        "local",
+        Duration::from_secs(30),
+        10,
+        colophon_db::Stop::NEVER,
+    )
+    .await
+    .expect("claim");
     assert_eq!(claimed.len(), 2);
     let (changeset, hash, review) = approved(&db, alice, project).await;
     let mut tx = as_token(&db.app, identity, project).await;
@@ -693,7 +704,9 @@ async fn the_reconciler_closes_the_dead_and_flags_the_stuck() {
     .await
     .expect("a stale held reservation");
 
-    let done = budgets::reconcile(&db.app).await.expect("reconciled");
+    let done = budgets::reconcile(&db.app, colophon_db::Stop::NEVER)
+        .await
+        .expect("reconciled");
     assert_eq!(
         (done.released, done.uncertain),
         (1, 1),
@@ -730,7 +743,9 @@ async fn the_reconciler_closes_the_dead_and_flags_the_stuck() {
             .any(|row| row.id == lone && row.state == "uncertain"),
         "{ledger:?}"
     );
-    let again = budgets::reconcile(&db.app).await.expect("reconciled");
+    let again = budgets::reconcile(&db.app, colophon_db::Stop::NEVER)
+        .await
+        .expect("reconciled");
     assert_eq!((again.released, again.uncertain), (0, 0));
     owner.close().await;
     db.drop().await;

@@ -18,12 +18,18 @@ env:
   CARGO_TERM_COLOR: always
   CARGO_BUILD_WARNINGS: deny
 
+# Every job's first step is the outgoing-port guard, ahead of checkout and before anything can open a socket:
+# Linux hands outgoing connections local ports from 32768 to 60999, which includes every fixed port CI listens
+# on (the stack's and its test servers', 53900 and up). k6 took 58090 first ("address in use", twice), and a
+# loopback client took the credential test's 56398 (CI 44868206132). scripts/test-ci-ports.sh keeps it so.
 jobs:
   rust:
     name: rust (toolchain, fmt, clippy, test, docs, architecture)
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
+      - name: Keep outgoing ports below the stack's
+        run: sudo sysctl -w net.ipv4.ip_local_port_range="20000 50999"
       # Third-party actions are pinned to commit SHAs (spec §35).
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -62,6 +68,8 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
+      - name: Keep outgoing ports below the stack's
+        run: sudo sysctl -w net.ipv4.ip_local_port_range="20000 50999"
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
@@ -92,6 +100,8 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
+      - name: Keep outgoing ports below the stack's
+        run: sudo sysctl -w net.ipv4.ip_local_port_range="20000 50999"
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
@@ -121,6 +131,8 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
+      - name: Keep outgoing ports below the stack's
+        run: sudo sysctl -w net.ipv4.ip_local_port_range="20000 50999"
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
@@ -136,12 +148,28 @@ jobs:
         run: scripts/test-homebrew-formula.sh
       - name: CI's retry wrapper (scripts/test-retry.sh)
         run: scripts/test-retry.sh
+      - name: The quick start's --keep leaves the project and its folder (scripts/test-quickstart-keep.sh)
+        run: scripts/test-quickstart-keep.sh
       - name: The droplet's logical backup (deploy/droplet/test-backup-logical.sh)
         run: deploy/droplet/test-backup-logical.sh
       - name: The droplet's Neon URL fix (deploy/droplet/test-neon-url.sh)
         run: deploy/droplet/test-neon-url.sh
+      - name: The droplet's hostname is one setting, odd values refused (deploy/droplet/test-public-host.sh)
+        run: deploy/droplet/test-public-host.sh
+      - name: The backups have their own R2 token, or share the media one only by the operator's choice (deploy/droplet/test-r2-keys.sh)
+        run: deploy/droplet/test-r2-keys.sh
       - name: The droplet's edge channel refuses what it can't prove (deploy/droplet/test-upgrade-edge.sh, D-211)
         run: deploy/droplet/test-upgrade-edge.sh
+      - name: The droplet's release channel installs only what release.yml built for the tag (deploy/droplet/test-upgrade-release.sh)
+        run: deploy/droplet/test-upgrade-release.sh
+      - name: The droplet's Caddy tells the server Cf-Connecting-Ip alone, admin on a 0600 socket (deploy/droplet/test-caddy.sh)
+        run: deploy/droplet/test-caddy.sh
+      - name: Our own origin-pull certificate, the token and key off every command line (deploy/droplet/test-custom-origin-pull.sh)
+        run: deploy/droplet/test-custom-origin-pull.sh
+      - name: Cloudflare's ranges go to Caddy and ufw, the server trusts loopback alone (deploy/droplet/test-cloudflare-ips.sh)
+        run: deploy/droplet/test-cloudflare-ips.sh
+      - name: smoke.sh's database password reaches psql through its environment only (deploy/droplet/test-pg-env.sh)
+        run: deploy/droplet/test-pg-env.sh
       - name: The leftover test database sweep (scripts/test-sweep-test-databases.sh, D-195)
         run: scripts/test-sweep-test-databases.sh
       - name: The shared-stack guard (scripts/test-stack-guard.sh, D-187)
@@ -152,14 +180,20 @@ jobs:
         run: scripts/test-backup-plaintext.sh
       - name: A restore whose payload fails its hash is blocked, with why (scripts/test-restore-blocked.sh, D-196)
         run: scripts/test-restore-blocked.sh
+      - name: Every job's first step keeps outgoing ports below CI's listeners (scripts/test-ci-ports.sh)
+        run: scripts/test-ci-ports.sh --self-test
       - name: Every load smoke check.sh runs, CI runs too (scripts/test-smoke-parity.sh, D-209)
         run: scripts/test-smoke-parity.sh
       - name: The smokes job's strict verdict on its expected failures (scripts/test-smoke-verdict.sh, D-209)
         run: scripts/test-smoke-verdict.sh
+      - name: perf-compare reads every admission level, N=1 behind libtest's prefix too (scripts/test-admission-lines.sh)
+        run: scripts/test-admission-lines.sh
       - name: The load runs' warnings gate (scripts/test-load-warnings.sh, D-221 evidence under 1 s excused)
         run: scripts/test-load-warnings.sh
       - name: A smoke is re-run only for a runner IO stall, once, and the re-run decides (scripts/test-run-smoke.sh)
         run: scripts/test-run-smoke.sh
+      - name: The write probe discards runs inside a disk stall and falls back loudly (scripts/test-runner-speed.sh, D-223)
+        run: scripts/test-runner-speed.sh
 
   # The testing rule (D-018) from a clean clone: the real stack, the real binary, real outages,
   # the testbed in a browser, and a load smoke run.
@@ -174,15 +208,11 @@ jobs:
     # 1,051 s). Splitting it into two jobs is the follow-up.
     timeout-minutes: 65
     steps:
+      - name: Keep outgoing ports below the stack's
+        run: sudo sysctl -w net.ipv4.ip_local_port_range="20000 50999"
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      # Linux hands outgoing connections ports from 32768 to 60999, which includes every port the
-      # stack and its test servers listen on (53900 and up); with a dozen servers started back to
-      # back and k6's thousands of connections, one eventually took 58090 first ("address in
-      # use", twice). Keep outgoing ports below them.
-      - name: Keep outgoing ports below the stack's
-        run: sudo sysctl -w net.ipv4.ip_local_port_range="20000 50999"
       - name: ShellCheck
         run: >-
           docker run --rm -v "$PWD:/mnt:ro" -w /mnt
@@ -202,6 +232,12 @@ jobs:
       # text fail; require, verify-ca and channel_binding=require are refused before connecting).
       - name: Database TLS against a private CA (scripts/db-tls-check.sh)
         run: scripts/db-tls-check.sh
+      # D-234: Neon's database owner is not a superuser. A fresh postgres of the script's own whose
+      # owner has CREATEROLE and CREATEDB only, and the real CLI as that owner: init-roles, migrate and
+      # migrate-status, twice; the run's grants undone; the four substituted migrations' functions keep
+      # the caller's context after a call and after an error caught by a savepoint.
+      - name: Installed by a non-superuser owner, as on Neon (scripts/db-nonsuperuser-check.sh)
+        run: scripts/db-nonsuperuser-check.sh
       # Before the stack tests: the site test runs the reference site's runner (apps/web) with Node.
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
@@ -210,12 +246,13 @@ jobs:
       - run: npm ci
       - name: Tests that need the stack (they stop and restart its services)
         # Compiled against the live, migrated schema rather than .sqlx/: catches stale query data.
+        # --no-fail-fast: every test binary runs, so a red in one (the attack suite's, D-231) can't hide another's.
         env:
           SQLX_OFFLINE: "false"
           DATABASE_URL: postgres://colophon:colophon-dev@127.0.0.1:55432/colophon
         run: |
           scripts/sweep-test-databases.sh
-          cargo test --workspace --locked -- --ignored --test-threads=1
+          cargo test --workspace --locked --no-fail-fast -- --ignored --test-threads=1
       - name: Crash tests F01, F02 and F03 (the server killed before and after a commit, the worker after announcing)
         env:
           SQLX_OFFLINE: "false"
@@ -280,8 +317,9 @@ jobs:
           set -o pipefail
           scripts/install-k6.sh "$RUNNER_TEMP/bin"
           export PATH="$RUNNER_TEMP/bin:$PATH" KEEP=0 DURATION=20s
-          # D-221's evidence: statements over 100 ms (sqlx) and requests over 200 ms with their phases, per smoke.
-          export COLOPHON_DB_SLOW_STATEMENT_MS=100 LOAD_LOG=info,colophon_api::slow=debug,colophon_server::lag=debug
+          # D-221's evidence: statements over 100 ms (sqlx, INFO since D-224) and requests over 200 ms with their phases,
+          # per smoke; each refusal on its own line (D-224) for the stall attribution.
+          export LOAD_LOG=info,sqlx::query=info,colophon_api::refusals=debug,colophon_api::slow=debug,colophon_server::lag=debug
           logs="$RUNNER_TEMP/integration-logs"; mkdir -p "$logs"
           # The runner itself, every second (D-221's key): CPU steal, iowait and the run queue (vmstat), and how long
           # tasks waited for CPU, I/O and memory (/proc/pressure). Beside the server's lag tickers, a stall then says
@@ -330,6 +368,17 @@ jobs:
           echo "| runner | ${runner_cpu:-unknown}: health $health_rps req/s (median of 3; long run ${long_rps:-not measured}), scale $scale of $REFERENCE_RPS |" >>"$GITHUB_STEP_SUMMARY"
           # Steady smokes are judged at their scaled rates even below the floor: the scaling keeps their relative load.
           export RUNNER_HEALTH_RPS=$health_rps RUNNER_LONG_HEALTH_RPS=${long_rps:-} RUNNER_REFERENCE_RPS=$REFERENCE_RPS RUNNER_SCALE=$scale RUNNER_JUDGED=yes
+          # D-223's write probe, RECORD-ONLY for now (phase 1): entries saves back to back, in projects of their own,
+          # runs inside a disk stall discarded. Calibrated from clean-class runs, phase 2 will scale the write smokes
+          # by it; until then every smoke keeps health's scale. A probe with no run left says so, loudly.
+          IFS=$'\t' read -r write_rps write_source write_kept write_discarded \
+            < <(PRESSURE_FILE="$logs/pressure.txt" scripts/runner-speed.sh write 2>"$logs/write-probe.log")
+          if [[ $write_source != probe ]]; then
+            echo "::warning::the write probe counted no run (kept ${write_kept:-0}, discarded ${write_discarded:-0}): write_scale_source is fallback, health's scale stands"
+            write_source=fallback
+          fi
+          echo "| write probe | ${write_rps:-none} req/s, $write_source (kept ${write_kept:-0}, discarded ${write_discarded:-0}; record-only, D-223) |" >>"$GITHUB_STEP_SUMMARY"
+          export RUNNER_WRITE_RPS=${write_rps:-} RUNNER_WRITE_SOURCE=$write_source RUNNER_WRITE_KEPT=${write_kept:-0} RUNNER_WRITE_DISCARDED=${write_discarded:-0}
           rate() { awk -v r="$1" -v s="$scale" 'BEGIN {v = int(r * s + 0.5); if (v < 1) v = 1; print v}'; }
           run_load TOTAL=100000 P99_MS=50 scripts/load.sh rich-text throughput
           run_load RATE=$(rate 400) P99_MS=200 scripts/load.sh session steady
@@ -417,11 +466,11 @@ jobs:
     # Valkey here and nowhere else.
     timeout-minutes: 60
     steps:
+      - name: Keep outgoing ports below the stack's
+        run: sudo sysctl -w net.ipv4.ip_local_port_range="20000 50999"
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - name: Keep outgoing ports below the stack's
-        run: sudo sysctl -w net.ipv4.ip_local_port_range="20000 50999"
       # Which runner these numbers come from: smoke results are pass/fail checks, never capacity
       # claims, and they differ across runner CPUs (D-186's host check gates on this once it lands).
       - name: Record the runner
@@ -482,7 +531,9 @@ jobs:
           logs="$RUNNER_TEMP/smoke-logs"; mkdir -p "$logs"
           ran=() failed=()
           # D-221: every smoke's server runs its lag tickers, and the runner is sampled each second (as in integration).
-          export LOAD_LOG=warn,colophon_server::lag=debug
+          # D-224: the stall attribution's evidence (scripts/stall-signature.sh): statements from 100 ms at INFO (a short
+          # stall's COMMITs are 100-220 ms) and each refusal on its own line. scripts/test-run-smoke.sh checks both.
+          export LOAD_LOG=warn,sqlx::query=info,colophon_api::refusals=debug,colophon_server::lag=debug
           vmstat -t 1 >"$logs/vmstat.txt" 2>&1 &
           vmstat_pid=$!
           (while :; do echo "$(date -u +%FT%TZ) cpu: $(tr '\n' ' ' </proc/pressure/cpu)| io: $(tr '\n' ' ' </proc/pressure/io)| memory: $(tr '\n' ' ' </proc/pressure/memory)"; sleep 1; done) >"$logs/pressure.txt" 2>&1 &
@@ -491,6 +542,8 @@ jobs:
           # Each scenario keeps its server log, and marks its window so the Postgres log (one
           # for the job) can be cut by scenario.
           pgq() { docker compose -f deploy/compose.yaml exec -T postgres psql -U colophon -d postgres -XAtq "$@"; }
+          # Before a stalled smoke's one re-run: keep its statement counts as <smoke>.stalled.statements.txt and reset them.
+          export RUN_SMOKE_BEFORE_RERUN=scripts/save-smoke-statements.sh
           pgc=$(docker compose -f deploy/compose.yaml ps -q postgres)
           # D-221: this runner's speed (the median of three short back-to-back health runs) normalises the smokes. A
           # back-to-back smoke's p99 limit is scaled by max(1, REFERENCE / health) (fixed VUs: latency ≈ VUs / throughput);
@@ -510,12 +563,23 @@ jobs:
           fi
           echo "| runner | ${runner_cpu:-unknown}: health $health_rps req/s (median of 3), scale $scale of $REFERENCE_RPS, latency judged: $judged |" >>"$GITHUB_STEP_SUMMARY"
           export RUNNER_HEALTH_RPS=$health_rps RUNNER_REFERENCE_RPS=$REFERENCE_RPS RUNNER_SCALE=$scale RUNNER_JUDGED=$judged SMOKE_LATENCY_JUDGED=$judged
+          # D-223's write probe, RECORD-ONLY for now (phase 1): entries saves back to back, in projects of their own,
+          # runs inside a disk stall discarded. Calibrated from clean-class runs, phase 2 will scale the write smokes
+          # by it; until then every smoke keeps health's scale. A probe with no run left says so, loudly.
+          IFS=$'\t' read -r write_rps write_source write_kept write_discarded \
+            < <(PRESSURE_FILE="$logs/pressure.txt" scripts/runner-speed.sh write 2>"$logs/write-probe.log")
+          if [[ $write_source != probe ]]; then
+            echo "::warning::the write probe counted no run (kept ${write_kept:-0}, discarded ${write_discarded:-0}): write_scale_source is fallback, health's scale stands"
+            write_source=fallback
+          fi
+          echo "| write probe | ${write_rps:-none} req/s, $write_source (kept ${write_kept:-0}, discarded ${write_discarded:-0}; record-only, D-223) |" >>"$GITHUB_STEP_SUMMARY"
+          export RUNNER_WRITE_RPS=${write_rps:-} RUNNER_WRITE_SOURCE=$write_source RUNNER_WRITE_KEPT=${write_kept:-0} RUNNER_WRITE_DISCARDED=${write_discarded:-0}
           # The verdict scales a flapper's p99 ceiling by the same factor as its limit (limit() below: P99 / scale).
           export SMOKE_LIMIT_SCALE=$scale
           rate() { awk -v r="$1" -v s="$scale" 'BEGIN {v = int(r * s + 0.5); if (v < 1) v = 1; print v}'; }
           limit() { awk -v l="$1" -v s="$scale" 'BEGIN {printf "%d", l / s + 0.5}'; }
           smoke() {
-            local name="${*: -2:1}" sampler
+            local name="${*: -2:1}" sampler snapshots
             ran+=("$name")
             echo "$(date -u +%FT%TZ) start $name" >>"$logs/windows.txt"
             echo "::group::$*"
@@ -524,6 +588,11 @@ jobs:
             pgq -c "SELECT pg_stat_statements_reset()" >/dev/null || true
             (while :; do echo "$(date -u +%FT%TZ) $(docker stats --no-stream --format '{{.CPUPerc}}' "$pgc" 2>/dev/null)"; sleep 1; done) >"$logs/$name.postgres-cpu.txt" &
             sampler=$!
+            # The oldest snapshot an application backend holds, each second: its xid age and how long its
+            # transaction has been open. A long one keeps dead index entries from being marked dead, so queue
+            # scans walk them (<smoke>.statements.txt's blks_per_call says how much a statement read).
+            (while :; do echo "$(date -u +%FT%TZ) $(pgq -c "SELECT coalesce(max(age(backend_xmin)), 0) || ' xids ' || coalesce(round(max(extract(epoch FROM now() - xact_start)) FILTER (WHERE backend_xmin IS NOT NULL)::numeric, 1), 0) || ' s' FROM pg_stat_activity WHERE datname = 'colophon'" 2>/dev/null)"; sleep 1; done) >"$logs/$name.snapshots.txt" &
+            snapshots=$!
             # A hard failure inside a runner IO stall is re-run once and the re-run decides (scripts/run-smoke.sh).
             if scripts/run-smoke.sh "$name" "$logs/$name.record.json" "$logs/$name.server.log" "$logs/pressure.txt" -- "$@"; then echo "::endgroup::"; else
               echo "::endgroup::"; echo "::warning::smoke failed: $* (the verdict below decides whether it was expected)"; failed+=("$name")
@@ -532,7 +601,7 @@ jobs:
                 -c "SELECT status, attempts, lease_owner IS NOT NULL AS leased, next_attempt_at > now() AS waiting, left(last_error, 200) AS last_error, count(*) FROM asset_jobs GROUP BY 1, 2, 3, 4, 5 ORDER BY 6 DESC LIMIT 20" \
                 -c "SELECT state, count(*) FROM assets GROUP BY 1" >"$logs/$name.work-tables.txt" 2>&1 || true
             fi
-            kill "$sampler" 2>/dev/null || true
+            kill "$sampler" "$snapshots" 2>/dev/null || true
             # D-218's evidence, pass or fail: each upload's created → finished time and the backlog from
             # asset_jobs, and the worker's own work, fetch / decode / land times and claim sizes from its log.
             if [[ "$name" == assets ]]; then
@@ -546,13 +615,13 @@ jobs:
               jq -r --arg n "$name" '(.hard_failures // {}) as $h | [$n, (.latency_ms.p99 // ""), ([.l08.ratios[]?] | max // ""), (.hard_failures_total // ""), ([$h | to_entries[] | select(.key != "failed_checks" and (.value | type) == "number" and .value > 0) | "\(.key)=\(.value)"] + ($h.failed_checks // []) | join("; "))] | @tsv' "$logs/$name.record.json" >>"$logs/metrics.tsv"
             fi
             echo "$(date -u +%FT%TZ) end $name" >>"$logs/windows.txt"
-            pgq -c "SELECT round(total_exec_time::numeric, 1) AS total_ms, calls, round(mean_exec_time::numeric, 3) AS mean_ms, rows, left(regexp_replace(query, '\\s+', ' ', 'g'), 160) FROM pg_stat_statements ORDER BY total_exec_time DESC LIMIT 10" \
-              >"$logs/$name.statements.txt" 2>&1 || true
+            scripts/smoke-statements.sh >"$logs/$name.statements.txt" 2>&1 || true
             cpu=$(awk '{print $2}' "$logs/$name.postgres-cpu.txt" | tr -d '%' | awk 'NF {s += $1; n++; if ($1 > m) m = $1} END {if (n) printf "avg %.0f%%, max %.0f%%", s / n, m; else print "not sampled"}')
-            echo "| $name | postgres CPU $cpu |" >>"$GITHUB_STEP_SUMMARY"
+            oldest=$(awk '{print $2, $4}' "$logs/$name.snapshots.txt" | awk 'NF == 2 {if ($1 > x) x = $1; if ($2 > s) s = $2} END {printf "oldest snapshot %d xids, %.1f s", x, s}')
+            echo "| $name | postgres CPU $cpu | $oldest |" >>"$GITHUB_STEP_SUMMARY"
           }
           # The worker at debug for assets alone: its per-attempt and per-claim timing lines are D-218's evidence.
-          smoke LOAD_LOG=info,colophon_worker=debug TOTAL=10000 P99_MS=$(limit 500) scripts/load.sh assets throughput
+          smoke LOAD_LOG=info,sqlx::query=info,colophon_api::refusals=debug,colophon_worker=debug TOTAL=10000 P99_MS=$(limit 500) scripts/load.sh assets throughput
           smoke TOTAL=10000 USERS=64 P99_MS=$(limit 700) scripts/load.sh audience throughput
           smoke TOTAL=10000 P99_MS=$(limit 500) scripts/load.sh bulk throughput
           smoke DURATION=10s P99_MS=$(limit 500) scripts/load.sh cache-down throughput
@@ -610,6 +679,8 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
+      - name: Keep outgoing ports below the stack's
+        run: sudo sysctl -w net.ipv4.ip_local_port_range="20000 50999"
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
@@ -672,9 +743,10 @@ jobs:
             deploy/droplet/colophon-backup-logical.service deploy/droplet/colophon-backup-logical.timer
           caddy_dir=$(mktemp -d)
           cp deploy/droplet/Caddyfile deploy/droplet/cloudflare-origin-pull-ca.pem "$caddy_dir/"
-          openssl req -x509 -newkey rsa:2048 -nodes -subj /CN=app.colophon.404human.dev -days 1 \
+          openssl req -x509 -newkey rsa:2048 -nodes -subj /CN=colophonapp.404human.dev -days 1 \
             -keyout "$caddy_dir/origin.key" -out "$caddy_dir/origin.pem" 2>/dev/null
           echo 'trusted_proxies static 173.245.48.0/20 2400:cb00::/32' >"$caddy_dir/cloudflare-trusted.caddy"
+          ORIGIN_PULL_CADDY_DIR=$caddy_dir deploy/droplet/origin-pull-ca.sh >/dev/null
           docker run --rm -v "$caddy_dir:/etc/caddy:ro" \
             caddy:2.10.2@sha256:c3d7ee5d2b11f9dc54f947f68a734c84e9c9666c92c88a7f30b9cba5da182adb \
             caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile
@@ -696,6 +768,17 @@ jobs:
           docker cp "$id:/usr/local/bin/colophon" "$out/colophon"
           docker rm "$id" >/dev/null
           deploy/droplet/test-unit-commands.sh "$out/colophon"
+      # Last of the unit checks: it puts stand-ins at /usr/local/bin/colophon and a colophon.env of its own.
+      - name: The backup units get the backups' own R2 key and bucket, never the media ones (deploy/droplet/test-unit-backup-env.sh)
+        run: sudo CI=true deploy/droplet/test-unit-backup-env.sh
+      - name: smoke.sh's database checks over verify-full with system roots, the CLI in the same run (deploy/droplet/test-smoke-db.sh)
+        run: |
+          set -euo pipefail
+          out=$(mktemp -d)
+          id=$(docker create colophon:local)
+          docker cp "$id:/usr/local/bin/colophon" "$out/colophon"
+          docker rm "$id" >/dev/null
+          sudo CI=true deploy/droplet/test-smoke-db.sh "$out/colophon"
       - name: Timings and sizes
         if: always()
         run: |
@@ -714,12 +797,114 @@ jobs:
           if-no-files-found: ignore
           retention-days: 7
 
+  fuzz:
+    # Every parser of outside input, coverage-guided from its seed corpus (D-231; fuzz/, outside the workspace with
+    # its own lockfile). A smoke, not a campaign: each target runs a bounded time on every push, so a parser change
+    # that panics, overflows or stalls on hostile input fails the build; a crash's input is uploaded to reproduce.
+    name: fuzz (each parser, bounded, from its seed corpus)
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    env:
+      # The gnu host's: the runner's default rustup host is musl, whose static libc the sanitizers refuse.
+      FUZZ_TOOLCHAIN: nightly-2026-11-01-x86_64-unknown-linux-gnu
+      FUZZ_TARGET: x86_64-unknown-linux-gnu
+    steps:
+      - name: Keep outgoing ports below the stack's
+        run: sudo sysctl -w net.ipv4.ip_local_port_range="20000 50999"
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install a dated nightly (cargo-fuzz needs its sanitizer flags)
+        run: rustup toolchain install "$FUZZ_TOOLCHAIN" --profile minimal
+      - name: Install the pinned toolchain too (cargo-deny reads the fuzz lockfile with it)
+        run: |
+          channel=$(sed -n 's/^channel = "\(.*\)"$/\1/p' rust-toolchain.toml)
+          rustup toolchain install "$channel" --profile minimal
+      - uses: taiki-e/install-action@cfdb7ed4ccc7c7dce37759eae89dc5674b469b39 # v2.90.3
+        with:
+          tool: cargo-fuzz@0.13.2,cargo-deny@0.20.2
+      # The fuzz crate's own lockfile: outside the workspace, so the supply-chain job never sees it.
+      - name: Advisories and sources of the fuzz lockfile
+        run: cargo deny --manifest-path fuzz/Cargo.toml --locked --config deny.toml check advisories sources
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          workspaces: fuzz
+      - name: Build every target
+        run: cargo "+$FUZZ_TOOLCHAIN" fuzz build --fuzz-dir fuzz --target "$FUZZ_TARGET"
+      - name: Run each target for 60 s from its corpus (a 2 s input is a stall, a crash fails)
+        run: |
+          set -euo pipefail
+          for target in $(cargo "+$FUZZ_TOOLCHAIN" fuzz list --fuzz-dir fuzz); do
+            mkdir -p "fuzz/run-corpus/$target"
+            cargo "+$FUZZ_TOOLCHAIN" fuzz run --fuzz-dir fuzz --target "$FUZZ_TARGET" "$target" \
+              "fuzz/run-corpus/$target" "fuzz/corpus/$target" -- \
+              -max_total_time=60 -timeout=2 -rss_limit_mb=2048 -max_len=65536
+          done
+      - if: failure()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: fuzz-artifacts
+          path: fuzz/artifacts/
+          retention-days: 14
+
   supply-chain:
     name: supply chain (cargo-deny)
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
+      - name: Keep outgoing ports below the stack's
+        run: sudo sysctl -w net.ipv4.ip_local_port_range="20000 50999"
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
       - uses: EmbarkStudios/cargo-deny-action@3c6349835b2b7b196a839186cb8b78e02f7b5f25 # v2.1.1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+      # The Next.js demo site has its own npm tree, outside the CMS's workspaces (D-220), so it is audited on its
+      # own and reported separately: a finding here is the demo's, never the CMS's.
+      - name: The Next.js demo's own npm tree (apps/sites/nextjs, not part of the CMS)
+        working-directory: apps/sites/nextjs
+        run: npm audit --omit=dev --audit-level=moderate
+
+  nextjs-demo:
+    # The Next.js demo site (D-220) lives outside the CMS's npm workspaces, with its own package-lock.json. This job
+    # installs it on its own and runs only when it or the API contract it reads changes, and on main.
+    name: Next.js demo (its own install, types, tests, an unseeded build)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Keep outgoing ports below the stack's
+        run: sudo sysctl -w net.ipv4.ip_local_port_range="20000 50999"
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - name: Does this change touch the demo or the API contract?
+        id: scope
+        env:
+          REF: ${{ github.ref }}
+        run: |
+          if [ "$REF" = "refs/heads/main" ]; then echo "run=true" >>"$GITHUB_OUTPUT"; exit 0; fi
+          base=$(git merge-base HEAD origin/main)
+          if git diff --name-only "$base" HEAD | grep -qE '^(apps/sites/nextjs/|docs/api/openapi\.json$)'; then
+            echo "run=true" >>"$GITHUB_OUTPUT"
+          else
+            echo "run=false" >>"$GITHUB_OUTPUT"; echo "Nothing the Next.js demo depends on changed; skipped."
+          fi
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        if: steps.scope.outputs.run == 'true'
+        with:
+          node-version: 24
+      - name: Install exactly what its package-lock.json pins
+        if: steps.scope.outputs.run == 'true'
+        working-directory: apps/sites/nextjs
+        run: npm ci --no-audit --no-fund
+      - name: Types, the delivery-read tests, and a build with nothing seeded
+        if: steps.scope.outputs.run == 'true'
+        working-directory: apps/sites/nextjs
+        run: |
+          npm run check
+          npm test
+          npm run build
+          test -f dist/index.html

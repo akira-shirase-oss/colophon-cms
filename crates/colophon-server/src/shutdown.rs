@@ -10,9 +10,75 @@
 
 use std::{future::Future, io, time::Duration};
 
-use axum::{Router, serve::ListenerExt as _};
+use axum::Router;
 use colophon_api::Readiness;
 use tokio::{net::TcpListener, sync::oneshot};
+
+/// Accepts connections until `stop` resolves, then lets every open connection finish its
+/// in-flight requests and close (idle ones close at once). Each request carries its peer's
+/// address, for the per-address rate limits (D-076), as `axum::serve` gave it before; hyper gets
+/// a timer, without which its header-read timeout never fires (axum's own serve sets none).
+async fn accept(
+    listener: TcpListener,
+    app: Router,
+    header_read: Duration,
+    stop: impl Future<Output = ()>,
+) -> io::Result<()> {
+    use hyper_util::{
+        rt::{TokioExecutor, TokioIo, TokioTimer},
+        server::{conn::auto::Builder, graceful::GracefulShutdown},
+        service::TowerToHyperService,
+    };
+    let graceful = GracefulShutdown::new();
+    let mut builder = Builder::new(TokioExecutor::new());
+    builder
+        .http1()
+        .timer(TokioTimer::new())
+        .header_read_timeout(header_read);
+    builder
+        .http2()
+        .timer(TokioTimer::new())
+        .enable_connect_protocol();
+    let mut stop = std::pin::pin!(stop);
+    loop {
+        let (tcp, peer) = tokio::select! {
+            accepted = listener.accept() => match accepted {
+                Ok(accepted) => accepted,
+                // Out of file descriptors and the like: the listener is fine, wait a moment.
+                Err(error) => {
+                    tracing::warn!(%error, "could not accept a connection");
+                    tokio::time::sleep(Duration::from_millis(50)).await;
+                    continue;
+                }
+            },
+            () = &mut stop => break,
+        };
+        // Small request/response exchanges: don't let Nagle's algorithm hold back the last packet.
+        if let Err(error) = tcp.set_nodelay(true) {
+            tracing::debug!(%error, "could not set TCP_NODELAY");
+        }
+        let service = TowerToHyperService::new(tower::ServiceExt::map_request(
+            app.clone(),
+            move |mut request: axum::http::Request<hyper::body::Incoming>| {
+                request
+                    .extensions_mut()
+                    .insert(axum::extract::ConnectInfo(peer));
+                request.map(axum::body::Body::new)
+            },
+        ));
+        let connection = builder
+            .serve_connection_with_upgrades(TokioIo::new(tcp), service)
+            .into_owned();
+        let watched = graceful.watch(connection);
+        tokio::spawn(async move {
+            if let Err(error) = watched.await {
+                tracing::trace!(%error, "connection ended with an error");
+            }
+        });
+    }
+    graceful.shutdown().await;
+    Ok(())
+}
 
 /// Shutdown timings.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -60,12 +126,15 @@ pub fn os_signal() -> io::Result<impl Future<Output = &'static str> + Send + 'st
     })
 }
 
-/// Serves `app` until `trigger` resolves, then runs the drain sequence.
+/// Serves `app` until `trigger` resolves, then runs the drain sequence. A connection has
+/// `header_read` to send each request's headers, or it is closed (D-230): a client that opens
+/// connections and trickles their headers (slowloris) holds none of them for longer.
 pub async fn serve(
     listener: TcpListener,
     app: Router,
     readiness: Readiness,
     timing: ShutdownTiming,
+    header_read: Duration,
     trigger: impl Future<Output = ()> + Send + 'static,
 ) -> io::Result<ShutdownOutcome> {
     let (triggered_tx, triggered_rx) = oneshot::channel::<()>();
@@ -82,19 +151,7 @@ pub async fn serve(
         tracing::info!("drain delay over: no longer accepting connections");
     };
 
-    // Small request/response exchanges: don't let Nagle's algorithm hold back the last packet.
-    let listener = listener.tap_io(|tcp| {
-        if let Err(error) = tcp.set_nodelay(true) {
-            tracing::debug!(%error, "could not set TCP_NODELAY");
-        }
-    });
-    // Each request carries its peer's address, for the per-address rate limits (D-076).
-    let server = axum::serve(
-        listener,
-        app.into_make_service_with_connect_info::<std::net::SocketAddr>(),
-    )
-    .with_graceful_shutdown(stop_accepting)
-    .into_future();
+    let server = accept(listener, app, header_read, stop_accepting);
 
     let hard_deadline = async move {
         // If the server ends without a trigger, the sender is dropped: never fire.

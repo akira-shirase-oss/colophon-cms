@@ -1,7 +1,7 @@
 # Deploying Colophon to one droplet (S0)
 
 S0 in `docs/SAAS_PLAN.md`: Colophon on a 2 GB DigitalOcean droplet in Toronto, against Neon,
-behind Cloudflare at `https://app.colophon.404human.dev`, used by the maintainer only. This is the
+behind Cloudflare at `https://colophonapp.404human.dev`, used by the maintainer only. This is the
 production path without containers (`deploy/production/README.md`), filled in for that host.
 
 **Before you start:** everything in [CREATE.md](CREATE.md) exists. Secrets are typed or pasted
@@ -35,7 +35,7 @@ are on.
 ### Upgrades, rollbacks and the two channels
 
 ```sh
-/opt/colophon-src/deploy/droplet/upgrade.sh 0.1.0-alpha.2      # a tagged release
+/opt/colophon-src/deploy/droplet/upgrade.sh 0.1.0-alpha.5      # a tagged release
 /opt/colophon-src/deploy/droplet/upgrade.sh --channel edge     # the newest build of main (once edge.yml lands)
 /opt/colophon-src/deploy/droplet/upgrade.sh --rollback         # back to the release before
 /opt/colophon-src/deploy/droplet/upgrade.sh --status
@@ -50,7 +50,13 @@ migrations work with the previous release's binary, so `--rollback` swaps binari
 three releases are kept.
 
 - **The release channel (default)** is for normal use: tagged, changelogged, the archives the
-  release workflow published.
+  release workflow published. It installs only archives whose provenance verifies: built by
+  `release.yml` on `refs/tags/v<version>` of this repository, checked with `gh attestation
+  verify` against the release's own bundle (`colophon-<version>.intoto.jsonl`; no GitHub login),
+  then against `SHA256SUMS`. `SHA256SUMS` alone comes from the same place as the archives, so it
+  proves they arrived intact, not who built them. A release without a bundle is refused. A
+  rehearsal from a local directory may set `COLOPHON_RELEASE_UNVERIFIED=rehearsal`, which is said
+  loudly and refused for releases from GitHub.
 - **The edge channel** is for a fix you need before the next release: the newest build of `main`
   (D-211). **It is available once `edge.yml` lands (D-211); until then use the release channel**
   — `upgrade.sh --channel edge` says so and changes nothing. It installs only what it can prove: `SHA256SUMS`'s provenance (built by `edge.yml` on
@@ -66,7 +72,7 @@ The commands run on the droplet as root unless they say otherwise. `$CHECKOUT` i
 repository on the droplet (step 2). **The version is in one place:**
 
 ```sh
-export COLOPHON_VERSION=0.1.0-alpha.1    # the release this guide installs; change only this to upgrade
+export COLOPHON_VERSION=0.1.0-alpha.5    # the release this guide installs; change only this to upgrade
 ```
 
 ## 1. The host
@@ -92,10 +98,15 @@ ufw default deny incoming && ufw default allow outgoing
 ufw allow from <your-ip> to any port 22 proto tcp comment 'ssh: maintainer'
 ufw --force enable
 
-# SSH: keys only. Checked before it's applied, so a typo can't lock you out.
+# SSH: keys only, no forwarding (X11, agent, TCP), 3 tries, 30 s to log in. Checked before it's
+# applied, so a typo can't lock you out (install.sh puts the old file back if sshd -t refuses).
 printf '%s\n' 'PasswordAuthentication no' 'KbdInteractiveAuthentication no' 'PermitRootLogin prohibit-password' \
+  'X11Forwarding no' 'AllowAgentForwarding no' 'AllowTcpForwarding no' 'MaxAuthTries 3' 'LoginGraceTime 30' \
   >/etc/ssh/sshd_config.d/10-colophon.conf
 sshd -t && systemctl reload ssh
+
+# gh, for upgrade.sh's provenance checks, from GitHub's own repository (Ubuntu's is too old). Its
+# key must be 7F38BBB59D064DBCB3D84D725612B36462313325; install.sh checks that and exports only it.
 
 # Security updates install themselves; the machine never reboots on its own (a reboot restarts
 # Colophon mid-request). The reminder below says when one is waiting.
@@ -143,9 +154,8 @@ git clone --depth 1 --branch v$v https://github.com/akira-shirase-oss/colophon-c
 CHECKOUT=/opt/colophon-src
 ```
 
-> The draft release `v0.1.0-alpha.1` is cut once the hardening batch and D-183 are merged; its
-> checksummed musl archives are what this step installs. Building from source on a 2 GB droplet
-> is not recommended (the Rust build needs more memory than the host has).
+> The release `v0.1.0-alpha.5` carries the checksummed musl archives this step installs. Building
+> from source on a 2 GB droplet is not recommended (the Rust build needs more memory than the host has).
 
 ## 3. Neon: the roles and the schema
 
@@ -180,6 +190,24 @@ chmod 0400 /etc/colophon/credentials/database_url
 If the first connection fails on the certificate, stop: `verify-full` against Neon is S0's first
 real proof (SAAS_PLAN "Neon"), and weakening it is not the fix.
 
+**Neon's owner is not a superuser** (D-234), and the two commands above handle that themselves:
+`init-roles` gives `colophon_app`'s password as text when Neon refuses a SCRAM verifier ("Neon
+only supports being given plaintext passwords"; over this `verify-full` connection), and grants
+the owner SET and INHERIT on Colophon's roles; `migrate` runs four migrations (0011, 0012, 0051,
+0082) from substitutes that need no superuser, and gives the owner roles CREATE on `public`
+**inside each migration's own transaction only**: no other session ever sees it, and a run that
+dies (a dropped connection, a kill) takes it with its rollback. The database records the same
+migrations and checksums as a superuser's install, so `admin migrate-status` reads them alike;
+it also reports any colophon role holding CREATE on `public`, or the owner inheriting
+`colophon_deleter`, and `smoke.sh` fails on either (`admin migrate` removes both). Proved on a
+fresh cluster with such an owner by `scripts/db-nonsuperuser-check.sh` (in CI), a run killed
+mid-migration included. Migration 0048 turns the owner's INHERIT on `colophon_deleter` off on
+purpose; nothing leaves it on.
+
+To look at the database with `psql` itself, add `&sslrootcert=system` to the URL: libpq checks
+`verify-full` against `~/.postgresql/root.crt` unless told to use the system's roots (Colophon's
+own driver always uses them).
+
 ## 4. The cache (Valkey's API, from Ubuntu's `redis-server`)
 
 ```sh
@@ -203,9 +231,10 @@ The cache holds nothing that isn't in Neon; losing it costs latency, not data.
 
 ```sh
 install -m 0644 $CHECKOUT/deploy/droplet/colophon.env.template /etc/colophon/colophon.env
-nano /etc/colophon/colophon.env          # the R2 account id and access key id
-umask 077; cat >/etc/colophon/credentials/s3_secret_key   # paste the R2 secret, Ctrl-D
-chmod 0400 /etc/colophon/credentials/s3_secret_key
+nano /etc/colophon/colophon.env          # the R2 account id and both tokens' access key ids (CREATE.md 6)
+umask 077; cat >/etc/colophon/credentials/s3_secret_key          # the MEDIA token's secret, Ctrl-D
+cat >/etc/colophon/credentials/backup_s3_secret_key              # the BACKUPS token's secret, Ctrl-D
+chmod 0400 /etc/colophon/credentials/s3_secret_key /etc/colophon/credentials/backup_s3_secret_key
 ```
 
 ## 6. The service
@@ -228,12 +257,58 @@ apt-get update && apt-get install -y caddy
 umask 077; cat >/etc/caddy/origin.pem; cat >/etc/caddy/origin.key
 chown root:caddy /etc/caddy/origin.pem /etc/caddy/origin.key && chmod 0640 /etc/caddy/origin.pem /etc/caddy/origin.key
 
-install -m 0644 $CHECKOUT/deploy/droplet/Caddyfile /etc/caddy/Caddyfile
-$CHECKOUT/deploy/droplet/origin-pull-ca.sh       # Cloudflare's origin-pull CA, its fingerprint checked
-$CHECKOUT/deploy/droplet/cloudflare-ips.sh       # Caddy's and Colophon's trusted ranges, ufw 443
-caddy validate --config /etc/caddy/Caddyfile && systemctl reload caddy
+# The site address is the host of COLOPHON_PUBLIC_URL in /etc/colophon/colophon.env (one setting):
+( . $CHECKOUT/deploy/droplet/public-host.sh && caddyfile_for_host $CHECKOUT/deploy/droplet/Caddyfile \
+    "$(public_host /etc/colophon/colophon.env)" >/etc/caddy/Caddyfile.new ) \
+  && install -m 0644 /etc/caddy/Caddyfile.new /etc/caddy/Caddyfile && rm /etc/caddy/Caddyfile.new
+$CHECKOUT/deploy/droplet/origin-pull-ca.sh       # which origin-pull CAs Caddy trusts (below); the shared one's fingerprint checked
+$CHECKOUT/deploy/droplet/cloudflare-ips.sh       # Caddy's trusted ranges, ufw 443; Colophon trusts loopback alone
+caddy validate --config /etc/caddy/Caddyfile && systemctl restart caddy   # restart the first time: the admin API moves to a socket
 systemctl restart colophon
 ```
+
+What the Caddyfile does, each checked by `test-caddy.sh` in CI:
+
+- **The client's address.** From a peer in Cloudflare's ranges, the client is `Cf-Connecting-Ip`
+  (Cloudflare sets it), and Caddy tells the server that one address, replacing any
+  `X-Forwarded-For` that came in. The server trusts loopback alone
+  (`COLOPHON_TRUSTED_PROXIES=127.0.0.1/32`). Trusting Cloudflare's ranges in the server as well
+  let a request from a Cloudflare address (another account's Worker) put any address it liked
+  to the left of its own and have it believed: a fresh address for every password attempt.
+- **The admin API** is a socket only Caddy's user and root can open,
+  `/var/lib/caddy/admin.sock` (0600), not TCP 2019, which every local process could reach and
+  reconfigure Caddy through. `systemctl reload caddy` uses it.
+- **HTTP/1.1 and HTTP/2 only**: HTTP/3 is UDP, which the firewall doesn't open.
+- **`X-Content-Type-Options: nosniff`** on every response, the server's JSON included (set after
+  the server answers, so the Studio's own isn't doubled).
+- **The bare root** (`https://colophonapp.404human.dev/`) redirects to `/studio/` with a 302 (the
+  server itself answers `route_not_found` there); no other path is redirected.
+- **HSTS** for this host: `max-age=31536000`, without `includeSubDomains` (the zone's other hosts
+  are on Cloudflare Pages) and without preload, a later and deliberate step.
+
+### Our own origin-pull certificate
+
+Cloudflare's default origin-pull certificate is **one certificate shared by every Cloudflare
+zone**: trusting its CA keeps out everything that isn't Cloudflare, but not another Cloudflare
+account that points a hostname at this droplet (Caddy's SNI check is all that stands in the way).
+The end state is a certificate of our own, uploaded to this zone. On your own machine, with a
+Cloudflare API token for this zone only (Zone → SSL and Certificates → Edit):
+
+```sh
+deploy/droplet/custom-origin-pull.sh generate ~/aop               # a client CA and certificate, 0700
+scp ~/aop/ca.pem root@<droplet>:/root/origin-pull-ca.pem
+ssh root@<droplet> '$CHECKOUT/deploy/droplet/origin-pull-ca.sh --add-custom /root/origin-pull-ca.pem && systemctl reload caddy'
+export CLOUDFLARE_API_TOKEN=…                                     # read from your password manager; never on a command line
+deploy/droplet/custom-origin-pull.sh upload <zone-id> ~/aop       # print <zone-id> ~/aop shows the calls instead
+deploy/droplet/custom-origin-pull.sh status <zone-id>             # until "active"
+deploy/droplet/custom-origin-pull.sh enable <zone-id>
+ssh root@<droplet> '$CHECKOUT/deploy/droplet/origin-pull-ca.sh --custom-only && systemctl reload caddy && $CHECKOUT/deploy/droplet/smoke.sh'
+```
+
+The order keeps the site up: the origin trusts both CAs before Cloudflare switches, and drops the
+shared one only once Cloudflare presents ours. Keep `~/aop/ca.key` offline (or delete it: it is
+needed only to issue the next client certificate, before this one expires in 5 years) and delete
+`client.key` once it is uploaded. Back out with `origin-pull-ca.sh --shared`.
 
 ## 8. The first administrator
 
@@ -241,7 +316,7 @@ systemctl restart colophon
 journalctl -u colophon | grep "Setup code"
 ```
 
-Open `https://app.colophon.404human.dev/studio/`, enter the code, and create your account. The
+Open `https://colophonapp.404human.dev/studio/`, enter the code, and create your account. The
 code works once; after that, the installation has its administrator.
 
 ## 9. Email (optional for S0)
@@ -271,7 +346,11 @@ PostgreSQL: Neon takes no pg_basebackup and keeps its own WAL. S0's backups are:
 
 The age key: generated here, its public half stays on the droplet, and you keep a copy of the
 private half **offline** (a password manager or paper). Without it, the logical backups can't be
-read; the droplet's own copy is for restore drills.
+read. The droplet needs only the public half to encrypt: its own copy of the private half is for
+the first restore drill, and then it goes. **Once your offline copy is confirmed and the restore
+drill (step 12) has decrypted a dump with it, remove it from the droplet:**
+`shred -u /etc/colophon/backup-age-identity`. Otherwise a break-in on the droplet reads every
+off-site dump too. Later drills bring the key in from your offline store, as restore.md says.
 
 ```sh
 age-keygen -o /etc/colophon/backup-age-identity 2>/dev/null && chmod 0400 /etc/colophon/backup-age-identity
@@ -310,7 +389,7 @@ Revoke that token in the Studio afterwards and `rm /root/smoke-token`.
 From **your own machine** (not the droplet), check that only Cloudflare reaches it:
 
 ```sh
-curl -sS --max-time 5 --resolve app.colophon.404human.dev:443:<droplet-ip> https://app.colophon.404human.dev/livez \
+curl -sS --max-time 5 --resolve colophonapp.404human.dev:443:<droplet-ip> https://colophonapp.404human.dev/livez \
   && echo "FAIL: the droplet answers directly" || echo "ok: only Cloudflare reaches 443"
 ```
 
@@ -377,7 +456,7 @@ certificate, and a test CA and client certificate for Authenticated Origin Pulls
 | `--rollback`: 5 s; a failing release rolled back by itself | R2: uploads, the ledger export, the logical backup's upload |
 | Caddy: 200 with the origin-pull client certificate, refused without it | systemd credentials (`LoadCredential=`): Docker can't provide them, so the rehearsal read the files directly |
 | `smoke.sh`'s server checks, idle memory (24–38 MiB) | The release archives from `release.yml` and the edge channel's provenance on a real build |
-| The Neon URL fix (pooled host → direct, `require` → `verify-full`), tested | The database round trip, Toronto ↔ Neon us-east-2: `smoke.sh` prints p50/p95 of 20 × `SELECT 1` (warns over 20 ms); record the deploy-day number here: **p50 — ms, p95 — ms** (Neon's first query after idle was 367 ms, a cold start) |
+| The Neon URL fix (pooled host → direct, `require` → `verify-full`), tested | The database round trip to Neon us-east-2 (the S0 droplet ended up in SFO2, San Francisco: 91 ms measured on 2026-11-21, so moving Neon nearer is open): `smoke.sh` prints p50/p95 of 20 × `SELECT 1` (warns over 20 ms); record the deploy-day number here: **p50 — ms, p95 — ms** (Neon's first query after idle was 367 ms, a cold start) |
 | Pruning under the backups bucket's 7-day lock, tested with a stub | The lock rule itself on R2 |
 
 
@@ -388,5 +467,8 @@ certificate, and a test CA and client certificate for Authenticated Origin Pulls
 | `colophon` won't start | `journalctl -u colophon -n 100`: a refused setting names itself |
 | `/readyz` says database down | Neon's status, the URL's `sslmode=verify-full`, the direct endpoint |
 | Cloudflare 52x errors | `systemctl status caddy`, the origin certificate files, `ufw status` (443 from Cloudflare), Authenticated Origin Pulls on in Cloudflare (Caddy refuses connections without its client certificate) |
-| Every visitor shares one rate limit | `COLOPHON_TRUSTED_PROXIES` lacks Cloudflare's ranges: rerun `cloudflare-ips.sh` |
+| Every visitor shares one rate limit | Caddy isn't telling the server `Cf-Connecting-Ip`: `/etc/caddy/cloudflare-trusted.caddy` lacks Cloudflare's ranges (rerun `cloudflare-ips.sh`), or `/etc/caddy/Caddyfile` predates `client_ip_headers` (rerun `install.sh`); `smoke.sh` says which |
 | Uploads refused 503 | the `COLOPHON_S3_*` settings and `credentials/s3_secret_key` |
+| A backup unit fails with "no COLOPHON_BACKUP_S3_ACCESS_KEY" | the backups' own R2 token (CREATE.md 6): its key id in `colophon.env`, its secret in `credentials/backup_s3_secret_key` |
+| install.sh refuses "the backups need their own R2 token" | give the backups their own token (CREATE.md 6), or accept one token on both buckets with `echo yes >/etc/colophon/install/r2_backup_shares_media` (it warns on every run) |
+| `upgrade.sh` refuses: "no provenance bundle" | a release published before `release.yml` shipped the bundle: upload one (`gh attestation download`, then `gh release upload`), or install a newer release |

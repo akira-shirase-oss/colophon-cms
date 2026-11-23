@@ -558,30 +558,6 @@ async fn a_snapshot_transaction_reads_one_moment() {
     db.drop().await;
 }
 
-/// Pads `project`'s production environment with `count` unreleased changesets and analyses the
-/// table, as a long-lived installation's statistics would be: a realistic table the planner
-/// knows the size of (D-219).
-async fn pad_and_analyse(db: &TestDb, project: Uuid, created_by: Uuid, count: i64) {
-    let owner = db.owner().await;
-    sqlx::query(
-        "INSERT INTO changesets (project_id, environment_id, id, title, hash, created_by)
-         SELECT e.project_id, e.id, gen_random_uuid(), 'Padding', decode(repeat('00', 32), 'hex'), $2
-         FROM environments e, generate_series(1, $3)
-         WHERE e.project_id = $1 AND e.slug = 'production'",
-    )
-    .bind(project)
-    .bind(created_by)
-    .bind(count)
-    .execute(&owner)
-    .await
-    .expect("padding");
-    sqlx::query("ANALYZE changesets")
-        .execute(&owner)
-        .await
-        .expect("analyse");
-    owner.close().await;
-}
-
 /// Changeset rows this transaction has read so far, by any kind of scan (an index scan's rows
 /// are counted against the index).
 async fn changesets_read(tx: &mut ProjectTransaction) -> i64 {
@@ -597,14 +573,19 @@ async fn changesets_read(tx: &mut ProjectTransaction) -> i64 {
 }
 
 /// A page of releases reads one changeset row per release it shows, however many the
-/// environment has, once the statistics know the table's size: the page's rows come from
-/// `releases` first, and only then their changesets, by index (D-219). With statistics that call
-/// the table tiny, the bound is one pass instead (the stale-statistics test below).
+/// environment has: the page's rows come from `releases` first, and only then their titles.
+///
+/// The planner's statistics are fixed before it measures. With none (a table auto-analyze hasn't
+/// reached yet) it looks each changeset up by key; once a 151-row, 4-page table is analyzed a
+/// whole-table scan per release is the cheaper plan by cost, and the page reads 151 x 100 rows. It
+/// flips back to the key by 500 rows (11 pages). So whether auto-analyze landed during the seeding
+/// decided the result (CI 44860425433 read 15,100). Drafts fill the table past that size, as any
+/// installation's is, and both tables are analyzed, so every run judges the same plan.
 #[tokio::test]
 #[ignore = "needs the local stack: scripts/stack.sh up"]
 async fn a_page_of_releases_reads_only_the_changesets_it_shows() {
     const MANY: i64 = 150;
-    const PADDING: i64 = 20_000;
+    const DRAFTS: i64 = 2_000;
     let db = TestDb::new().await;
     let (alice, project, entry, _, _) = ready(&db).await;
     for base in 0..MANY {
@@ -617,7 +598,24 @@ async fn a_page_of_releases_reads_only_the_changesets_it_shows() {
         assert!(matches!(committed, Committed::Done { .. }), "{committed:?}");
         tx.commit().await.expect("commit");
     }
-    pad_and_analyse(&db, project, alice, PADDING).await;
+    let owner = db.owner().await;
+    sqlx::query(
+        "INSERT INTO changesets (project_id, environment_id, id, title, hash, created_by)
+         SELECT e.project_id, e.id, gen_random_uuid(), 'draft ' || n, decode(repeat('00', 32), 'hex'), $2
+         FROM environments e, generate_series(1, $3) n
+         WHERE e.project_id = $1 AND e.slug = 'production'",
+    )
+    .bind(project)
+    .bind(alice)
+    .bind(DRAFTS)
+    .execute(&owner)
+    .await
+    .expect("drafts");
+    sqlx::query("ANALYZE changesets, releases")
+        .execute(&owner)
+        .await
+        .expect("analyze");
+    owner.close().await;
     // As the server runs it after a few calls: one generic plan for every project.
     let mut tx = enter(&db.app, alice, project).await;
     sqlx::query("SET LOCAL plan_cache_mode = force_generic_plan")
@@ -641,7 +639,7 @@ async fn a_page_of_releases_reads_only_the_changesets_it_shows() {
     assert!(
         read <= shown,
         "a page of {shown} releases read {read} changeset rows (the environment has {})",
-        MANY + 1 + PADDING
+        MANY + 1 + DRAFTS
     );
     drop(tx);
     db.drop().await;

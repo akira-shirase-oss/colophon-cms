@@ -2,6 +2,7 @@
 	import { onMount } from 'svelte';
 	import { resolve } from '$app/paths';
 	import { call, csrfToken, detailsOf, envelopeOf, listProjects, type Reply } from '#lib/api.ts';
+	import { latestFor } from '#lib/latest.ts';
 
 	interface Project {
 		id: string;
@@ -78,13 +79,14 @@
 	// (of the first project, from onMount) used to finish after a project was picked — reading
 	// the picked project's changesets half-way, since `api` had moved — and reset the changeset
 	// just chosen, so Publish released another one.
-	let loads = 0;
+	// Latest load wins: an answer for an older load, or another project, is dropped (#lib/latest.ts).
+	const loads = latestFor(() => projectId);
 	async function load() {
-		const mine = ++loads;
+		const current = loads.start();
 		const at = api;
 		const listed = await call('GET', `${at}/releases`);
 		const sets = await call('GET', `${at}/changesets`);
-		if (mine !== loads) return;
+		if (!current()) return;
 		releases = listed.status === 200 ? (listed.body as { data: Release[] }).data : [];
 		generation = Number(listed.headers.get('colophon-generation') ?? '0');
 		base = generation;

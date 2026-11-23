@@ -8,6 +8,129 @@ through `--version` and `GET /version`.
 
 ## [Unreleased]
 
+### Fixed
+
+- **The releases page and the schedules list stay fast as an environment grows** (D-219). Each page
+  now reads its releases' or schedules' changesets once as a set, so a database whose statistics
+  lag behind its growth can no longer make one page read every changeset once per row.
+- **Stopping the server no longer cuts background work off mid-transaction**. The worker's
+  sweeps, the pending-work fold, the media and table retention sweeps and the change-hint sender
+  each stopped the moment shutdown began, even while a database transaction was committing, so
+  whether that work was saved could stay unknown and the database logged "there is no
+  transaction in progress". Each now finishes the step it is on and stops before the next; a step
+  stuck behind a lock gives up on its own within four seconds and is rolled back, so shutdown still
+  completes inside its deadline. Background work still waiting for a database connection when shutdown
+  begins no longer starts at all, so it can't hold the stop up either (D-236).
+
+## [0.1.0-alpha.5] — 2026-11-22
+
+### Security
+
+- **The key that signs media addresses rotates** (D-233): `colophon admin media-key rotate` makes a new one, and the
+  one before it keeps verifying the links it signed; `--retire-previous` drops every older key at once, for a key
+  that leaked. Every restore makes a new key and retires its source's, so a staging copy restored from production
+  can no longer sign or verify production's links. Addresses now carry the key's id (`?kid=`): links signed
+  before upgrading (at most 15 minutes old) stop working at the upgrade. Each rotation is recorded, never the key.
+  A server reads the keys one read at a time, so an older read can never bring back a key a rotation retired.
+  Upgrading runs migration 0086 (it works under a non-superuser owner such as Neon's, D-234).
+
+## [0.1.0-alpha.4] — 2026-11-22
+
+### Security
+
+- **A nested `blob:` origin no longer stops the server** (RUSTSEC-2026-0592). `url` 2.5.8 and earlier took a
+  `blob:` URL's origin by recursing into its inner URL without bound, a stack overflow that aborts the whole process.
+  `PUT {P}/audience/origins` took each listed origin's `origin()` before checking its scheme, and before checking
+  the caller's permission, so any signed-in account could stop the server with one request (about 100 KB of nested
+  `blob:` prefixes). `url` is now 2.5.9, which follows the URL Standard, and the origin check refuses anything but
+  http(s) with a host before it takes an origin. Every other `origin()` call already checked the scheme first.
+- **One R2 token on both buckets is an explicit operator choice, not a refusal** (`deploy/droplet/r2-keys.sh`). The
+  backups still get their own token by default; `r2_backup_shares_media=yes` in `/etc/colophon/install/` lets an
+  operator who has one token use it for the backups too, with a warning on every install run, because a server
+  compromise could then delete backups older than the bucket lock.
+- **The droplet's rate limits key by the real visitor** (white-hat review of S0, 2026-11-21). Caddy now takes the
+  client from `Cf-Connecting-Ip` when the peer is Cloudflare and tells the server that one address, replacing any
+  `X-Forwarded-For`; the server trusts loopback alone. Trusting all of Cloudflare's ranges in the server let a
+  request from a Cloudflare address (another account's Worker) choose its own client address, and with it a fresh
+  per-address password limit for every attempt.
+- **Caddy's admin API is a 0600 socket** (`/var/lib/caddy/admin.sock`), not TCP 2019, which every local process
+  could reach and rewrite Caddy's config through. HTTP/3, which the firewall doesn't open, isn't advertised.
+- **HSTS**: the droplet sends `Strict-Transport-Security: max-age=31536000` for its own host (no
+  `includeSubDomains`: other hosts of the zone are on Cloudflare Pages; no preload yet). `smoke.sh` checks it.
+- **Our own origin-pull certificate**: Cloudflare's default one is shared by every Cloudflare zone.
+  `custom-origin-pull.sh` makes a client CA and certificate and uploads them to the zone (the token and the key
+  from files, never a command line); `origin-pull-ca.sh --add-custom` / `--custom-only` move Caddy's trust over
+  without downtime.
+- **Releases are installed only with verified provenance**: `upgrade.sh` checks each archive with
+  `gh attestation verify` against the release's own bundle (built by `release.yml` on the version's tag), which
+  `release.yml` now publishes; `SHA256SUMS` alone came from the same place as the archives. `install.sh` installs
+  `gh` from GitHub's repository with a pinned key.
+- **The backups have their own R2 token** (`COLOPHON_BACKUP_S3_ACCESS_KEY`, `credentials/backup_s3_secret_key`),
+  scoped to the backups bucket; the internet-facing server holds the media token alone.
+- `smoke.sh` gives psql the database password through libpq's environment and the API token through a 0600 header
+  file, never a command line; SSH allows no forwarding and 3 tries; the Redis password file is never briefly
+  world-readable; the R2 ids are checked before they go into the env file; `upgrade.sh` refuses a switch when it
+  can't read the migration status; the server's unit adds `ProcSubset=pid`, `PrivateUsers=yes` and
+  `SystemCallFilter=~@resources`.
+
+### Fixed
+
+- **The droplet's deletion-ledger export wrote to the media bucket**: its unit set `COLOPHON_S3_BUCKET` with
+  `Environment=`, which `EnvironmentFile=` (colophon.env's `colophon-media`) overrides. It is now set in the command.
+- Every response from the droplet carries `X-Content-Type-Options: nosniff` (the JSON API's had none).
+- The droplet's bare root opens the Studio (a 302 to `/studio/`) instead of the server's `route_not_found`.
+- `install.sh` stops when the Caddyfile doesn't validate (`validate && reload` under `set -e` went on).
+- **`smoke.sh`'s database checks work against Neon**: psql is given `sslrootcert=system` for a `verify-full` URL
+  that names no CA (libpq otherwise looks for `~/.postgresql/root.crt`), in psql's own environment only:
+  `PGSSLROOTCERT` in the shell broke the `colophon` CLI, whose driver reads it as a file path (found live on
+  alpha.3).
+
+## [0.1.0-alpha.3] — 2026-11-21
+
+### Added
+
+- **Colophon installs on a database whose owner is not a superuser, Neon's included** (D-234). `colophon admin
+  init-roles` gives a login role's password as text when the server refuses a verifier (Neon: "only supports being
+  given plaintext passwords"), over the connection's `verify-full` TLS, and grants the owner SET and INHERIT on
+  Colophon's roles. `colophon admin migrate` runs four migrations (0011, 0012, 0051, 0082) from substitutes that pin
+  no custom setting on a function, with the rights each migration needs granted inside that migration's own
+  transaction (never visible to the application, gone with a crash's rollback); the database records the same
+  migrations and checksums as a superuser's install, and `admin migrate-status` reports any such right left outside
+  a migration (`smoke.sh` fails on it). A superuser's install is unchanged.
+
+### Fixed
+
+- **The droplet's `cloudflare-ips.sh` survives a re-run.** It replaced the 443 rules with `yes | ufw delete`, which
+  under `pipefail` ended in SIGPIPE once ufw had read its one answer, so every run that found rules to replace
+  (any re-run of `install.sh`) stopped after deleting one of them; its loop test had the same flaw. It now reads
+  ufw's answers whole and deletes with `--force`, and runs the same on macOS for its test.
+- **The droplet's `install.sh` stops when `init-roles` fails**, instead of going on to migrate without the roles.
+
+## [0.1.0-alpha.2] — 2026-11-21
+
+### Added
+
+- A SvelteKit demo site (D-220): Butter & Thyme's recipes prerendered with SvelteKit 3 at one release per
+  build (`?generation=N` on every read, a build that refuses an answer from another release), the release
+  marker on every page, and a rebuild on publish with the other demo sites (`apps/sites/sveltekit`).
+- A Next.js demo site (D-220a): the same recipes as a Next.js 16 static export, with one release pinned for all
+  of Next's build workers before the build, and its own npm install, separate from the CMS's (`apps/sites/nextjs`).
+
+### Changed
+
+- The Studio takes the website's look (D-210a): page titles in Geist Pixel, a larger Overview whose Get
+  started steps sit in the website's inverted panel, and a pixel icon with one line on every empty state.
+  Work screens stay as dense as before.
+- **An outage is logged once, not once per request** (D-224): a repeating fault (no database connection
+  free, a full work bound, a dependency's failed probe) is said in full at once, then once per 10-second
+  window while it lasts, then once when a whole window passes without it. Slow statements come in two
+  tiers: INFO from `COLOPHON_DB_SLOW_STATEMENT_INFO_MS` (default 100) as evidence, WARN from
+  `COLOPHON_DB_SLOW_STATEMENT_MS` (default 1000) as an alert.
+- The S0 droplet's address is `https://colophonapp.404human.dev`, one level under the zone that Cloudflare's
+  free certificate covers, and the hostname is one setting, `COLOPHON_PUBLIC_URL` in the droplet's env file:
+  the install takes Caddy's site address from it and the smoke check its domain, refusing anything but a
+  plain `https://<host>`.
+
 ### Changed — read before upgrading
 
 - **A release's receipt no longer embeds what it changed** (D-185). `GET …/releases/{n}` drops
@@ -28,12 +151,92 @@ through `--version` and `GET /version`.
   stale_changeset` if anything moved since. The Studio always sends it.
 - A `{generation}` that isn't a positive whole number answers `404` on release reads and `422
   invalid_generation` on rollbacks, in the usual error envelope.
+- **Unpublished media is private** (D-229). `/media/v1/…` serves an upload to the public only once a
+  release names it; until then it answers `404` (as if it didn't exist), except to a signed-in member
+  of the project and to the short-lived signed addresses that preview answers, and delivery answers
+  for signed-in site members, now carry (`?kid=&expires=&signature=`). A replaced image's bare address
+  keeps showing the published version until the next publish. In a signed-in site member's answer,
+  `current_url` is the published version's own address (the same as `url`): a member's signed address
+  never opens a replacement nobody has published. A site that linked uploads by id before
+  publishing them gets `404`s: use the addresses an answer gives.
+- **JSON bodies are at most 1 MiB** (D-230) unless a route documents more: imports 16 MiB, bulk chunks
+  and remote-MCP messages 2 MiB. Before, every signed-in route read up to the upload limit (21 MiB).
+
+### Security
+
+- A project API token is held to its creator's role as it is now (D-228): demoting the person who
+  made it narrows it at its next request, and removing them (or their leaving) revokes it, with a
+  `token.revoked` audit row giving the reason. Before, a removed owner's token kept working.
+- Unpublished media is no longer served to anyone who knows its address (D-229; see "Changed").
+- A connection has 10 seconds to send a request's headers, or it is closed
+  (`COLOPHON_HEADER_TIMEOUT_MS`, D-230): the server set no header timeout at all before.
+- Preview preflights, `/me` and the media origin count against the rate limits (D-231); a preflight's
+  origin check read the database outside them.
+- Destinations whose IPv6 address embeds a private IPv4 address (IPv4-compatible, 6to4) are refused,
+  as are Teredo, site-local, NAT64 and discard-only addresses (D-231).
+- Hostile input no longer stalls or crashes a parser (D-231): a condition listing many values is
+  refused before its quadratic duplicate check, an import over 512 items is refused while it is read
+  and before the collection is locked, oversized rich text is refused before it is copied out, and a
+  migration operation with an empty path or a schedule at an extreme instant is refused, not a panic.
+- Every parser of outside input is property-tested, the domain's parsers are also fuzzed in CI, and
+  every attack class in `docs/security/attack-surface.md` has a regression test against the running
+  server (D-231).
+- An import's body is read only after its caller is known to belong to the project (D-230): a
+  stranger's 16 MiB import is refused before any of it arrives, and no transaction waits on it.
+- The proxies in `deploy/` keep idle connections to the server 5 seconds, below its 10 s header timeout,
+  which also ends idle keep-alives: a reused connection the server had just closed answered 502 (D-230).
+
+### Fixed
+
+- **A delivery or media job's deadline sweep can no longer deadlock with a publish** (D-216). The
+  sweep that fails jobs past their deadline now leaves a job another transaction holds for its next
+  pass, and every update that must take several jobs takes them in one order. Under concurrent
+  publishes the two could abort each other with a database deadlock, which reached a client as a
+  500; a transaction the database aborts that way now answers 503 with `Retry-After`.
+
+- **Revoking a throttled token, or changing its limits, takes effect on its next request**
+  (D-214). A token refused for its quota and then revoked was still told `429` with a
+  `Retry-After` instead of `401`, and removing or replacing its request ceiling kept refusing it
+  until the old window ran out. The remembered refusal now ends as the change commits, on every
+  server.
+
+### Correction
+
+- **The cold-read benchmark (L03) read fewer than a third of its corpus.** Its load test chose which
+  entries to read by a counter each simulated user keeps for itself, so every user read the same
+  entries in step: 675 of the 2,048 it was meant to cover. The test now numbers reads across all
+  users and reads all 2,048. The published figure is replaced by a CI run of the fixed test (p99
+  152.6 ms at 505 requests a second on an AMD EPYC 9V74, commit `079e44d`); the earlier laptop figure
+  (p99 68.2 ms at 1,017 a second) came from different hardware, and the old and fixed tests run side
+  by side showed no consistent latency difference. `docs/BENCHMARKS.md` has the details.
 
 ### Performance
 
-- **The releases page and the schedules list stay fast as an environment grows** (D-219). Each page
-  now reads its releases' or schedules' changesets once as a set, so a database whose statistics
-  lag behind its growth can no longer make one page read every changeset once per row.
+- **An authenticated project request sets its database context in one round trip instead of four**
+  (D-227): the identity, the membership or token with its permissions, the project and the environment
+  are set by one database function, in the same order, under the caller's own policies. On a remote
+  database each round trip saved is one network latency per request. Upgrading runs migration 0079,
+  which adds those functions.
+
+- The release check (D-217) runs on one release in 256 once the server has proved at startup that it
+  catches a connection left inside a transaction; until then, and whenever that proof fails, it runs on
+  every release (D-226).
+
+- **The media worker picks up its next upload without reading every upload before it**. Each
+  time it asked for work it read every job the table had ever held, finished ones included, and
+  sorted the queue to take one to four; under a steady stream of uploads that grew to seconds a
+  claim and the queue backed up. It now takes waiting jobs by one indexed lookup that stops at what
+  it asked for. A job whose worker stopped answering (a crash) is put back in the queue, in its old
+  place, by the worker's 10-second sweep, so it is picked up within 10 seconds of its lease running
+  out. Upgrading runs migration 0080, which adds one index to the media job table.
+
+- **Submitting work no longer waits on every other project's submissions** (D-216). The
+  installation's 1 GiB bound on pending work metadata used to be counted from scratch on every
+  submit, under one lock held for the whole request; it is now a running total checked at the end
+  of each submit, so bulk jobs, uploads, releases and migration plans in different projects go
+  through side by side. Upgrading runs migration 0078, which briefly holds writes to the work
+  tables while it counts the existing total once.
+
 - **An API token over its request quota no longer costs the database anything** (D-214). After
   its first refusal, a token that keeps sending is refused from memory and the rate limiter alone
   until its `Retry-After` runs out, so an agent stuck in a retry loop can't slow other projects'

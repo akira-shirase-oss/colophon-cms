@@ -39,6 +39,7 @@ import http from 'k6/http';
 import { check, fail, sleep } from 'k6';
 import exec from 'k6/execution';
 import { Counter } from 'k6/metrics';
+import { idempotencyKey } from './lib/idempotency-key.js';
 
 const BASE_URL = __ENV.BASE_URL || 'http://127.0.0.1:58000';
 const PUBLIC_URL = __ENV.PUBLIC_URL || 'http://localhost:58000';
@@ -120,7 +121,7 @@ const article = (title, text) => JSON.stringify({
 });
 
 function key() {
-  return `k6-l14-${__VU}-${__ITER}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+  return idempotencyKey(`k6-l14-${__VU}-${__ITER}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`, 'media-load');
 }
 
 // Enough articles for every editorial VU id across both editorial arms' maxima.
@@ -145,7 +146,7 @@ export function setup() {
     const batch = [];
     for (let j = i; j < Math.min(i + 40, ARTICLES); j += 1) {
       batch.push(['POST', entries, article(`Article ${j}`, 'Start'), {
-        headers: Object.assign({ 'Idempotency-Key': `k6-l14-${slug}-${j}` }, write),
+        headers: Object.assign({ 'Idempotency-Key': idempotencyKey(`k6-l14-${slug}-${j}`, 'media-load') }, write),
         tags: { name: 'setup' },
       }]);
     }
@@ -164,6 +165,7 @@ export function setup() {
 
 // The editorial arm's own truth: the ETag of the revision it last saved (module state is
 // per-VU).
+// per-VU state: the VU's own resource's version, refreshed by every save and read; any read/save order is valid.
 let etag = null;
 export function editorial(data) {
   const arm = exec.scenario.name === 'baseline' ? 'baseline' : 'media_phase';
@@ -171,7 +173,7 @@ export function editorial(data) {
   if (etag === null) etag = mine.etag;
   const url = `${data.entries}/${mine.id}`;
   const tags = { arm };
-  const roll = __ITER % 10;
+  const roll = exec.scenario.iterationInTest % 10;
   if (roll < 2) {
     const res = http.put(url, article(`Article by VU ${exec.vu.idInTest}`, `Iteration ${__ITER}`), {
       headers: Object.assign({ 'If-Match': etag, 'Idempotency-Key': key(), 'Content-Type': 'application/json', Cookie: data.session.cookie, 'X-CSRF-Token': data.session.csrf, Origin: PUBLIC_URL }),
@@ -237,7 +239,7 @@ function verdict(data, id, want) {
 }
 
 export function media(data) {
-  const roll = __ITER % 10;
+  const roll = exec.scenario.iterationInTest % 10;
   if (roll < 6) {
     // The real workload: ~11.5 MB in, quarantined, then the worker decodes it.
     const made = http.post(data.assets, BIG, {
@@ -252,14 +254,15 @@ export function media(data) {
     const done = verdict(data, made.json('data.id'), 'usable');
     if (done === null) return;
     verified.add(1);
-    // What the decoder produced must actually serve: the original and a rendition.
+    // What the decoder produced must actually serve: the original and a rendition — to the member
+    // who uploaded it, privately, since no release names it yet (D-229).
     const at = `${data.media}/${done.json('data.id')}`;
     for (const url of [at, `${at}/w320`]) {
-      const object = http.get(url, { redirects: 0, tags: { arm: 'media', endpoint: 'media', name: 'media/v1/{asset}' } });
+      const object = http.get(url, { headers: { Cookie: data.session.cookie }, redirects: 0, tags: { arm: 'media', endpoint: 'media', name: 'media/v1/{asset}' } });
       if (check(object, {
         'media 200': (r) => r.status === 200,
-        // The bare address follows the current version, so it revalidates (D-157).
-        'media revalidates': (r) => r.headers['Cache-Control'] === 'public, max-age=60, must-revalidate',
+        // Unpublished: for this viewer only, kept by no cache.
+        'media private': (r) => r.headers['Cache-Control'] === 'private, no-store',
       })) mediaReads.add(1);
       else errors.add(1);
     }

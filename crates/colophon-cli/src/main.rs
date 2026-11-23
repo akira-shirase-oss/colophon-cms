@@ -761,6 +761,32 @@ enum AdminCommand {
         #[command(subcommand)]
         step: RestoreStep,
     },
+    /// The media signing key (D-233): signed media addresses carry its id.
+    MediaKey {
+        #[command(subcommand)]
+        step: MediaKeyStep,
+    },
+}
+
+/// What can be done to the media signing key, as the migrator.
+#[derive(Debug, Subcommand)]
+enum MediaKeyStep {
+    /// Make a new current key: addresses are signed with it from each server's next read of the
+    /// keys (within a minute), and the key before it still verifies the links it signed. Older keys
+    /// are dropped. Prints the new key's id, never the key; each rotation is recorded in
+    /// `media_key_rotations` (who, when, which id).
+    Rotate {
+        // The migrator's connection URL (or a file holding it).
+        #[command(flatten)]
+        database: admin::MigratorUrl,
+        /// Drop every other key too, for a key that leaked: every link it signed stops working
+        /// within a minute, the last 15 minutes' previews and member links included.
+        #[arg(long)]
+        retire_previous: bool,
+        /// Print one versioned JSON result instead of text.
+        #[arg(long)]
+        json: bool,
+    },
 }
 
 /// The restore procedure's per-stage database actions (each run as the migrator against the
@@ -781,8 +807,10 @@ enum RestoreStep {
         json: bool,
     },
     /// Register the recovery epoch (spec step 3, O2): every environment's epoch advances, so a
-    /// cached generation or stale lease from the old timeline can never act on the new one.
-    /// The procedure runs it exactly once, before anything serves.
+    /// cached generation or stale lease from the old timeline can never act on the new one, and
+    /// the media signing key is replaced, every older key retired (D-233), so a restored copy
+    /// never signs or verifies with its source's key. The procedure runs it exactly once, before
+    /// anything serves.
     Epoch {
         // The migrator's connection URL of the restored database (or a file holding it).
         #[command(flatten)]
@@ -983,6 +1011,20 @@ fn run_admin(runtime: &Runtime, command: AdminCommand) -> ExitCode {
             ))
             .into(),
         AdminCommand::Restore { step } => run_restore(runtime, step),
+        AdminCommand::MediaKey {
+            step:
+                MediaKeyStep::Rotate {
+                    database,
+                    retire_previous,
+                    json,
+                },
+        } => runtime
+            .block_on(admin::media_key_rotate(
+                &database,
+                retire_previous,
+                out::Out::new("admin media-key rotate", out::Format::of(json, false)),
+            ))
+            .into(),
     }
 }
 

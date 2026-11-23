@@ -6,6 +6,7 @@
 
 import http from 'k6/http';
 import { check, fail } from 'k6';
+import exec from 'k6/execution';
 
 const BASE_URL = __ENV.BASE_URL || 'http://127.0.0.1:58000';
 const PUBLIC_URL = __ENV.PUBLIC_URL || 'http://localhost:58000';
@@ -60,10 +61,10 @@ export function setup() {
 }
 
 export default function (data) {
-  const roll = __ITER % 5;
+  const roll = exec.scenario.iterationInTest % 5;
   if (roll < 3) {
     // A real sign-in: the hash verifies, the session comes back.
-    const address = data.emails[(__VU + __ITER) % data.emails.length];
+    const address = data.emails[(__VU + exec.scenario.iterationInTest) % data.emails.length];
     const res = http.post(`${BASE_URL}/auth/signin`, JSON.stringify({ email: address, password: PASSWORD }), { headers: JSON_HEADERS, tags: { endpoint: 'signin' } });
     check(res, {
       'signed in': (r) => r.status === 204,
@@ -75,7 +76,7 @@ export default function (data) {
     check(res, { 'refused like a wrong password': (r) => r.status === 400 });
   } else {
     // A taken sign-up: the new password is hashed before the email's account is found.
-    const res = http.post(`${BASE_URL}/auth/signup`, JSON.stringify({ email: data.emails[__ITER % data.emails.length], password: 'a fresh password' }), { headers: JSON_HEADERS, responseCallback: TAKEN, tags: { endpoint: 'taken' } });
+    const res = http.post(`${BASE_URL}/auth/signup`, JSON.stringify({ email: data.emails[exec.scenario.iterationInTest % data.emails.length], password: 'a fresh password' }), { headers: JSON_HEADERS, responseCallback: TAKEN, tags: { endpoint: 'taken' } });
     check(res, { 'refused as taken': (r) => r.status === 409 });
   }
 }

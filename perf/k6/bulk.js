@@ -10,6 +10,8 @@
 
 import http from 'k6/http';
 import { check, fail } from 'k6';
+import exec from 'k6/execution';
+import { sequenceKey } from './lib/keys.js';
 
 const BASE_URL = __ENV.BASE_URL || 'http://127.0.0.1:58000';
 const PUBLIC_URL = __ENV.PUBLIC_URL || 'http://localhost:58000';
@@ -48,8 +50,9 @@ export const options = {
 };
 
 const BODY = { schema: 'colophon/rich-text', version: 1, doc: { type: 'doc', content: [{ type: 'paragraph' }] } };
+// per-VU state: a counter that only makes keys unique; no step order.
 let sequence = 0;
-const nextKey = (prefix) => `${prefix}-${Date.now().toString(36)}-${sequence += 1}`;
+const nextKey = (prefix) => sequenceKey(prefix, __VU, Date.now(), (sequence += 1), 'bulk');
 
 export function setup() {
   const signedIn = http.post(`${PUBLIC_URL}/auth/signin`, JSON.stringify({ email: 'dev-owner@colophon.test', password: 'colophon-dev' }), { headers: { 'Content-Type': 'application/json' } });
@@ -81,7 +84,7 @@ export function setup() {
 }
 
 export default function (data) {
-  const slot = __ITER % 100;
+  const slot = exec.scenario.iterationInTest % 100;
   const params = (endpoint, extra) => ({ headers: Object.assign({}, data.headers, extra || {}), redirects: 0, tags: { endpoint } });
   if (slot < 45) {
     const filtered = slot % 3 === 0 ? '?state=done' : '';
@@ -95,7 +98,7 @@ export default function (data) {
     const res = http.get(`${data.base}/bulk/${data.job}/items${outcome}`, params('items'));
     check(res, { 'items 200': (r) => r.status === 200 && Array.isArray(r.json('data')) });
   } else {
-    const draft = data.drafts[__ITER % data.drafts.length];
+    const draft = data.drafts[exec.scenario.iterationInTest % data.drafts.length];
     const res = http.post(`${data.base}/bulk`, JSON.stringify({
       collection: 'articles', seal: true,
       items: [{ key: 'a', entry: draft.id, expected_revision: draft.revision, op: { op: 'set', path: 'title', value: 'loaded' } }],

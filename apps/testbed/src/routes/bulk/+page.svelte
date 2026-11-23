@@ -4,6 +4,7 @@
 	// appends, lists, opens items and cancels — against `{P}/bulk`.
 	import { onMount } from 'svelte';
 	import { call, csrfToken, detailsOf, envelopeOf, listProjects, type Reply } from '#lib/api.ts';
+	import { latestFor } from '#lib/latest.ts';
 
 	interface Job {
 		id: string;
@@ -48,8 +49,14 @@
 	let seal = $state(true);
 	let message = $state('');
 
+	// Latest load wins: an answer for an older load, or another project, job or filter, is dropped (#lib/latest.ts).
+	const jobLoads = latestFor(() => projectId);
+	const itemLoads = latestFor(() => `${projectId} ${job?.id ?? ''} ${outcome}`);
+
 	async function loadJobs() {
+		const current = jobLoads.start();
 		const reply = await call('GET', `${base}?limit=50`);
+		if (!current()) return;
 		jobs = reply.status === 200 ? (reply.body as { data: Job[] }).data : [];
 	}
 
@@ -66,7 +73,9 @@
 	async function loadItems() {
 		if (job === null) return;
 		const filter = outcome === '' ? '' : `?outcome=${outcome}`;
+		const current = itemLoads.start();
 		const reply = await call('GET', `${base}/${job.id}/items${filter}${filter === '' ? '?' : '&'}limit=100`);
+		if (!current()) return;
 		items = reply.status === 200 ? (reply.body as { data: Item[] }).data : [];
 	}
 

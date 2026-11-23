@@ -56,6 +56,10 @@ impl Default for HttpLimits {
     }
 }
 
+/// What a JSON (or text) request body may be, unless its route documents more (D-230). Before, every
+/// signed-in route read up to the upload limit (21 MiB by default).
+pub const JSON_BODY_BYTES: usize = 1024 * 1024;
+
 /// The request deadline, handed to an upload handler instead of timing its body (D-215).
 #[derive(Debug, Clone, Copy)]
 pub struct UploadDeadline(pub Duration);
@@ -338,8 +342,13 @@ pub fn apply(router: Router, limits: HttpLimits, build: BuildInfo) -> Router {
         }))
         // 8. Reject bodies that grow past the limit while streaming (no Content-Length)...
         .layer(RequestBodyLimitLayer::new(limits.max_body_bytes))
-        // ...and give axum's extractors, whose own default is 2 MB, the same limit.
-        .layer(DefaultBodyLimit::max(limits.max_body_bytes));
+        // ...and hold axum's extractors (JSON, text, bytes; whose own default is 2 MB) to 1 MiB, or
+        // the server's limit if it is lower: the server-wide limit is sized for uploads, which
+        // stream their bodies instead (D-230). A route that documents a larger need says so in the
+        // route table (`body_limit`): imports, bulk chunks, MCP messages.
+        .layer(DefaultBodyLimit::max(
+            JSON_BODY_BYTES.min(limits.max_body_bytes),
+        ));
     router.layer(stack)
 }
 

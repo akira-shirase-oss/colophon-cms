@@ -5,6 +5,7 @@
 
 import http from 'k6/http';
 import { check } from 'k6';
+import exec from 'k6/execution';
 
 const BASE_URL = __ENV.BASE_URL || 'http://127.0.0.1:58000';
 const SCENARIO = __ENV.SCENARIO || 'throughput';
@@ -60,7 +61,7 @@ export const options = {
 };
 
 export default function () {
-  if (__ITER % 2 === 0) {
+  if (exec.scenario.iterationInTest % 2 === 0) {
     const res = http.post(URL, VALID_BODY, PARAMS);
     check(res, {
       'valid 200': (r) => r.status === 200,

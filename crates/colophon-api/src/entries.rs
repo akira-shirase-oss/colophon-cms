@@ -489,6 +489,20 @@ pub(crate) async fn open_isolated(
     environment: &str,
     isolation: scope::Isolation,
 ) -> Result<ProjectTransaction, ApiError> {
+    let tx = begin(state, caller, project, environment, isolation).await?;
+    quota(state, tx, caller.judged).await
+}
+
+/// The transaction [`open`] begins, without counting the request against a token's quota: for
+/// a handler that checked membership with [`open`] already and opens a second transaction for
+/// the same request (an import, which reads its body between the two).
+async fn begin(
+    state: &AppState,
+    caller: SignedIn,
+    project: &str,
+    environment: &str,
+    isolation: scope::Isolation,
+) -> Result<ProjectTransaction, ApiError> {
     let services = services(state)?;
     let project = Uuid::try_parse(project).map_err(|_| ApiError::NotFound)?;
     let opened = match caller.project {
@@ -515,22 +529,20 @@ pub(crate) async fn open_isolated(
             .await
         }
     };
-    let tx = opened
-        .map_err(ApiError::from_db)?
-        .ok_or(ApiError::NotFound)?;
-    quota(state, tx, caller.secret_hash).await
+    opened.map_err(ApiError::from_db)?.ok_or(ApiError::NotFound)
 }
 
 /// The token's own request ceiling (D-118): Postgres's row is the only authority for
 /// `requests_per_minute`; the limiter only holds the rolling count. A refusal records the
 /// episode's first `token.rate_limited`, committed alone — the transaction's other state is
 /// only the token check — then answers 429. A member's transaction carries no token, and a
-/// `NULL` ceiling no quota, so this is free for both. A refusal is remembered under the token's
-/// `secret_hash`, so its next requests are refused before they reach Postgres (D-214).
+/// `NULL` ceiling no quota, so this is free for both. A refusal is remembered under what the
+/// token was `judged` on, so its next requests are refused before they reach Postgres until its
+/// project's tokens change (D-214).
 async fn quota(
     state: &AppState,
     mut tx: ProjectTransaction,
-    secret_hash: Option<[u8; 32]>,
+    judged: Option<crate::admission::Judged>,
 ) -> Result<ProjectTransaction, ApiError> {
     let (Some(admission), Some(token)) = (&state.admission, tx.token) else {
         return Ok(tx);
@@ -544,9 +556,9 @@ async fn quota(
     else {
         return Ok(tx);
     };
-    if let Some(hash) = secret_hash {
+    if let Some(judged) = judged {
         admission.remember_refusal(
-            hash,
+            judged,
             tx.project,
             token.id,
             requests_per_minute,
@@ -1192,7 +1204,7 @@ pub(crate) async fn import(
     Path(path): Path<CollectionPath>,
     Query(query): Query<ImportQuery>,
     headers: HeaderMap,
-    body: String,
+    body: axum::body::Body,
 ) -> Result<Response, ApiError> {
     let dry_run = query.dry_run == Some(true);
     let source_type = query.r#type.as_deref().filter(|kind| !kind.is_empty());
@@ -1202,7 +1214,30 @@ pub(crate) async fn import(
     } else {
         Some(idempotency_key(&headers)?)
     };
-    let mut tx = open(&state, caller, &path.project, &path.environment).await?;
+    // Membership first (and a token's quota, counted once): a stranger hears 404 before any of
+    // the body is read, and no transaction is held while a client sends 16 MiB (review
+    // 2026-11-21). The work's own transaction checks membership again: it is the authority.
+    let checked = open(&state, caller, &path.project, &path.environment).await?;
+    checked
+        .transaction
+        .rollback()
+        .await
+        .map_err(ApiError::internal)?;
+    let body = import_body(body).await?;
+    // Read and counted before the write lock: a body over the limit is refused without holding
+    // the collection, and is never built past its limit.
+    let ImportItems {
+        items,
+        at: at_index,
+    } = import_items(&body)?;
+    let mut tx = begin(
+        &state,
+        caller,
+        &path.project,
+        &path.environment,
+        scope::Isolation::PerStatement,
+    )
+    .await?;
     content_types::lock_for_write(&mut tx, &path.collection)
         .await
         .map_err(ApiError::from_db)?;
@@ -1212,17 +1247,6 @@ pub(crate) async fn import(
         if let Some(replay) = claim(&mut tx, IMPORT, key, &request).await? {
             return Ok(replay);
         }
-    }
-    let ImportItems {
-        items,
-        at: at_index,
-    } = import_items(&body)?;
-    if items.len() > IMPORT_MAX_ITEMS {
-        return Err(ApiError::Invalid(Refusal {
-            code: "too_many_items",
-            pointer: "/".to_owned(),
-            message: format!("an import is at most {IMPORT_MAX_ITEMS} items"),
-        }));
     }
     // A single type's file holds one item: two of them can't both be its one entry.
     if content_type.single() && items.len() > 1 {
@@ -1492,18 +1516,46 @@ struct ImportItems {
 
 /// One JSON object per line, one JSON array of the same objects (`[{...},{...}]`), or a
 /// Strapi API response's envelope — an object whose `data` is the item list beside a `meta`
-/// pagination block (D-114).
+/// pagination block (D-114). Counted while it is read: more than [`IMPORT_MAX_ITEMS`] items is
+/// `too_many_items`, and the items past the limit are skipped unbuilt, so a large body costs a
+/// scan, not a tree of values (docs/security/attack-surface.md, "Imports").
+/// An import's body, read after its caller passed the membership check: at most
+/// [`crate::openapi::IMPORT_BODY_BYTES`] (413 past it), a stalled sender given up on as an
+/// upload's is (`uploads::IDLE` between chunks), and text (400 otherwise).
+async fn import_body(body: axum::body::Body) -> Result<String, ApiError> {
+    use http_body_util::BodyExt as _;
+
+    let limit = crate::openapi::IMPORT_BODY_BYTES;
+    let mut body = body;
+    let mut bytes: Vec<u8> = Vec::new();
+    loop {
+        let frame = match tokio::time::timeout(crate::uploads::IDLE, body.frame()).await {
+            Err(_) => return Err(ApiError::BodyStalled),
+            Ok(None) => break,
+            Ok(Some(Err(_))) => return Err(ApiError::BadRequest),
+            Ok(Some(Ok(frame))) => frame,
+        };
+        if let Ok(data) = frame.into_data() {
+            if bytes.len().saturating_add(data.len()) > limit {
+                return Err(ApiError::PayloadTooLarge);
+            }
+            bytes.extend_from_slice(&data);
+        }
+    }
+    String::from_utf8(bytes).map_err(|_| ApiError::BadRequest)
+}
+
 fn import_items(body: &str) -> Result<ImportItems, ApiError> {
     let trimmed = body.trim();
     if trimmed.starts_with('[') {
-        let items = serde_json::from_str::<Vec<Value>>(trimmed).map_err(|_| {
+        let Bounded(items) = serde_json::from_str::<Bounded>(trimmed).map_err(|_| {
             ApiError::Invalid(Refusal {
                 code: "invalid_json",
                 pointer: "/".to_owned(),
                 message: "the body isn't a JSON array".to_owned(),
             })
         })?;
-        return Ok(ImportItems {
+        return within_limit(ImportItems {
             items,
             at: |index| format!("/{index}"),
         });
@@ -1511,19 +1563,26 @@ fn import_items(body: &str) -> Result<ImportItems, ApiError> {
     // An object body is only an envelope when `meta` sits beside the `data` list: a lone
     // `{"data": […]}` can as well be a native document's own field.
     if trimmed.starts_with('{')
-        && let Ok(value) = serde_json::from_str::<Value>(trimmed)
-        && let Some(items) = value.get("data").and_then(Value::as_array)
-        && value.get("meta").is_some()
+        && let Ok(Envelope {
+            data: Some(Bounded(items)),
+            meta: Some(_),
+        }) = serde_json::from_str::<Envelope>(trimmed)
     {
-        return Ok(ImportItems {
-            items: items.clone(),
+        return within_limit(ImportItems {
+            items,
             at: |index| format!("/data/{index}"),
         });
     }
-    let items = trimmed
+    let lines: Vec<&str> = trimmed
         .lines()
         .map(str::trim)
         .filter(|line| !line.is_empty())
+        .collect();
+    if lines.len() > IMPORT_MAX_ITEMS {
+        return Err(too_many_items());
+    }
+    let items = lines
+        .into_iter()
         .enumerate()
         .map(|(index, line)| {
             serde_json::from_str::<Value>(line).map_err(|_| {
@@ -1539,6 +1598,60 @@ fn import_items(body: &str) -> Result<ImportItems, ApiError> {
         items,
         at: |index| format!("/line/{}", index + 1),
     })
+}
+
+fn too_many_items() -> ApiError {
+    ApiError::Invalid(Refusal {
+        code: "too_many_items",
+        pointer: "/".to_owned(),
+        message: format!("an import is at most {IMPORT_MAX_ITEMS} items"),
+    })
+}
+
+fn within_limit(items: ImportItems) -> Result<ImportItems, ApiError> {
+    if items.items.len() > IMPORT_MAX_ITEMS {
+        return Err(too_many_items());
+    }
+    Ok(items)
+}
+
+/// A Strapi envelope: `data` and `meta`, anything else ignored. `data` that isn't a list makes
+/// the body a plain document instead.
+#[derive(Deserialize)]
+struct Envelope {
+    data: Option<Bounded>,
+    meta: Option<serde::de::IgnoredAny>,
+}
+
+/// A JSON list read into at most one item more than [`IMPORT_MAX_ITEMS`]: the rest is checked
+/// to be JSON but never built.
+struct Bounded(Vec<Value>);
+
+impl<'de> Deserialize<'de> for Bounded {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        struct Items;
+        impl<'de> serde::de::Visitor<'de> for Items {
+            type Value = Bounded;
+            fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                formatter.write_str("a list of items")
+            }
+            fn visit_seq<A: serde::de::SeqAccess<'de>>(
+                self,
+                mut seq: A,
+            ) -> Result<Bounded, A::Error> {
+                let mut items = Vec::new();
+                while items.len() <= IMPORT_MAX_ITEMS {
+                    match seq.next_element::<Value>()? {
+                        Some(item) => items.push(item),
+                        None => return Ok(Bounded(items)),
+                    }
+                }
+                while seq.next_element::<serde::de::IgnoredAny>()?.is_some() {}
+                Ok(Bounded(items))
+            }
+        }
+        deserializer.deserialize_seq(Items)
+    }
 }
 
 /// One item's place in the report (D-114).
@@ -2952,6 +3065,46 @@ mod tests {
         assert_eq!((items.at)(0), "/line/1");
     }
 
+    /// Every form of an import is counted while it is read: one item over the limit is
+    /// refused there, before the handler takes the collection's write lock, and the items past
+    /// the limit are never built (docs/security/attack-surface.md, "Imports").
+    #[test]
+    fn an_import_over_the_limit_is_refused_while_it_is_read() {
+        let many = IMPORT_MAX_ITEMS + 1;
+        let array = format!("[{}]", vec!["{}"; many].join(","));
+        let envelope = format!(r#"{{"data": {array}, "meta": {{}}}}"#);
+        let lines = vec!["{}"; many].join("\n");
+        for body in [&array, &envelope, &lines] {
+            let read = import_items(body).map(|items| items.items.len());
+            assert!(
+                matches!(
+                    &read,
+                    Err(ApiError::Invalid(Refusal {
+                        code: "too_many_items",
+                        ..
+                    }))
+                ),
+                "{:?}",
+                read.as_ref().ok()
+            );
+        }
+        // A line that isn't JSON past the limit is never read: the count refuses first.
+        let broken = format!("{lines}\nnot json");
+        assert!(matches!(
+            import_items(&broken),
+            Err(ApiError::Invalid(Refusal {
+                code: "too_many_items",
+                ..
+            }))
+        ));
+        // Exactly the limit is fine in every form.
+        let array = format!("[{}]", vec!["{}"; IMPORT_MAX_ITEMS].join(","));
+        assert_eq!(
+            import_items(&array).map(|items| items.items.len()).ok(),
+            Some(IMPORT_MAX_ITEMS)
+        );
+    }
+
     #[test]
     fn a_dry_run_says_would_where_an_apply_says_did() {
         let plan = ItemPlan {
@@ -2994,5 +3147,37 @@ mod tests {
         );
         assert!(verdict(&ApiError::Busy).is_none());
         assert!(verdict(&ApiError::Unauthorized).is_none());
+    }
+}
+
+/// Never-panics properties for an import's body (D-231): `import_items` and its bounded reader
+/// refuse or read whatever arrives, and never keep more than the limit's worth of items.
+#[cfg(test)]
+mod never_panics {
+    use proptest::prelude::*;
+
+    use super::{IMPORT_MAX_ITEMS, import_items};
+
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(512))]
+
+        #[test]
+        fn any_text_is_read_or_refused(body in ".{0,2000}") {
+            if let Ok(read) = import_items(&body) {
+                prop_assert!(read.items.len() <= IMPORT_MAX_ITEMS);
+            }
+        }
+
+        #[test]
+        fn json_shaped_bodies_are_read_or_refused(items in proptest::collection::vec("[\\[\\]{}\",:0-9a-z ]{0,40}", 0..40), lines in any::<bool>()) {
+            let body = if lines {
+                items.join("\n")
+            } else {
+                format!("{{\"data\":[{}],\"meta\":{{}}}}", items.join(","))
+            };
+            if let Ok(read) = import_items(&body) {
+                prop_assert!(read.items.len() <= IMPORT_MAX_ITEMS);
+            }
+        }
     }
 }

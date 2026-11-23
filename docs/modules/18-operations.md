@@ -217,7 +217,9 @@ never silently rerun without `--force`; `deploy/runbooks/restore.md` is the oper
    embedded set (`colophon_db::restore::check_schema`): a backup carrying a migration this binary doesn't know is
    refused; a schema behind the binary reports `pending` and passes — nothing migrates silently inside verify.
 3. **epoch:** `admin restore epoch` advances every environment's epoch exactly once — the new recovery epoch (D4)
-   that invalidates the old timeline's cache generations, delivery scope keys and worker leases.
+   that invalidates the old timeline's cache generations, delivery scope keys and worker leases — after replacing
+   the media signing key and retiring every older one (D-233), so a restored copy never shares its source's key.
+   Outside a restore, `admin media-key rotate [--retire-previous]` rotates it; servers read the keys every minute.
 4. **ledger:** every `--ledger` export replays the interval the restored `deletion_ledger` lacks (anti-joined by
    row id — `id > max` would hide out-of-order rows). A gap the files don't cover, or a row that can't replay,
    blocks the stage — O2 keeps serving off.
@@ -259,7 +261,7 @@ A backup existing is not proof of a working restore.
 | Resource | Default guard |
 |---|---|
 | HTTP API | 1 MiB JSON input, page size ≤ 100, 2 s ordinary query budget; 429/503 before unbounded queues form |
-| Jobs | 10,000 pending jobs per project and 1 GiB pending payload metadata per install — both in place (D-131, D-135): `colophon_db::work` admits under the project's advisory lock then the install-wide byte lock, and over either bound the accepting transaction refuses 503 `work_full`/`payload_full` + `Retry-After`; the payload is counted as stored bytes — job keys, recorded `assets.size_bytes`, bulk manifests and pending items, plan definitions and resolutions — object bytes stay in storage |
+| Jobs | 10,000 pending jobs per project and 1 GiB pending payload metadata per install — both in place (D-131, D-135): `colophon_db::work` admits under the project's advisory lock, then checks the install-wide running total at the end under its counter row's lock (D-216), and over either bound the accepting transaction refuses 503 `work_full`/`payload_full` + `Retry-After`; the payload is counted as stored bytes — job keys, recorded `assets.size_bytes`, bulk manifests and pending items, plan definitions and resolutions — object bytes stay in storage |
 | Worker pools | 8 publishing/delivery tasks (2 per destination), 4 image jobs, 2 AI jobs |
 | Cache | 1 GiB reference budget with explicit eviction |
 | Logs | 7 days and 1 GiB, 16 KiB record cap, visible dropped-record counter |

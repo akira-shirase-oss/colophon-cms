@@ -89,6 +89,13 @@ pub struct MediaObject {
     /// The literal object key to serve — `None` when the environment exists but the asset or
     /// version does not (or isn't `usable`): the origin answers 404.
     pub public_key: Option<String>,
+    /// Whether that version is published: named by a publication anyone may read, of any generation no takedown revoked (D-229,
+    /// migration 0082). Anything else is served only to the project's members or with a signed
+    /// address, privately.
+    pub published: bool,
+    /// For the bare address only: the newest published version's key, which the public sees
+    /// while a newer version waits for its publish (D-229). `None` when no version is published.
+    pub published_key: Option<String>,
 }
 
 /// The media origin's whole read (`media_object`, migration 0051): resolve `slug` and pick the
@@ -106,7 +113,8 @@ pub async fn media_object(
 ) -> Result<Option<MediaObject>, DbError> {
     sqlx::query_as!(
         MediaObject,
-        r#"SELECT environment_id AS "environment_id!", public_key
+        r#"SELECT environment_id AS "environment_id!", public_key, published AS "published!",
+                  published_key
            FROM media_object($1, $2, $3, $4)"#,
         project,
         slug,
@@ -114,6 +122,73 @@ pub async fn media_object(
         version_sha
     )
     .fetch_optional(pool)
+    .await
+    .map_err(DbError::from_query)
+}
+
+/// One key that signs or verifies short-lived media addresses (D-229, D-233).
+#[derive(Clone, PartialEq, Eq)]
+pub struct MediaSigningKey {
+    /// Its id, which a signed address carries (`?kid=`); the highest is the current key.
+    pub id: i16,
+    /// The 32 key bytes.
+    pub key: Vec<u8>,
+}
+
+impl std::fmt::Debug for MediaSigningKey {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("MediaSigningKey")
+            .field("id", &self.id)
+            .field("key", &"[REDACTED]")
+            .finish()
+    }
+}
+
+/// The installation's live media signing keys, the current one (the highest id) first: at
+/// most two, since a rotation keeps only the key it replaces (migration 0086).
+pub async fn media_signing_keys(pool: &PgPool) -> Result<Vec<MediaSigningKey>, DbError> {
+    sqlx::query_as!(
+        MediaSigningKey,
+        "SELECT id, key FROM media_signing_keys ORDER BY id DESC"
+    )
+    .fetch_all(pool)
+    .await
+    .map_err(DbError::from_query)
+}
+
+/// Why a media signing key was rotated, as `media_key_rotations` records it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RotationReason {
+    /// An operator's `colophon admin media-key rotate`.
+    Admin,
+    /// A restore's epoch stage: a restored copy never shares its source's key.
+    Restore,
+}
+
+impl RotationReason {
+    const fn name(self) -> &'static str {
+        match self {
+            Self::Admin => "admin",
+            Self::Restore => "restore",
+        }
+    }
+}
+
+/// Makes a new current media signing key and drops every key but the one it replaces, or,
+/// with `retire_previous`, every other key (a leaked key: every link it signed stops working
+/// once the servers reload, within a minute), and writes its line in `media_key_rotations`. Run with the migrator's login (the admin command,
+/// the restore's epoch stage); the API's role can only read keys. Returns the new key's id.
+pub async fn rotate_media_key(
+    pool: &PgPool,
+    retire_previous: bool,
+    reason: RotationReason,
+) -> Result<i16, DbError> {
+    sqlx::query_scalar!(
+        r#"SELECT colophon_rotate_media_key($1, $2) AS "id!""#,
+        retire_previous,
+        reason.name()
+    )
+    .fetch_one(pool)
     .await
     .map_err(DbError::from_query)
 }

@@ -11,6 +11,8 @@
 import http from 'k6/http';
 import { check, fail, sleep } from 'k6';
 import { Counter, Rate, Trend } from 'k6/metrics';
+import exec from 'k6/execution';
+import { idempotencyKey } from './lib/idempotency-key.js';
 
 const BASE_URL = __ENV.BASE_URL || 'http://127.0.0.1:58000';
 const PUBLIC_URL = __ENV.PUBLIC_URL || 'http://localhost:58000';
@@ -83,7 +85,7 @@ const WIDE = new Uint8Array([
 ]);
 
 function key() {
-  return `k6-${__VU}-${__ITER}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+  return idempotencyKey(`k6-${__VU}-${__ITER}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`, 'assets');
 }
 
 export function setup() {
@@ -113,7 +115,7 @@ export function setup() {
   // One known-usable asset for the public origin to serve: upload, then wait for the
   // worker to verify it before the run starts.
   const made = http.post(assets, WIDE.buffer, {
-    headers: { Cookie: session.cookie, 'X-CSRF-Token': session.csrf, Origin: PUBLIC_URL, 'Content-Type': 'image/png', 'X-Colophon-File-Name': 'warm.png', 'Idempotency-Key': `k6-warm-${Date.now().toString(36)}` },
+    headers: { Cookie: session.cookie, 'X-CSRF-Token': session.csrf, Origin: PUBLIC_URL, 'Content-Type': 'image/png', 'X-Colophon-File-Name': 'warm.png', 'Idempotency-Key': idempotencyKey(`k6-warm-${Date.now().toString(36)}`, 'assets') },
     redirects: 0,
   });
   if (made.status !== 202) fail(`warm upload: HTTP ${made.status} ${made.body}`);
@@ -129,6 +131,26 @@ export function setup() {
     if (waited >= 30000) fail(`warm asset never verified: still ${state} after ${waited} ms: ${one.body}`);
     sleep(0.1);
   }
+
+  // Published, so the public origin serves it (D-229: an upload no release names is a member's,
+  // privately): a one-field type naming it, one entry, its changeset approved and released.
+  const base = `${BASE_URL}/api/v1/projects/${id}/environments/production`;
+  const keyed = () => Object.assign({ 'Idempotency-Key': idempotencyKey(`k6-pub-${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`, 'assets') }, write);
+  const type = http.post(`${base}/content-types`, JSON.stringify({ slug: 'covers', definition: { name: 'Covers', title_field: 'title', fields: [
+    { id: 'title', label: 'Title', type: 'text', required: true },
+    { id: 'photo', label: 'Photo', type: 'asset' },
+  ] } }), { headers: keyed() });
+  if (type.status !== 201) fail(`content type: HTTP ${type.status} ${type.body}`);
+  const cover = http.post(`${base}/collections/covers/entries`, JSON.stringify({ title: 'Warm', photo: mediaId }), { headers: keyed() });
+  if (cover.status !== 201) fail(`entry: HTTP ${cover.status} ${cover.body}`);
+  const set = http.post(`${base}/changesets`, JSON.stringify({ title: 'warm', entries: [cover.json('data.id')] }), { headers: keyed() });
+  if (set.status !== 201) fail(`changeset: HTTP ${set.status} ${set.body}`);
+  const path = `${base}/changesets/${set.json('data.id')}`;
+  const ifMatch = Object.assign({ 'If-Match': `"${set.json('data.hash')}"` }, write);
+  http.post(`${path}/submit`, null, { headers: ifMatch });
+  http.post(`${path}/reviews`, JSON.stringify({ decision: 'approve' }), { headers: ifMatch });
+  const released = http.post(`${path}/publish`, JSON.stringify({ base_generation: 0 }), { headers: Object.assign(keyed(), ifMatch) });
+  if (released.status !== 201) fail(`publish: HTTP ${released.status} ${released.body}`);
 
   return { session, sessions, assets, media: `${BASE_URL}/media/v1/${id}/production`, mediaId };
 }
@@ -147,10 +169,10 @@ export default function (data) {
     },
     redirects: 0,
   });
-  const roll = __ITER % 10;
+  const roll = exec.scenario.iterationInTest % 10;
   if (roll < 4) {
     // Half the uploads are real, one in ten a fake the verifier will reject.
-    const fake = __ITER % 50 === 49;
+    const fake = exec.scenario.iterationInTest % 50 === 49;
     const body = fake ? FAKE : PNG;
     const res = http.post(data.assets, body.buffer, Object.assign({ tags: { endpoint: 'upload', name: 'assets' } }, write(fake ? 'photo.png' : 'dot.png')));
     uploadRefused.add(res.status === 429 || res.status === 503);
@@ -202,7 +224,7 @@ export default function (data) {
     }
   } else if (roll === 6) {
     // D-179: search over the trigram index — a common term and a rare one.
-    const q = __ITER % 20 === 6 ? 'warm' : 'dot';
+    const q = exec.scenario.iterationInTest % 20 === 6 ? 'warm' : 'dot';
     const res = http.get(`${data.assets}?q=${q}&limit=50`, Object.assign({ tags: { endpoint: 'search', name: 'assets?q' } }, read));
     check(res, { 'search 200': (r) => r.status === 200 && Array.isArray(r.json('data')) });
   } else if (roll === 7) {
@@ -231,9 +253,9 @@ export default function (data) {
       });
     }
   } else {
-    // M.1/M.3: the public origin serves the setup's verified object — the original half the
-    // time, its w320 rendition the other half — no sign-in, no row reads.
-    const at = __ITER % 2 === 0 ? `${data.media}/${data.mediaId}` : `${data.media}/${data.mediaId}/w320`;
+    // M.1/M.3: the public origin serves the setup's verified, published object — the original
+    // half the time, its w320 rendition the other half — no sign-in.
+    const at = exec.scenario.iterationInTest % 2 === 0 ? `${data.media}/${data.mediaId}` : `${data.media}/${data.mediaId}/w320`;
     const object = http.get(at, { tags: { endpoint: 'media', name: 'media/v1/{asset}' }, redirects: 0 });
     check(object, {
       'media 200': (r) => r.status === 200,

@@ -47,6 +47,10 @@ ProtectKernelModules=yes
 ProtectKernelTunables=yes
 ProtectControlGroups=yes
 ProtectProc=invisible
+# /proc shows processes only (no /proc/sys, /proc/meminfo, ...): the server reads none of it.
+ProcSubset=pid
+# A user namespace of its own: no other user or group is mapped, root included.
+PrivateUsers=yes
 RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
 RestrictNamespaces=yes
 RestrictRealtime=yes
@@ -56,6 +60,7 @@ MemoryDenyWriteExecute=yes
 SystemCallArchitectures=native
 SystemCallFilter=@system-service
 SystemCallFilter=~@privileged
+SystemCallFilter=~@resources
 UMask=0077
 LimitNOFILE=65536
 

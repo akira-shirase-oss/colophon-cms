@@ -15,6 +15,8 @@
 
 import http from 'k6/http';
 import { check, fail, sleep } from 'k6';
+import exec from 'k6/execution';
+import { idempotencyKey } from './lib/idempotency-key.js';
 
 const BASE_URL = __ENV.BASE_URL || 'http://127.0.0.1:58000';
 const PUBLIC_URL = __ENV.PUBLIC_URL || 'http://localhost:58000';
@@ -86,7 +88,9 @@ export function setup() {
 
 // Each virtual user publishes in its own project, so it knows the generation it publishes on, and
 // what it published last.
+// per-VU state: advances only on a successful publish; checks compare against the current value.
 let generation = 0;
+// per-VU state: null-checked before use; any slot order is valid.
 let previous = null;
 
 const article = (title) => ({
@@ -96,12 +100,12 @@ const article = (title) => ({
 
 export default function (data) {
   const base = data.bases[(__VU - 1) % data.bases.length];
-  const key = (step) => `k6-${data.run}-${__VU}-${__ITER}-${step}`;
+  const key = (step) => idempotencyKey(`k6-${data.run}-${__VU}-${__ITER}-${step}`, 'publishing');
   const params = (endpoint, extra) => ({ headers: Object.assign({}, data.headers, extra || {}), redirects: 0, tags: { endpoint, name: endpoint } });
 
   const entry = http.post(`${base}/collections/articles/entries`, JSON.stringify(article(`Article ${__VU}-${__ITER}`)), params('entry', { 'Idempotency-Key': key('e') }));
   if (!check(entry, { 'entry 201': (r) => r.status === 201 })) return;
-  const unpublish = previous !== null && __ITER % 10 === 9 ? [previous] : [];
+  const unpublish = previous !== null && exec.scenario.iterationInTest % 10 === 9 ? [previous] : [];
   const changes = { title: `k6 ${__ITER}`, entries: [entry.json('data.id')], unpublish };
   const set = http.post(`${base}/changesets`, JSON.stringify(changes), params('changeset', { 'Idempotency-Key': key('c') }));
   if (!check(set, { 'changeset 201': (r) => r.status === 201 })) return;

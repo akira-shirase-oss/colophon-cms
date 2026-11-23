@@ -275,19 +275,8 @@ site_pid=""
 sampler_pid=""
 site_port="${SITE_PORT:-58097}"
 receiver_port="${RECEIVER_PORT:-58096}"
-# A port that already has a listener means a stale process from an earlier run: the
-# child spawned here would die on EADDRINUSE while the squatter — with its old state —
-# answers in its place. (A stale receiver once drove a real Valkey pause through its
-# /control while the run's own receiver.log held only the crash dump, so the warn
-# window read empty and every warning counted.) Fail fast, don't measure it.
-port_busy() { lsof -nP -t -iTCP:"$1" -sTCP:LISTEN >/dev/null 2>&1; }
-refuse_squatter() {
-  if port_busy "$1"; then
-    echo "error: port $1 already has a listener — a stale process would answer in place" >&2
-    echo "of this run's own $2. Find it: lsof -nP -iTCP:$1 -sTCP:LISTEN" >&2
-    exit 1
-  fi
-}
+# shellcheck source=scripts/port-guard.sh
+. scripts/port-guard.sh
 # shellcheck disable=SC2329 # invoked by the EXIT trap below
 cleanup() {
   if [[ -n "$sampler_pid" ]]; then kill "$sampler_pid" 2>/dev/null || true; fi
@@ -393,6 +382,10 @@ else
     . scripts/local-env.sh
     # The public URL is the sign-in redirect URI registered in the development realm.
     export COLOPHON_LISTEN_ADDR="127.0.0.1:$port" COLOPHON_PUBLIC_URL="http://localhost:$port" COLOPHON_LOG="${LOAD_LOG:-warn}" COLOPHON_LOG_FORMAT=json
+    # L10 counts the fills the cache should have answered (a key this process stored, filled again within
+    # its lifetime: D-232). The server says them once a window on their own target, at DEBUG when the window
+    # had none, so the run can tell a zero from a count that wasn't taken.
+    if [[ "$endpoint" == "cdn-warm" ]]; then export COLOPHON_LOG="$COLOPHON_LOG,colophon_api::cache_refill=debug"; fi
     # A load run can hold hundreds of live sockets, and a big response keeps each one open
     # longer: under this Mac's 256-file default the accept loop hit EMFILE about once a second
     # on GET /openapi.json at 2,000/s (D-110's scenario). Production runs under a service
@@ -632,6 +625,15 @@ if [[ "$endpoint" == "uploads-slow" ]]; then
   exit "$uploads_status"
 fi
 
+# Valkey's own evictions during the run, beside L10's refill count: the local Valkey is shared, and
+# another checkout's load can evict this run's keys (an eviction refill is the cache's, not the code's).
+valkey_evicted() {
+  docker compose -f deploy/compose.yaml exec -T valkey valkey-cli -a colophon-dev --no-auth-warning INFO stats 2>/dev/null \
+    | tr -d '\r' | awk -F: '$1 == "evicted_keys" { print $2 }'
+}
+evicted_before=""
+[[ "$endpoint" == "cdn-warm" ]] && evicted_before=$(valkey_evicted || true)
+
 echo "running k6: $endpoint $scenario"
 k6_status=0
 k6_drill_env=()
@@ -654,6 +656,9 @@ fi
   -e P99_MS="$P99_MS" -e USERS="${USERS:-512}" -e RECEIVER_URL="http://127.0.0.1:$receiver_port" -e SITE_URL="http://127.0.0.1:$site_port" \
   ${k6_drill_env[@]+"${k6_drill_env[@]}"} \
   "perf/k6/$endpoint.js" 2>&1 | tee "$work/k6-console.log" || k6_status=$?
+# When k6 stopped, to the second (UTC, as the server's JSON stamps its lines): L10's refill count must
+# include a window that closed after it, so the run's last seconds are counted too.
+k6_ended=$(date -u +%Y-%m-%dT%H:%M:%S)
 
 if [[ -n "$sampler_pid" ]]; then
   kill "$sampler_pid" 2>/dev/null || true
@@ -687,7 +692,6 @@ fi
 # The predicates live in scripts/lib/load-warnings.jq, which scripts/test-load-warnings.sh tests.
 warnings_lib="$(cat scripts/lib/load-warnings.jq)"
 counted_jq="$warnings_lib select(counted)"
-slow_jq="$warnings_lib select(slow_statement)"
 count_logged() { jq -Rn "[inputs | fromjson? | $counted_jq] | length"; }
 if [[ "$cluster" == "1" ]]; then
   server_warnings=0
@@ -750,8 +754,54 @@ fi
 # The evidence the gate no longer counts, kept in the record: how many slow statements, and the slowest.
 slow_logs=("$work/server.log")
 for log in "$work"/worker*.log; do [[ -f "$log" ]] && slow_logs+=("$log"); done
-slow_statements=$(cat "${slow_logs[@]}" | jq -Rsc "[split(\"\\n\")[] | fromjson? | $slow_jq | .elapsed_secs // 0]
-  | {count: length, max_ms: ((max // 0) * 1000 | round)}")
+slow_statements=$(cat "${slow_logs[@]}" | jq -Rsc "$warnings_lib [split(\"\\n\")[] | fromjson? | select(slow_statement) | elapsed] | slow_summary")
+
+# L10's duplicate fills (D-232): the server says, once a 10-s window on colophon_api::cache_refill, how
+# many stores Valkey kept and how many keys it filled again within their lifetime. k6 can't see them, so
+# they join l10 here, before the record and the lNN gate loop read summary.json. The server is still up,
+# so this waits (at most 12 s) for a window that closed after k6 stopped: without it the run's last
+# seconds, a whole release's fills, went uncounted. Two gates: no refill, and the fill path counted:
+# k6 saw fills at all (a cache that was off or unreachable bypasses every answer, so none), and the
+# stores the server kept or was refused cover every fill k6 saw, the edges' and the publisher's. A run
+# with no window after k6, a renamed target, a wrong filter, a cold cache or a fill path that stopped
+# counting fails rather than read as zero. A run through the balancer has no server log here: not
+# counted, and the record says so.
+if [[ "$endpoint" == "cdn-warm" && -f "$work/summary.json" ]] && jq -e '.l10 | type == "object"' "$work/summary.json" >/dev/null; then
+  evicted_after=$(valkey_evicted || true)
+  evicted=null
+  if [[ "$evicted_before" =~ ^[0-9]+$ && "$evicted_after" =~ ^[0-9]+$ ]]; then evicted=$(( evicted_after - evicted_before )); fi
+  if [[ "$cluster" != "1" && -f "$work/server.log" ]]; then
+    refill_windows='[split("\n")[] | fromjson? | select(.target == "colophon_api::cache_refill" and (.total | type) == "number")]'
+    for _ in $(seq 24); do
+      jq -Rse --arg end "$k6_ended" "$refill_windows | map(select(.timestamp[0:19] > \$end)) | length > 0" "$work/server.log" >/dev/null && break
+      sleep 0.5
+    done
+    duplicates=$(jq -Rs --arg end "$k6_ended" "$refill_windows"'
+      | {windows: length, windows_after_k6: (map(select(.timestamp[0:19] > $end)) | length),
+         stored: (map(.stored // 0) | add // 0), unkept: (map(.unkept // 0) | add // 0), count: (map(.total) | add // 0),
+         by_kind: {list: (map(.list) | add // 0), entry: (map(.entry) | add // 0),
+                   query: (map(.query) | add // 0), other: (map(.other) | add // 0)}}' "$work/server.log")
+    if [[ "$(jq '.windows_after_k6' <<<"$duplicates")" == 0 ]]; then
+      echo "warning: no refill window closed after k6 stopped (colophon_api::cache_refill at debug): the duplicate fills weren't all counted" >&2
+    fi
+  else
+    duplicates=null
+  fi
+  jq --argjson d "$duplicates" --argjson evicted "$evicted" '
+    .l10.fills.duplicate_fills = $d
+    | .l10.fills.valkey_evicted_keys = $evicted
+    | .l10.gates.no_duplicate_fills = (if $d == null then null else ($d.windows_after_k6 > 0 and $d.count == 0) end)
+    | .l10.gates.fills_counted_by_the_server = (if $d == null then null else
+        ((.l10.fills.total | type) == "number" and (.l10.fills.publisher | type) == "number"
+         and .l10.fills.total > 0
+         and ($d.stored + $d.unkept) >= (.l10.fills.total + .l10.fills.publisher)) end)
+    | .l10.gate = ((.l10.gate // "") + (if $d == null
+        then "; duplicate fills not counted: cluster run"
+        else "; no key filled again within its lifetime (counted by the server, once a window)" end))
+    | .l10.held = ([.l10.gates[] | select(. != null)] | all)' "$work/summary.json" > "$work/summary.l10.json"
+  mv "$work/summary.l10.json" "$work/summary.json"
+  echo "    duplicate fills (the server's count, D-232): $(jq -c '.l10.fills.duplicate_fills' "$work/summary.json"); Valkey evicted keys during the run: $evicted"
+fi
 
 # mixed.js cannot read the windows file itself — open() is init-stage only — so
 # with drills announced it stamps every failed assertion `L05FAIL <epoch_s>` on
@@ -933,10 +983,16 @@ record=$(jq -c '.hard_failures_total = ([.hard_failures | to_entries[] | select(
 # systematic gap between the two would bias the scale, and every record shows it.
 if [[ -n "${RUNNER_SCALE:-}" ]]; then
   record=$(jq -c --arg health "${RUNNER_HEALTH_RPS:-}" --arg long "${RUNNER_LONG_HEALTH_RPS:-}" --arg reference "${RUNNER_REFERENCE_RPS:-}" --arg scale "$RUNNER_SCALE" --arg p99 "${P99_MS:-}" --arg judged "${RUNNER_JUDGED:-yes}" \
+    --arg wrps "${RUNNER_WRITE_RPS:-}" --arg wsource "${RUNNER_WRITE_SOURCE:-}" --arg wkept "${RUNNER_WRITE_KEPT:-}" --arg wdiscarded "${RUNNER_WRITE_DISCARDED:-}" \
     '($health | tonumber? // null) as $h | ($long | tonumber? // null) as $l
      | .runner = {cpu: .machine.cpu, judged: ($judged == "yes"), health_rps: $h, long_health_rps: $l,
                   probe_to_long: (if $h and $l and $l > 0 then ($h / $l * 1000 | round / 1000) else null end),
-                  reference_rps: ($reference | tonumber? // null), scale: ($scale | tonumber? // null), p99_limit_ms: ($p99 | tonumber? // null)}' <<<"$record")
+                  reference_rps: ($reference | tonumber? // null), scale: ($scale | tonumber? // null), p99_limit_ms: ($p99 | tonumber? // null)}
+     # The D-223 write probe, recorded (phase 1: not applied). Its runs are in projects of their own.
+     | if $wsource != "" then .runner += {write_rps: ($wrps | tonumber? // null), write_scale_source: $wsource,
+                                         write_probe: {kept: ($wkept | tonumber? // 0), discarded: ($wdiscarded | tonumber? // 0),
+                                                       isolated: "a project per run (entries setup)", applied: false}}
+       else . end' <<<"$record")
 fi
 echo "$record" | jq .
 # RECORD_OUT: the record as a file too, for a caller that judges it (CI's smoke verdict, D-209).

@@ -397,10 +397,22 @@ async fn outbox(
     generation: i64,
     job_lifetime: std::time::Duration,
 ) -> Result<(), DbError> {
+    // Every older job that hasn't started must go, so this waits for each one, taking them in
+    // id order: the one order every multi-row lock on the work tables uses (the sweeps don't
+    // wait at all), so no two of them can lock in a circle.
     let superseded = sqlx::query_scalar!(
-        "UPDATE jobs SET status = 'superseded', updated_at = now(), finished_at = now()
-         WHERE project_id = $1 AND environment_id = $2 AND generation < $3 AND status IN ('pending', 'retrying')
-         RETURNING id",
+        "WITH older AS (
+             SELECT project_id, environment_id, id FROM jobs
+             WHERE project_id = $1 AND environment_id = $2 AND generation < $3
+               AND status IN ('pending', 'retrying')
+             ORDER BY id
+             FOR UPDATE
+         )
+         UPDATE jobs j SET status = 'superseded', updated_at = now(), finished_at = now()
+         FROM older
+         WHERE j.project_id = older.project_id AND j.environment_id = older.environment_id
+           AND j.id = older.id AND j.status IN ('pending', 'retrying')
+         RETURNING j.id",
         tx.project,
         tx.environment,
         generation

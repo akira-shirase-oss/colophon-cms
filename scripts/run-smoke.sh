@@ -11,7 +11,8 @@
 # - It fails with hard failures AND the signature: the first attempt's record and log are kept as
 #   <name>.stalled.record.json / .stalled.server.log, labelled "runner IO stall" with the numbers (a `stall` field),
 #   and the smoke runs once more. That re-run decides: its record (with `rerun_of`) is the one the verdict reads,
-#   and its exit status is this script's. Never more than one re-run.
+#   and its exit status is this script's. Never more than one re-run. RUN_SMOKE_BEFORE_RERUN, if set, is run with the
+#   stalled smoke's stem just before that re-run, and at no other time.
 set -euo pipefail
 name=$1 record=$2 log=$3 pressure=$4
 shift 4
@@ -43,6 +44,12 @@ jq -c --argjson s "$signature" '. + {stall: ($s + {label: "runner IO stall"})}' 
 rm -f "$record"
 [[ -f $log ]] && mv "$log" "$stalled_log"
 echo "::warning::$name: runner IO stall ($hard hard failures; io full ≥ $(jq -r '.io_full_min' <<<"$signature")% of each failure second, COMMIT share $(jq -r '.commit_share_min' <<<"$signature")); first attempt kept as $(basename "$stalled_record"), re-running it once"
+
+# A caller's hook, before the re-run only, with the stalled smoke's stem (its record path without .record.json):
+# the smokes job keeps the stalled attempt's statement counts and resets them, so they don't mix with the re-run's.
+if [[ -n ${RUN_SMOKE_BEFORE_RERUN:-} ]]; then
+  "$RUN_SMOKE_BEFORE_RERUN" "${record%.record.json}" || echo "::warning::$name: the pre-re-run hook failed; re-running anyway"
+fi
 
 rerun=0
 run "$@" || rerun=$?

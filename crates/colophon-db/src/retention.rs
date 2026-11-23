@@ -55,7 +55,7 @@
 use sqlx::{AssertSqlSafe, PgPool};
 use time::OffsetDateTime;
 
-use crate::{DbError, Postgres, Transaction};
+use crate::{DbError, Postgres, Stop, Transaction};
 
 /// How long each class of row is kept. The production values are [`Retention::DEFAULT`];
 /// a test passes smaller ones instead of backdating a database.
@@ -193,16 +193,6 @@ impl Swept {
     }
 }
 
-/// A worker's transaction: as `colophon_worker`, for its duration.
-async fn worker(pool: &PgPool) -> Result<Transaction<'static, Postgres>, DbError> {
-    let mut transaction = crate::begin_tx(pool).await.map_err(DbError::from_query)?;
-    sqlx::query("SET LOCAL ROLE colophon_worker")
-        .execute(&mut *transaction)
-        .await
-        .map_err(DbError::from_query)?;
-    Ok(transaction)
-}
-
 /// Calls one of migration 0050's `colophon_sweep_*` functions — a bounded delete owned by
 /// `colophon_retention` that a worker may execute but never see past — and answers how many
 /// rows it removed.
@@ -225,14 +215,20 @@ async fn retained(
 
 /// Runs one bounded pass over every retained table, as `colophon_worker` — at most `batch`
 /// rows a table, oldest first. `ages` says how long each class is kept; `BATCH` is the
-/// production batch. Returns what it deleted.
+/// production batch. Returns what it deleted. Told to `stop` between two of its statements, it
+/// rolls back and answers [`DbError::Stopped`]: after a stop it runs at most the one it is in.
 #[allow(
     clippy::too_many_lines,
     reason = "one transaction's deletes, in an order that leaves no row briefly orphaned \
               of what explains it — splitting the sequence would hide that order"
 )]
-pub async fn sweep(pool: &PgPool, ages: &Retention, batch: i64) -> Result<Swept, DbError> {
-    let mut tx = worker(pool).await?;
+pub async fn sweep(
+    pool: &PgPool,
+    ages: &Retention,
+    batch: i64,
+    stop: Stop<'_>,
+) -> Result<Swept, DbError> {
+    let mut tx = crate::transactions::background_worker(pool, stop).await?;
     let work_cut = OffsetDateTime::now_utc() - ages.work;
     let audit_cut = OffsetDateTime::now_utc() - ages.audit;
     let ledger_cut = OffsetDateTime::now_utc() - ages.ledger;
@@ -260,6 +256,9 @@ pub async fn sweep(pool: &PgPool, ages: &Retention, batch: i64) -> Result<Swept,
 
     // Receipts past the age, and receipts of jobs that are about to go — a job never
     // leaves an observation dangling to a row that no longer exists.
+    if stop.requested() {
+        return crate::transactions::stopped(tx).await;
+    }
     let observations = sqlx::query!(
         "WITH doomed AS (
              SELECT o.project_id, o.environment_id, o.id FROM observations o
@@ -286,6 +285,9 @@ pub async fn sweep(pool: &PgPool, ages: &Retention, batch: i64) -> Result<Swept,
 
     // Finished jobs old enough, with no reservation still naming them and no observation
     // left: one racing receipt keeps its job for another pass, never loses the pair.
+    if stop.requested() {
+        return crate::transactions::stopped(tx).await;
+    }
     let jobs = sqlx::query!(
         "WITH doomed AS (
              SELECT project_id, environment_id, id FROM jobs j
@@ -311,6 +313,9 @@ pub async fn sweep(pool: &PgPool, ages: &Retention, batch: i64) -> Result<Swept,
     .map_err(DbError::from_write)?
     .rows_affected();
 
+    if stop.requested() {
+        return crate::transactions::stopped(tx).await;
+    }
     let asset_jobs = sqlx::query!(
         "WITH doomed AS (
              SELECT project_id, environment_id, id FROM asset_jobs
@@ -330,6 +335,9 @@ pub async fn sweep(pool: &PgPool, ages: &Retention, batch: i64) -> Result<Swept,
 
     // A bulk manifest's items go before their job: the job's doomed set asks for none left,
     // so a parent only outlives its items by a pass, never by a delete.
+    if stop.requested() {
+        return crate::transactions::stopped(tx).await;
+    }
     let bulk_items = sqlx::query!(
         "WITH doomed AS (
              SELECT i.project_id, i.environment_id, i.job_id, i.key FROM bulk_items i
@@ -353,6 +361,9 @@ pub async fn sweep(pool: &PgPool, ages: &Retention, batch: i64) -> Result<Swept,
     .map_err(DbError::from_write)?
     .rows_affected();
 
+    if stop.requested() {
+        return crate::transactions::stopped(tx).await;
+    }
     let bulk_jobs = sqlx::query!(
         "WITH doomed AS (
              SELECT project_id, environment_id, id FROM bulk_jobs b
@@ -377,6 +388,9 @@ pub async fn sweep(pool: &PgPool, ages: &Retention, batch: i64) -> Result<Swept,
     .map_err(DbError::from_write)?
     .rows_affected();
 
+    if stop.requested() {
+        return crate::transactions::stopped(tx).await;
+    }
     let migration_items = sqlx::query!(
         "WITH doomed AS (
              SELECT i.project_id, i.environment_id, i.plan_id, i.entry_id
@@ -398,6 +412,9 @@ pub async fn sweep(pool: &PgPool, ages: &Retention, batch: i64) -> Result<Swept,
     .map_err(DbError::from_write)?
     .rows_affected();
 
+    if stop.requested() {
+        return crate::transactions::stopped(tx).await;
+    }
     let migration_plans = sqlx::query!(
         "WITH doomed AS (
              SELECT project_id, environment_id, id FROM migration_plans p
@@ -419,6 +436,9 @@ pub async fn sweep(pool: &PgPool, ages: &Retention, batch: i64) -> Result<Swept,
     .map_err(DbError::from_write)?
     .rows_affected();
 
+    if stop.requested() {
+        return crate::transactions::stopped(tx).await;
+    }
     let schedules = sqlx::query!(
         "WITH doomed AS (
              SELECT project_id, environment_id, id FROM schedules
@@ -438,6 +458,9 @@ pub async fn sweep(pool: &PgPool, ages: &Retention, batch: i64) -> Result<Swept,
 
     // The audit log, through the one door migration 0050 leaves: colophon_audit_sweep runs
     // as colophon_retention, the only role the append-only trigger lets delete.
+    if stop.requested() {
+        return crate::transactions::stopped(tx).await;
+    }
     let audit_rows = sqlx::query_scalar!(
         "SELECT colophon_audit_sweep($1, $2) AS \"swept!\"",
         audit_cut,
@@ -452,6 +475,9 @@ pub async fn sweep(pool: &PgPool, ages: &Retention, batch: i64) -> Result<Swept,
     // and flow tables are private to the sign-in and invite flows, the worker has never
     // been able to read them and that stays true — it can only execute the bounded deletes
     // migration 0050 owns (D-135).
+    if stop.requested() {
+        return crate::transactions::stopped(tx).await;
+    }
     let idempotency = retained(
         &mut tx,
         "colophon_sweep_idempotency",
@@ -462,13 +488,25 @@ pub async fn sweep(pool: &PgPool, ages: &Retention, batch: i64) -> Result<Swept,
 
     // Sessions and tokens are dead state once expired — a revocation a person asked for is
     // an audit event, not a row to keep.
+    if stop.requested() {
+        return crate::transactions::stopped(tx).await;
+    }
     let sessions = retained(&mut tx, "colophon_sweep_sessions", session_cut, batch).await?;
+    if stop.requested() {
+        return crate::transactions::stopped(tx).await;
+    }
     let access_tokens =
         retained(&mut tx, "colophon_sweep_access_tokens", session_cut, batch).await?;
+    if stop.requested() {
+        return crate::transactions::stopped(tx).await;
+    }
     let invitations = retained(&mut tx, "colophon_sweep_invitations", flow_cut, batch).await?;
 
     // Dead device and sign-in flows: their writers prune the same rows on a busy day; the
     // sweep keeps a quiet one bounded too.
+    if stop.requested() {
+        return crate::transactions::stopped(tx).await;
+    }
     let device_logins = retained(
         &mut tx,
         "colophon_sweep_device_logins",
@@ -476,6 +514,9 @@ pub async fn sweep(pool: &PgPool, ages: &Retention, batch: i64) -> Result<Swept,
         batch,
     )
     .await?;
+    if stop.requested() {
+        return crate::transactions::stopped(tx).await;
+    }
     let sign_in_attempts = retained(
         &mut tx,
         "colophon_sweep_sign_in_attempts",
@@ -483,17 +524,29 @@ pub async fn sweep(pool: &PgPool, ages: &Retention, batch: i64) -> Result<Swept,
         batch,
     )
     .await?;
+    if stop.requested() {
+        return crate::transactions::stopped(tx).await;
+    }
     let setup_attempts =
         retained(&mut tx, "colophon_sweep_setup_attempts", attempt_cut, batch).await?;
+    if stop.requested() {
+        return crate::transactions::stopped(tx).await;
+    }
     let setup_codes = retained(&mut tx, "colophon_sweep_setup_codes", flow_cut, batch).await?;
     // Magic links are dead at `expires_at`; their `audience.magic_link_*` events are the
     // record. Kept a day past it, as long as the cooldown and the ceilings read them.
     let magic_cut = OffsetDateTime::now_utc() - ages.magic_link;
     let hot = batch.saturating_mul(HOT_BATCHES);
+    if stop.requested() {
+        return crate::transactions::stopped(tx).await;
+    }
     let magic_links = retained(&mut tx, "colophon_sweep_magic_links", magic_cut, hot).await?;
     // A sign-in key idle an hour starts its count over; a paused one stays until its pause
     // is that old too, and a trusted one 90 days.
     let throttle_cut = OffsetDateTime::now_utc() - ages.throttle;
+    if stop.requested() {
+        return crate::transactions::stopped(tx).await;
+    }
     let sign_in_throttle = retained(
         &mut tx,
         "colophon_sweep_sign_in_throttle",
@@ -504,6 +557,9 @@ pub async fn sweep(pool: &PgPool, ages: &Retention, batch: i64) -> Result<Swept,
     // Preview grants (D-171): an ended grant reads nothing; its `preview.*` audit events are
     // the record. Kept a week past its end, so "who previewed this" still answers for a while.
     let preview_cut = OffsetDateTime::now_utc() - PREVIEW_GRANT_AGE;
+    if stop.requested() {
+        return crate::transactions::stopped(tx).await;
+    }
     let preview_grants =
         retained(&mut tx, "colophon_sweep_preview_grants", preview_cut, batch).await?;
 

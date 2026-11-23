@@ -47,6 +47,7 @@ import http from 'k6/http';
 import { check, fail, sleep } from 'k6';
 import exec from 'k6/execution';
 import { Counter, Gauge } from 'k6/metrics';
+import { idempotencyKey } from './lib/idempotency-key.js';
 
 const BASE_URL = __ENV.BASE_URL || 'http://127.0.0.1:58000';
 const PUBLIC_URL = __ENV.PUBLIC_URL || 'http://localhost:58000';
@@ -240,17 +241,17 @@ export function setup() {
   // A release behind the reads (and jobs for the outbox to run through baseline).
   const live = [];
   for (let i = 0; i < 20; i += 1) {
-    const created = http.post(entries, JSON.stringify(article(`Public ${i}`, 'published')), { headers: Object.assign({ 'Idempotency-Key': `k6-l12-${run}-p${i}` }, owner) });
+    const created = http.post(entries, JSON.stringify(article(`Public ${i}`, 'published')), { headers: Object.assign({ 'Idempotency-Key': idempotencyKey(`k6-l12-${run}-p${i}`, 'postgres-trouble') }, owner) });
     if (created.status !== 201) fail(`public article ${i}: HTTP ${created.status}`);
     live.push(created.json('data.id'));
   }
-  const set = http.post(`${base}/changesets`, JSON.stringify({ title: 'release 1', entries: live }), { headers: Object.assign({ 'Idempotency-Key': `k6-l12-${run}-c` }, owner) });
+  const set = http.post(`${base}/changesets`, JSON.stringify({ title: 'release 1', entries: live }), { headers: Object.assign({ 'Idempotency-Key': idempotencyKey(`k6-l12-${run}-c`, 'postgres-trouble') }, owner) });
   if (set.status !== 201) fail(`changeset: HTTP ${set.status} ${set.body}`);
   const path = `${base}/changesets/${set.json('data.id')}`;
   const ifMatch = Object.assign({ 'If-Match': `"${set.json('data.hash')}"` }, owner);
   http.post(`${path}/submit`, null, { headers: ifMatch });
   http.post(`${path}/reviews`, JSON.stringify({ decision: 'approve' }), { headers: ifMatch });
-  const published = http.post(`${path}/publish`, JSON.stringify({ base_generation: 0 }), { headers: Object.assign({ 'Idempotency-Key': `k6-l12-${run}-p` }, ifMatch) });
+  const published = http.post(`${path}/publish`, JSON.stringify({ base_generation: 0 }), { headers: Object.assign({ 'Idempotency-Key': idempotencyKey(`k6-l12-${run}-p`, 'postgres-trouble') }, ifMatch) });
   if (published.status !== 201) fail(`publish: HTTP ${published.status} ${published.body}`);
   return { owner, base, entries, content: `${BASE_URL}/content/v1/${project.json('data.id')}/production/articles`, live, run };
 }
@@ -265,15 +266,15 @@ export function read(data) {
   const tags = { phase: phase() };
   const headers = { Cookie: data.owner.Cookie };
   let res;
-  const roll = __ITER % 5;
+  const roll = exec.scenario.iterationInTest % 5;
   if (roll < 2) {
     res = http.get(data.content, Object.assign({ redirects: 0, tags: Object.assign({ name: 'content' }, tags) }, EXPECTED));
   } else if (roll === 2) {
-    res = http.get(`${data.content}/${data.live[__ITER % data.live.length]}`, Object.assign({ redirects: 0, tags: Object.assign({ name: 'content/{entry}' }, tags) }, EXPECTED));
+    res = http.get(`${data.content}/${data.live[exec.scenario.iterationInTest % data.live.length]}`, Object.assign({ redirects: 0, tags: Object.assign({ name: 'content/{entry}' }, tags) }, EXPECTED));
   } else if (roll === 3) {
     res = http.get(`${data.entries}?limit=10`, Object.assign({ headers, redirects: 0, tags: Object.assign({ name: 'entries?limit' }, tags) }, EXPECTED));
   } else {
-    res = http.get(`${data.entries}/${data.live[(__ITER + 1) % data.live.length]}`, Object.assign({ headers, redirects: 0, tags: Object.assign({ name: 'entries/{entry}' }, tags) }, EXPECTED));
+    res = http.get(`${data.entries}/${data.live[(exec.scenario.iterationInTest + 1) % data.live.length]}`, Object.assign({ headers, redirects: 0, tags: Object.assign({ name: 'entries/{entry}' }, tags) }, EXPECTED));
   }
   note(res);
   // Classify the answer by the window it ARRIVED in, not the window the request was
@@ -293,8 +294,11 @@ export function read(data) {
 // Per write-arm VU: its lazily-created article, the last etag a save was acknowledged
 // with, and the titles of saves whose fate the client never learned (they may or may
 // not have committed — a read either resyncs onto them or finds the acknowledged etag).
+// per-VU state: picked once per VU and only read after; no step order.
 let mine = null;
+// per-VU state: the VU's own resource's version, refreshed by every save and read; any read/save order is valid.
 let etag = null;
+// per-VU state: a list of titles, checked on use; any slot order is valid.
 let pending = [];
 
 function resync(res) {
@@ -321,7 +325,7 @@ export function write(data) {
   };
   if (mine === null) {
     const created = http.post(data.entries, JSON.stringify(article(`Draft by VU ${exec.vu.idInTest}`, 'start')), {
-      headers: Object.assign({ 'Idempotency-Key': `k6-l12-${data.run}-w${exec.vu.idInTest}` }, headers),
+      headers: Object.assign({ 'Idempotency-Key': idempotencyKey(`k6-l12-${data.run}-w${exec.vu.idInTest}`, 'postgres-trouble') }, headers),
       redirects: 0, tags: Object.assign({ name: 'entries', endpoint: 'create' }, tags), responseCallback: EXPECTED.responseCallback,
     });
     note(created);
@@ -336,12 +340,12 @@ export function write(data) {
     return;
   }
   const url = `${data.entries}/${mine}`;
-  if (__ITER % 3 === 0) {
+  if (exec.scenario.iterationInTest % 3 === 0) {
     // The title IS the identity a read-back resyncs onto: it has to be unique, not the
     // body's text, because data.revision.title is what the served revision reports.
     const title = `VU ${exec.vu.idInTest} save ${__ITER}`;
     const res = http.put(url, JSON.stringify(article(title, `iteration ${__ITER}`)), {
-      headers: Object.assign({ 'If-Match': etag, 'Idempotency-Key': `k6-l12-${data.run}-${exec.vu.idInTest}-${__ITER}` }, headers),
+      headers: Object.assign({ 'If-Match': etag, 'Idempotency-Key': idempotencyKey(`k6-l12-${data.run}-${exec.vu.idInTest}-${__ITER}`, 'postgres-trouble') }, headers),
       redirects: 0, tags: Object.assign({ name: 'entries/{entry}', endpoint: 'save' }, tags), responseCallback: EXPECTED.responseCallback,
     });
     note(res);
@@ -386,8 +390,11 @@ export function probe() {
 
 // The publish arm's per-VU project, created lazily so each VU is the only publisher
 // on it (exec.vu.idInTest is global across scenarios — a fixed pool could collide).
+// per-VU state: picked once per VU and only read after; no step order.
 let mineBase = null;
+// per-VU state: advances only on a successful publish; checks compare against the current value.
 let mineGeneration = 0;
+// per-VU state: picked once per VU and only read after; no step order.
 let mineEntry = null;
 
 /** One publish iteration: the five-request pipeline — entry, changeset, submit,
@@ -404,7 +411,7 @@ export function publish(data) {
   });
   if (mineBase === null) {
     const run = `${data.run}-p${exec.vu.idInTest}`;
-    const project = http.post(`${BASE_URL}/api/v1/projects`, JSON.stringify({ slug: `k6-${run}`, name: `k6 L12 ${exec.vu.idInTest}` }), params('projects', { 'Idempotency-Key': `k6-l12-${run}` }));
+    const project = http.post(`${BASE_URL}/api/v1/projects`, JSON.stringify({ slug: `k6-${run}`, name: `k6 L12 ${exec.vu.idInTest}` }), params('projects', { 'Idempotency-Key': idempotencyKey(`k6-l12-${run}`, 'postgres-trouble') }));
     if (project.status !== 201) {
       note(project);
       publishCounters[`${tags.phase}_failed`].add(1);
@@ -412,15 +419,15 @@ export function publish(data) {
     }
     const base = `${BASE_URL}/api/v1/projects/${project.json('data.id')}/environments/production`;
     const pid = project.json('data.id');
-    const made = http.post(`${base}/destinations`, JSON.stringify({ name: 'receiver', url: `${RECEIVER_URL}/hook/${pid}` }), params('destinations', { 'Idempotency-Key': `k6-l12-${run}-d` }));
-    const site = http.post(`${base}/destinations`, JSON.stringify({ kind: 'probe', name: 'site', url: `${RECEIVER_URL}/site/${pid}` }), params('destinations', { 'Idempotency-Key': `k6-l12-${run}-s` }));
+    const made = http.post(`${base}/destinations`, JSON.stringify({ name: 'receiver', url: `${RECEIVER_URL}/hook/${pid}` }), params('destinations', { 'Idempotency-Key': idempotencyKey(`k6-l12-${run}-d`, 'postgres-trouble') }));
+    const site = http.post(`${base}/destinations`, JSON.stringify({ kind: 'probe', name: 'site', url: `${RECEIVER_URL}/site/${pid}` }), params('destinations', { 'Idempotency-Key': idempotencyKey(`k6-l12-${run}-s`, 'postgres-trouble') }));
     if (made.status !== 201 || site.status !== 201) {
       publishCounters[`${tags.phase}_failed`].add(1);
       return;
     }
     mineBase = base;
   }
-  const idem = (s) => `k6-l12-${data.run}-p${exec.vu.idInTest}-${__ITER}-${s}`;
+  const idem = (s) => idempotencyKey(`k6-l12-${data.run}-p${exec.vu.idInTest}-${__ITER}-${s}`, 'postgres-trouble');
   const entry = http.post(`${mineBase}/collections/articles/entries`, JSON.stringify(article(`Publish ${__ITER}`, 'published')), params('entry', { 'Idempotency-Key': idem('e') }));
   if (entry.status !== 201) {
     publishCounters[`${tags.phase}_failed`].add(1);
@@ -454,7 +461,7 @@ export function publish(data) {
  *  then — in the recovery window — the acknowledged write must read back exactly. */
 export function sentinel(data) {
   const created = http.post(data.entries, JSON.stringify(article(`Sentinel ${data.run}`, 'acknowledged before the kill')), {
-    headers: Object.assign({ 'Idempotency-Key': `k6-l12-${data.run}-sentinel` }, data.owner),
+    headers: Object.assign({ 'Idempotency-Key': idempotencyKey(`k6-l12-${data.run}-sentinel`, 'postgres-trouble') }, data.owner),
     redirects: 0, tags: { name: 'entries', phase: 'baseline' },
   });
   if (!check(created, { 'sentinel create 201': (r) => r.status === 201 })) {
@@ -469,14 +476,14 @@ export function sentinel(data) {
   sleep(Math.max(0, PHASE / 2 - 3));
   const headers = data.owner;
   const params = (endpoint, extra) => ({ headers: Object.assign({}, headers, extra || {}), redirects: 0, tags: { name: endpoint, phase: 'margin' }, responseCallback: EXPECTED.responseCallback });
-  const set = http.post(`${data.base}/changesets`, JSON.stringify({ title: 'sentinel release', entries: [id] }), params('changeset', { 'Idempotency-Key': `k6-l12-${data.run}-sc` }));
+  const set = http.post(`${data.base}/changesets`, JSON.stringify({ title: 'sentinel release', entries: [id] }), params('changeset', { 'Idempotency-Key': idempotencyKey(`k6-l12-${data.run}-sc`, 'postgres-trouble') }));
   const path = set.status === 201 && `${data.base}/changesets/${set.json('data.id')}`;
   let published = null;
   if (path) {
     const ifMatch = { 'If-Match': `"${set.json('data.hash')}"` };
     http.post(`${path}/submit`, null, params('submit', ifMatch));
     http.post(`${path}/reviews`, JSON.stringify({ decision: 'approve' }), params('review', ifMatch));
-    published = http.post(`${path}/publish`, JSON.stringify({ base_generation: 1 }), params('publish', Object.assign({ 'Idempotency-Key': `k6-l12-${data.run}-sp` }, ifMatch)));
+    published = http.post(`${path}/publish`, JSON.stringify({ base_generation: 1 }), params('publish', Object.assign({ 'Idempotency-Key': idempotencyKey(`k6-l12-${data.run}-sp`, 'postgres-trouble') }, ifMatch)));
   }
   sentinelStages[published && published.status === 201 ? 'published' : 'publish_failed'].add(1);
   // Land inside the recovery window: published near PHASE, read after 2*PHASE+4*GAP.

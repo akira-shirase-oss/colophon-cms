@@ -9,11 +9,16 @@
 //! notification Postgres sent while the connection was dead is gone, so every reconnect (and
 //! every hard error) ends in a `resync` to all streams — clients reload instead of trusting a
 //! view that may have skipped a commit. There is no durable replay anywhere in the chain.
+//!
+//! The listener also ends the quota refusals this process remembers (D-214's addendum): a hint
+//! that a project's tokens, members or roles changed ends that project's, and a reconnect —
+//! whose gap may hold such a hint — ends them all. A lost hint costs at most the refusal's own
+//! `Retry-After`: a remembered refusal never outlives the window it was refused in.
 
 use std::{sync::Arc, time::Duration};
 
-use colophon_api::events::EventBus;
-use colophon_db::events::{CHANNEL, Hint};
+use colophon_api::{admission::Admission, events::EventBus};
+use colophon_db::events::{CHANNEL, Hint, Kind};
 use tokio_util::sync::CancellationToken;
 
 /// How often the pump sends queued hints (D-180): the most a live list's hint waits.
@@ -21,7 +26,9 @@ const PUMP_EVERY: Duration = Duration::from_millis(100);
 
 /// Sends queued change hints until `cancel` fires (D-180): one pass every 100 ms, and
 /// at once again while a pass comes back full. A failed pass waits for the next tick — the
-/// hints stay queued, so a database blip delays them and loses none that committed.
+/// hints stay queued, so a database blip delays them and loses none that committed. A pass
+/// under way when `cancel` fires runs to its end (dropped mid-COMMIT, whether its hints went
+/// out would be unknown), bounded server side ([`colophon_db::bound_background`]).
 pub async fn pump(pool: colophon_db::PgPool, cancel: CancellationToken) {
     let mut ticks = tokio::time::interval(PUMP_EVERY);
     ticks.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
@@ -31,30 +38,25 @@ pub async fn pump(pool: colophon_db::PgPool, cancel: CancellationToken) {
             _ = ticks.tick() => {}
         }
         loop {
-            let pass = tokio::select! {
-                () = cancel.cancelled() => return,
-                pass = tokio::time::timeout(PUMP_DEADLINE, colophon_db::events::pump(&pool)) => pass,
-            };
-            match pass {
-                Ok(Ok(drained))
+            if cancel.is_cancelled() {
+                return;
+            }
+            let stopping = || cancel.is_cancelled();
+            match colophon_db::events::pump(&pool, colophon_db::Stop::new(&stopping)).await {
+                Ok(drained)
                     if drained
                         >= u64::try_from(colophon_db::events::PUMP_BATCH).unwrap_or(u64::MAX) => {}
-                Ok(Ok(_)) => break,
-                Ok(Err(error)) => {
+                Ok(_) => break,
+                // Told to stop between its statements: the hints stay queued for the next start.
+                Err(colophon_db::DbError::Stopped) => return,
+                Err(error) => {
                     tracing::warn!(%error, "sending change hints failed; trying again");
-                    break;
-                }
-                Err(_) => {
-                    tracing::warn!("sending change hints timed out; trying again");
                     break;
                 }
             }
         }
     }
 }
-
-/// The deadline for one pump pass.
-const PUMP_DEADLINE: Duration = Duration::from_secs(5);
 
 /// How long to wait before reconnecting after a failure. Bounded, so a database that never
 /// comes back can't spin, and short, so a blip's streams resync quickly.
@@ -64,7 +66,12 @@ const RECONNECT_DELAY: Duration = Duration::from_secs(2);
 /// listener silently stops the live lists, and the reconnect itself is what tells streams to
 /// resync. Every blocking call is wrapped in the cancellation token — `connect` and `listen`
 /// can wait out sqlx's internal retries on a dead database, and a shutdown must not.
-pub async fn run(bus: Arc<EventBus>, database_url: String, cancel: CancellationToken) {
+pub async fn run(
+    bus: Arc<EventBus>,
+    admission: Arc<Admission>,
+    database_url: String,
+    cancel: CancellationToken,
+) {
     'reconnect: loop {
         let connected = tokio::select! {
             () = cancel.cancelled() => return,
@@ -95,6 +102,9 @@ pub async fn run(bus: Arc<EventBus>, database_url: String, cancel: CancellationT
                 () = tokio::time::sleep(RECONNECT_DELAY) => continue 'reconnect,
             }
         }
+        // Listening from here on: whatever changed before is unknown, so no refusal remembered
+        // before now stands.
+        admission.forget_every_refusal();
         loop {
             let message = tokio::select! {
                 () = cancel.cancelled() => return,
@@ -103,6 +113,7 @@ pub async fn run(bus: Arc<EventBus>, database_url: String, cancel: CancellationT
             match message {
                 Ok(Some(notification)) => {
                     if let Some(hint) = Hint::decode(notification.payload()) {
+                        ends_refusals(&admission, &hint);
                         bus.publish(hint);
                     } else {
                         // A payload we don't read can only under-deliver; it still means
@@ -117,10 +128,12 @@ pub async fn run(bus: Arc<EventBus>, database_url: String, cancel: CancellationT
                 // anything notified in the gap is gone, so every stream resyncs.
                 Ok(None) => {
                     tracing::warn!("the change-hint listener reconnected; streams resync");
+                    admission.forget_every_refusal();
                     bus.resync();
                 }
                 Err(error) => {
                     tracing::warn!(%error, "the change-hint listener failed; reconnecting");
+                    admission.forget_every_refusal();
                     bus.resync();
                     tokio::select! {
                         () = cancel.cancelled() => return,
@@ -129,5 +142,14 @@ pub async fn run(bus: Arc<EventBus>, database_url: String, cancel: CancellationT
                 }
             }
         }
+    }
+}
+
+/// Ends `hint.project`'s remembered quota refusals when the hint says something a refusal was
+/// judged on changed (D-214's addendum): a token (its row, permissions or limits), or the
+/// members and roles a token's access rests on.
+fn ends_refusals(admission: &Admission, hint: &Hint) {
+    if matches!(hint.kind, Kind::Tokens | Kind::Members | Kind::Roles) {
+        admission.tokens_changed(hint.project);
     }
 }

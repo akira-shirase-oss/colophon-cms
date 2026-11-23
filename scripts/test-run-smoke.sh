@@ -46,17 +46,28 @@ echo "{\"endpoint\":\"x\",\"attempt\":$n,\"hard_failures_total\":$hard}" >"$RECO
 exit "$status"
 EOF
 chmod +x "$work/smoke.sh"
+# The pre-re-run hook: records each call's argument, one per line.
+# shellcheck disable=SC2016 # the hook's own `$1`, written literally into it
+printf '#!/usr/bin/env bash\necho "$1" >>"%s/hook"\n' "$work" >"$work/hook.sh"
+chmod +x "$work/hook.sh"
 
 fail=0
 check() { # case, plan lines..., then: expected exit, expected attempts, expect stalled file (yes|no)
   local name=$1 exit_want=$2 attempts_want=$3 stalled_want=$4; shift 4
   rm -f "$work"/attempts "$work"/x.* ; printf '%s\n' "$@" >"$work/plan"
   local got=0
-  WORK=$work COMMIT=$commit REFUSAL=$refusal CALM_REFUSAL=$calm_refusal SELECT_SLOW=$select_slow \
+  rm -f "$work/hook"
+  RUN_SMOKE_BEFORE_RERUN=$work/hook.sh WORK=$work COMMIT=$commit REFUSAL=$refusal CALM_REFUSAL=$calm_refusal SELECT_SLOW=$select_slow \
     scripts/run-smoke.sh x "$work/x.record.json" "$work/x.server.log" "$work/pressure.txt" -- "$work/smoke.sh" \
     >"$work/out" 2>&1 || got=$?
   local attempts; attempts=$(cat "$work/attempts")
   local stalled=no; [[ -f $work/x.stalled.record.json ]] && stalled=yes
+  # The pre-re-run hook ran exactly once, with the stalled smoke's stem, when there was a re-run; never otherwise.
+  local hooked; hooked=$(cat "$work/hook" 2>/dev/null || true)
+  local hooked_want=""; [[ $stalled == yes ]] && hooked_want="$work/x"
+  if [[ $hooked != "$hooked_want" ]]; then
+    echo "FAIL $name: the pre-re-run hook was called with [$hooked], want [$hooked_want]" >&2; fail=1; return
+  fi
   if [[ $got != "$exit_want" || $attempts != "$attempts_want" || $stalled != "$stalled_want" ]]; then
     echo "FAIL $name: exit $got (want $exit_want), attempts $attempts (want $attempts_want), stalled record $stalled (want $stalled_want)" >&2
     sed 's/^/    /' "$work/out" >&2; fail=1; return
@@ -88,6 +99,40 @@ printf '%s\n' "$commit" "$refusal" >"$work/stall.log"
 sig=$(scripts/stall-signature.sh "$work/stall.log" "$work/pressure.txt")
 [[ $(jq -r '.io_full_min' <<<"$sig") == 90 && $(jq -r '.commit_share_min' <<<"$sig") == 1 ]] \
   || { echo "FAIL the signature's numbers: $sig" >&2; fail=1; }
+
+# D-224's logs: an outage is one WARN, then a summary a window (no code: not a failed request), and each refusal
+# is a DEBUG line on colophon_api::refusals with its code; slow statements under a second are INFO without the
+# "slow statement" message, only their elapsed_secs.
+evidence='{"timestamp":"2026-11-20T12:00:05.60Z","level":"DEBUG","target":"colophon_api::refusals","message":"request refused: no database connection free","code":"unavailable"}'
+calm_evidence='{"timestamp":"2026-11-20T12:00:02.60Z","level":"DEBUG","target":"colophon_api::refusals","message":"request refused: no database connection free","code":"unavailable"}'
+info_commit='{"timestamp":"2026-11-20T12:00:05.30Z","level":"INFO","target":"sqlx::query","summary":"COMMIT","elapsed_secs":0.18}'
+summary='{"timestamp":"2026-11-20T12:00:02.00Z","level":"WARN","target":"colophon_api::outages","message":"refused 40 requests in the last 10 s: no database connection free, since 2026-11-20T11:59:52Z","refused":40,"since":"2026-11-20T11:59:52Z"}'
+signature() { # case, expected stall, log lines...
+  local name=$1 want=$2; shift 2
+  printf '%s\n' "$@" >"$work/d224.log"
+  local got; got=$(scripts/stall-signature.sh "$work/d224.log" "$work/pressure.txt")
+  [[ $(jq -r '.stall' <<<"$got") == "$want" ]] || { echo "FAIL $name: $got" >&2; fail=1; }
+}
+signature "refusals said only as DEBUG evidence, with INFO COMMITs, are a stall" true "$info_commit" "$evidence"
+signature "a DEBUG refusal in a calm second blocks" false "$info_commit" "$evidence" "$calm_evidence"
+signature "an outage's summary line in a calm second is not a failed request" true "$commit" "$refusal" "$summary"
+# The signature's own floor: a statement under 100 ms isn't evidence, whatever reached the log (the server's layer
+# drops them, but a log without it would offer every statement). Twenty fast COMMITs beside one slow SELECT are no
+# COMMIT queue.
+fast_commits=()
+for i in $(seq -w 10 29); do
+  fast_commits+=("{\"timestamp\":\"2026-11-20T12:00:05.${i}Z\",\"level\":\"INFO\",\"target\":\"sqlx::query\",\"summary\":\"COMMIT\",\"elapsed_secs\":0.002}")
+done
+signature "fast COMMITs don't make a COMMIT queue" false "$select_slow" "$refusal" "${fast_commits[@]}"
+
+# The signature reads what the server logs, so every load run CI makes must log the evidence: refusals at DEBUG
+# on their target, and statements at INFO (a short stall's COMMITs are 100-220 ms, under the WARN tier).
+while IFS= read -r line; do
+  for wanted in 'sqlx::query=info' 'colophon_api::refusals=debug'; do
+    [[ $line == *"$wanted"* ]] || { echo "FAIL a CI load run's LOAD_LOG lacks $wanted: $line" >&2; fail=1; }
+  done
+done < <(grep -oE 'LOAD_LOG=[^ ]+' .github/workflows/ci.yml)
+[[ $(grep -cE 'LOAD_LOG=' .github/workflows/ci.yml) -ge 2 ]] || { echo "FAIL: no LOAD_LOG found in CI" >&2; fail=1; }
 
 (( fail == 0 )) && echo "run-smoke: only a runner IO stall is re-run, once, and the re-run decides; correctness blocks"
 exit "$fail"

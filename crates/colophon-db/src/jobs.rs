@@ -99,14 +99,24 @@ pub struct Claimed {
 }
 
 /// Fails unfinished jobs that ran out of time (a worker runs this now and then, not on every
-/// claim); how many.
-pub async fn expire(pool: &PgPool) -> Result<u64, DbError> {
-    let mut transaction = worker(pool).await?;
+/// claim); how many. A sweep never waits: it takes only the rows it can lock at once (`SKIP
+/// LOCKED`), and a job another transaction holds (a release superseding it, a worker finishing
+/// it) is the next pass's, so the sweep can never be part of a lock cycle (CI 44719897863: two
+/// sweeps and a supersede, each locking rows in its own order, deadlocked).
+pub async fn expire(pool: &PgPool, stop: crate::Stop<'_>) -> Result<u64, DbError> {
+    let mut transaction = crate::transactions::background_worker(pool, stop).await?;
     let expired = sqlx::query!(
-        "UPDATE jobs SET status = 'failed', last_error = 'ran out of time', lease_owner = NULL, lease_expires_at = NULL,
-                         updated_at = now(), finished_at = now()
-         WHERE deadline_at <= now() AND status IN ('pending', 'retrying', 'running')
-           AND (status <> 'running' OR lease_expires_at < now())"
+        "WITH due AS (
+             SELECT project_id, environment_id, id FROM jobs
+             WHERE deadline_at <= now() AND status IN ('pending', 'retrying', 'running')
+               AND (status <> 'running' OR lease_expires_at < now())
+             ORDER BY id
+             FOR UPDATE SKIP LOCKED
+         )
+         UPDATE jobs j SET status = 'failed', last_error = 'ran out of time', lease_owner = NULL,
+                           lease_expires_at = NULL, updated_at = now(), finished_at = now()
+         FROM due
+         WHERE j.project_id = due.project_id AND j.environment_id = due.environment_id AND j.id = due.id"
     )
     .execute(&mut *transaction)
     .await
@@ -126,8 +136,10 @@ pub async fn claim(
     location: &str,
     lease: Duration,
     limit: i64,
+    stop: crate::Stop<'_>,
 ) -> Result<Vec<Claimed>, DbError> {
-    let mut transaction = worker(pool).await?;
+    // A background unit: a stop while it waits for a connection ends it, nothing claimed.
+    let mut transaction = crate::transactions::background_worker(pool, stop).await?;
     let lease_ms = i64::try_from(lease.as_millis()).unwrap_or(i64::MAX);
     let claimed = sqlx::query_as!(
         Claimed,

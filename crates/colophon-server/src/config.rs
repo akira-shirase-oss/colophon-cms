@@ -131,6 +131,9 @@ pub struct Config {
     pub log_filter: String,
     /// `COLOPHON_REQUEST_TIMEOUT_MS`, default 10 s.
     pub request_timeout: Duration,
+    /// `COLOPHON_HEADER_TIMEOUT_MS`, default 10 s (100 ms to 60 s): how long a connection has to
+    /// send a request's headers before it is closed (D-230).
+    pub header_timeout: Duration,
     /// `COLOPHON_MAX_BODY_BYTES`, default 21 MiB: JSON requests stay small, but the upload
     /// endpoint legitimately carries a 20 MiB image (its own intent check bounds it tighter).
     pub max_body_bytes: usize,
@@ -139,9 +142,11 @@ pub struct Config {
     pub upload_memory_mb: usize,
     /// `COLOPHON_DB_MAX_CONNECTIONS`, default 16.
     pub db_max_connections: u32,
-    /// Statements slower than this are logged at WARN (D-221). `COLOPHON_DB_SLOW_STATEMENT_MS`,
-    /// default 1000 (sqlx's own); CI's smokes lower it to name a stall's statements.
-    pub db_slow_statement: Duration,
+    /// Slow statements, in two tiers (D-224): logged at INFO from `COLOPHON_DB_SLOW_STATEMENT_INFO_MS`
+    /// (default 100), the evidence that names a stall's statements (D-221), and at WARN from
+    /// `COLOPHON_DB_SLOW_STATEMENT_MS` (default 1000, sqlx's own), an alert. The INFO tier can't be
+    /// above the WARN tier.
+    pub db_slow_statements: colophon_db::SlowStatements,
     /// Time between readiness probes. `COLOPHON_PROBE_INTERVAL_MS`, default 2 s.
     pub probe_interval: Duration,
     /// Deadline for one probe; shorter than the interval. `COLOPHON_PROBE_TIMEOUT_MS`, default 1 s.
@@ -736,10 +741,21 @@ impl Config {
         let log_format = env.parse("COLOPHON_LOG_FORMAT", LogFormat::Json);
         let log_filter = env.raw("COLOPHON_LOG").unwrap_or_else(|| "info".to_owned());
         let request_timeout = env.millis("COLOPHON_REQUEST_TIMEOUT_MS", 10_000, 100..=120_000);
+        let header_timeout = env.millis("COLOPHON_HEADER_TIMEOUT_MS", 10_000, 100..=60_000);
         let max_body_bytes = env.ranged("COLOPHON_MAX_BODY_BYTES", 21 * MIB, KIB..=64 * MIB);
         let upload_memory_mb = env.ranged("COLOPHON_UPLOAD_MEMORY_MB", 256, 1..=16 * 1024);
         let db_max_connections = env.ranged("COLOPHON_DB_MAX_CONNECTIONS", 16, 1..=1_000);
-        let db_slow_statement = env.millis("COLOPHON_DB_SLOW_STATEMENT_MS", 1_000, 1..=600_000);
+        let db_slow_statements = colophon_db::SlowStatements {
+            info: env.millis("COLOPHON_DB_SLOW_STATEMENT_INFO_MS", 100, 1..=600_000),
+            warn: env.millis("COLOPHON_DB_SLOW_STATEMENT_MS", 1_000, 1..=600_000),
+        };
+        if db_slow_statements.info > db_slow_statements.warn {
+            env.problems.push(format!(
+                "COLOPHON_DB_SLOW_STATEMENT_INFO_MS ({} ms) is above COLOPHON_DB_SLOW_STATEMENT_MS ({} ms): evidence starts below the alert",
+                db_slow_statements.info.as_millis(),
+                db_slow_statements.warn.as_millis()
+            ));
+        }
         let (probe_interval, probe_timeout) = env.probe();
         let (drain_delay, shutdown_grace) = env.drain();
         let (public_origin, extra_trusted_origins, oidc) = env.sign_in(listen_addr);
@@ -844,10 +860,11 @@ impl Config {
                 log_format,
                 log_filter,
                 request_timeout,
+                header_timeout,
                 max_body_bytes,
                 upload_memory_mb,
                 db_max_connections,
-                db_slow_statement,
+                db_slow_statements,
                 probe_interval,
                 probe_timeout,
                 drain_delay,
@@ -906,6 +923,7 @@ mod tests {
         let config = load(&[("COLOPHON_DATABASE_URL", DB)]).expect("valid");
         assert_eq!(config.listen_addr.to_string(), "127.0.0.1:58000");
         assert_eq!(config.request_timeout, Duration::from_secs(10));
+        assert_eq!(config.header_timeout, Duration::from_secs(10));
         assert_eq!(config.max_body_bytes, 21 * MIB);
         assert_eq!(config.probe_interval, Duration::from_secs(2));
         assert!(config.cache_url.is_none());
@@ -913,6 +931,37 @@ mod tests {
         assert_eq!(config.cache_jitter, Duration::from_secs(60));
         assert_eq!(config.log_format, LogFormat::Json);
         assert_eq!(config.worker_location, "local");
+    }
+
+    #[test]
+    fn slow_statements_log_in_two_tiers() {
+        let config = load(&[("COLOPHON_DATABASE_URL", DB)]).expect("valid");
+        assert_eq!(
+            config.db_slow_statements,
+            colophon_db::SlowStatements {
+                info: Duration::from_millis(100),
+                warn: Duration::from_secs(1)
+            }
+        );
+        let config = load(&[
+            ("COLOPHON_DATABASE_URL", DB),
+            ("COLOPHON_DB_SLOW_STATEMENT_INFO_MS", "50"),
+            ("COLOPHON_DB_SLOW_STATEMENT_MS", "500"),
+        ])
+        .expect("both moved");
+        assert_eq!(config.db_slow_statements.info, Duration::from_millis(50));
+        assert_eq!(config.db_slow_statements.warn, Duration::from_millis(500));
+        let error = load(&[
+            ("COLOPHON_DATABASE_URL", DB),
+            ("COLOPHON_DB_SLOW_STATEMENT_INFO_MS", "2000"),
+        ])
+        .expect_err("evidence above the alert");
+        assert!(
+            error
+                .to_string()
+                .contains("COLOPHON_DB_SLOW_STATEMENT_INFO_MS"),
+            "{error}"
+        );
     }
 
     #[test]

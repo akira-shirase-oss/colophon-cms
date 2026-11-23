@@ -7,6 +7,7 @@ pub mod config;
 pub mod events;
 mod lag;
 mod mail;
+mod outage_logs;
 pub mod probes;
 pub mod setup_code;
 pub mod shutdown;
@@ -81,6 +82,8 @@ fn start_worker(
         )
     });
     let tables = colophon_worker::tables::Sweeper::new(worker_pool.clone(), config.table_sweep);
+    // The pending-payload log's fold (D-216): admissions fold it too, this keeps it short.
+    let folder = colophon_worker::payload::Folder::new(worker_pool.clone());
     let cancel = cancel.clone();
     Ok(Some(tokio::spawn(async move {
         let sweep_cancel = cancel.clone();
@@ -93,7 +96,8 @@ fn start_worker(
             Arc::new(worker).run(cancel.clone()),
             scheduler.run(cancel.clone()),
             sweep,
-            tables.run(cancel.clone())
+            tables.run(cancel.clone()),
+            folder.run(cancel.clone())
         );
         worker_pool.close().await;
     })))
@@ -107,6 +111,8 @@ struct Background {
     setup: Option<tokio::task::JoinHandle<()>>,
     events_cancel: CancellationToken,
     hints: Vec<tokio::task::JoinHandle<()>>,
+    /// The begin tripwire's startup self-test (D-226): until it succeeds every release is checked.
+    guard: tokio::task::JoinHandle<()>,
 }
 
 /// Starts the worker, the setup code and the change hints, each under a child of `cancel`.
@@ -114,6 +120,7 @@ fn start_background(
     config: &Config,
     pool: &colophon_db::PgPool,
     bus: &Arc<colophon_api::events::EventBus>,
+    admission: &Arc<colophon_api::admission::Admission>,
     cancel: &CancellationToken,
 ) -> anyhow::Result<Background> {
     let worker_cancel = cancel.child_token();
@@ -121,7 +128,8 @@ fn start_background(
     let setup_cancel = cancel.child_token();
     let setup = start_setup_code(config, pool, &setup_cancel);
     let events_cancel = cancel.child_token();
-    let hints = start_events(config, pool, bus, &events_cancel);
+    let hints = start_events(config, pool, bus, admission, &events_cancel);
+    let guard = start_release_guard(config);
     Ok(Background {
         worker_cancel,
         worker,
@@ -129,6 +137,27 @@ fn start_background(
         setup,
         events_cancel,
         hints,
+        guard,
+    })
+}
+
+/// Proves the begin tripwire on one throwaway connection and arms it, beside the listener so a
+/// database that is down at startup delays nothing (D-226). Armed, the pool's release check runs on
+/// one release in `CANARY_EVERY`; if the proof fails, every release stays checked, as before, and
+/// the reason (the missing dependency) is logged at ERROR, once.
+fn start_release_guard(config: &Config) -> tokio::task::JoinHandle<()> {
+    let url = config.database_url.expose().to_owned();
+    tokio::spawn(async move {
+        match colophon_db::arm_release_guard(&url).await {
+            Ok(()) => tracing::info!(
+                canary_every = colophon_db::transactions::CANARY_EVERY,
+                "the begin tripwire is armed: a pooled connection is checked once in canary_every releases (D-226)"
+            ),
+            Err(off) => tracing::error!(
+                reason = %off,
+                "the begin tripwire is off: every pooled connection is checked as it is released (D-226)"
+            ),
+        }
     })
 }
 
@@ -145,6 +174,9 @@ async fn stop_background(tasks: Background) -> tokio::time::Instant {
     stop_worker(&tasks.worker_cancel, tasks.worker, deadline).await;
     stop_setup_code(&tasks.setup_cancel, tasks.setup, deadline).await;
     stop_events(&tasks.events_cancel, tasks.hints, deadline).await;
+    // Unfinished, the self-test just leaves every release checked: nothing to wait for.
+    tasks.guard.abort();
+    let _ = tasks.guard.await;
     deadline
 }
 
@@ -196,18 +228,21 @@ async fn stop_setup_code(
 /// Starts the change hints' two tasks: the pump in every role (D-180) — writers queue their
 /// hints in `change_hints` and some running Colophon process must send them, whichever pump
 /// gets there first — and, for the api and all roles, the listener (D-108): one `LISTEN`
-/// connection feeding the bus the `{P}/events` streams subscribe to. The worker role alone has
+/// connection feeding the bus the `{P}/events` streams subscribe to and ending the quota
+/// refusals the admission remembers when a token changes (D-214). The worker role alone has
 /// no streams to serve and gets no listener.
 fn start_events(
     config: &Config,
     pool: &colophon_db::PgPool,
     bus: &Arc<colophon_api::events::EventBus>,
+    admission: &Arc<colophon_api::admission::Admission>,
     cancel: &CancellationToken,
 ) -> Vec<tokio::task::JoinHandle<()>> {
     let mut tasks = vec![tokio::spawn(events::pump(pool.clone(), cancel.clone()))];
     if matches!(config.role, Role::Api | Role::All) {
         tasks.push(tokio::spawn(events::run(
             bus.clone(),
+            admission.clone(),
             config.database_url.expose().to_owned(),
             cancel.clone(),
         )));
@@ -273,6 +308,7 @@ fn api_services(
         passwords: colophon_db::passwords::PasswordGate::new(config.password_concurrency),
         magic_links: config.magic_links,
         media_origin: config.media_origin.clone(),
+        media_keys: colophon_api::media_sign::Keys::default(),
         uploads: colophon_api::uploads::UploadGate::new(
             config.upload_memory_mb,
             config.max_body_bytes,
@@ -332,7 +368,7 @@ pub async fn run(
         .with_context(|| format!("binding {}", config.listen_addr))?;
 
     // Before any pool exists, so every pool logs statements past the configured threshold (D-221).
-    colophon_db::set_slow_statement_threshold(config.db_slow_statement);
+    colophon_db::set_slow_statements(config.db_slow_statements);
     let pool = colophon_db::connect_lazy(
         config.database_url.expose(),
         PoolSettings {
@@ -345,6 +381,8 @@ pub async fn run(
     let cancel = CancellationToken::new();
     // D-221's evidence: when this process stops running on time (off unless its DEBUG target is on).
     lag::start(&cancel);
+    // D-224: an outage in progress is summarised once a window, not logged once per request.
+    outage_logs::start(&cancel);
     let mut supervisor = Supervisor::new(readiness.clone(), cancel.child_token());
     let database_probe = DatabaseProbe::new(config.database_url.expose(), config.probe_timeout)
         .map_err(|error| anyhow::anyhow!(error))
@@ -383,11 +421,12 @@ pub async fn run(
     )
     .map_err(|error| anyhow::anyhow!(error))
     .context("configuring rate limits")?;
+    let admission = std::sync::Arc::new(admission);
     let state = colophon_api::AppState {
         readiness: readiness.clone(),
         services: Some(std::sync::Arc::new(services)),
         build,
-        admission: Some(std::sync::Arc::new(admission)),
+        admission: Some(admission.clone()),
     };
     let mut routes = colophon_api::routes(state);
     if let Some(dir) = &config.studio_dir {
@@ -412,10 +451,10 @@ pub async fn run(
         tracing::info!(signal = name, "shutdown signal received");
     };
 
-    let background = start_background(&config, &pool, &event_bus, &cancel)?;
+    let background = start_background(&config, &pool, &event_bus, &admission, &cancel)?;
 
     let outcome = tokio::select! {
-        outcome = shutdown::serve(listener, app, readiness, timing, trigger) => outcome.context("serving")?,
+        outcome = shutdown::serve(listener, app, readiness, timing, config.header_timeout, trigger) => outcome.context("serving")?,
         never = supervisor.watch() => match never {},
     };
 
@@ -485,6 +524,7 @@ mod stop_tests {
             setup: Some(stuck()),
             events_cancel: CancellationToken::new(),
             hints: vec![stuck(), stuck()],
+            guard: stuck(),
         })
         .await;
         let took = started.elapsed();

@@ -18,6 +18,8 @@
 
 import http from 'k6/http';
 import { check, fail } from 'k6';
+import exec from 'k6/execution';
+import { idempotencyKey } from './lib/idempotency-key.js';
 
 const BASE_URL = __ENV.BASE_URL || 'http://127.0.0.1:58000';
 const PUBLIC_URL = __ENV.PUBLIC_URL || 'http://localhost:58000';
@@ -70,14 +72,14 @@ function article(title) {
 }
 
 function key() {
-  return `k6-${__VU}-${__ITER}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+  return idempotencyKey(`k6-${__VU}-${__ITER}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`, 'deletion');
 }
 
 /** Creates `count` articles; their ids and ETags. */
 function createArticles(base, write, prefix, count) {
   const made = [];
   for (let i = 0; i < count; i++) {
-    const created = http.post(base, article(`${prefix} ${i}`), { headers: Object.assign({ 'Idempotency-Key': `k6-setup-${prefix}-${Date.now().toString(36)}-${i}` }, write) });
+    const created = http.post(base, article(`${prefix} ${i}`), { headers: Object.assign({ 'Idempotency-Key': idempotencyKey(`k6-setup-${prefix}-${Date.now().toString(36)}-${i}`, 'deletion') }, write) });
     if (created.status !== 201) fail(`${prefix} ${i}: HTTP ${created.status} ${created.body}`);
     made.push({ id: created.json('data.id'), etag: created.headers['Etag'] });
   }
@@ -87,7 +89,7 @@ function createArticles(base, write, prefix, count) {
 /** A changeset holding `entries`; its path and If-Match. */
 function changeset(environment, write, title, entries) {
   const set = http.post(`${environment}/changesets`, JSON.stringify({ title, entries: entries.map((entry) => entry.id) }), {
-    headers: Object.assign({ 'Idempotency-Key': `k6-setup-${title.replace(/\W/g, '-')}-${Date.now().toString(36)}` }, write),
+    headers: Object.assign({ 'Idempotency-Key': idempotencyKey(`k6-setup-${title.replace(/\W/g, '-')}-${Date.now().toString(36)}`, 'deletion') }, write),
   });
   if (set.status !== 201) fail(`changeset ${title}: HTTP ${set.status} ${set.body}`);
   return { path: `${environment}/changesets/${set.json('data.id')}`, ifMatch: `"${set.json('data.hash')}"` };
@@ -116,7 +118,7 @@ export function setup() {
   const releases = http.get(`${environment}/releases`, { headers: { Cookie: session.cookie } });
   const generation = parseInt(releases.headers['Colophon-Generation'], 10);
   const publish = http.post(`${release.path}/publish`, JSON.stringify({ base_generation: generation }), {
-    headers: Object.assign({ 'If-Match': release.ifMatch, 'Idempotency-Key': `k6-setup-publish-${slug}` }, write),
+    headers: Object.assign({ 'If-Match': release.ifMatch, 'Idempotency-Key': idempotencyKey(`k6-setup-publish-${slug}`, 'deletion') }, write),
   });
   if (publish.status !== 201) fail(`publish: HTTP ${publish.status} ${publish.body}`);
   // Pinned: a changeset holds them and is never published.
@@ -126,13 +128,14 @@ export function setup() {
 }
 
 // Per VU: the article it deleted last, which no list may show again.
+// per-VU state: null-checked before use; any slot order is valid.
 let lastDeleted = null;
 
 export default function (data) {
   const write = {
     Cookie: data.session.cookie, 'X-CSRF-Token': data.session.csrf, Origin: PUBLIC_URL, 'Content-Type': 'application/json',
   };
-  const roll = __ITER % 10;
+  const roll = exec.scenario.iterationInTest % 10;
 
   if (roll < 7) {
     const created = http.post(data.base, article(`Doomed by VU ${__VU}`), {
@@ -149,11 +152,11 @@ export default function (data) {
     });
     if (!ok) return;
     lastDeleted = id;
-    if (__ITER % 3 === 0) {
+    if (exec.scenario.iterationInTest % 3 === 0) {
       const gone = http.get(url, { headers: { Cookie: data.session.cookie }, redirects: 0, responseCallback: GONE, tags: { endpoint: 'gone', name: 'entries/{entry}' } });
       check(gone, { 'a deleted entry is 404': (r) => r.status === 404 });
     }
-    if (__ITER % 5 === 0) {
+    if (exec.scenario.iterationInTest % 5 === 0) {
       const again = http.del(url, null, { headers: once, redirects: 0, tags: { endpoint: 'replay', name: 'entries/{entry}' } });
       check(again, {
         'replay 200': (r) => r.status === 200,
@@ -164,7 +167,7 @@ export default function (data) {
   } else if (roll < 9) {
     const kept = roll === 7 ? data.published : data.pinned;
     const target = kept[__VU % kept.length];
-    const stale = __ITER % 4 === 0;
+    const stale = exec.scenario.iterationInTest % 4 === 0;
     const headers = {
       'If-Match': stale ? '"00000000-0000-7000-8000-000000000000"' : target.etag, 'Idempotency-Key': key(),
       'X-CSRF-Token': data.session.csrf, Cookie: data.session.cookie, Origin: PUBLIC_URL,

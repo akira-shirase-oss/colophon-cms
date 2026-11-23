@@ -507,9 +507,14 @@ async fn a_pass_removes_dead_state_but_never_what_is_still_named() {
     .await
     .expect("setup code");
 
-    let swept = retention::sweep(&db.app, &Retention::DEFAULT, BATCH)
-        .await
-        .expect("sweep");
+    let swept = retention::sweep(
+        &db.app,
+        &Retention::DEFAULT,
+        BATCH,
+        colophon_db::Stop::NEVER,
+    )
+    .await
+    .expect("sweep");
 
     assert_eq!(swept.reservations, 2, "the two 100-day ledger rows age out");
     assert_eq!(
@@ -578,9 +583,14 @@ async fn a_pass_removes_dead_state_but_never_what_is_still_named() {
 
     // A second pass finds nothing: every delete is unconditional, so an empty pass is the
     // steady state, not a stall.
-    let again = retention::sweep(&db.app, &Retention::DEFAULT, BATCH)
-        .await
-        .expect("second sweep");
+    let again = retention::sweep(
+        &db.app,
+        &Retention::DEFAULT,
+        BATCH,
+        colophon_db::Stop::NEVER,
+    )
+    .await
+    .expect("second sweep");
     assert_eq!(again.total(), 0, "nothing left to remove");
 
     db.drop().await;
@@ -615,9 +625,14 @@ async fn dead_magic_links_are_swept_and_live_ones_kept() {
         .await
         .expect("a link");
     }
-    let swept = retention::sweep(&db.app, &Retention::DEFAULT, BATCH)
-        .await
-        .expect("swept");
+    let swept = retention::sweep(
+        &db.app,
+        &Retention::DEFAULT,
+        BATCH,
+        colophon_db::Stop::NEVER,
+    )
+    .await
+    .expect("swept");
     assert_eq!(
         swept.magic_links, 1,
         "only the link dead for a day: {swept:?}"
@@ -661,9 +676,14 @@ async fn idle_sign_in_keys_are_swept_and_live_ones_kept() {
         .await
         .expect("a key");
     }
-    let swept = retention::sweep(&db.app, &Retention::DEFAULT, BATCH)
-        .await
-        .expect("swept");
+    let swept = retention::sweep(
+        &db.app,
+        &Retention::DEFAULT,
+        BATCH,
+        colophon_db::Stop::NEVER,
+    )
+    .await
+    .expect("swept");
     assert_eq!(swept.sign_in_throttle, 2, "{swept:?}");
     let left: Vec<String> =
         sqlx::query_scalar("SELECT address FROM sign_in_throttle ORDER BY address")
@@ -706,13 +726,117 @@ async fn tables_strangers_grow_are_swept_ten_batches_a_pass() {
     .execute(&owner)
     .await
     .expect("idle keys");
-    let swept = retention::sweep(&db.app, &Retention::DEFAULT, BATCH)
-        .await
-        .expect("swept");
+    let swept = retention::sweep(
+        &db.app,
+        &Retention::DEFAULT,
+        BATCH,
+        colophon_db::Stop::NEVER,
+    )
+    .await
+    .expect("swept");
     assert_eq!(
         (swept.magic_links, swept.sign_in_throttle),
         (5_000, 5_000),
         "{swept:?}"
+    );
+    owner.close().await;
+    db.drop().await;
+}
+
+/// The pre-review's item 3: a stop rolls back only the pass under way (each pass is its own
+/// transaction, a tick up to twenty of them, and every start runs a tick at once), so a server
+/// restarted often still clears a backlog as long as one pass is far shorter than the time
+/// between restarts. A pass at its fullest here: ten batches (5,000 rows) from each of the two
+/// tables that get them, and a whole batch (500) from four more, timed. Evidence of this
+/// machine only (docs/modules/05-worker.md records the run), never production capacity; the
+/// bound asserted is loose, so it fails only if a pass stops being a matter of moments.
+#[tokio::test]
+#[ignore = "needs the local stack: scripts/stack.sh up"]
+async fn a_full_pass_takes_moments_not_a_restart_interval() {
+    let db = TestDb::new().await;
+    let fix = released(&db).await;
+    let owner = db.owner().await;
+    for seed in [
+        "INSERT INTO audience_magic_links
+             (project_id, id, email, token_hash, return_to, created_at, expires_at)
+         SELECT $1, gen_random_uuid(), 'flood' || n || '@example.test',
+                sha256(n::text::bytea), 'http://site.test/magic',
+                now() - interval '3 days', now() - interval '3 days' + interval '15 minutes'
+         FROM generate_series(1, 6000) AS n",
+        "INSERT INTO sign_in_throttle (realm, email, address, failures, updated_at)
+         SELECT 'staff', 'flood' || n || '@example.test', '198.51.100.9', 1,
+                now() - interval '2 hours'
+         FROM generate_series(1, 6000) AS n WHERE $1::uuid IS NOT NULL",
+        "INSERT INTO sign_in_attempts (state_hash, nonce, pkce_verifier, return_to, created_at, expires_at)
+         SELECT sha256(('state' || n)::bytea), lpad(n::text, 20, 'n'), lpad(n::text, 50, 'v'), '/',
+                now() - interval '2 hours',
+                now() - interval '1 hour'
+         FROM generate_series(1, 600) AS n WHERE $1::uuid IS NOT NULL",
+        "INSERT INTO device_logins (device_hash, user_code, client_name, created_at, expires_at)
+         SELECT sha256(('device' || n)::bytea),
+                'BBBB-' || substr('BCDFGHJKLMNPQRSTVWXZ23456789', (n / 28) % 28 + 1, 1)
+                    || substr('BCDFGHJKLMNPQRSTVWXZ23456789', n % 28 + 1, 1) || 'BB',
+                'cli', now() - interval '2 hours',
+                now() - interval '1 hour'
+         FROM generate_series(1, 600) AS n WHERE $1::uuid IS NOT NULL",
+    ] {
+        sqlx::query(seed)
+            .bind(fix.project)
+            .execute(&owner)
+            .await
+            .expect("a backlog");
+    }
+    sqlx::query(
+        "INSERT INTO idempotency_records (project_id, environment_id, identity_id, operation, key,
+                                          request_hash, created_at)
+         SELECT $1, $2, $3, 'entry.save', 'flood-key-' || lpad(n::text, 8, '0'),
+                sha256(n::text::bytea), now() - interval '40 days'
+         FROM generate_series(1, 600) AS n",
+    )
+    .bind(fix.project)
+    .bind(fix.environment)
+    .bind(fix.alice)
+    .execute(&owner)
+    .await
+    .expect("old idempotency records");
+    sqlx::query(
+        "INSERT INTO setup_attempts (id, identity_id, attempted_at)
+         SELECT gen_random_uuid(), $1, now() - interval '1 hour' FROM generate_series(1, 600)",
+    )
+    .bind(fix.alice)
+    .execute(&owner)
+    .await
+    .expect("old setup attempts");
+
+    let started = std::time::Instant::now();
+    let swept = retention::sweep(
+        &db.app,
+        &Retention::DEFAULT,
+        BATCH,
+        colophon_db::Stop::NEVER,
+    )
+    .await
+    .expect("swept");
+    let took = started.elapsed();
+    eprintln!(
+        "one full table-retention pass: {} rows in {took:?}",
+        swept.total()
+    );
+    assert_eq!(
+        (
+            swept.magic_links,
+            swept.sign_in_throttle,
+            swept.sign_in_attempts,
+            swept.device_logins,
+            swept.idempotency,
+            swept.setup_attempts,
+        ),
+        (5_000, 5_000, 500, 500, 500, 500),
+        "{swept:?}"
+    );
+    assert!(
+        took < std::time::Duration::from_secs(5),
+        "a full pass took {took:?}: no longer moments against a restart interval"
     );
     owner.close().await;
     db.drop().await;
