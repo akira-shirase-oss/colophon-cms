@@ -154,7 +154,7 @@ function reauth(data) {
   });
   if (res.status !== 204) return false;
   const jar = http.cookieJar().cookiesForURL(PUBLIC_URL);
-  creds = { cookie: `colophon_session=${jar.colophon_session[0]}`, csrf: jar.colophon_csrf[0] };
+  creds = { cookie: `__Host-colophon_session=${jar['__Host-colophon_session'][0]}`, csrf: jar['__Host-colophon_csrf'][0] };
   return true;
 }
 // Sends fn(); a 401 means the session died — re-authenticate and send once more with the
@@ -183,7 +183,7 @@ export function setup() {
   const signedIn = http.post(`${PUBLIC_URL}/auth/signin`, JSON.stringify({ email: 'dev-owner@colophon.test', password: 'colophon-dev' }), { headers: { 'Content-Type': 'application/json' } });
   if (signedIn.status !== 204) fail(`sign-in failed: HTTP ${signedIn.status}`);
   const jar = http.cookieJar().cookiesForURL(PUBLIC_URL);
-  const session = { cookie: `colophon_session=${jar.colophon_session[0]}`, csrf: jar.colophon_csrf[0] };
+  const session = { cookie: `__Host-colophon_session=${jar['__Host-colophon_session'][0]}`, csrf: jar['__Host-colophon_csrf'][0] };
   const write = { Cookie: session.cookie, 'X-CSRF-Token': session.csrf, Origin: PUBLIC_URL, 'Content-Type': 'application/json' };
 
   const slug = `k6-${Date.now().toString(36)}`;

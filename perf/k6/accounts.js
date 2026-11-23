@@ -68,7 +68,7 @@ export default function (data) {
     const res = http.post(`${BASE_URL}/auth/signin`, JSON.stringify({ email: address, password: PASSWORD }), { headers: JSON_HEADERS, tags: { endpoint: 'signin' } });
     check(res, {
       'signed in': (r) => r.status === 204,
-      'session cookie set': (r) => (r.headers['Set-Cookie'] || '').includes('colophon_session='),
+      'session cookie set': (r) => (r.headers['Set-Cookie'] || '').includes('__Host-colophon_session='),
     });
   } else if (roll === 3) {
     // A missing account: the dummy-hash verify runs, then the same refusal a wrong password gets.

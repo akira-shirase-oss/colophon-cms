@@ -92,7 +92,7 @@ export function setup() {
   const signedIn = http.post(`${PUBLIC_URL}/auth/signin`, JSON.stringify({ email: 'dev-owner@colophon.test', password: 'colophon-dev' }), { headers: { 'Content-Type': 'application/json' } });
   if (signedIn.status !== 204) fail(`sign-in failed: HTTP ${signedIn.status}`);
   const jar = http.cookieJar().cookiesForURL(PUBLIC_URL);
-  const session = { cookie: `colophon_session=${jar.colophon_session[0]}`, csrf: jar.colophon_csrf[0] };
+  const session = { cookie: `__Host-colophon_session=${jar['__Host-colophon_session'][0]}`, csrf: jar['__Host-colophon_csrf'][0] };
   // One session per VU, as clients have (D-215): a session or token may have 4 uploads in flight and
   // the Studio sends 3 at a time, so 64 VUs sharing one session measured 429 too_many_uploads, not
   // uploads (CI 44608263509: 3,598 of 4,096 uploads refused). load.sh lifts the password limit.
@@ -102,7 +102,7 @@ export function setup() {
     const again = http.post(`${PUBLIC_URL}/auth/signin`, JSON.stringify({ email: 'dev-owner@colophon.test', password: 'colophon-dev' }), { headers: { 'Content-Type': 'application/json' } });
     if (again.status !== 204) fail(`sign-in ${i + 1} of ${vus} failed: HTTP ${again.status}`);
     const cookies = http.cookieJar().cookiesForURL(PUBLIC_URL);
-    sessions.push({ cookie: `colophon_session=${cookies.colophon_session[0]}`, csrf: cookies.colophon_csrf[0] });
+    sessions.push({ cookie: `__Host-colophon_session=${cookies['__Host-colophon_session'][0]}`, csrf: cookies['__Host-colophon_csrf'][0] });
   }
 
   const write = { Cookie: session.cookie, 'X-CSRF-Token': session.csrf, Origin: PUBLIC_URL, 'Content-Type': 'application/json' };

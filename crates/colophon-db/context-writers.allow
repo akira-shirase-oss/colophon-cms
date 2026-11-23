@@ -38,6 +38,7 @@ crates/colophon-worker/src/lib.rs apply_bulk_item   # a bulk job's items: the jo
 
 # No project at all: identity only, which shows nothing of any project (tests/rls_layer.rs).
 crates/colophon-db/src/identity.rs profile   # the signed-in person's own profile
+crates/colophon-db/src/identity.rs set_disabled   # an administrator disabling or enabling an account (D-235, 0096): identity only, no project; colophon_account_set_disabled takes the actor from app.identity_id and re-checks it is an enabled administrator
 crates/colophon-db/src/projects.rs list   # the caller's own projects, through memberships
 crates/colophon-db/src/projects.rs page   # the same, a page at a time
 crates/colophon-db/src/projects.rs get   # one project, through the caller's membership

@@ -53,7 +53,7 @@ async function api<T>(method: string, path: string, body?: unknown, headers: Rec
 		headers: {
 			cookie: cookieHeader(),
 			origin,
-			'x-csrf-token': cookies.get('colophon_csrf') ?? '',
+			'x-csrf-token': cookies.get('__Host-colophon_csrf') ?? '',
 			...(body === undefined ? {} : { 'content-type': 'application/json' }),
 			...headers
 		},
@@ -1055,7 +1055,7 @@ async function uploadPhoto(base: string, file: string, bytes: Buffer): Promise<s
 		headers: {
 			cookie: cookieHeader(),
 			origin,
-			'x-csrf-token': cookies.get('colophon_csrf') ?? '',
+			'x-csrf-token': cookies.get('__Host-colophon_csrf') ?? '',
 			'content-type': 'image/png',
 			'x-colophon-file-name': file,
 			'idempotency-key': key()

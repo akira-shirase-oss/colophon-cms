@@ -163,7 +163,7 @@ async function signIn() {
 			headers: {
 				cookie: header(),
 				origin: SERVER,
-				'x-csrf-token': cookies.get('colophon_csrf') ?? '',
+				'x-csrf-token': cookies.get('__Host-colophon_csrf') ?? '',
 				...(body === undefined ? {} : { 'content-type': 'application/json' })
 			},
 			body: body === undefined ? undefined : JSON.stringify(body)

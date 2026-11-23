@@ -56,7 +56,7 @@ function signIn(username) {
   if (signedIn.status !== 204) fail(`sign-in as ${username} failed: HTTP ${signedIn.status}`);
   const cookies = jar.cookiesForURL(PUBLIC_URL);
   return {
-    Cookie: `colophon_session=${cookies.colophon_session[0]}`, 'X-CSRF-Token': cookies.colophon_csrf[0], Origin: PUBLIC_URL,
+    Cookie: `__Host-colophon_session=${cookies['__Host-colophon_session'][0]}`, 'X-CSRF-Token': cookies['__Host-colophon_csrf'][0], Origin: PUBLIC_URL,
     'Content-Type': 'application/json',
   };
 }
@@ -72,7 +72,7 @@ function freshPerson() {
   if (made.status !== 201) fail(`signup: HTTP ${made.status} ${made.body}`);
   const cookies = jar.cookiesForURL(PUBLIC_URL);
   return {
-    Cookie: `colophon_session=${cookies.colophon_session[0]}`, 'X-CSRF-Token': cookies.colophon_csrf[0], Origin: PUBLIC_URL,
+    Cookie: `__Host-colophon_session=${cookies['__Host-colophon_session'][0]}`, 'X-CSRF-Token': cookies['__Host-colophon_csrf'][0], Origin: PUBLIC_URL,
     'Content-Type': 'application/json',
   };
 }
