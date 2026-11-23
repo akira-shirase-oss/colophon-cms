@@ -78,10 +78,13 @@ a zero-unauthorized-action evaluation gate, X12, L08 and F11.
 
 **Connecting by URL (D-246).** An agent needs only `https://<server>/mcp`: its 401 names the protected-resource
 metadata, the authorization server's metadata names the rest, the agent registers itself (public client, exact
-redirect URIs), its person signs in to the Studio and approves it for one project on `/studio/connect/<id>`, and
-the agent trades the single-use code (PKCE S256) for an hour's access token and a rotating thirty-day refresh
-token. The token acts as that person, with their role, in that project, and only through `/mcp`; the Studio's
-Connected apps page lists and disconnects connections. Project API tokens keep working beside it.
+redirect URIs), its person signs in to the Studio and approves it on `/studio/connect/<id>`, and the agent trades the
+single-use code (PKCE S256) for an hour's access token and a rotating thirty-day refresh token. The token acts as
+that person in all their projects, with their role in each, and in ones they join later (D-248): its MCP session
+offers `list_projects`, and every tool names its `project`; the API decides each call as for the person's own
+session, so a project they aren't in is not found and a removed membership is refused at once. It never creates or
+deletes a project. Only through `/mcp`; the Studio's Connected apps page lists and disconnects connections. A
+connection approved for one project (D-246) keeps acting there alone. Project API tokens keep working beside it.
 
 **Built: local stdio and remote Streamable HTTP (D-121, below).** `crates/colophon-mcp`, a library and the
 `colophon-mcp` binary, speaks MCP **2025-11-25** on
