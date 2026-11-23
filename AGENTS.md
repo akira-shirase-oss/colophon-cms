@@ -156,7 +156,7 @@ identity and leak checks alone. The pre-push hook warns when the branch doesn't 
 `QUICK=1 scripts/check.sh` (a docs-only push runs the leak check alone). Escape hatch, for a work-in-progress commit
 during a mutation proof only: `COLOPHON_SKIP_HOOKS=1 COLOPHON_SKIP_REASON="<why>" git commit ...`, logged to
 `.git/colophon-hooks-skipped.log`; `--no-verify` also skips them but leaves no record, so don't use it. Per push, CI
-runs the tests (rust, integration in four shards, frontend), cargo-deny and the docs check; fuzz, the load smokes,
+runs the tests (rust, integration in five shards, frontend), cargo-deny and the docs check; fuzz, the load smokes,
 quick start, distribution, the Next.js demo and the benchmarks run nightly, by hand (`gh workflow run ci.yml`) and
 before every release (release.yml calls ci.yml in full).
 

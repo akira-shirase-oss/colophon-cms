@@ -6,7 +6,7 @@
 #   full    every job: the schedule, workflow_dispatch, or release.yml's call (FULL_INPUT=true)
 #   code    anything beyond docs/, *.md and perf/results/ changed: the test jobs run
 #   rust    code, and not only the Studio, the testbed or their UI packages: the Rust jobs run
-#   shards  ["server","workspace","studio-1","studio-2"], the Studio's alone for a frontend-only
+#   shards  ["server-1","server-2","workspace","studio-1","studio-2"], the Studio's alone for a frontend-only
 #           change, [] for docs alone, and "smokes" added when full
 #
 # The change is measured from the pull request's base, the push's previous head, or (a new branch,
@@ -27,9 +27,9 @@ everything() {
   out code true
   out rust true
   if [[ "$1" == true ]]; then
-    out shards '["server","workspace","studio-1","studio-2","smokes"]'
+    out shards '["server-1","server-2","workspace","studio-1","studio-2","smokes"]'
   else
-    out shards '["server","workspace","studio-1","studio-2"]'
+    out shards '["server-1","server-2","workspace","studio-1","studio-2"]'
   fi
   exit 0
 }
@@ -73,7 +73,7 @@ out full false
 out code "$code"
 out rust "$rust"
 if [[ "$rust" == true ]]; then
-  out shards '["server","workspace","studio-1","studio-2"]'
+  out shards '["server-1","server-2","workspace","studio-1","studio-2"]'
 elif [[ "$code" == true ]]; then
   out shards '["studio-1","studio-2"]'
 else

@@ -270,7 +270,8 @@ jobs:
     if: needs.changes.outputs.shards != '[]'
     runs-on: ubuntu-latest
     # D-241: the one job became shards, each on its own runner with its own stack, chosen by
-    # `changes`. server: colophon-server's stack tests and the crash tests; workspace: every other
+    # `changes`. server-1 and server-2: colophon-server's stack tests in halves (alternate test
+    # targets, sorted; server-1 also the crash tests); workspace: every other
     # crate's, ShellCheck, and the database TLS and non-superuser checks; studio-1 and studio-2: the
     # Studio's real-server suite in halves (studio-1 also the testbed); smokes (nightly only): the
     # load smoke runs. Before: one job, 44 to 60 minutes on green runs (stack tests 16, the Studio
@@ -329,7 +330,7 @@ jobs:
           cache: npm
       - run: npm ci
       - name: Tests that need the stack (they stop and restart its services)
-        if: matrix.shard == 'server' || matrix.shard == 'workspace'
+        if: startsWith(matrix.shard, 'server-') || matrix.shard == 'workspace'
         # Compiled against the live, migrated schema rather than .sqlx/: catches stale query data.
         # --no-fail-fast: every test binary runs, so a red in one (the attack suite's, D-231) can't hide another's.
         env:
@@ -342,13 +343,25 @@ jobs:
           # MCP server): the unsharded run built the whole workspace, so each shard builds every
           # binary first.
           cargo build --locked --workspace --bins
-          if [[ "$SHARD" == server ]]; then
-            cargo test -p colophon-server --locked --no-fail-fast -- --ignored --test-threads=1
+          if [[ "$SHARD" == server-* ]]; then
+            # Alternate test targets (sorted, from cargo's own list) to each half; faults needs a
+            # feature and runs in its own step below.
+            half=${SHARD#server-}
+            mapfile -t targets < <(cargo metadata --no-deps --format-version 1 --locked \
+              | jq -r '.packages[] | select(.name == "colophon-server") | .targets[]
+                       | select(.kind == ["test"]) | select((."required-features" // []) == []) | .name' | sort)
+            picked=()
+            for i in "${!targets[@]}"; do
+              (( i % 2 == half - 1 )) && picked+=(--test "${targets[$i]}")
+            done
+            [[ "$half" == 1 ]] && picked+=(--lib --bins)
+            echo "server-$half: ${#picked[@]} target flags"
+            cargo test -p colophon-server "${picked[@]}" --locked --no-fail-fast -- --ignored --test-threads=1
           else
             cargo test --workspace --exclude colophon-server --locked --no-fail-fast -- --ignored --test-threads=1
           fi
       - name: Crash tests F01, F02 and F03 (the server killed before and after a commit, the worker after announcing)
-        if: matrix.shard == 'server'
+        if: matrix.shard == 'server-1'
         env:
           SQLX_OFFLINE: "false"
           DATABASE_URL: postgres://colophon:colophon-dev@127.0.0.1:55432/colophon
