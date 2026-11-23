@@ -50,7 +50,7 @@ test('an owner invites with a link, the invitee signs in and joins, and roles de
 	expect(await violations(guest)).toEqual([]);
 	await guest.getByTestId('open-projects').click();
 	// Their projects: straight into it when it's their only one, or in the list when they have more.
-	await expect(guest.getByTestId('project-name').or(guest.getByTestId('projects').getByText('Studio test', { exact: true }))).toBeVisible();
+	await expect(guest.getByTestId('project-name').or(guest.getByTestId('projects').getByText('Studio test', { exact: true })).first()).toBeVisible();
 	// Signed out, a link without an invitation still says so.
 	const stranger = await (await browser.newContext()).newPage();
 	await stranger.goto('/studio/invite');
