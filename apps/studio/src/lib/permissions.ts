@@ -35,7 +35,8 @@ export const POWERS: { action: Action; label: string; hint: string }[] = [
 		label: 'Manage API tokens',
 		hint: 'Make and revoke keys that let scripts and sites use the API, never with more powers than this role.'
 	},
-	{ action: 'audit.read', label: 'See the activity log', hint: 'Who changed roles, members, invitations and API tokens, and when.' }
+	{ action: 'audit.read', label: 'See the activity log', hint: 'Who changed roles, members, invitations and API tokens, and when.' },
+	{ action: 'audience.manage', label: 'Manage the site’s visitors', hint: 'The people who sign in on your site to read members-only content.' }
 ];
 
 /** A grid cell's key: an action on a subject (`*` or a content type). */

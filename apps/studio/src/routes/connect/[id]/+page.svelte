@@ -90,7 +90,7 @@
 			</p>
 			<label class="block space-y-1 text-sm">
 				<span class="font-medium">In this project</span>
-				<select class="w-full rounded-md border border-input bg-background px-3 py-2" bind:value={chosen} data-testid="connect-project">
+				<select class="w-full rounded-md border border-input bg-background px-3 py-2" value={project} onchange={(event) => (chosen = event.currentTarget.value)} data-testid="connect-project">
 					{#each projects as one (one.id)}
 						<option value={one.id} selected={one.id === project}>{one.name} ({one.role_name})</option>
 					{/each}
