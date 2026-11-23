@@ -15,13 +15,13 @@ pub const MAX_CLIENTS: i64 = 10_000;
 
 /// Rows as the queries below read them.
 type PendingRow = (Uuid, String, Vec<String>, String, Option<String>, String);
-type RedeemedRow = (Uuid, Uuid, Uuid, Uuid, String, String);
-type AccessRow = (Uuid, Uuid, Uuid, Uuid, Option<OffsetDateTime>);
+type RedeemedRow = (Uuid, Uuid, Option<Uuid>, Uuid, String, String);
+type AccessRow = (Uuid, Uuid, Option<Uuid>, Uuid, Option<OffsetDateTime>);
 type ConnectedRow = (
     Uuid,
     String,
-    Uuid,
-    String,
+    Option<Uuid>,
+    Option<String>,
     OffsetDateTime,
     Option<OffsetDateTime>,
 );
@@ -57,8 +57,9 @@ pub struct Grant {
     pub id: Uuid,
     /// The person it acts as.
     pub identity: Uuid,
-    /// The one project it acts in.
-    pub project: Uuid,
+    /// The one project it acts in; `None`: every project its person is a member of, now or
+    /// later, with their role in each (D-248).
+    pub project: Option<Uuid>,
     /// The client it was given to.
     pub client: Uuid,
 }
@@ -92,10 +93,10 @@ pub struct Connected {
     pub id: Uuid,
     /// The client's own (unverified) name.
     pub client_name: String,
-    /// The project it acts in, and its name.
-    pub project: Uuid,
-    /// The project's name.
-    pub project_name: String,
+    /// The one project it acts in; `None`: all its person's projects (D-248).
+    pub project: Option<Uuid>,
+    /// That project's name ("a project you left" once they have); `None` with no project.
+    pub project_name: Option<String>,
     /// When it was approved.
     pub created_at: OffsetDateTime,
     /// When a token of it was last used.
@@ -205,15 +206,16 @@ pub async fn pending(pool: &PgPool, id: Uuid, identity: Uuid) -> Result<Option<P
     ))
 }
 
-/// Ends the authorization `id` (`identity`'s, unexpired), and with `project` approves it: one
-/// transaction makes the grant and a code (its hash), valid ten minutes. The request is consumed
-/// either way, so an answer counts once. `None` when there is no such request; the caller has
-/// checked that `identity` may act in `project`.
+/// Ends the authorization `id` (`identity`'s, unexpired), and with `approve` approves it: one
+/// transaction makes the grant — in one project, or with `None` in all of the person's (D-248) —
+/// and a code (its hash), valid ten minutes. The request is consumed either way, so an answer
+/// counts once. `None` when there is no such request; the caller has checked that `identity` may
+/// act in a project it names.
 pub async fn answer(
     pool: &PgPool,
     id: Uuid,
     identity: Uuid,
-    approve: Option<(Uuid, &[u8; 32])>,
+    approve: Option<(Option<Uuid>, &[u8; 32])>,
 ) -> Result<Option<Pending>, DbError> {
     let mut transaction = crate::begin_tx(pool).await.map_err(DbError::from_query)?;
     let row: Option<(Uuid, String, Option<String>, String)> = sqlx::query_as(
@@ -352,7 +354,7 @@ pub async fn redeem_refresh(
     refresh_hash: &[u8; 32],
     client: Uuid,
 ) -> Result<Presented<Grant>, DbError> {
-    let taken: Option<(Uuid, Uuid, Uuid, Uuid)> = sqlx::query_as(
+    let taken: Option<(Uuid, Uuid, Option<Uuid>, Uuid)> = sqlx::query_as(
         "UPDATE oauth_tokens t SET used_at = now()
          FROM oauth_grants g
          WHERE t.token_hash = $1 AND t.kind = 'refresh' AND t.used_at IS NULL AND t.expires_at > now()
@@ -437,7 +439,7 @@ pub async fn revoke_token(pool: &PgPool, token_hash: &[u8; 32]) -> Result<(), Db
 
 /// `identity`'s grants that still stand, newest first. Read as that person (row security shows
 /// them the projects they are in); a grant in a project they have since left keeps its row, named
-/// "a project you left", so it can still be revoked.
+/// "a project you left", so it can still be revoked. An all-projects grant (D-248) has no project.
 pub async fn connected(pool: &PgPool, identity: Uuid) -> Result<Vec<Connected>, DbError> {
     let mut transaction = crate::scope::begin(
         pool,
@@ -448,7 +450,9 @@ pub async fn connected(pool: &PgPool, identity: Uuid) -> Result<Vec<Connected>, 
     )
     .await?;
     let rows: Vec<ConnectedRow> = sqlx::query_as(
-        "SELECT g.id, c.name, g.project_id, coalesce(p.name, 'a project you left'), g.created_at, g.last_used_at
+        "SELECT g.id, c.name, g.project_id,
+                CASE WHEN g.project_id IS NULL THEN NULL ELSE coalesce(p.name, 'a project you left') END,
+                g.created_at, g.last_used_at
          FROM oauth_grants g
          JOIN oauth_clients c ON c.id = g.client_id
          LEFT JOIN projects p ON p.id = g.project_id

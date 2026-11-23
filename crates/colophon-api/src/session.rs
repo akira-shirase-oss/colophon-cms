@@ -130,7 +130,8 @@ pub enum Credential {
     /// A project's API token (`Authorization: Bearer colophon_api_…`, step R.4).
     ApiToken,
     /// An OAuth access token an agent got for the MCP endpoint (D-246): its person, with their role,
-    /// in the one project of its grant, and only through `/mcp` ([`SignedIn::oauth_project`]).
+    /// in the one project of its grant ([`SignedIn::oauth_project`]) or in every project they are a
+    /// member of ([`SignedIn::oauth_all_projects`], D-248), and only through `/mcp`.
     OAuth,
 }
 
@@ -158,6 +159,10 @@ pub struct SignedIn {
     /// For an OAuth access token, the one project its grant acts in (D-246); `None` otherwise.
     /// Kept apart from [`Self::project`], which says "a project API token" to the handlers.
     pub oauth_project: Option<Uuid>,
+    /// For an OAuth access token whose grant names no project (D-248): it acts in every project its
+    /// person is a member of, with their role in each, the API deciding each request as for their
+    /// own session. `false` otherwise.
+    pub oauth_all_projects: bool,
 }
 
 /// The caller behind `Authorization: Bearer <token>`.
@@ -194,12 +199,16 @@ async fn bearer(
         project: None,
         judged: None,
         oauth_project: None,
+        oauth_all_projects: false,
     })
 }
 
 /// An OAuth access token (D-246). Its audience is the MCP endpoint alone: `/mcp` itself, and the
 /// requests `/mcp`'s tools make in-process ([`crate::mcp::InProcess`], which no network request
-/// carries) to the grant's own project. Anywhere else it is refused like no credential at all.
+/// carries) to the grant's own project — or, for a grant in all its person's projects (D-248), to
+/// any project's routes and the list of their projects, membership and role decided by the API as
+/// for their session. Anywhere else it is refused like no credential at all, and it never deletes
+/// a project, whatever the person's role.
 async fn oauth_access(
     services: &Services,
     token: &str,
@@ -211,14 +220,7 @@ async fn oauth_access(
         .ok_or(ApiError::Unauthorized)?;
     let path = parts.uri.path();
     let in_process = parts.extensions.get::<crate::mcp::InProcess>().is_some();
-    let own = format!("/api/v1/projects/{}", grant.project);
-    let allowed = path == "/mcp"
-        || (in_process
-            && (path == own
-                || path
-                    .strip_prefix(&own)
-                    .is_some_and(|rest| rest.starts_with('/'))));
-    if !allowed {
+    if !(path == "/mcp" || in_process && oauth_reaches(grant.project, &parts.method, path)) {
         return Err(ApiError::Unauthorized);
     }
     Ok(SignedIn {
@@ -227,8 +229,32 @@ async fn oauth_access(
         credential: Credential::OAuth,
         project: None,
         judged: None,
-        oauth_project: Some(grant.project),
+        oauth_project: grant.project,
+        oauth_all_projects: grant.project.is_none(),
     })
+}
+
+/// Whether an in-process request of an OAuth grant may go to `path`: under its one project, or
+/// with no project (D-248) under any project, plus reading the list of the person's projects.
+/// Deleting a project itself never: MCP doesn't offer it, and this holds even if a tool tried.
+fn oauth_reaches(project: Option<Uuid>, method: &axum::http::Method, path: &str) -> bool {
+    const PROJECTS: &str = "/api/v1/projects";
+    let Some(rest) = path.strip_prefix(PROJECTS) else {
+        return false;
+    };
+    if rest.is_empty() {
+        return project.is_none() && *method == axum::http::Method::GET;
+    }
+    let Some(rest) = rest.strip_prefix('/') else {
+        return false;
+    };
+    let (named, below) = rest
+        .split_once('/')
+        .map_or((rest, None), |(id, below)| (id, Some(below)));
+    if below.is_none_or(str::is_empty) && *method == axum::http::Method::DELETE {
+        return false;
+    }
+    project.is_none_or(|own| named == own.to_string())
 }
 
 /// The project API token `token` (whose random part is `secret`), on `path`.
@@ -299,6 +325,7 @@ async fn api_token(
         credential: Credential::ApiToken,
         project: Some(found.project_id),
         oauth_project: None,
+        oauth_all_projects: false,
         judged: Some(crate::admission::Judged {
             hash,
             read_at,
@@ -403,6 +430,7 @@ impl FromRequestParts<AppState> for SignedIn {
             judged: None,
             project: None,
             oauth_project: None,
+            oauth_all_projects: false,
         })
     }
 }
@@ -410,6 +438,59 @@ impl FromRequestParts<AppState> for SignedIn {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn an_oauth_grant_reaches_its_projects_and_never_deletes_one() {
+        use axum::http::Method;
+        let (mine, other) = (Uuid::now_v7(), Uuid::now_v7());
+        let under = |project: Uuid, rest: &str| format!("/api/v1/projects/{project}{rest}");
+        // One project's grant (D-246): its project alone.
+        let one = Some(mine);
+        assert!(oauth_reaches(one, &Method::GET, &under(mine, "")));
+        assert!(oauth_reaches(
+            one,
+            &Method::POST,
+            &under(mine, "/environments/production/changesets")
+        ));
+        assert!(!oauth_reaches(one, &Method::GET, &under(other, "/members")));
+        assert!(!oauth_reaches(one, &Method::GET, "/api/v1/projects"));
+        assert!(!oauth_reaches(
+            one,
+            &Method::GET,
+            &format!("/api/v1/projects/{mine}x/members")
+        ));
+        // All the person's projects (D-248): any project's routes (the API decides membership)
+        // and reading the list of theirs; never creating one through the list.
+        assert!(oauth_reaches(None, &Method::GET, &under(other, "/members")));
+        assert!(oauth_reaches(None, &Method::PATCH, &under(mine, "")));
+        assert!(oauth_reaches(None, &Method::GET, "/api/v1/projects"));
+        assert!(!oauth_reaches(None, &Method::POST, "/api/v1/projects"));
+        // Never deleting a project, whichever grant, and nothing outside projects.
+        for grant in [one, None] {
+            assert!(!oauth_reaches(grant, &Method::DELETE, &under(mine, "")));
+            assert!(!oauth_reaches(grant, &Method::DELETE, &under(mine, "/")));
+            assert!(oauth_reaches(
+                grant,
+                &Method::DELETE,
+                &under(
+                    mine,
+                    "/environments/production/collections/articles/entries/x"
+                )
+            ));
+            for elsewhere in [
+                "/api/v1/me",
+                "/api/v1/admin/accounts",
+                "/api/v1/projectsx",
+                "/mcp",
+                "/oauth/token",
+            ] {
+                assert!(
+                    !oauth_reaches(grant, &Method::GET, elsewhere),
+                    "{elsewhere}"
+                );
+            }
+        }
+    }
 
     #[test]
     fn cookies_are_found_across_headers_and_pairs() {
