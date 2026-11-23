@@ -220,6 +220,169 @@ async fn a_stopped_sweep_pass_runs_nothing_after_its_statement_under_way() {
     );
 }
 
+/// `colophon_db::begin_background` asks for the stop before anything else and once more after
+/// the `BEGIN`: a stop already requested sends nothing to the server (no `BEGIN`, so no
+/// `ROLLBACK` either), and one that comes while the `BEGIN` runs ends the unit before its first
+/// statement, rolled back, never handed back as a transaction to run on.
+#[tokio::test]
+#[ignore = "needs the stack and scripts/migrate.sh"]
+async fn begin_background_begins_nothing_once_stopped() {
+    let (pool, held) = an_exhausted_pool().await;
+    let owner = owner_database().await;
+    let mut held = held;
+    let backend: i32 = sqlx::query_scalar("SELECT pg_backend_pid()")
+        .fetch_one(&mut *held)
+        .await
+        .expect("the pool's one backend");
+    drop(held);
+
+    // Already stopped: nothing reaches the server. Any statement on the backend (a BEGIN, its
+    // ROLLBACK, the pool's release check after them) would move its state_change.
+    tokio::time::sleep(STILL_RUNNING).await;
+    let changed = async || -> String {
+        sqlx::query_scalar("SELECT state_change::text FROM pg_stat_activity WHERE pid = $1")
+            .bind(backend)
+            .fetch_one(&owner)
+            .await
+            .expect("the backend is still connected")
+    };
+    let before = changed().await;
+    let stopped = || true;
+    let begun = colophon_db::begin_background(&pool, colophon_db::Stop::new(&stopped)).await;
+    assert!(
+        matches!(begun, Err(colophon_db::DbError::Stopped)),
+        "{begun:?}"
+    );
+    tokio::time::sleep(STILL_RUNNING).await;
+    assert_eq!(
+        changed().await,
+        before,
+        "a stopped unit still sent statements"
+    );
+
+    // Stopped once the connection is in use (during the BEGIN, at the latest right after it):
+    // the unit ends before its first statement.
+    let in_use = || pool.size() == 1 && pool.num_idle() == 0;
+    let begun = colophon_db::begin_background(&pool, colophon_db::Stop::new(&in_use)).await;
+    assert!(
+        matches!(begun, Err(colophon_db::DbError::Stopped)),
+        "a stop during the BEGIN handed the transaction back: {begun:?}"
+    );
+    tokio::time::sleep(STILL_RUNNING).await;
+    let open: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM pg_stat_activity WHERE pid = $1 AND state LIKE 'idle in transaction%'",
+    )
+    .bind(backend)
+    .fetch_one(&owner)
+    .await
+    .expect("pg_stat_activity");
+    assert_eq!(open, 0, "the stopped unit's transaction was rolled back");
+    pool.close().await;
+    owner.close().await;
+}
+
+/// The tables one table-sweep pass deletes from, in its order (`colophon_db::retention::sweep`).
+const SWEEP_ORDER: [&str; 20] = [
+    "budget_reservations",
+    "observations",
+    "jobs",
+    "asset_jobs",
+    "bulk_items",
+    "bulk_jobs",
+    "migration_items",
+    "migration_plans",
+    "schedules",
+    "idempotency_records",
+    "sessions",
+    "access_tokens",
+    "invitations",
+    "device_logins",
+    "sign_in_attempts",
+    "setup_attempts",
+    "setup_codes",
+    "audience_magic_links",
+    "sign_in_throttle",
+    "preview_grants",
+];
+
+/// Every stop check of the sweep, each one: for each pair of neighbouring statements, both
+/// tables held, a stop while the first statement waits, then its table released. The pass
+/// must answer `Stopped` at once: a check missing after that statement would run the next,
+/// which waits on its held table for the lock timeout and fails as a lock wait instead. (A
+/// test holding only the first and last tables let any one check go missing: the next one
+/// caught the stop.)
+#[tokio::test]
+#[ignore = "needs the stack and scripts/migrate.sh"]
+async fn every_check_of_the_sweep_stops_it_after_the_statement_under_way() {
+    let (owner, app) = (owner_database().await, app_database().await);
+    for pair in SWEEP_ORDER.windows(2) {
+        let (now, next) = (pair[0], pair[1]);
+        let mut held = Vec::new();
+        for table in pair {
+            let mut holder = owner.begin().await.expect("begin");
+            // Audited: `table` is one of SWEEP_ORDER's literals.
+            sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
+                "LOCK TABLE {table} IN SHARE MODE"
+            )))
+            .execute(&mut *holder)
+            .await
+            .expect("hold the table");
+            let pid: i32 = sqlx::query_scalar("SELECT pg_backend_pid()")
+                .fetch_one(&mut *holder)
+                .await
+                .expect("its backend");
+            held.push((holder, pid));
+        }
+        let stop_now = std::sync::atomic::AtomicBool::new(false);
+        let stopping = || stop_now.load(std::sync::atomic::Ordering::SeqCst);
+        let first_holder = held[0].1;
+        let driver = async {
+            let deadline = Instant::now() + Duration::from_secs(10);
+            loop {
+                let waiting: i64 = sqlx::query_scalar(
+                    "SELECT count(*) FROM pg_stat_activity WHERE $1 = ANY(pg_blocking_pids(pid))",
+                )
+                .bind(first_holder)
+                .fetch_one(&owner)
+                .await
+                .expect("pg_stat_activity");
+                if waiting > 0 {
+                    break;
+                }
+                assert!(Instant::now() < deadline, "the pass never reached {now}");
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+            stop_now.store(true, std::sync::atomic::Ordering::SeqCst);
+            let (first, _) = held.remove(0);
+            first.rollback().await.expect("release");
+            Instant::now()
+        };
+        let (swept, released) = tokio::join!(
+            colophon_db::retention::sweep(
+                &app,
+                &colophon_db::retention::Retention::DEFAULT,
+                colophon_db::retention::BATCH,
+                colophon_db::Stop::new(&stopping),
+            ),
+            driver
+        );
+        let took = released.elapsed();
+        assert!(
+            matches!(swept, Err(colophon_db::DbError::Stopped)),
+            "stopped at {now}, the pass ran on to {next}: {swept:?}"
+        );
+        assert!(
+            took < Duration::from_secs(1),
+            "stopped at {now}, the pass took {took:?} after it"
+        );
+        for (holder, _) in held {
+            holder.rollback().await.expect("release");
+        }
+    }
+    app.close().await;
+    owner.close().await;
+}
+
 /// A one-connection pool on the application login, the worker pool's settings otherwise (its
 /// 2 s acquire timeout included), and that connection held: a unit started on it waits in
 /// pool acquisition, as a sweep does on a worker pool its deliveries have exhausted.
@@ -337,6 +500,169 @@ async fn a_stop_while_the_table_sweep_waits_for_a_connection_begins_nothing() {
     );
     pool.close().await;
     owner.close().await;
+}
+
+/// An approved publish request for a new article in `project`, scheduled `seconds` from now in
+/// UTC (the HTTP path an editor takes): the changeset's path.
+async fn scheduled(owner: &common::Session, project: &str, seconds: i64) -> String {
+    let base = format!("/api/v1/projects/{project}/environments/production");
+    let entry = create_article(owner, project, "Scheduled at a stop").await;
+    let set = call(
+        owner,
+        Method::POST,
+        &format!("{base}/changesets"),
+        Some(&serde_json::json!({"title": "Scheduled at a stop", "entries": [entry]})),
+        &[("idempotency-key", &key())],
+    )
+    .await
+    .expect("request");
+    assert!(set.status.is_success(), "{}", set.body);
+    let path = format!(
+        "{base}/changesets/{}",
+        set.body["data"]["id"].as_str().expect("an id")
+    );
+    let if_match = format!("\"{}\"", set.body["data"]["hash"].as_str().expect("a hash"));
+    let at = (jiff::Timestamp::now() + jiff::SignedDuration::from_secs(seconds))
+        .strftime("%Y-%m-%dT%H:%M:%S")
+        .to_string();
+    for (step, body) in [
+        ("submit", None),
+        ("reviews", Some(serde_json::json!({"decision": "approve"}))),
+        (
+            "schedule",
+            Some(serde_json::json!({"local_time": at, "time_zone": "UTC"})),
+        ),
+    ] {
+        let done = call(
+            owner,
+            Method::POST,
+            &format!("{path}/{step}"),
+            body.as_ref(),
+            &[("if-match", &if_match)],
+        )
+        .await
+        .expect("request");
+        assert!(done.status.is_success(), "{step}: {}", done.body);
+    }
+    path
+}
+
+/// The coordinator's scheduler ruling (D-197): a scheduled publish is an editorial publish, not
+/// a background unit, so a stop neither bounds it to 4 s nor rolls it back between statements;
+/// it keeps the HTTP publish's own bound, every pool's 5 s statement timeout. Blocked on a held
+/// lock when the stop comes, it fails at that bound and rolls back, and the loop ends inside the
+/// 5 s cleanup deadline, never waiting on systemd's kill. The next start publishes the schedule
+/// exactly once (one release, generation 1), and another pass after that publishes nothing more:
+/// the schedule row is consumed in the publish's own transaction.
+#[tokio::test]
+#[ignore = "needs the stack and scripts/migrate.sh"]
+async fn a_scheduled_publish_blocked_at_a_stop_ends_by_the_deadline_and_publishes_once() {
+    // The API alone: the test runs the scheduler itself, on the worker pool's settings.
+    let _server = common::Server::start_with(&[("COLOPHON_ROLE", "api")]).await;
+    let owner = sign_in("dev-owner").await;
+    let project = project(&owner).await;
+    scheduled(&owner, &project, 2).await;
+    let url = local_env()
+        .into_iter()
+        .find_map(|(key, value)| (key == "COLOPHON_DATABASE_URL").then_some(value))
+        .expect("deploy/local.env names the application database");
+    let worker_pool =
+        colophon_db::connect_lazy(&url, colophon_db::PoolSettings::default()).expect("a pool");
+    let database = owner_database().await;
+    let releases = async || -> (i64, Option<i64>) {
+        sqlx::query_as("SELECT count(*), max(generation) FROM releases WHERE project_id = $1::uuid")
+            .bind(&project)
+            .fetch_one(&database)
+            .await
+            .expect("the releases")
+    };
+    let state = async || -> String {
+        sqlx::query_scalar("SELECT state FROM schedules WHERE project_id = $1::uuid")
+            .bind(&project)
+            .fetch_one(&database)
+            .await
+            .expect("the schedule")
+    };
+
+    // The publish's release insert waits on the table, held.
+    let mut holder = database.begin().await.expect("begin");
+    sqlx::query("LOCK TABLE releases IN SHARE MODE")
+        .execute(&mut *holder)
+        .await
+        .expect("hold the releases");
+    let holder_pid: i32 = sqlx::query_scalar("SELECT pg_backend_pid()")
+        .fetch_one(&mut *holder)
+        .await
+        .expect("its backend");
+    let cancel = CancellationToken::new();
+    let scheduler = tokio::spawn(
+        colophon_worker::schedules::Scheduler::new(worker_pool.clone(), Duration::from_millis(200))
+            .run(cancel.clone()),
+    );
+    let deadline = Instant::now() + Duration::from_secs(15);
+    loop {
+        let waiting: i64 = sqlx::query_scalar(
+            "SELECT count(*) FROM pg_stat_activity WHERE $1 = ANY(pg_blocking_pids(pid))",
+        )
+        .bind(holder_pid)
+        .fetch_one(&database)
+        .await
+        .expect("pg_stat_activity");
+        if waiting > 0 {
+            break;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "the scheduled publish never reached the releases"
+        );
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+
+    let stopped = Instant::now();
+    cancel.cancel();
+    tokio::time::timeout(CLEANUP_DEADLINE, scheduler)
+        .await
+        .expect("the scheduler ends inside the cleanup deadline")
+        .expect("joined");
+    let took = stopped.elapsed();
+    holder.rollback().await.expect("release");
+    assert!(
+        took < CLEANUP_DEADLINE,
+        "the blocked publish held the stop for {took:?}"
+    );
+    assert_eq!(
+        releases().await,
+        (0, None),
+        "the blocked publish rolled back"
+    );
+    assert_eq!(state().await, "scheduled", "and left its schedule due");
+
+    // The next start: published once, then nothing more on another pass.
+    for pass in 0..2 {
+        let cancel = CancellationToken::new();
+        let scheduler = tokio::spawn(
+            colophon_worker::schedules::Scheduler::new(
+                worker_pool.clone(),
+                Duration::from_millis(200),
+            )
+            .run(cancel.clone()),
+        );
+        let deadline = Instant::now() + Duration::from_secs(15);
+        while state().await != "published" {
+            assert!(Instant::now() < deadline, "the schedule never published");
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+        tokio::time::sleep(Duration::from_millis(600)).await;
+        cancel.cancel();
+        scheduler.await.expect("joined");
+        assert_eq!(
+            releases().await,
+            (1, Some(1)),
+            "published exactly once (pass {pass})"
+        );
+    }
+    worker_pool.close().await;
+    database.close().await;
 }
 
 /// The real binary on the test origin, its JSON log kept.
