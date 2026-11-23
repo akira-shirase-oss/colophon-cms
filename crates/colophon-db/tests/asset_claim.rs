@@ -152,7 +152,9 @@ async fn a_claim_reads_its_limit_not_the_table() {
     .expect("a lapsed lease");
     // The sweep makes it waiting again, keeping its place.
     assert_eq!(
-        assets::release_lapsed(&db.app).await.expect("released"),
+        assets::release_lapsed(&db.app, colophon_db::Stop::NEVER)
+            .await
+            .expect("released"),
         1,
         "the lapsed lease, and only it"
     );
@@ -165,7 +167,7 @@ async fn a_claim_reads_its_limit_not_the_table() {
     flush_app(&db).await;
 
     let (scans_before, tuples_before) = reads(&owner).await;
-    let claimed = assets::claim(&db.app, "worker-a", HOUR, 4)
+    let claimed = assets::claim(&db.app, "worker-a", HOUR, 4, colophon_db::Stop::NEVER)
         .await
         .expect("claim");
     flush_app(&db).await;
@@ -242,7 +244,7 @@ async fn a_claim_never_walks_finished_jobs_leases() {
     flush_app(&db).await;
 
     let before = index_reads(&owner, "asset_jobs_leased").await;
-    let claimed = assets::claim(&db.app, "worker-a", HOUR, 4)
+    let claimed = assets::claim(&db.app, "worker-a", HOUR, 4, colophon_db::Stop::NEVER)
         .await
         .expect("claim");
     flush_app(&db).await;
@@ -405,7 +407,7 @@ async fn a_claim_reads_a_handful_of_blocks_at_a_fast_runners_scale() {
         .execute(&mut *seed)
         .await
         .expect("the history finished");
-    assets::claim(&db.app, "worker-a", HOUR, 1)
+    assets::claim(&db.app, "worker-a", HOUR, 1, colophon_db::Stop::NEVER)
         .await
         .expect("a first claim");
     // A snapshot held through the claim, as the smoke's are (up to 3.7 s), and the uploads
@@ -442,7 +444,7 @@ async fn a_claim_reads_a_handful_of_blocks_at_a_fast_runners_scale() {
 
     let (scans_before, _) = reads(&owner).await;
     let before = blocks(&owner).await;
-    let claimed = assets::claim(&db.app, "worker-a", HOUR, 4)
+    let claimed = assets::claim(&db.app, "worker-a", HOUR, 4, colophon_db::Stop::NEVER)
         .await
         .expect("claim");
     flush_app(&db).await;

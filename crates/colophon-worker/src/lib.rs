@@ -313,6 +313,8 @@ impl Worker {
             tracker.spawn(worker.run_bulk(cancel.clone()));
         }
         let mut last_expiry: Option<std::time::Instant> = None;
+        // Heard between units and while one waits for a connection (colophon_db::begin_background).
+        let stopping = || cancel.is_cancelled();
         loop {
             if last_expiry.is_none_or(|at| at.elapsed() >= EXPIRY_INTERVAL) {
                 last_expiry = Some(std::time::Instant::now());
@@ -320,10 +322,9 @@ impl Worker {
                 // runs to its end (dropped mid-COMMIT, whether it committed would be unknown),
                 // bounded server side (colophon_db::bound_background), and a shutdown never
                 // waits on more than the one in flight.
-                let stopping = || cancel.is_cancelled();
                 let sweeps = async {
-                    match jobs::expire(&self.pool).await {
-                        Ok(0) => {}
+                    match jobs::expire(&self.pool, colophon_db::Stop::new(&stopping)).await {
+                        Ok(0) | Err(colophon_db::DbError::Stopped) => {}
                         Ok(expired) => tracing::info!(expired, "jobs ran out of time"),
                         Err(error) => {
                             tracing::warn!(error = %error, "expiring jobs failed; trying again later");
@@ -332,7 +333,9 @@ impl Worker {
                     if cancel.is_cancelled() {
                         return;
                     }
-                    match colophon_db::assets::expire(&self.pool).await {
+                    match colophon_db::assets::expire(&self.pool, colophon_db::Stop::new(&stopping))
+                        .await
+                    {
                         Ok(0) | Err(_) => {}
                         Ok(expired) => tracing::info!(expired, "asset jobs ran out of time"),
                     }
@@ -405,10 +408,13 @@ impl Worker {
                 &self.settings.location,
                 self.settings.lease,
                 i64::try_from(free).unwrap_or(1),
+                colophon_db::Stop::new(&stopping),
             )
             .await
             {
                 Ok(claimed) => claimed,
+                // Stopped while waiting for a connection: nothing was claimed.
+                Err(colophon_db::DbError::Stopped) => break,
                 Err(error) => {
                     tracing::warn!(error = %error, "claiming jobs failed; trying again");
                     Vec::new()
@@ -1970,6 +1976,7 @@ impl Worker {
             Arc::clone(&wake),
             cancel.clone(),
         ));
+        let stopping = || cancel.is_cancelled();
         loop {
             let first = tokio::select! {
                 () = cancel.cancelled() => break,
@@ -1985,10 +1992,13 @@ impl Worker {
                 &self.settings.owner,
                 self.settings.lease,
                 i64::try_from(free).unwrap_or(1),
+                colophon_db::Stop::new(&stopping),
             )
             .await
             {
                 Ok(claimed) => claimed,
+                // Stopped while waiting for a connection: nothing was claimed.
+                Err(colophon_db::DbError::Stopped) => break,
                 Err(error) => {
                     tracing::warn!(error = %error, "claiming asset jobs failed; trying again");
                     Vec::new()

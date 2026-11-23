@@ -623,6 +623,7 @@ pub async fn claim(
     owner: &str,
     lease: Duration,
     limit: i64,
+    stop: crate::Stop<'_>,
 ) -> Result<Vec<Claimed>, DbError> {
     let mut transaction = worker(pool).await?;
     // Planned for this call's limit every time, never once for all (see above).
@@ -687,7 +688,7 @@ pub const RELEASE_BATCH: i64 = 200;
 /// one bounded statement: at most [`RELEASE_BATCH`] jobs, a 4 s statement and a 3 s lock wait,
 /// server side, so a stop that lets it finish waits under the 5 s cleanup deadline. How many
 /// it released. The sweep runs passes back to back ([`release_lapsed_all`]).
-pub async fn release_lapsed(pool: &PgPool) -> Result<u64, DbError> {
+pub async fn release_lapsed(pool: &PgPool, stop: crate::Stop<'_>) -> Result<u64, DbError> {
     let mut transaction = worker(pool).await?;
     // A background unit: bounded server side, so a stop can let it finish.
     crate::bound_background(&mut transaction)
@@ -735,7 +736,7 @@ pub async fn release_lapsed_all(
     let full = u64::try_from(RELEASE_BATCH).unwrap_or(u64::MAX);
     let mut total = 0;
     loop {
-        let released = release_lapsed(pool).await?;
+        let released = release_lapsed(pool, stop).await?;
         total += released;
         if released < full || stop.requested() || started.elapsed() >= budget {
             return Ok(total);
@@ -1117,7 +1118,7 @@ async fn land_usable(
 
 /// Fails unfinished asset jobs that ran out of time (swept with the delivery jobs'); how many.
 /// Like `jobs::expire` it never waits: a job another transaction holds is the next pass's.
-pub async fn expire(pool: &PgPool) -> Result<u64, DbError> {
+pub async fn expire(pool: &PgPool, stop: crate::Stop<'_>) -> Result<u64, DbError> {
     let mut transaction = worker(pool).await?;
     // A background unit: bounded server side, so a stop can let it finish.
     crate::bound_background(&mut transaction)
@@ -1170,6 +1171,7 @@ pub async fn enqueue_expired(
     deadline_at: OffsetDateTime,
     limit: i64,
     room: i64,
+    stop: crate::Stop<'_>,
 ) -> Result<u64, DbError> {
     let mut transaction = worker(pool).await?;
     // A background unit: bounded server side, so a stop can let it finish.

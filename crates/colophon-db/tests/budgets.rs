@@ -548,9 +548,16 @@ async fn a_release_reserves_a_slot_per_job_and_the_outcome_closes_it() {
 
     // A release while both slots are held by running jobs is refused — the worker claims
     // them first, since a pending job would only be superseded, which frees its slot.
-    let claimed = jobs::claim(&db.app, "worker-a", "local", Duration::from_secs(30), 10)
-        .await
-        .expect("claim");
+    let claimed = jobs::claim(
+        &db.app,
+        "worker-a",
+        "local",
+        Duration::from_secs(30),
+        10,
+        colophon_db::Stop::NEVER,
+    )
+    .await
+    .expect("claim");
     assert_eq!(claimed.len(), 2);
     let (changeset, hash, review) = approved(&db, alice, project).await;
     let mut tx = as_token(&db.app, identity, project).await;

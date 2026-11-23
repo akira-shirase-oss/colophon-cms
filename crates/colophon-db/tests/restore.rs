@@ -113,9 +113,16 @@ async fn a_restored_backup_gets_a_new_epoch_and_a_held_outbox() {
 
     // Both jobs sit in the outbox; one is claimed and in flight when the "backup" is taken —
     // its delivery may already have landed, and nobody can tell (F13).
-    let in_flight = jobs::claim(&db.app, "worker-gone", "test", HOUR, 1)
-        .await
-        .expect("claim");
+    let in_flight = jobs::claim(
+        &db.app,
+        "worker-gone",
+        "test",
+        HOUR,
+        1,
+        colophon_db::Stop::NEVER,
+    )
+    .await
+    .expect("claim");
     assert_eq!(in_flight.len(), 1, "one job under lease at backup time");
     let owner = db.owner().await;
     let before = epochs(&owner).await;
@@ -188,11 +195,23 @@ async fn a_restored_backup_gets_a_new_epoch_and_a_held_outbox() {
 
     // O3: nothing may dispatch before reconciliation — no worker can claim a held job,
     // and the expiry sweep leaves held jobs alone.
-    let claimable = jobs::claim(&restored, "worker", "test", HOUR, 10)
-        .await
-        .expect("claim on the restored backup");
+    let claimable = jobs::claim(
+        &restored,
+        "worker",
+        "test",
+        HOUR,
+        10,
+        colophon_db::Stop::NEVER,
+    )
+    .await
+    .expect("claim on the restored backup");
     assert!(claimable.is_empty(), "a held job can never be claimed");
-    assert_eq!(jobs::expire(&restored).await.expect("expire"), 0);
+    assert_eq!(
+        jobs::expire(&restored, colophon_db::Stop::NEVER)
+            .await
+            .expect("expire"),
+        0
+    );
     let again = restore::hold_jobs(&restored).await.expect("hold again");
     assert!(again.is_empty(), "holding is idempotent");
 
@@ -204,9 +223,16 @@ async fn a_restored_backup_gets_a_new_epoch_and_a_held_outbox() {
     // The explicit enable: jobs return to pending, due now — then a claim succeeds.
     let resumed = restore::resume_jobs(&restored, 3600).await.expect("resume");
     assert_eq!(resumed.len(), 2);
-    let claimable = jobs::claim(&restored, "worker", "test", HOUR, 10)
-        .await
-        .expect("claim after resume");
+    let claimable = jobs::claim(
+        &restored,
+        "worker",
+        "test",
+        HOUR,
+        10,
+        colophon_db::Stop::NEVER,
+    )
+    .await
+    .expect("claim after resume");
     assert_eq!(claimable.len(), 2, "resumed jobs dispatch as usual");
 
     sqlx::query(AssertSqlSafe(format!(

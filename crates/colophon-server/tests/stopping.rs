@@ -86,7 +86,7 @@ async fn a_held_delta(
     owner: &sqlx::PgPool,
     app: &sqlx::PgPool,
 ) -> sqlx::Transaction<'static, sqlx::Postgres> {
-    colophon_db::work::fold_payload(app)
+    colophon_db::work::fold_payload(app, colophon_db::Stop::NEVER)
         .await
         .expect("the log starts empty");
     sqlx::query("INSERT INTO payload_deltas (bytes) VALUES (7), (-7)")
@@ -149,7 +149,7 @@ async fn a_stuck_fold_ends_on_its_own_inside_the_cleanup_deadline() {
     );
     assert_eq!(deltas(&owner).await, 2, "the failed fold rolled back");
     holder.rollback().await.expect("release");
-    colophon_db::work::fold_payload(&app)
+    colophon_db::work::fold_payload(&app, colophon_db::Stop::NEVER)
         .await
         .expect("fold the test's deltas away");
     app.close().await;
@@ -218,6 +218,125 @@ async fn a_stopped_sweep_pass_runs_nothing_after_its_statement_under_way() {
         took < Duration::from_secs(1),
         "the stopped pass ran on to its last table: {took:?} after its first was free"
     );
+}
+
+/// A one-connection pool on the application login, the worker pool's settings otherwise (its
+/// 2 s acquire timeout included), and that connection held: a unit started on it waits in
+/// pool acquisition, as a sweep does on a worker pool its deliveries have exhausted.
+async fn an_exhausted_pool() -> (sqlx::PgPool, sqlx::pool::PoolConnection<sqlx::Postgres>) {
+    let url = local_env()
+        .into_iter()
+        .find_map(|(key, value)| (key == "COLOPHON_DATABASE_URL").then_some(value))
+        .expect("deploy/local.env names the application database");
+    let pool = colophon_db::connect_lazy(
+        &url,
+        colophon_db::PoolSettings {
+            max_connections: 1,
+            ..colophon_db::PoolSettings::default()
+        },
+    )
+    .expect("a pool");
+    let held = pool.acquire().await.expect("the pool's one connection");
+    (pool, held)
+}
+
+/// The pre-review's item 1: a stop that finds a unit still waiting for a connection ends the
+/// loop at once, before the unit begins (dropping a begin is safe, D-217), so shutdown never
+/// waits on the acquire timeout plus a statement. Once the connection is free, nothing began:
+/// the log the fold would have emptied is untouched. It failed first: the loop waited for the
+/// connection, then folded after the stop.
+#[tokio::test]
+#[ignore = "needs the stack and scripts/migrate.sh"]
+async fn a_stop_while_the_fold_waits_for_a_connection_begins_nothing() {
+    let (owner, app) = (owner_database().await, app_database().await);
+    colophon_db::work::fold_payload(&app, colophon_db::Stop::NEVER)
+        .await
+        .expect("the log starts empty");
+    sqlx::query("INSERT INTO payload_deltas (bytes) VALUES (7), (-7)")
+        .execute(&owner)
+        .await
+        .expect("two deltas");
+    let (pool, held) = an_exhausted_pool().await;
+    let cancel = CancellationToken::new();
+    let folder =
+        tokio::spawn(colophon_worker::payload::Folder::new(pool.clone()).run(cancel.clone()));
+    tokio::time::sleep(STILL_RUNNING).await;
+    assert!(
+        !folder.is_finished(),
+        "the fold waits for the held connection"
+    );
+
+    cancel.cancel();
+    tokio::time::sleep(STILL_RUNNING).await;
+    assert!(
+        folder.is_finished(),
+        "a fold still waiting for a connection held up the stop"
+    );
+    drop(held);
+    tokio::time::sleep(STILL_RUNNING).await;
+    assert_eq!(deltas(&owner).await, 2, "nothing began after the stop");
+    folder.await.expect("joined");
+    colophon_db::work::fold_payload(&app, colophon_db::Stop::NEVER)
+        .await
+        .expect("fold the test's deltas away");
+    pool.close().await;
+    app.close().await;
+    owner.close().await;
+}
+
+/// The same for a unit that runs as `colophon_worker` (the table sweep): queued for a
+/// connection at the stop, it never begins.
+#[tokio::test]
+#[ignore = "needs the stack and scripts/migrate.sh"]
+async fn a_stop_while_the_table_sweep_waits_for_a_connection_begins_nothing() {
+    let (pool, mut held) = an_exhausted_pool().await;
+    let owner = owner_database().await;
+    let backend: i32 = sqlx::query_scalar("SELECT pg_backend_pid()")
+        .fetch_one(&mut *held)
+        .await
+        .expect("the held connection's backend");
+    let cancel = CancellationToken::new();
+    let sweeper = tokio::spawn(
+        colophon_worker::tables::Sweeper::new(pool.clone(), Duration::from_secs(3600))
+            .run(cancel.clone()),
+    );
+    tokio::time::sleep(STILL_RUNNING).await;
+    assert!(
+        !sweeper.is_finished(),
+        "the sweep waits for the held connection"
+    );
+
+    cancel.cancel();
+    tokio::time::sleep(STILL_RUNNING).await;
+    assert!(
+        sweeper.is_finished(),
+        "a sweep still waiting for a connection held up the stop"
+    );
+    drop(held);
+    sweeper.await.expect("joined");
+    // The pool's one backend, once free, ran none of a unit's statements.
+    tokio::time::sleep(STILL_RUNNING).await;
+    let last: String = sqlx::query_scalar("SELECT query FROM pg_stat_activity WHERE pid = $1")
+        .bind(backend)
+        .fetch_one(&owner)
+        .await
+        .expect("the backend is still connected");
+    let upper = last.to_uppercase();
+    assert!(
+        ![
+            "BEGIN",
+            "COMMIT",
+            "ROLLBACK",
+            "COLOPHON_WORKER",
+            "COLOPHON_SWEEP",
+            "SET_CONFIG"
+        ]
+        .iter()
+        .any(|word| upper.contains(word)),
+        "a unit began after the stop; the backend last ran: {last}"
+    );
+    pool.close().await;
+    owner.close().await;
 }
 
 /// The real binary on the test origin, its JSON log kept.

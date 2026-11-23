@@ -144,7 +144,10 @@ pub async fn reconcile_payload(pool: &sqlx::PgPool) -> Result<(i64, i64, i64), D
 /// unless an admission holds it (`None`: this turn is skipped, the admission folds them).
 /// `Some(n)`: `n` deltas folded.
 /// It runs as `colophon_worker`, the role the fold belongs to.
-pub async fn fold_payload(pool: &sqlx::PgPool) -> Result<Option<i64>, DbError> {
+pub async fn fold_payload(
+    pool: &sqlx::PgPool,
+    stop: crate::Stop<'_>,
+) -> Result<Option<i64>, DbError> {
     let mut transaction = crate::begin_tx(pool).await.map_err(DbError::from_query)?;
     // A background unit: bounded server side, so a stop can let it finish.
     crate::bound_background(&mut transaction)

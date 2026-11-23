@@ -98,6 +98,10 @@ impl Sweeper {
     async fn pass(&self, cancel: &CancellationToken, stop_at: tokio::time::Instant) {
         let cutoff = OffsetDateTime::now_utc() - self.expiry;
         let deadline = OffsetDateTime::now_utc() + self.job_lifetime;
+        if cancel.is_cancelled() {
+            return;
+        }
+        let stopping = || cancel.is_cancelled();
         let room = match colophon_db::work::install_payload(&self.pool).await {
             Ok(pending) => colophon_db::work::MAX_PENDING_PAYLOAD.saturating_sub(pending),
             Err(error) => {
@@ -109,10 +113,17 @@ impl Sweeper {
         if room <= 0 {
             tracing::debug!("no room under the payload bound; expire enqueue skipped");
         } else {
-            match colophon_db::assets::enqueue_expired(&self.pool, cutoff, deadline, ENQUEUE, room)
-                .await
+            match colophon_db::assets::enqueue_expired(
+                &self.pool,
+                cutoff,
+                deadline,
+                ENQUEUE,
+                room,
+                colophon_db::Stop::new(&stopping),
+            )
+            .await
             {
-                Ok(0) => {}
+                Ok(0) | Err(colophon_db::DbError::Stopped) => {}
                 Ok(expired) => tracing::info!(expired, "expire jobs enqueued"),
                 Err(error) => {
                     tracing::warn!(error = %error, "the sweep's expiry enqueue failed");

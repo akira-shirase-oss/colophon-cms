@@ -103,7 +103,7 @@ pub struct Claimed {
 /// LOCKED`), and a job another transaction holds (a release superseding it, a worker finishing
 /// it) is the next pass's, so the sweep can never be part of a lock cycle (CI 44719897863: two
 /// sweeps and a supersede, each locking rows in its own order, deadlocked).
-pub async fn expire(pool: &PgPool) -> Result<u64, DbError> {
+pub async fn expire(pool: &PgPool, stop: crate::Stop<'_>) -> Result<u64, DbError> {
     let mut transaction = worker(pool).await?;
     // A background unit: bounded server side, so a stop can let it finish.
     crate::bound_background(&mut transaction)
@@ -140,6 +140,7 @@ pub async fn claim(
     location: &str,
     lease: Duration,
     limit: i64,
+    stop: crate::Stop<'_>,
 ) -> Result<Vec<Claimed>, DbError> {
     let mut transaction = worker(pool).await?;
     let lease_ms = i64::try_from(lease.as_millis()).unwrap_or(i64::MAX);

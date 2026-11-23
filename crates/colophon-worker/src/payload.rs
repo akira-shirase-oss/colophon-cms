@@ -37,7 +37,7 @@ impl Folder {
             if cancel.is_cancelled() {
                 break;
             }
-            self.tick().await;
+            self.tick(&cancel).await;
             tokio::select! {
                 () = cancel.cancelled() => break,
                 () = tokio::time::sleep(INTERVAL) => {}
@@ -47,9 +47,19 @@ impl Folder {
     }
 
     /// One fold, then the log's length and age: logged, and a warning when it is long or old.
-    async fn tick(&self) {
-        if let Err(error) = colophon_db::work::fold_payload(&self.pool).await {
-            tracing::warn!(error = %error, "the payload fold failed; trying again next interval");
+    async fn tick(&self, cancel: &CancellationToken) {
+        let stopping = || cancel.is_cancelled();
+        match colophon_db::work::fold_payload(&self.pool, colophon_db::Stop::new(&stopping)).await {
+            Ok(_) => {}
+            // Told to stop before it began: the deltas wait for the next start's fold.
+            Err(colophon_db::DbError::Stopped) => return,
+            Err(error) => {
+                tracing::warn!(error = %error, "the payload fold failed; trying again next interval");
+            }
+        }
+        // A read for the log only: not worth a wait for a connection once stopping.
+        if cancel.is_cancelled() {
+            return;
         }
         match colophon_db::work::payload_log(&self.pool).await {
             Ok((deltas, oldest_seconds)) if deltas > LONG || oldest_seconds > STALE => {
