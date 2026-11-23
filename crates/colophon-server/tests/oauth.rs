@@ -12,7 +12,7 @@
 mod common;
 
 use colophon_auth::tokens;
-use common::{ORIGIN, Server, Session, app, call, project, sign_in};
+use common::{ORIGIN, Server, Session, app, article, call, join, project, sign_in};
 use reqwest::{Method, StatusCode, header};
 use serde_json::{Value, json};
 
@@ -71,7 +71,14 @@ fn param(url: &str, name: &str) -> Option<String> {
 
 /// An authorization's whole front channel: authorize, then `person` approves it for `project`.
 /// The redirect the app gets.
-async fn approved(person: &Session, client: &str, challenge: &str, project: &str) -> String {
+/// The person's approval of `client`: in all their projects (D-248), or with `project` in that
+/// one project alone (D-246's grants, still honoured). The redirect it sends the browser to.
+async fn approved(
+    person: &Session,
+    client: &str,
+    challenge: &str,
+    project: Option<&str>,
+) -> String {
     let asked = authorize(
         Some(person),
         &[
@@ -110,7 +117,10 @@ async fn approved(person: &Session, client: &str, challenge: &str, project: &str
         person,
         Method::POST,
         &format!("/oauth/requests/{id}"),
-        Some(&json!({"decision": "approve", "project": project})),
+        Some(&project.map_or_else(
+            || json!({"decision": "approve"}),
+            |project| json!({"decision": "approve", "project": project}),
+        )),
         &[],
     )
     .await
@@ -197,14 +207,13 @@ fn initialize() -> Value {
     }})
 }
 
-/// A full connection for `person` in a new project of theirs: (project, client, access, refresh).
-async fn connected(person: &Session) -> (String, String, String, String) {
-    let project = project(person).await;
+/// A full connection for `person` in all their projects (D-248): (client, access, refresh).
+async fn connected(person: &Session) -> (String, String, String) {
     let client = register("Test agent", REDIRECT).await;
     let (verifier, challenge) = pkce();
-    let redirect = approved(person, &client, &challenge, &project).await;
+    let redirect = approved(person, &client, &challenge, None).await;
     let (access, refresh) = exchange(&client, &redirect, &verifier).await;
-    (project, client, access, refresh)
+    (client, access, refresh)
 }
 
 #[tokio::test]
@@ -250,10 +259,9 @@ async fn an_agent_connects_by_the_mcp_url_alone_and_acts_as_its_person() {
     );
 
     // Register, approve, exchange: the redirect carries the code, the state and the issuer.
-    let project = project(&owner).await;
     let client = register("Test agent", REDIRECT).await;
     let (verifier, challenge) = pkce();
-    let redirect = approved(&owner, &client, &challenge, &project).await;
+    let redirect = approved(&owner, &client, &challenge, None).await;
     assert!(redirect.starts_with(REDIRECT), "{redirect}");
     assert_eq!(param(&redirect, "state").as_deref(), Some("xyz"));
     assert_eq!(param(&redirect, "iss").as_deref(), Some(ORIGIN));
@@ -288,7 +296,9 @@ async fn an_agent_connects_by_the_mcp_url_alone_and_acts_as_its_person() {
             .as_array()
             .expect("a list")
             .iter()
-            .any(|app| app["project"] == project.as_str())
+            .any(|app| app["client_name"] == "Test agent" && app["project"].is_null()),
+        "an all-projects connection names no project: {}",
+        apps.body
     );
     let (status, renewed) = token(&[
         ("grant_type", "refresh_token"),
@@ -313,7 +323,6 @@ async fn an_agent_connects_by_the_mcp_url_alone_and_acts_as_its_person() {
 async fn what_the_authorization_server_cannot_prove_it_refuses() {
     let _server = Server::start().await;
     let owner = sign_in("dev-owner").await;
-    let project = project(&owner).await;
     let client = register("Test agent", REDIRECT).await;
     let (verifier, challenge) = pkce();
     let mcp_url = format!("{ORIGIN}/mcp");
@@ -398,7 +407,7 @@ async fn what_the_authorization_server_cannot_prove_it_refuses() {
     let _ = mcp_url;
 
     // A wrong verifier: refused, and the code is spent (its grant revoked).
-    let redirect = approved(&owner, &client, &challenge, &project).await;
+    let redirect = approved(&owner, &client, &challenge, None).await;
     let code = param(&redirect, "code").expect("a code");
     let (status, body) = token(&[
         ("grant_type", "authorization_code"),
@@ -429,7 +438,7 @@ async fn what_the_authorization_server_cannot_prove_it_refuses() {
 
     // A code presented by another client, or with another redirect URI: refused.
     let other = register("Other agent", REDIRECT).await;
-    let redirect = approved(&owner, &client, &challenge, &project).await;
+    let redirect = approved(&owner, &client, &challenge, None).await;
     let code = param(&redirect, "code").expect("a code");
     let (status, body) = token(&[
         ("grant_type", "authorization_code"),
@@ -444,7 +453,7 @@ async fn what_the_authorization_server_cannot_prove_it_refuses() {
         (StatusCode::BAD_REQUEST, Some("invalid_grant")),
         "{body}"
     );
-    let redirect = approved(&owner, &client, &challenge, &project).await;
+    let redirect = approved(&owner, &client, &challenge, None).await;
     let code = param(&redirect, "code").expect("a code");
     let (status, body) = token(&[
         ("grant_type", "authorization_code"),
@@ -461,7 +470,7 @@ async fn what_the_authorization_server_cannot_prove_it_refuses() {
     );
 
     // A code used twice: the second use fails, and the tokens the first one got stop working.
-    let redirect = approved(&owner, &client, &challenge, &project).await;
+    let redirect = approved(&owner, &client, &challenge, None).await;
     let (access, _) = exchange(&client, &redirect, &verifier).await;
     assert_eq!(
         mcp(Some(&access), None, &initialize()).await.0,
@@ -522,7 +531,8 @@ async fn what_the_authorization_server_cannot_prove_it_refuses() {
 async fn an_oauth_token_speaks_to_mcp_alone() {
     let _server = Server::start().await;
     let owner = sign_in("dev-owner").await;
-    let (project, _, access, _) = connected(&owner).await;
+    let project = project(&owner).await;
+    let (_, access, _) = connected(&owner).await;
     let bearer = format!("Bearer {access}");
     for path in [
         format!("/api/v1/projects/{project}"),
@@ -562,7 +572,7 @@ async fn a_connection_ends_when_disconnected_replayed_or_its_account_disabled() 
     let owner = sign_in("dev-owner").await;
 
     // A refresh token used twice ends the connection: the stolen copy and the real one alike.
-    let (_, client, _, refresh) = connected(&owner).await;
+    let (client, _, refresh) = connected(&owner).await;
     let (status, first) = token(&[
         ("grant_type", "refresh_token"),
         ("refresh_token", &refresh),
@@ -601,7 +611,7 @@ async fn a_connection_ends_when_disconnected_replayed_or_its_account_disabled() 
     );
 
     // Disconnected in the Studio: its token stops at once; RFC 7009's revoke does the same.
-    let (_, _, access, _) = connected(&owner).await;
+    let (_, access, _) = connected(&owner).await;
     let apps = call(&owner, Method::GET, "/api/v1/me/connected-apps", None, &[])
         .await
         .expect("apps");
@@ -623,7 +633,7 @@ async fn a_connection_ends_when_disconnected_replayed_or_its_account_disabled() 
         mcp(Some(&access), None, &initialize()).await.0,
         StatusCode::UNAUTHORIZED
     );
-    let (_, _, access, _) = connected(&owner).await;
+    let (_, access, _) = connected(&owner).await;
     let revoked = app()
         .post(format!("{ORIGIN}/oauth/revoke"))
         .form(&[("token", access.as_str())])
@@ -638,7 +648,7 @@ async fn a_connection_ends_when_disconnected_replayed_or_its_account_disabled() 
 
     // A disabled account's connections stop with it.
     let editor = sign_in("dev-editor").await;
-    let (_, _, access, _) = connected(&editor).await;
+    let (_, access, _) = connected(&editor).await;
     assert_eq!(
         mcp(Some(&access), None, &initialize()).await.0,
         StatusCode::OK
@@ -775,4 +785,175 @@ async fn consent_is_the_persons_own_in_their_own_browser() {
     .await
     .expect("twice");
     assert_eq!(twice.status, StatusCode::NOT_FOUND);
+}
+
+/// An MCP session for `access`: its id.
+async fn session(access: &str) -> String {
+    let (status, _, session, body) = mcp(Some(access), None, &initialize()).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    session.expect("a session id")
+}
+
+/// `tools/call` of `name` with `arguments` in `session`: the tool's result.
+async fn tool(access: &str, session: &str, name: &str, arguments: &Value) -> Value {
+    let (status, _, _, body) = mcp(
+        Some(access),
+        Some(session),
+        &json!({"jsonrpc": "2.0", "id": 3, "method": "tools/call", "params": {"name": name, "arguments": arguments}}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    body["result"].clone()
+}
+
+/// A tool result that succeeded.
+fn worked(result: &Value) -> bool {
+    result["isError"] == json!(false)
+}
+
+/// A refused tool result's HTTP status, as the API gave it.
+fn refused(result: &Value) -> Option<i64> {
+    (result["isError"] == json!(true))
+        .then(|| result["structuredContent"]["error"]["status"].as_i64())
+        .flatten()
+}
+
+fn articles(project: &str) -> Value {
+    json!({"project": project, "environment": "production", "collection": "articles"})
+}
+
+fn new_article(project: &str, title: &str) -> Value {
+    json!({"project": project, "environment": "production", "collection": "articles", "body": article(title, "x")})
+}
+
+#[tokio::test]
+#[ignore = "needs the stack and scripts/migrate.sh"]
+async fn one_connection_acts_in_every_project_of_its_person_with_their_role_in_each() {
+    let _server = Server::start().await;
+    let owner = sign_in("dev-owner").await;
+    let editor = sign_in("dev-editor").await;
+    // The editor edits in one project and only reads in another; a third isn't theirs.
+    let (writes, reads, elsewhere) = (
+        project(&owner).await,
+        project(&owner).await,
+        project(&owner).await,
+    );
+    join(&owner, &editor, &writes, "editor").await;
+    let role = call(
+        &owner,
+        Method::POST,
+        &format!("/api/v1/projects/{reads}/roles"),
+        Some(&json!({
+            "key": "reader",
+            "name": "Reader",
+            "permissions": [{"action": "content.read", "subject": "articles"}]
+        })),
+        &[],
+    )
+    .await
+    .expect("role");
+    assert_eq!(role.status, StatusCode::CREATED, "{}", role.body);
+    join(&owner, &editor, &reads, "reader").await;
+    let (_, access, _) = connected(&editor).await;
+    let session = session(&access).await;
+
+    // Its projects, each with its role, and the tools name the one they act in.
+    let listed = tool(&access, &session, "list_projects", &json!({})).await;
+    assert!(worked(&listed), "{listed}");
+    let text = listed.to_string();
+    assert!(text.contains(&writes) && text.contains(&reads), "{listed}");
+    assert!(
+        !text.contains(&elsewhere),
+        "a project they aren't in is listed: {listed}"
+    );
+    for project in [&writes, &reads] {
+        let read = tool(&access, &session, "list_entries", &articles(project)).await;
+        assert!(worked(&read), "{project}: {read}");
+    }
+    // Their role in each: a draft where they edit, refused where they only read.
+    let drafted = tool(
+        &access,
+        &session,
+        "create_entry",
+        &new_article(&writes, "By the agent"),
+    )
+    .await;
+    assert!(worked(&drafted), "{drafted}");
+    let not_here = tool(
+        &access,
+        &session,
+        "create_entry",
+        &new_article(&reads, "Sneaky"),
+    )
+    .await;
+    assert_eq!(refused(&not_here), Some(403), "{not_here}");
+    // A project they aren't in is what it is to them: not found.
+    let stranger = tool(&access, &session, "list_entries", &articles(&elsewhere)).await;
+    assert_eq!(refused(&stranger), Some(404), "{stranger}");
+
+    // Removed from a project, the same session is refused there at once, and works in the other.
+    let me = call(&editor, Method::GET, "/me", None, &[])
+        .await
+        .expect("me");
+    let editor_id = me.body["data"]["id"].as_str().expect("an id").to_owned();
+    let removed = call(
+        &owner,
+        Method::DELETE,
+        &format!("/api/v1/projects/{writes}/members/{editor_id}"),
+        None,
+        &[],
+    )
+    .await
+    .expect("remove");
+    assert!(removed.status.is_success(), "{}", removed.body);
+    let gone = tool(&access, &session, "list_entries", &articles(&writes)).await;
+    assert_eq!(refused(&gone), Some(404), "{gone}");
+    let still = tool(&access, &session, "list_entries", &articles(&reads)).await;
+    assert!(worked(&still), "{still}");
+
+    // Connected apps says where it acts: all of their projects.
+    let apps = call(&editor, Method::GET, "/api/v1/me/connected-apps", None, &[])
+        .await
+        .expect("apps");
+    let all = apps.body["data"]
+        .as_array()
+        .expect("a list")
+        .iter()
+        .any(|app| app["project"].is_null() && app["project_name"].is_null());
+    assert!(all, "{}", apps.body);
+}
+
+#[tokio::test]
+#[ignore = "needs the stack and scripts/migrate.sh"]
+async fn a_connection_made_for_one_project_still_acts_there_alone() {
+    let _server = Server::start().await;
+    let owner = sign_in("dev-owner").await;
+    let (mine, other) = (project(&owner).await, project(&owner).await);
+    // D-246's grants (or an older Studio tab that names a project): that project, nothing more.
+    let client = register("Test agent", REDIRECT).await;
+    let (verifier, challenge) = pkce();
+    let redirect = approved(&owner, &client, &challenge, Some(&mine)).await;
+    let (access, _) = exchange(&client, &redirect, &verifier).await;
+    let session = session(&access).await;
+    let read = tool(
+        &access,
+        &session,
+        "list_entries",
+        &json!({"collection": "articles"}),
+    )
+    .await;
+    assert!(worked(&read), "{read}");
+    let listed = tool(&access, &session, "list_projects", &json!({})).await;
+    assert_eq!(listed["isError"], json!(true), "{listed}");
+    let elsewhere = tool(&access, &session, "list_entries", &articles(&other)).await;
+    assert_eq!(elsewhere["isError"], json!(true), "{elsewhere}");
+    let apps = call(&owner, Method::GET, "/api/v1/me/connected-apps", None, &[])
+        .await
+        .expect("apps");
+    let named = apps.body["data"]
+        .as_array()
+        .expect("a list")
+        .iter()
+        .any(|app| app["project"] == mine.as_str() && app["project_name"] == "Test project");
+    assert!(named, "{}", apps.body);
 }
