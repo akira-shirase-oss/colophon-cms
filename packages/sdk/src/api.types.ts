@@ -55,6 +55,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/me/usage": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** What the caller's account uses against its limits, across the projects it owns (D-235) */
+        get: operations["myUsage"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/projects": {
         parameters: {
             query?: never;
@@ -2704,6 +2721,11 @@ export interface components {
             joined_at: string;
             role: string;
         };
+        Meter: {
+            /** @description null: unbounded (an administrator, or no quota configured) */
+            limit: number | null;
+            used: number;
+        };
         MigrationItemView: {
             /** Format: date-time */
             applied_at?: string | null;
@@ -3613,6 +3635,13 @@ export interface components {
          * @description the file's bytes; its name in `X-Colophon-File-Name`, its claimed type in `Content-Type`
          */
         UploadBody: string;
+        Usage: {
+            assets: components["schemas"]["Meter"];
+            entries: components["schemas"]["Meter"];
+            projects: components["schemas"]["Meter"];
+            /** @description stored plus still-quarantined upload bytes */
+            storage_bytes: components["schemas"]["Meter"];
+        };
         /** @description the shape never changes: fields may be added, none removed or renamed */
         VersionReport: {
             /** @description the API versions served, oldest first */
@@ -3779,6 +3808,55 @@ export interface operations {
             };
             /** @description `not_found` — no such invitation — used, revoked or invented */
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description `rate_limited` — over the per-credential or per-address limit; `Retry-After` */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description any other failure, in the one error envelope */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    myUsage: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description ok */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        data: components["schemas"]["Usage"];
+                    };
+                };
+            };
+            /** @description `unauthorized` — not signed in, the credential is invalid, or the token was revoked */
+            401: {
                 headers: {
                     [name: string]: unknown;
                 };

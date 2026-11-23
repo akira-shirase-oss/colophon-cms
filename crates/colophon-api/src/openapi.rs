@@ -26,8 +26,8 @@ use serde_json::{Map, Value, json};
 use crate::{
     AppState, BuildInfo, assets, audience, audit, auth, bulk, changesets, collaboration,
     components, content_types, delivery, destinations, device, entries, graphql, health, mcp,
-    members, migrations, preview, projects, receipts, rich_text, roles, schedules, setup, tokens,
-    undo, version,
+    me_usage, members, migrations, preview, projects, receipts, rich_text, roles, schedules, setup,
+    tokens, undo, version,
 };
 
 /// A verb Colophon's routes use. Naming them in a small enum keeps the table total: the
@@ -876,6 +876,20 @@ pub(crate) static TABLE: &[Route] = &[
                 summary: "Who the caller is, and every project they belong to",
                 tag: "auth",
                 ok: data("Me"),
+                ..MIN
+            },
+        )],
+    ),
+    route(
+        ("", "/api/v1/me/usage"),
+        &[op(
+            Verb::Get,
+            |f| on(f, me_usage::usage),
+            OpDoc {
+                id: "myUsage",
+                summary: "What the caller's account uses against its limits, across the projects it owns (D-235)",
+                tag: "auth",
+                ok: data("Usage"),
                 ..MIN
             },
         )],
@@ -5250,6 +5264,24 @@ fn identity() -> Value {
                     "enum": ["open", "invite", "closed"],
                     "description": "who may sign up (D-235): anyone, only with an invitation, or nobody",
                 },
+            },
+        },
+        "Meter": {
+            "type": "object",
+            "required": ["used", "limit"],
+            "properties": {
+                "used": { "type": "integer", "minimum": 0 },
+                "limit": { "type": ["integer", "null"], "minimum": 0, "description": "null: unbounded (an administrator, or no quota configured)" },
+            },
+        },
+        "Usage": {
+            "type": "object",
+            "required": ["projects", "entries", "assets", "storage_bytes"],
+            "properties": {
+                "projects": { "$ref": "#/components/schemas/Meter" },
+                "entries": { "$ref": "#/components/schemas/Meter" },
+                "assets": { "$ref": "#/components/schemas/Meter" },
+                "storage_bytes": { "$ref": "#/components/schemas/Meter", "description": "stored plus still-quarantined upload bytes" },
             },
         },
         "SignedOut": {

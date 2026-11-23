@@ -42,6 +42,8 @@ pub struct Usage {
     pub limits: Limits,
     /// An administrator: counted, never refused.
     pub exempt: bool,
+    /// Projects this account owns.
+    pub projects: u64,
 }
 
 /// One drifted total `reconcile` found.
@@ -136,6 +138,11 @@ pub async fn of_identity(pool: &PgPool, identity: Uuid) -> Result<Usage, DbError
             .fetch_one(&mut *tx)
             .await
             .map_err(DbError::from_query)?;
+    let projects: i32 = sqlx::query_scalar("SELECT colophon_projects_owned($1)")
+        .bind(identity)
+        .fetch_one(&mut *tx)
+        .await
+        .map_err(DbError::from_query)?;
     tx.commit().await.map_err(DbError::from_query)?;
     Ok(Usage {
         entries: as_u64(row.0),
@@ -148,6 +155,7 @@ pub async fn of_identity(pool: &PgPool, identity: Uuid) -> Result<Usage, DbError
             storage_bytes: as_u64(row.6),
         },
         exempt: row.7,
+        projects: u64::try_from(projects).unwrap_or(0),
     })
 }
 

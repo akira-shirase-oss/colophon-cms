@@ -30,7 +30,23 @@ export function retryWords(at: number, now = Date.now(), locale?: string): strin
 	return `after ${time}`;
 }
 
-export function refusal(failure: unknown, mode: 'signin' | 'signup', now = Date.now()): AuthRefusal {
+/** The Studio's own sentence for a field refusal, by the server's reason; the server's words
+ *  (lowercase, for API clients) only when the reason is one it doesn't know. `password` tells a
+ *  short `weak_password` from a long one. */
+export function fieldWords(reason: string | null, serverMessage: string, password = ''): string {
+	switch (reason) {
+		case 'weak_password':
+			return new TextEncoder().encode(password).length > 512 ? 'Use a password of 512 bytes or fewer.' : 'Use at least 8 characters.';
+		case 'invalid_email':
+			return 'Enter an email address like name@example.com.';
+		case 'bot_check_failed':
+			return "The check that you're a person didn't pass. Try it again.";
+		default:
+			return serverMessage.charAt(0).toUpperCase() + serverMessage.slice(1);
+	}
+}
+
+export function refusal(failure: unknown, mode: 'signin' | 'signup', now = Date.now(), password = ''): AuthRefusal {
 	if (!(failure instanceof ApiError)) return { fields: {}, form: String(failure), retryAt: null };
 	if (failure.status === 429) {
 		const at = failure.retryAt ?? now + (failure.retryAfter ?? 1000);
@@ -42,6 +58,8 @@ export function refusal(failure: unknown, mode: 'signin' | 'signup', now = Date.
 		return { fields: {}, form: 'That email and password did not match.', retryAt: null };
 	}
 	const field = failure.details?.pointer ? FIELDS[failure.details.pointer] : undefined;
-	if (failure.status === 422 && field) return { fields: { [field]: failure.message }, form: '', retryAt: null };
-	return { fields: {}, form: failure.message, retryAt: null };
+	if (failure.status === 422 && field) {
+		return { fields: { [field]: fieldWords(failure.details?.reason ?? failure.reason, failure.message, password) }, form: '', retryAt: null };
+	}
+	return { fields: {}, form: failure.message.charAt(0).toUpperCase() + failure.message.slice(1), retryAt: null };
 }

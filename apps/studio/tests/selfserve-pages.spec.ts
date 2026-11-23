@@ -119,23 +119,62 @@ test('the first account of a new invite-only installation may sign up without an
 	await expect(page.locator('#signup-email')).toBeVisible();
 });
 
-test('a 422 lands under its field, and the Turnstile token rides along when a key is published', async ({ page }) => {
+test("a 422 lands under its field in the Studio's words; editing clears it and the button stays usable", async ({ page }) => {
 	const sent = await serve(page, {
 		siteKey: '1x00000000000000000000AA',
 		signUp: {
 			status: 422,
-			body: { error: { code: 'invalid_field', message: 'use at least 8 characters, not a common password', details: { reason: 'weak_password', pointer: '/password' } } }
+			body: { error: { code: 'invalid_field', message: 'that is not an email address', details: { reason: 'invalid_email', pointer: '/email' } } }
 		}
 	});
 	await page.goto('/studio/signup');
 	await expect(page.getByTestId('turnstile')).toHaveText('Verified');
-	await page.locator('#signup-email').fill('ada@example.test');
-	await page.locator('#signup-password').fill('password');
+	await page.locator('#signup-email').fill('ada@localhost');
+	await page.locator('#signup-password').fill('colophon-dev');
 	await page.getByTestId('password-submit').click();
-	await expect(page.getByTestId('field-error-password')).toHaveText('use at least 8 characters, not a common password');
-	await expect(page.locator('#signup-password')).toHaveAttribute('aria-invalid', 'true');
+	await expect(page.getByTestId('field-error-email')).toHaveText('Enter an email address like name@example.com.');
+	await expect(page.locator('#signup-email')).toHaveAttribute('aria-invalid', 'true');
+	await expect(page.getByTestId('password-submit')).toBeEnabled();
 	expect(sent[0]).toMatchObject({ turnstile_token: 'tok-1' });
 	await shoot(page, 'signup-field-error');
+	await page.locator('#signup-email').fill('ada@example.test');
+	await expect(page.getByTestId('field-error-email')).toHaveCount(0);
+	await expect(page.getByTestId('password-submit')).toBeEnabled();
+});
+
+test('password refusals read as one clear sentence each', async () => {
+	const { fieldWords } = await import('../src/lib/shell/authErrors.ts');
+	expect(fieldWords('weak_password', 'pick at least eight characters', 'short')).toBe('Use at least 8 characters.');
+	expect(fieldWords('weak_password', 'keep it under 512 bytes', 'x'.repeat(513))).toBe('Use a password of 512 bytes or fewer.');
+	expect(fieldWords('something_new', 'say it plainly')).toBe('Say it plainly');
+});
+
+test('sign-in with a wrong password says so plainly', async ({ page }) => {
+	await serve(page, {});
+	await page.route('**/auth/signin', (route) =>
+		route.fulfill({ status: 400, json: { error: { code: 'sign_in_failed', message: 'sign-in failed', details: { reason: 'sign_in_failed' } } } })
+	);
+	await page.goto('/studio/signin');
+	await page.locator('#signin-email').fill('ada@example.test');
+	await page.locator('#signin-password').fill('not-the-password');
+	await page.getByTestId('password-submit').click();
+	await expect(page.getByTestId('auth-error')).toHaveText('That email and password did not match.');
+	await shoot(page, 'signin-error');
+});
+
+test('sign-up shows a skeleton while the server says what it offers', async ({ page }) => {
+	let answer = () => {};
+	const later = new Promise<void>((resolve) => (answer = resolve));
+	await serve(page, {});
+	await page.route('**/auth/providers', async (route) => {
+		await later;
+		await route.fulfill({ json: { data: { sso: false, turnstile_site_key: null, registration: 'open' } } });
+	});
+	await page.goto('/studio/signup');
+	await expect(page.getByTestId('signup-loading')).toBeVisible();
+	await shoot(page, 'signup-loading');
+	answer();
+	await expect(page.locator('#signup-email')).toBeVisible();
 });
 
 test('no site key, no widget and no token', async ({ page }) => {

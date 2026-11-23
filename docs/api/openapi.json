@@ -2018,6 +2018,27 @@
         ],
         "type": "object"
       },
+      "Meter": {
+        "properties": {
+          "limit": {
+            "description": "null: unbounded (an administrator, or no quota configured)",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "used": {
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "used",
+          "limit"
+        ],
+        "type": "object"
+      },
       "MigrationItemView": {
         "properties": {
           "applied_at": {
@@ -4748,6 +4769,30 @@
         "format": "binary",
         "type": "string"
       },
+      "Usage": {
+        "properties": {
+          "assets": {
+            "$ref": "#/components/schemas/Meter"
+          },
+          "entries": {
+            "$ref": "#/components/schemas/Meter"
+          },
+          "projects": {
+            "$ref": "#/components/schemas/Meter"
+          },
+          "storage_bytes": {
+            "$ref": "#/components/schemas/Meter",
+            "description": "stored plus still-quarantined upload bytes"
+          }
+        },
+        "required": [
+          "projects",
+          "entries",
+          "assets",
+          "storage_bytes"
+        ],
+        "type": "object"
+      },
       "VersionReport": {
         "description": "the shape never changes: fields may be added, none removed or renamed",
         "properties": {
@@ -5051,6 +5096,73 @@
         "summary": "What an invitation link offers, before accepting",
         "tags": [
           "members"
+        ]
+      }
+    },
+    "/api/v1/me/usage": {
+      "get": {
+        "operationId": "myUsage",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "data": {
+                      "$ref": "#/components/schemas/Usage"
+                    }
+                  },
+                  "required": [
+                    "data"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "ok"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "`unauthorized` — not signed in, the credential is invalid, or the token was revoked"
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "`rate_limited` — over the per-credential or per-address limit; `Retry-After`"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "any other failure, in the one error envelope"
+          }
+        },
+        "security": [
+          {
+            "sessionCookie": []
+          },
+          {
+            "bearerToken": []
+          }
+        ],
+        "summary": "What the caller's account uses against its limits, across the projects it owns (D-235)",
+        "tags": [
+          "auth"
         ]
       }
     },

@@ -46,8 +46,19 @@
 	const registration = $derived(providers.data?.registration);
 	const needsInvitation = $derived(registration === 'invite' && !invitation && !firstRun);
 
+	/** Editing a field takes its error away: the button stays usable and the next try is fresh. */
+	function edited(field: AuthField) {
+		if (fields[field]) fields = { ...fields, [field]: undefined };
+		error = heldUntil === null ? '' : error;
+	}
+
 	async function submit(event: SubmitEvent) {
 		event.preventDefault();
+		// The widget hands a new token after each attempt; until it has, say so rather than send.
+		if (siteKey !== null && token === '') {
+			fields = { ...fields, turnstile_token: 'Wait a moment for the check to finish, then try again.' };
+			return;
+		}
 		busy = true;
 		error = '';
 		fields = {};
@@ -56,7 +67,7 @@
 			await queryClient.invalidateQueries({ queryKey: ['me'] });
 			await onSignedUp?.(joined);
 		} catch (failure) {
-			const said = refusal(failure, 'signup');
+			const said = refusal(failure, 'signup', Date.now(), password);
 			fields = said.fields;
 			error = said.form;
 			if (said.retryAt !== null) {
@@ -94,14 +105,14 @@
 		{/if}
 		<div class="space-y-1">
 			<label for="signup-name" class="text-sm font-medium">Your name</label>
-			<Input id="signup-name" bind:value={name} maxlength={200} autocomplete="name" aria-invalid={fields.display_name ? true : undefined} aria-describedby="signup-name-note" />
+			<Input id="signup-name" bind:value={name} oninput={() => edited('display_name')} maxlength={200} autocomplete="name" aria-invalid={fields.display_name ? true : undefined} aria-describedby="signup-name-note" />
 			<p id="signup-name-note" class={fields.display_name ? 'text-sm text-destructive' : 'text-sm text-muted-foreground'}>
 				{fields.display_name ?? 'Shown to the people you work with.'}
 			</p>
 		</div>
 		<div class="space-y-1">
 			<label for="signup-email" class="text-sm font-medium">Email</label>
-			<Input id="signup-email" type="email" bind:value={email} required maxlength={254} autocomplete="email" aria-invalid={fields.email ? true : undefined} aria-describedby={fields.email ? 'signup-email-note' : undefined} />
+			<Input id="signup-email" type="email" bind:value={email} oninput={() => edited('email')} required maxlength={254} autocomplete="email" aria-invalid={fields.email ? true : undefined} aria-describedby={fields.email ? 'signup-email-note' : undefined} />
 			{#if fields.email}<p id="signup-email-note" class="text-sm text-destructive" data-testid="field-error-email">{fields.email}</p>{/if}
 		</div>
 		<div class="space-y-1">
@@ -110,6 +121,7 @@
 				id="signup-password"
 				type="password"
 				bind:value={password}
+				oninput={() => edited('password')}
 				required
 				minlength={8}
 				maxlength={512}
@@ -129,7 +141,7 @@
 		{/if}
 		{#if error}<p role="alert" class="pt-2 text-sm text-destructive" data-testid="auth-error">{error}</p>{/if}
 		<div class="pt-4">
-			<Button type="submit" class="w-full" disabled={busy || heldUntil !== null || (siteKey !== null && token === '')} data-testid="password-submit">
+			<Button type="submit" class="w-full" disabled={busy || heldUntil !== null} data-testid="password-submit">
 				{busy ? 'Creating your account…' : 'Create account and continue'}
 			</Button>
 		</div>

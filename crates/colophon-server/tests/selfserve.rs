@@ -11,7 +11,7 @@
 
 mod common;
 
-use common::{Server, Session, call, owner_database, sign_in, unique_slug};
+use common::{Server, Session, call, get, owner_database, sign_in, unique_slug};
 use reqwest::{Method, StatusCode};
 use serde_json::json;
 
@@ -611,4 +611,76 @@ async fn an_asset_replaced_again_and_again_is_never_refused_by_a_stale_reservati
         .await
         .expect("reservations");
     assert_eq!(left, 0, "a refused replacement left its reservation behind");
+}
+
+/// `GET /api/v1/me/usage` as `session`: each meter's (used, limit), limit `None` when unbounded.
+async fn usage(session: &Session) -> [(u64, Option<u64>); 4] {
+    let (status, body) = get(Some(session), "/api/v1/me/usage").await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    ["projects", "entries", "assets", "storage_bytes"].map(|meter| {
+        let meter = &body["data"][meter];
+        (
+            meter["used"].as_u64().expect("used"),
+            meter["limit"].as_u64(),
+        )
+    })
+}
+
+#[tokio::test]
+#[ignore = "needs the stack and scripts/migrate.sh"]
+async fn each_account_sees_its_own_usage_and_never_another_s() {
+    let _server = Server::start_with(&[
+        ("COLOPHON_REGISTRATION", "open"),
+        ("COLOPHON_PROJECTS_PER_ACCOUNT", "3"),
+        ("COLOPHON_ACCOUNT_MAX_ENTRIES", "50"),
+    ])
+    .await;
+    let (alice, bob) = (account().await, account().await);
+    assert_eq!(
+        usage(&alice).await[0],
+        (0, Some(3)),
+        "a new account owns nothing"
+    );
+
+    let made = create(&alice).await;
+    assert_eq!(made.status, StatusCode::CREATED, "{}", made.body);
+    let project = made.body["data"]["id"].as_str().expect("id").to_owned();
+    common::create_article(&alice, &project, "one").await;
+    common::create_article(&alice, &project, "two").await;
+    for _ in 0..2 {
+        let made = create(&bob).await;
+        assert_eq!(made.status, StatusCode::CREATED, "{}", made.body);
+    }
+
+    let [projects, entries, _, _] = usage(&alice).await;
+    assert_eq!((projects, entries), ((1, Some(3)), (2, Some(50))));
+    let [projects, entries, _, _] = usage(&bob).await;
+    assert_eq!(
+        (projects, entries),
+        ((2, Some(3)), (0, Some(50))),
+        "bob's usage carries none of alice's entries, alice's none of his projects"
+    );
+}
+
+#[tokio::test]
+#[ignore = "needs the stack and scripts/migrate.sh, which bootstraps dev-owner"]
+async fn an_administrator_s_usage_is_unbounded_and_a_stranger_gets_401() {
+    let _server = Server::start_with(&[("COLOPHON_REGISTRATION", "open")]).await;
+    let owner = sign_in("dev-owner").await;
+    for (meter, (_, limit)) in ["projects", "entries", "assets", "storage_bytes"]
+        .iter()
+        .zip(usage(&owner).await)
+    {
+        assert_eq!(limit, None, "{meter} is bounded for an administrator");
+    }
+    let (status, body) = get(None, "/api/v1/me/usage").await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED, "{body}");
+}
+
+#[tokio::test]
+#[ignore = "needs the stack and scripts/migrate.sh"]
+async fn where_members_create_no_projects_their_project_limit_is_zero() {
+    let _server = Server::start_with(&[("COLOPHON_REGISTRATION", "invite")]).await;
+    let member = account().await;
+    assert_eq!(usage(&member).await[0], (0, Some(0)));
 }
