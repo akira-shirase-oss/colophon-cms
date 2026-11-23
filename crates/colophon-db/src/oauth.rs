@@ -462,14 +462,16 @@ pub async fn connected(pool: &PgPool, identity: Uuid) -> Result<Vec<Connected>, 
     transaction.commit().await.map_err(DbError::from_query)?;
     Ok(rows
         .into_iter()
-        .map(|(id, client_name, project, project_name, created_at, last_used_at)| Connected {
-            id,
-            client_name,
-            project,
-            project_name,
-            created_at,
-            last_used_at,
-        })
+        .map(
+            |(id, client_name, project, project_name, created_at, last_used_at)| Connected {
+                id,
+                client_name,
+                project,
+                project_name,
+                created_at,
+                last_used_at,
+            },
+        )
         .collect())
 }
 

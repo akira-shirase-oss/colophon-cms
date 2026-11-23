@@ -553,7 +553,10 @@ async fn an_oauth_token_speaks_to_mcp_alone() {
 
 #[tokio::test]
 #[ignore = "needs the stack and scripts/migrate.sh"]
-#[expect(clippy::too_many_lines, reason = "every way a connection ends, in one place")]
+#[expect(
+    clippy::too_many_lines,
+    reason = "every way a connection ends, in one place"
+)]
 async fn a_connection_ends_when_disconnected_replayed_or_its_account_disabled() {
     let _server = Server::start().await;
     let owner = sign_in("dev-owner").await;
