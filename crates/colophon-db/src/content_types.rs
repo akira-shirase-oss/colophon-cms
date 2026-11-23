@@ -456,8 +456,8 @@ struct Shared {
 /// publishes take this lock shared, before they read the content type or what they publish;
 /// a change to the type takes it exclusively ([`lock_for_change`]). So a write is validated
 /// against the version that is current when it commits, and a change sees every draft and
-/// publication there will be until the next change (D-055). Waiting counts against the
-/// statement timeout, like any query.
+/// publication there will be until the next change (D-055). Waiting counts against the lock
+/// timeout (D-239) and the statement timeout, like any lock a query waits on.
 pub async fn lock_for_write(tx: &mut ProjectTransaction, collection: &str) -> Result<(), DbError> {
     lock(
         tx,
