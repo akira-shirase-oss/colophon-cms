@@ -16,6 +16,7 @@
 //! - [`config`]: `COLOPHON_SERVER`, `COLOPHON_TOKEN` and `COLOPHON_PROJECT`.
 
 pub mod api;
+pub mod catalog;
 pub mod config;
 pub mod discovery;
 pub mod jsonrpc;

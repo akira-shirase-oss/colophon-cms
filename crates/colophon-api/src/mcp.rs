@@ -605,12 +605,17 @@ impl Backend for Dispatch {
         let services = services(&self.state)
             .map_err(|_| api::ApiError::Unreachable("the server has no database".into()))?;
         let router = services.mcp.router(&self.state);
-        let mut uri = format!(
-            "/api/v1/projects/{}/environments/{}{}",
-            self.project,
-            self.environment,
-            request.path()
-        );
+        let mut uri = if request.path().starts_with("/api/") {
+            // A project-level route given whole (D-247): only this session's own project.
+            colophon_mcp::api::full_path(self.project, request.path())?
+        } else {
+            format!(
+                "/api/v1/projects/{}/environments/{}{}",
+                self.project,
+                self.environment,
+                request.path()
+            )
+        };
         if !request.query_pairs().is_empty() {
             let mut pairs = url::form_urlencoded::Serializer::new(String::new());
             for (name, value) in request.query_pairs() {
