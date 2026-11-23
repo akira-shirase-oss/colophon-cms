@@ -164,17 +164,21 @@ pub(crate) fn stack_guard(var: impl Fn(&str) -> Option<String>) -> Result<(), St
     )
 }
 
-/// `docker compose -f deploy/compose.yaml <args>`: the one way a test touches the stack's
-/// services, and it refuses the shared stack before any docker call ([`stack_guard`]).
-pub(crate) fn compose(args: &[&str]) {
+/// `docker compose -f deploy/compose.yaml <args>`, not yet run: the one way a test touches the
+/// stack's services, and it refuses the shared stack before any docker call ([`stack_guard`]).
+fn compose_command(args: &[&str]) -> Command {
     if let Err(refusal) = stack_guard(|key| std::env::var(key).ok()) {
         panic!("{refusal}");
     }
     let file = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../deploy/compose.yaml");
-    let status = Command::new("docker")
-        .args(["compose", "-f"])
-        .arg(file)
-        .args(args)
+    let mut command = Command::new("docker");
+    command.args(["compose", "-f"]).arg(file).args(args);
+    command
+}
+
+/// [`compose_command`] run, its output discarded; a failure fails the test.
+pub(crate) fn compose(args: &[&str]) {
+    let status = compose_command(args)
         .stdout(Stdio::null())
         .stderr(Stdio::null())
         .status()
@@ -185,25 +189,18 @@ pub(crate) fn compose(args: &[&str]) {
 /// `valkey-cli <args>` inside the stack's Valkey, its output: flushing it, setting its memory cap
 /// or reading its stats (F08). Refuses the shared stack before any docker call ([`stack_guard`]).
 pub(crate) fn valkey_cli(args: &[&str]) -> String {
-    if let Err(refusal) = stack_guard(|key| std::env::var(key).ok()) {
-        panic!("{refusal}");
-    }
-    let file = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../deploy/compose.yaml");
-    let output = Command::new("docker")
-        .args(["compose", "-f"])
-        .arg(file)
-        .args([
-            "exec",
-            "-T",
-            "valkey",
-            "valkey-cli",
-            "-a",
-            "colophon-dev",
-            "--no-auth-warning",
-        ])
-        .args(args)
-        .output()
-        .expect("docker compose runs");
+    let output = compose_command(&[
+        "exec",
+        "-T",
+        "valkey",
+        "valkey-cli",
+        "-a",
+        "colophon-dev",
+        "--no-auth-warning",
+    ])
+    .args(args)
+    .output()
+    .expect("docker compose runs");
     assert!(output.status.success(), "valkey-cli {args:?} failed");
     String::from_utf8_lossy(&output.stdout).into_owned()
 }
