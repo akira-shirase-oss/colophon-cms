@@ -297,9 +297,45 @@ pub(crate) async fn post(
     headers: HeaderMap,
     body: Bytes,
 ) -> Result<Response, ApiError> {
-    let services = services(&state)?;
-    let id = admitted(services, &caller, &headers, false)?;
+    let id = admitted(services(&state)?, &caller, &headers, false)?;
     let (project, environment) = target(&path)?;
+    post_on(&state, &caller, id, project, environment, &headers, &body).await
+}
+
+/// `POST /mcp`: the public address (D-244). A project API token belongs to exactly one project, so
+/// the project comes from the token and the environment is `production`; everything else is
+/// `POST {P}/mcp`'s.
+pub(crate) async fn post_public(
+    State(state): State<AppState>,
+    caller: SignedIn,
+    headers: HeaderMap,
+    body: Bytes,
+) -> Result<Response, ApiError> {
+    let id = admitted(services(&state)?, &caller, &headers, false)?;
+    let project = caller.project.ok_or(ApiError::NotFound)?;
+    post_on(
+        &state,
+        &caller,
+        id,
+        project,
+        "production".to_owned(),
+        &headers,
+        &body,
+    )
+    .await
+}
+
+/// One message on `(project, environment)`, after the door checks.
+async fn post_on(
+    state: &AppState,
+    caller: &SignedIn,
+    id: Option<Uuid>,
+    project: Uuid,
+    environment: String,
+    headers: &HeaderMap,
+    body: &Bytes,
+) -> Result<Response, ApiError> {
+    let services = services(state)?;
 
     let mut fresh = None;
     let reply = if let Some(id) = id {
@@ -307,11 +343,11 @@ pub(crate) async fn post(
             .mcp
             .get(id, caller.session, project, &environment)
             .ok_or(ApiError::NotFound)?;
-        hosted.session.handle(&body, &hosted.dispatch).await
+        hosted.session.handle(body, &hosted.dispatch).await
     } else {
-        let dispatch = Dispatch::new(&state, &headers, project, &environment)?;
+        let dispatch = Dispatch::new(state, headers, project, &environment)?;
         let session = RemoteSession::new();
-        let reply = session.handle(&body, &dispatch).await;
+        let reply = session.handle(body, &dispatch).await;
         fresh = session.is_initialized().then_some(Hosted {
             session,
             dispatch,
@@ -346,9 +382,30 @@ pub(crate) async fn delete(
     Path(path): Path<McpPath>,
     headers: HeaderMap,
 ) -> Result<Response, ApiError> {
-    let services = services(&state)?;
-    let id = admitted(services, &caller, &headers, true)?;
+    let id = admitted(services(&state)?, &caller, &headers, true)?;
     let (project, environment) = target(&path)?;
+    delete_on(&state, &caller, id, project, &environment)
+}
+
+/// `DELETE /mcp`: the public address's session end (D-244), on the token's project.
+pub(crate) async fn delete_public(
+    State(state): State<AppState>,
+    caller: SignedIn,
+    headers: HeaderMap,
+) -> Result<Response, ApiError> {
+    let id = admitted(services(&state)?, &caller, &headers, true)?;
+    let project = caller.project.ok_or(ApiError::NotFound)?;
+    delete_on(&state, &caller, id, project, "production")
+}
+
+fn delete_on(
+    state: &AppState,
+    caller: &SignedIn,
+    id: Option<Uuid>,
+    project: Uuid,
+    environment: &str,
+) -> Result<Response, ApiError> {
+    let services = services(state)?;
     let hosted = services
         .mcp
         .remove(
@@ -357,7 +414,7 @@ pub(crate) async fn delete(
             ))?,
             caller.session,
             project,
-            &environment,
+            environment,
         )
         .ok_or(ApiError::NotFound)?;
     hosted.session.close();
