@@ -4,7 +4,7 @@
 // new role…, which comes back to the invitation with the new role chosen.
 
 import { expect, test } from '@playwright/test';
-import { newProject, password, signIn, violations } from './helpers.ts';
+import { newProject, password, signedIn, signIn, violations } from './helpers.ts';
 
 test('an owner invites with a link, the invitee signs in and joins, and roles decide who manages members', async ({ page, browser }) => {
 	await signIn(page);
@@ -90,7 +90,7 @@ test('an owner invites with a link, the invitee signs in and joins, and roles de
 	// The guest leaves, and the project is gone from their list.
 	await guest.goto(`/studio/projects/${project}/members`);
 	await guest.getByRole('button', { name: 'Leave project' }).click();
-	await expect(guest.getByTestId('signed-in')).toBeVisible();
+	await expect(signedIn(guest)).toBeVisible();
 	await expect(guest.locator(`a[href="/studio/projects/${project}"]`)).toHaveCount(0);
 	await page.reload();
 	await expect(page.getByTestId('member')).toHaveCount(1);

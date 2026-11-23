@@ -19,4 +19,5 @@ scripts/check-toolchain.sh >/dev/null
 scripts/migrate.sh
 cargo build --quiet --release --locked -p colophon-server
 npm run build -w @colophon/studio
-npx -w @colophon/studio playwright test -c playwright.server.config.ts
+# Arguments go to Playwright: CI runs the suite in halves (--shard=1/2, --shard=2/2; D-241).
+npx -w @colophon/studio playwright test -c playwright.server.config.ts "$@"

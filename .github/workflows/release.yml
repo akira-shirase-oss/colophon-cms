@@ -264,9 +264,20 @@ jobs:
   # it to GHCR and signs its provenance; a dry run builds both platforms, loads the amd64 one,
   # runs it and scans it. Either way it writes the quick start's compose.yaml pinned to the
   # image's digest, which the release attaches.
+  # Every CI check, the nightly ones included (D-241: per push, CI runs only the tests and cargo-deny;
+  # fuzz, the load smokes, quick start, distribution, the Next.js demo and the benchmarks run nightly
+  # and here). Nothing is pushed or drafted until it passes.
+  checks:
+    name: every CI check (ci.yml in full)
+    uses: ./.github/workflows/ci.yml
+    with:
+      full: true
+    permissions:
+      contents: read
+
   image:
     name: container image (multi-arch, scanned; pushed and attested on tags)
-    needs: [plan, build]
+    needs: [plan, build, checks]
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     permissions:
@@ -582,7 +593,7 @@ jobs:
 
   release:
     name: draft the GitHub release, with signed provenance
-    needs: [plan, assemble]
+    needs: [plan, assemble, checks]
     if: needs.plan.outputs.publish == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 10

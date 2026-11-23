@@ -1,7 +1,7 @@
 // Shared steps for the Studio tests against a real server.
 
 import AxeBuilder from '@axe-core/playwright';
-import { type Browser, expect, type Page } from '@playwright/test';
+import { type Browser, expect, type Locator, type Page } from '@playwright/test';
 
 /** Fills the built-in password card on this page and submits it (D-146). */
 export async function password(page: Page, user = 'dev-owner') {
@@ -10,11 +10,18 @@ export async function password(page: Page, user = 'dev-owner') {
 	await page.getByTestId('password-submit').click();
 }
 
+/** What a signed-in home shows: the projects list, or — with exactly one project — that project,
+ *  which the home page opens straight away. How many projects the shared test accounts have
+ *  depends on which specs ran before, so a spec checks for either. */
+export function signedIn(page: Page): Locator {
+	return page.getByTestId('signed-in').or(page.getByTestId('project-name')).first();
+}
+
 /** Signs in from the Studio's home page. */
 export async function signIn(page: Page, user = 'dev-owner') {
 	await page.goto('/studio/');
 	await password(page, user);
-	await expect(page.getByTestId('signed-in')).toBeVisible();
+	await expect(signedIn(page)).toBeVisible();
 }
 
 /** A fresh project, created through the API as the signed-in page; its id. */

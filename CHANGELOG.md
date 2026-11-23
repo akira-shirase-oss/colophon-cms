@@ -20,7 +20,15 @@ through `--version` and `GET /version`.
 
 - The Studio's sign-in only returns to an address on its own origin (`/\evil.example` used to pass).
 
+### Changed
+
+- **Git hooks catch problems before a push, and per-push CI runs the tests only** (D-241):
+  `scripts/install-hooks.sh` installs a fast pre-commit check of what a commit touches and a pre-push
+  `QUICK=1 scripts/check.sh`; integration runs in five parallel shards, and fuzz, the load smokes,
+  quick start, distribution, the Next.js demo and the benchmarks run nightly and before every release.
+
 ### Fixed
+
 - MCP: a tool that only reads, such as previewing a rollback, is no longer marked destructive, and `if_match` takes the ETag as its header gave it, quotes included (D-247).
 - MCP tests follow the D-247 catalog: the expected tool list is built from the catalog itself; every tool that publishes, approves, removes or manages access is shown to send nothing without `confirm: true`; the API still refuses what the token may not do; deleting a project is never offered.
 
