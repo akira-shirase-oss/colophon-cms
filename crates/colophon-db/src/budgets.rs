@@ -485,11 +485,7 @@ pub struct Reconciled {
 /// Nothing silently drops an ambiguous reservation: it keeps counting until it is resolved.
 /// Told to `stop` between its statements, it rolls back ([`DbError::Stopped`]).
 pub async fn reconcile(pool: &PgPool, stop: crate::Stop<'_>) -> Result<Reconciled, DbError> {
-    let mut tx = worker(pool).await?;
-    // A background unit: bounded server side, so a stop can let it finish.
-    crate::bound_background(&mut tx)
-        .await
-        .map_err(DbError::from_query)?;
+    let mut tx = crate::transactions::background_worker(pool, stop).await?;
     let released = sqlx::query!(
         "WITH closing AS (
              SELECT r.project_id, r.id, j.status

@@ -193,16 +193,6 @@ impl Swept {
     }
 }
 
-/// A worker's transaction: as `colophon_worker`, for its duration.
-async fn worker(pool: &PgPool) -> Result<Transaction<'static, Postgres>, DbError> {
-    let mut transaction = crate::begin_tx(pool).await.map_err(DbError::from_query)?;
-    sqlx::query("SET LOCAL ROLE colophon_worker")
-        .execute(&mut *transaction)
-        .await
-        .map_err(DbError::from_query)?;
-    Ok(transaction)
-}
-
 /// Calls one of migration 0050's `colophon_sweep_*` functions — a bounded delete owned by
 /// `colophon_retention` that a worker may execute but never see past — and answers how many
 /// rows it removed.
@@ -238,11 +228,7 @@ pub async fn sweep(
     batch: i64,
     stop: Stop<'_>,
 ) -> Result<Swept, DbError> {
-    let mut tx = worker(pool).await?;
-    // A background unit: bounded server side, so a stop can let it finish.
-    crate::bound_background(&mut tx)
-        .await
-        .map_err(DbError::from_query)?;
+    let mut tx = crate::transactions::background_worker(pool, stop).await?;
     let work_cut = OffsetDateTime::now_utc() - ages.work;
     let audit_cut = OffsetDateTime::now_utc() - ages.audit;
     let ledger_cut = OffsetDateTime::now_utc() - ages.ledger;

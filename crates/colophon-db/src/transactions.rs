@@ -101,6 +101,62 @@ impl<'a> Stop<'a> {
     }
 }
 
+/// How often a background unit still waiting for a connection asks whether it was told to stop.
+const STOP_ASKED_EVERY: Duration = Duration::from_millis(25);
+
+/// Begins a background unit's transaction, bounded ([`bound_background`]), unless `stop` is
+/// requested first. The wait for a connection and the `BEGIN` are raced against the stop (asked
+/// every 25 ms): dropping a [`begin_tx`] is safe at any point, since its task finishes the
+/// `BEGIN` and a transaction nobody holds rolls back before its connection is pooled again
+/// (D-217). So a unit still queued for a connection when its loop is told to stop never begins,
+/// and a shutdown never waits on a pool's acquire timeout plus a statement, only on the one
+/// statement a unit already began is in. Asked once more after the `BEGIN`, a stop ends the unit
+/// before its first statement, with an explicit `ROLLBACK`.
+pub async fn begin_background(
+    pool: &PgPool,
+    stop: Stop<'_>,
+) -> Result<Transaction<'static, Postgres>, crate::DbError> {
+    if stop.requested() {
+        return Err(crate::DbError::Stopped);
+    }
+    let pending = begin_tx(pool);
+    tokio::pin!(pending);
+    let mut asks = tokio::time::interval(STOP_ASKED_EVERY);
+    asks.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+    let mut transaction = loop {
+        tokio::select! {
+            biased;
+            outcome = &mut pending => break outcome.map_err(crate::DbError::from_query)?,
+            _ = asks.tick() => {
+                if stop.requested() {
+                    return Err(crate::DbError::Stopped);
+                }
+            }
+        }
+    };
+    bound_background(&mut transaction)
+        .await
+        .map_err(crate::DbError::from_query)?;
+    if stop.requested() {
+        return stopped(transaction).await;
+    }
+    Ok(transaction)
+}
+
+/// [`begin_background`], then `SET LOCAL ROLE colophon_worker`: the transaction of a background
+/// unit that runs as the worker role (the sweeps, the reconciler, the claims).
+pub(crate) async fn background_worker(
+    pool: &PgPool,
+    stop: Stop<'_>,
+) -> Result<Transaction<'static, Postgres>, crate::DbError> {
+    let mut transaction = begin_background(pool, stop).await?;
+    sqlx::query("SET LOCAL ROLE colophon_worker")
+        .execute(&mut *transaction)
+        .await
+        .map_err(crate::DbError::from_query)?;
+    Ok(transaction)
+}
+
 /// Ends a unit [`Stop`] told to stop: rolls `transaction` back, explicitly, and says so.
 pub(crate) async fn stopped<T>(
     transaction: Transaction<'static, Postgres>,

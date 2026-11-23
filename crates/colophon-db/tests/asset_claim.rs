@@ -263,9 +263,13 @@ async fn a_claim_never_walks_finished_jobs_leases() {
 
 /// A pass is bounded, a sweep is not: 250 lapsed leases are all released in one sweep, a
 /// pass of 200 then one of 50, and a live lease is never touched; a stop asked for between
-/// passes ends the sweep without starting another.
+/// passes ends the sweep without starting another, and one asked for before it begins nothing.
 #[tokio::test]
 #[ignore = "needs the local stack: scripts/stack.sh up"]
+#[expect(
+    clippy::too_many_lines,
+    reason = "one sweep, a stop under way, and a stop before: one table's leases in order"
+)]
 async fn one_sweep_releases_every_lapsed_lease_a_bounded_pass_at_a_time() {
     let db = TestDb::new().await;
     one_upload(&db).await;
@@ -308,28 +312,80 @@ async fn one_sweep_releases_every_lapsed_lease_a_bounded_pass_at_a_time() {
             .expect("the live job");
     assert_eq!(live, "running", "a live lease is never released");
 
-    // Another 250, and a stop asked for during the first pass: the sweep ends after it.
+    // Another 250, and a stop asked for while the first pass is under way (its release waits on
+    // the table, held): the pass finishes, and the sweep ends after it.
     strand().await;
-    let asked = std::sync::atomic::AtomicUsize::new(0);
-    let stopped = || {
-        asked.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-        true
+    let lapsed = async || -> i64 {
+        sqlx::query_scalar(
+            "SELECT count(*) FROM asset_jobs WHERE status = 'running' AND lease_owner = 'gone'",
+        )
+        .fetch_one(&owner)
+        .await
+        .expect("the lapsed leases")
     };
+    let stop_now = std::sync::atomic::AtomicBool::new(false);
+    let stopped = || stop_now.load(std::sync::atomic::Ordering::SeqCst);
+    let mut holder = owner.begin().await.expect("begin");
+    sqlx::query("LOCK TABLE asset_jobs IN SHARE MODE")
+        .execute(&mut *holder)
+        .await
+        .expect("hold the table");
+    let driver = async {
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        loop {
+            let waiting: i64 = sqlx::query_scalar(
+                "SELECT count(*) FROM pg_stat_activity
+                 WHERE datname = current_database() AND wait_event_type = 'Lock'
+                   AND query LIKE '%asset_jobs%' AND pid <> pg_backend_pid()",
+            )
+            .fetch_one(&owner)
+            .await
+            .expect("pg_stat_activity");
+            if waiting > 0 {
+                break;
+            }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "the pass never waited"
+            );
+            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        }
+        stop_now.store(true, std::sync::atomic::Ordering::SeqCst);
+        holder.rollback().await.expect("release the table");
+    };
+    let (released, ()) = tokio::join!(
+        assets::release_lapsed_all(
+            &db.app,
+            assets::RELEASE_BUDGET,
+            colophon_db::Stop::new(&stopped),
+        ),
+        driver
+    );
     assert_eq!(
+        released.expect("a stopped sweep"),
+        u64::try_from(assets::RELEASE_BATCH).expect("a count"),
+        "the pass under way finished, then the stop"
+    );
+    assert_eq!(
+        lapsed().await,
+        250 - assets::RELEASE_BATCH,
+        "no second pass"
+    );
+
+    // A stop asked for before the sweep: it begins nothing (colophon_db::begin_background).
+    assert!(matches!(
         assets::release_lapsed_all(
             &db.app,
             assets::RELEASE_BUDGET,
             colophon_db::Stop::new(&stopped),
         )
-        .await
-        .expect("a stopped sweep"),
-        u64::try_from(assets::RELEASE_BATCH).expect("a count"),
-        "one pass, then the stop"
-    );
+        .await,
+        Err(colophon_db::DbError::Stopped)
+    ));
     assert_eq!(
-        asked.load(std::sync::atomic::Ordering::SeqCst),
-        1,
-        "asked once, between passes"
+        lapsed().await,
+        250 - assets::RELEASE_BATCH,
+        "nothing released"
     );
     owner.close().await;
     db.drop().await;

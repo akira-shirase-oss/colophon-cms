@@ -640,6 +640,10 @@ async fn a_counter_updated_in_the_triggers_would_make_workers_wait() {
 
 #[tokio::test]
 #[ignore = "needs the local stack: scripts/stack.sh up"]
+#[expect(
+    clippy::too_many_lines,
+    reason = "every concurrent path that touches the counter, in one race"
+)]
 async fn admissions_sweeps_finishes_and_supersedes_never_deadlock() {
     let db = TestDb::new().await;
     let alice = db.administrator("alice").await;

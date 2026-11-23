@@ -107,6 +107,10 @@ async fn epochs(pool: &PgPool) -> Vec<(Uuid, Uuid, i64, i64)> {
 
 #[tokio::test]
 #[ignore = "needs the local stack: scripts/stack.sh up"]
+#[expect(
+    clippy::too_many_lines,
+    reason = "one restore drill, from the held outbox to the next claim, in order"
+)]
 async fn a_restored_backup_gets_a_new_epoch_and_a_held_outbox() {
     let db = TestDb::new().await;
     let (_alice, project, environment) = released(&db, 2).await;

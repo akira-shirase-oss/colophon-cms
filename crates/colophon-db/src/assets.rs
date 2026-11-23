@@ -625,7 +625,8 @@ pub async fn claim(
     limit: i64,
     stop: crate::Stop<'_>,
 ) -> Result<Vec<Claimed>, DbError> {
-    let mut transaction = worker(pool).await?;
+    // A background unit: a stop while it waits for a connection ends it, nothing claimed.
+    let mut transaction = crate::transactions::background_worker(pool, stop).await?;
     // Planned for this call's limit every time, never once for all (see above).
     sqlx::query("SET LOCAL plan_cache_mode = force_custom_plan")
         .execute(&mut *transaction)
@@ -689,11 +690,7 @@ pub const RELEASE_BATCH: i64 = 200;
 /// server side, so a stop that lets it finish waits under the 5 s cleanup deadline. How many
 /// it released. The sweep runs passes back to back ([`release_lapsed_all`]).
 pub async fn release_lapsed(pool: &PgPool, stop: crate::Stop<'_>) -> Result<u64, DbError> {
-    let mut transaction = worker(pool).await?;
-    // A background unit: bounded server side, so a stop can let it finish.
-    crate::bound_background(&mut transaction)
-        .await
-        .map_err(DbError::from_query)?;
+    let mut transaction = crate::transactions::background_worker(pool, stop).await?;
     let released = sqlx::query!(
         "WITH lapsed AS (
              SELECT project_id, environment_id, id FROM asset_jobs
@@ -1119,11 +1116,7 @@ async fn land_usable(
 /// Fails unfinished asset jobs that ran out of time (swept with the delivery jobs'); how many.
 /// Like `jobs::expire` it never waits: a job another transaction holds is the next pass's.
 pub async fn expire(pool: &PgPool, stop: crate::Stop<'_>) -> Result<u64, DbError> {
-    let mut transaction = worker(pool).await?;
-    // A background unit: bounded server side, so a stop can let it finish.
-    crate::bound_background(&mut transaction)
-        .await
-        .map_err(DbError::from_query)?;
+    let mut transaction = crate::transactions::background_worker(pool, stop).await?;
     let expired = sqlx::query!(
         "WITH due AS (
              SELECT project_id, environment_id, id FROM asset_jobs
@@ -1173,11 +1166,7 @@ pub async fn enqueue_expired(
     room: i64,
     stop: crate::Stop<'_>,
 ) -> Result<u64, DbError> {
-    let mut transaction = worker(pool).await?;
-    // A background unit: bounded server side, so a stop can let it finish.
-    crate::bound_background(&mut transaction)
-        .await
-        .map_err(DbError::from_query)?;
+    let mut transaction = crate::transactions::background_worker(pool, stop).await?;
     let enqueued = sqlx::query!(
         "WITH collectable AS (
              SELECT a.project_id, a.environment_id, a.id, a.created_at, a.size_bytes,

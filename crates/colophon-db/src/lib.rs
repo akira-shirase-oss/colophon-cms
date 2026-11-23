@@ -56,8 +56,8 @@ use sqlx::{
 pub use sqlx::postgres::{PgConnection, PgListener, PgPool};
 pub use sqlx::{Postgres, Transaction};
 pub use transactions::{
-    BACKGROUND_LOCK_TIMEOUT, BACKGROUND_STATEMENT_TIMEOUT, Phases, Stop, begin_tx,
-    begin_tx_snapshot, bound_background, with_phases,
+    BACKGROUND_LOCK_TIMEOUT, BACKGROUND_STATEMENT_TIMEOUT, Phases, Stop, begin_background,
+    begin_tx, begin_tx_snapshot, bound_background, with_phases,
 };
 
 /// The schema migrations, embedded at compile time from `migrations/`.

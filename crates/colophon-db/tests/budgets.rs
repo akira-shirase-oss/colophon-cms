@@ -482,6 +482,10 @@ async fn hooks(db: &TestDb, alice: Uuid, project: Uuid, count: usize) {
 
 #[tokio::test]
 #[ignore = "needs the local stack: scripts/stack.sh up"]
+#[expect(
+    clippy::too_many_lines,
+    reason = "one release's jobs from reservation to outcome, in order"
+)]
 async fn a_release_reserves_a_slot_per_job_and_the_outcome_closes_it() {
     let db = TestDb::new().await;
     let (alice, project) = project(&db).await;
