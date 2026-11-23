@@ -564,3 +564,90 @@ async fn a_claim_reads_a_handful_of_blocks_at_a_fast_runners_scale() {
     owner.close().await;
     db.drop().await;
 }
+
+/// The deadline sweep (`assets::expire`, every 10 s on every worker) reads the jobs that ran out
+/// of time, not the table (D-237). At the size the assets smoke reaches, 23,000 jobs (20,000
+/// finished, 3,000 waiting) and five past their deadline, it reads a handful of blocks on its
+/// own backend. It failed first on main: `asset_jobs` had no index on the open jobs' deadline
+/// (`jobs` has `jobs_open_by_deadline`), so every sweep read the whole table.
+#[tokio::test]
+#[ignore = "needs the local stack: scripts/stack.sh up"]
+async fn the_deadline_sweep_reads_the_expired_not_the_table() {
+    const JOBS: i64 = 23_000;
+    const WAITING: i64 = 3_000;
+    const EXPIRED: i64 = 5;
+    /// The most one sweep that fails five jobs may read on its own backend.
+    const MAX_EXPIRE_BLOCKS: i64 = 60;
+    let db = TestDb::new().await;
+    one_upload(&db).await;
+    let owner = db.owner().await;
+    sqlx::query(
+        "INSERT INTO assets (project_id, environment_id, id, file_name, declared_type, size_bytes,
+                             quarantine_key, created_by)
+         SELECT a.project_id, a.environment_id, gen_random_uuid(), 'f' || n || '.png', 'image/png',
+                1024, 'quarantine/f' || n, a.created_by
+         FROM assets a, generate_series(1, $1) n",
+    )
+    .bind(JOBS)
+    .execute(&owner)
+    .await
+    .expect("assets");
+    sqlx::query(
+        "INSERT INTO asset_jobs (project_id, environment_id, id, asset_id, kind, idempotency_key,
+                                 next_attempt_at, deadline_at)
+         SELECT a.project_id, a.environment_id, gen_random_uuid(), a.id, 'verify',
+                'job:' || a.file_name, now() - interval '2 hours', now() + interval '1 hour'
+         FROM assets a WHERE a.file_name LIKE 'f%'",
+    )
+    .execute(&owner)
+    .await
+    .expect("one job each");
+    sqlx::query(
+        "UPDATE asset_jobs SET status = 'succeeded', finished_at = now() - interval '1 hour'
+         WHERE id IN (SELECT id FROM asset_jobs WHERE idempotency_key LIKE 'job:%'
+                      ORDER BY idempotency_key LIMIT $1)",
+    )
+    .bind(JOBS - WAITING)
+    .execute(&owner)
+    .await
+    .expect("the history finished");
+    sqlx::raw_sql("VACUUM ANALYZE asset_jobs, assets")
+        .execute(&owner)
+        .await
+        .expect("vacuum");
+    let pid: i32 = sqlx::query_scalar("SELECT pg_backend_pid()")
+        .fetch_one(&db.app)
+        .await
+        .expect("the sweep's backend");
+    // An unmeasured sweep with nothing to expire: caches hot for the measured one.
+    assert_eq!(
+        assets::expire(&db.app, colophon_db::Stop::NEVER)
+            .await
+            .expect("a warming sweep"),
+        0
+    );
+    sqlx::query(
+        "UPDATE asset_jobs SET deadline_at = now() - interval '1 minute'
+         WHERE id IN (SELECT id FROM asset_jobs WHERE status = 'pending'
+                      AND idempotency_key LIKE 'job:%' ORDER BY idempotency_key LIMIT $1)",
+    )
+    .bind(EXPIRED)
+    .execute(&owner)
+    .await
+    .expect("five out of time");
+    flush_app(&db).await;
+    let before = own_reads(&owner, pid).await;
+    let expired = assets::expire(&db.app, colophon_db::Stop::NEVER)
+        .await
+        .expect("the sweep");
+    flush_app(&db).await;
+    let read = own_reads(&owner, pid).await - before;
+    eprintln!("one deadline sweep at {JOBS} jobs, {EXPIRED} expired: {read} blocks");
+    assert_eq!(expired, u64::try_from(EXPIRED).expect("a count"));
+    assert!(
+        read <= MAX_EXPIRE_BLOCKS,
+        "a deadline sweep read {read} blocks at {JOBS} jobs"
+    );
+    owner.close().await;
+    db.drop().await;
+}
