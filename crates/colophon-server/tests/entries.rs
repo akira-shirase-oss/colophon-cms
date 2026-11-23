@@ -574,3 +574,231 @@ async fn a_list_says_what_is_live_and_the_live_revision_reads_back() {
         first_revision.as_str()
     );
 }
+
+/// F04 on the real binary under real concurrency (module 17): two editors, signed in apart, save
+/// the same base revision at the same moment, fifty times over. Each time exactly one save lands
+/// and the other is refused `stale_revision` naming the revision that won; the loser retried with
+/// its own Idempotency-Key gets that same refusal back, never a late success; and the entry's
+/// history is the base and the fifty winners, in order: no loser's revision is ever stored. (The
+/// database half, the Studio's two browsers and the simulator are in module 17's F04 row.)
+#[tokio::test]
+#[ignore = "needs the local stack and migrations: scripts/stack.sh up && scripts/migrate.sh"]
+#[expect(
+    clippy::too_many_lines,
+    reason = "one entry's fifty contested saves, then its whole history"
+)]
+async fn two_editors_saving_one_base_at_once_one_wins_and_nothing_is_lost() {
+    const ROUNDS: usize = 50;
+    let _server = Server::start().await;
+    let owner = sign_in("dev-owner").await;
+    let project = project(&owner).await;
+    let editor = sign_in("dev-editor").await;
+    common::join(&owner, &editor, &project, "editor").await;
+    let (id, mut base) = create(&owner, &project, "Base").await;
+    let path = format!("{}/{id}", entries(&project));
+    let mut kept = vec!["Base".to_owned()];
+
+    for round in 0..ROUNDS {
+        let keys = [key(), key()];
+        let titles = [format!("Owner {round}"), format!("Editor {round}")];
+        let sessions = [&owner, &editor];
+        let bodies = [article(&titles[0], "A"), article(&titles[1], "B")];
+        let headers = [
+            [
+                ("if-match", base.as_str()),
+                ("idempotency-key", keys[0].as_str()),
+            ],
+            [
+                ("if-match", base.as_str()),
+                ("idempotency-key", keys[1].as_str()),
+            ],
+        ];
+        let (first, second) = tokio::join!(
+            call(
+                sessions[0],
+                Method::PUT,
+                &path,
+                Some(&bodies[0]),
+                &headers[0]
+            ),
+            call(
+                sessions[1],
+                Method::PUT,
+                &path,
+                Some(&bodies[1]),
+                &headers[1]
+            ),
+        );
+        let replies = [first.expect("request"), second.expect("request")];
+        let won: Vec<usize> = (0..2)
+            .filter(|&n| replies[n].status == StatusCode::OK)
+            .collect();
+        let lost: Vec<usize> = (0..2)
+            .filter(|&n| replies[n].status == StatusCode::CONFLICT)
+            .collect();
+        assert_eq!(
+            (won.len(), lost.len()),
+            (1, 1),
+            "round {round}: {} and {}",
+            replies[0].status,
+            replies[1].status
+        );
+        let (winner, loser) = (won[0], lost[0]);
+        let current = replies[winner].etag().expect("the winner's ETag");
+        assert_eq!(
+            replies[loser].body["error"]["details"]["reason"], "stale_revision",
+            "round {round}: {}",
+            replies[loser].body
+        );
+        assert_eq!(
+            replies[loser].etag(),
+            Some(current.clone()),
+            "round {round}: the 409 names the revision that won"
+        );
+
+        // The loser sends the same request again, same key: the same answer, not a late success.
+        let retried = call(
+            sessions[loser],
+            Method::PUT,
+            &path,
+            Some(&bodies[loser]),
+            &headers[loser],
+        )
+        .await
+        .expect("request");
+        assert_eq!(
+            (retried.status, &retried.body["error"]["details"]["reason"]),
+            (StatusCode::CONFLICT, &json!("stale_revision")),
+            "round {round}: the retry is refused again: {}",
+            retried.body
+        );
+
+        kept.push(titles[winner].clone());
+        base = current;
+    }
+
+    // The history is the base and every winner, newest first: no loser was ever stored.
+    let history = call(
+        &owner,
+        Method::GET,
+        &format!("{}/{id}/revisions?limit=100", entries(&project)),
+        None,
+        &[],
+    )
+    .await
+    .expect("request");
+    assert_eq!(history.status, StatusCode::OK, "{}", history.body);
+    let mut stored: Vec<String> = history.body["data"]
+        .as_array()
+        .expect("a list")
+        .iter()
+        .filter_map(|revision| revision["title"].as_str().map(str::to_owned))
+        .collect();
+    stored.reverse();
+    assert_eq!(stored, kept);
+}
+
+/// F04 with both saves provably in flight together: the entry's row is held, both editors save
+/// from the same base, and only once both of the server's backends wait (one on the holder, the
+/// other queued behind it) is it released, well inside the statement timeout. One lands, the other is refused naming it, and the history holds the base and the
+/// winner alone.
+#[tokio::test]
+#[ignore = "needs the local stack and migrations: scripts/stack.sh up && scripts/migrate.sh"]
+async fn two_saves_held_in_flight_together_still_make_one_winner() {
+    let _server = Server::start().await;
+    let owner = sign_in("dev-owner").await;
+    let project = project(&owner).await;
+    let editor = sign_in("dev-editor").await;
+    common::join(&owner, &editor, &project, "editor").await;
+    let (id, base) = create(&owner, &project, "Base").await;
+    let path = format!("{}/{id}", entries(&project));
+
+    let database = common::owner_database().await;
+    let mut holder = database.begin().await.expect("begin");
+    sqlx::query("SELECT 1 FROM entries WHERE id = $1::uuid FOR UPDATE")
+        .bind(&id)
+        .execute(&mut *holder)
+        .await
+        .expect("hold the entry");
+    let holder_pid: i32 = sqlx::query_scalar("SELECT pg_backend_pid()")
+        .fetch_one(&mut *holder)
+        .await
+        .expect("its backend");
+    let saves = ["Owner", "Editor"].map(|title| {
+        let (session, path, base) = (
+            if title == "Owner" {
+                owner.clone()
+            } else {
+                editor.clone()
+            },
+            path.clone(),
+            base.clone(),
+        );
+        tokio::spawn(async move {
+            call(
+                &session,
+                Method::PUT,
+                &path,
+                Some(&article(title, "body")),
+                &[("if-match", &base), ("idempotency-key", &key())],
+            )
+            .await
+            .expect("request")
+        })
+    });
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    loop {
+        // The two queue: the first waits on the holder, the second on the first.
+        let waiting: i64 = sqlx::query_scalar(
+            "SELECT count(*) FROM pg_stat_activity
+             WHERE datname = current_database() AND pid <> $1
+               AND cardinality(pg_blocking_pids(pid)) > 0",
+        )
+        .bind(holder_pid)
+        .fetch_one(&database)
+        .await
+        .expect("pg_stat_activity");
+        if waiting >= 2 {
+            break;
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "both saves never waited together ({waiting} waiting)"
+        );
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+    }
+    holder.rollback().await.expect("release");
+
+    let mut statuses = Vec::new();
+    let mut winner = None;
+    for save in saves {
+        let reply = save.await.expect("joined");
+        if reply.status == StatusCode::OK {
+            winner = Some(reply.body["data"]["content"]["title"].clone());
+        }
+        statuses.push(reply.status);
+    }
+    statuses.sort_unstable();
+    assert_eq!(statuses, [StatusCode::OK, StatusCode::CONFLICT]);
+    let history = call(
+        &owner,
+        Method::GET,
+        &format!("{}/{id}/revisions", entries(&project)),
+        None,
+        &[],
+    )
+    .await
+    .expect("request");
+    let titles: Vec<&serde_json::Value> = history.body["data"]
+        .as_array()
+        .expect("a list")
+        .iter()
+        .map(|revision| &revision["title"])
+        .collect();
+    assert_eq!(
+        titles,
+        [&winner.expect("a winner"), &json!("Base")],
+        "the base and the winner alone"
+    );
+    database.close().await;
+}
