@@ -47,6 +47,7 @@ for range in "${ranges[@]}"; do
     while IFS= read -r path; do changed+=("$path"); done < <(git show --name-only --format= "$range")
   fi
 done
+hook_clean_git_env
 step "leak check (everything pushed)" leak_check "$diff"
 
 docs_only=1

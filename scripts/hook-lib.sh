@@ -22,6 +22,14 @@ hook_toolchain() {
   export CARGO_BUILD_WARNINGS=deny
 }
 
+# Git runs a hook with its own variables set (GIT_DIR, and GIT_INDEX_FILE for a commit's own index).
+# A hook reads what it needs from git first, then clears them: a tool or test that runs git in
+# another directory (colophon-version's stamp tests) must find that directory's repository, not this.
+hook_clean_git_env() {
+  unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_PREFIX GIT_OBJECT_DIRECTORY \
+    GIT_ALTERNATE_OBJECT_DIRECTORIES GIT_QUARANTINE_PATH GIT_EXEC_PATH GIT_REFLOG_ACTION
+}
+
 # COLOPHON_SKIP_HOOKS=1 skips the hook, for a work-in-progress commit during a mutation proof only;
 # every skip is logged (COLOPHON_SKIP_REASON says why). `git commit --no-verify` also skips it but
 # leaves no record, so the variable is the one to use.

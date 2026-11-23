@@ -24,6 +24,7 @@ fi
 diff=$(mktemp)
 trap 'rm -f "$diff"' EXIT
 git diff --cached -U0 --no-color >"$diff"
+hook_clean_git_env
 step "identity (author and committer)" identity_check
 step "leak check (staged lines)" leak_check "$diff"
 
