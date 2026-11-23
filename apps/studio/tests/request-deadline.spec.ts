@@ -6,7 +6,21 @@
 
 import { expect, test } from '@playwright/test';
 import { ApiError, REQUEST_TIMEOUT_MS, send } from '../src/lib/api.ts';
-import { newKeys, publishInOneClick } from '../src/lib/publishing.ts';
+
+/** publishing.ts, imported here rather than at the top: its imports reach prosemirror-view, which
+ *  probes `document` when it loads, and Playwright runs several files in one worker, where another
+ *  file's stub `document` (no `style`) can be left behind. Loaded with no `document` at all, it
+ *  takes its server-side path whatever ran before. */
+async function publishing() {
+	const global = globalThis as { document?: unknown };
+	const stub = global.document;
+	delete global.document;
+	try {
+		return await import('../src/lib/publishing.ts');
+	} finally {
+		global.document = stub;
+	}
+}
 
 type Call = { method: string; url: string; key: string | undefined };
 
@@ -89,6 +103,7 @@ test('a body that never ends, even one deaf to the abort, still ends at the dead
 });
 
 test('a publish that gets no answer stops with "try again", and trying again sends the same key', async () => {
+	const { newKeys, publishInOneClick } = await publishing();
 	const calls: Call[] = [];
 	globalThis.fetch = stalledBody(calls);
 	const keys = newKeys();
