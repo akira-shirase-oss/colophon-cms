@@ -28,7 +28,8 @@ Step 2.3 (D-046): `crates/colophon-worker`, run by `colophon-server --role worke
 - **A lapsed lease is the sweep's to release (D-237).** A running job whose lease ran out (its worker crashed or
   was cut off) goes back to `retrying` in `jobs::release_lapsed`, run in the sweeps below as the worker starts and
   every 10 s, so a dead worker's delivery resumes up to 10 s after its lease runs out (30 s by default) instead of
-  at the next claim. Nothing else of the job changes: its place, its attempt count, its deadline, its idempotency
+  at the next claim. A worker's sweep at start comes too early for a lease still running, so after a crash and a
+  restart the killed worker's jobs resume within the lease plus 10 s of the restart: about 40 s by default. Nothing else of the job changes: its place, its attempt count, its deadline, its idempotency
   key and its generation, so the next attempt re-announces under the same key (F03), counts as the attempt it
   always did, and is superseded by a newer release like any waiting job; its old holder's late `finish` is refused.
   It takes rows in id order under `SKIP LOCKED` (the one order every multi-row lock on the work tables uses), 200
