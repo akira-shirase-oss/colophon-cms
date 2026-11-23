@@ -8,6 +8,12 @@ through `--version` and `GET /version`.
 
 ## [Unreleased]
 
+### Fixed
+
+- **The Studio never waits past 15 seconds for an answer** (D-245): a request whose answer stalls on a
+  flaky connection now stops with "Colophon didn't answer: try again", and publishing again sends the same
+  request rather than a second one.
+
 ## [0.1.0-alpha.6] — 2026-11-23
 
 ### Added

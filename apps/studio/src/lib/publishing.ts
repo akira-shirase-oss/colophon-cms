@@ -14,7 +14,9 @@ export type Outcome =
 	| { kind: 'published'; generation: number; request: string }
 	| { kind: 'unpublished'; generation: number; request: string }
 	| { kind: 'requested'; request: string; unpublish: boolean }
-	| { kind: 'stopped'; message: string; request: string | null };
+	/** `noAnswer`: no answer came within the deadline (D-245). Whatever ran stays done, and sending
+	 *  the same request again with the same keys is safe: it replays, never doubles. */
+	| { kind: 'stopped'; message: string; request: string | null; noAnswer?: boolean };
 
 /** A publish request an entry waits in for review, as the editor names it (D-184). */
 export interface InReview {
@@ -108,6 +110,7 @@ export async function publishInOneClick(options: {
 		return { kind: takingDown ? 'unpublished' : 'published', generation: published.generation, request: made.id };
 	} catch (failure) {
 		const reason = failure instanceof ApiError ? failure.reason : null;
+		const noAnswer = failure instanceof ApiError && failure.failure === 'retry' && failure.status === null;
 		// A refusal about links names the entries, from the request's own (D-065).
 		const links = request === null ? null : await explainLinks(project, request, reason);
 		if (links !== null) return { kind: 'stopped', message: links.text, request };
@@ -119,6 +122,6 @@ export async function publishInOneClick(options: {
 					: reason === 'value_taken'
 						? VALUE_TAKEN_ON_PUBLISH
 						: plainError(failure, options.doing ?? (oneClick ? 'publish this' : 'ask for review here'));
-		return { kind: 'stopped', message, request };
+		return { kind: 'stopped', message, request, noAnswer };
 	}
 }
