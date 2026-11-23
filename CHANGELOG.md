@@ -173,7 +173,8 @@ through `--version` and `GET /version`.
   whether that work was saved could stay unknown and the database logged "there is no
   transaction in progress". Each now finishes the step it is on and stops before the next; a step
   stuck behind a lock gives up on its own within four seconds and is rolled back, so shutdown still
-  completes inside its deadline.
+  completes inside its deadline. Background work still waiting for a database connection when shutdown
+  begins no longer starts at all, so it can't hold the stop up either (D-236).
 
 - **A delivery or media job's deadline sweep can no longer deadlock with a publish** (D-216). The
   sweep that fails jobs past their deadline now leaves a job another transaction holds for its next
