@@ -298,3 +298,47 @@ async fn a_proxy_in_the_environment_never_carries_a_delivery() {
     );
     task.abort();
 }
+
+/// A delivery whose worker died mid-attempt resumes (D-237): the job is left running on a lease
+/// that ran out, and the claim no longer looks at running jobs, so it is the worker's sweep that
+/// makes it waiting again; the next claim then delivers it, once, with the key the lost attempt
+/// carried (the destination can drop a duplicate) and its attempts counted. The sweep runs as the
+/// worker starts and every 10 s after, so a dead worker's delivery resumes within that interval
+/// of its lease running out.
+#[tokio::test]
+#[ignore = "needs the stack and scripts/migrate.sh"]
+async fn a_dead_worker_s_delivery_resumes_through_the_sweep() {
+    // The API alone first: the release's job waits, and no worker takes it.
+    let api = Server::start_with(&[("COLOPHON_ROLE", "api")]).await;
+    let owner = sign_in("dev-owner").await;
+    let project = project(&owner).await;
+    let receiver = Receiver::start(&[]).await;
+    destination(&owner, &project, &receiver.url).await;
+    let generation = publish_article(&owner, &project, "Resumed").await;
+    // As a worker leaves it when it dies mid-attempt: running, its lease run out, one attempt.
+    let database = common::owner_database().await;
+    let key: String = sqlx::query_scalar(
+        "UPDATE jobs SET status = 'running', lease_owner = 'dead-worker', attempts = 1,
+                         lease_generation = 1, lease_expires_at = now() - interval '1 second'
+         WHERE project_id = $1::uuid AND generation = $2
+         RETURNING idempotency_key",
+    )
+    .bind(&project)
+    .bind(generation)
+    .fetch_one(&database)
+    .await
+    .expect("a dead worker's job");
+    drop(api);
+
+    let _worker = Server::start_with(&FAST).await;
+    let job = finished_job(&owner, &project, generation, 15).await;
+    assert_eq!(
+        (job["status"].as_str(), job["attempts"].as_i64()),
+        (Some("succeeded"), Some(2)),
+        "{job}"
+    );
+    let seen = receiver.seen();
+    assert_eq!(seen.len(), 1, "delivered once");
+    assert_eq!(seen[0].key, key, "under the lost attempt's key");
+    database.close().await;
+}

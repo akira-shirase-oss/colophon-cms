@@ -53,6 +53,15 @@ advisory unless they ask not to be.
 - Behind a reverse proxy, set `COLOPHON_TRUSTED_PROXIES` to the proxy's address or network:
   only then is the client's address believed from `X-Forwarded-For`, and every per-address
   bound (rate limits, sign-in pauses, magic-link shares) counts clients rather than the proxy.
+- Rate limits while Valkey is away (D-076, D-238): every server falls back to limits of its
+  own, so across a cluster of N servers a client gets up to N times each rate until Valkey is
+  back; nothing is ever unlimited, and Valkey being down never refuses a request by itself. Each
+  server keeps at most 100,000 keys then, and at that bound lets the least restrictive go
+  first, never a key that is actually being limited, so a flood of new keys can't reset anyone's
+  limit. Per-address limits can't stop a client that rotates addresses (an IPv6 network has
+  more than any limit covers, Valkey up or down): the bound on password guesses against an
+  account is the per-account sign-in pause, counted in Postgres (D-154), which a Valkey outage
+  doesn't touch, as it doesn't touch budgets (D-113).
 - Deliveries never use `HTTP_PROXY`/`HTTPS_PROXY`/`ALL_PROXY` (D-149): a host whose egress
   must go through a proxy can't send webhooks yet.
 - Vulnerabilities in dependencies are watched by daily RustSec/OSV checks and

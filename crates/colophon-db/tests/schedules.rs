@@ -432,6 +432,30 @@ async fn two_workers_running_one_schedule_at_once_publish_it_once() {
     db.drop().await;
 }
 
+/// Pads `project`'s production environment with `count` unreleased changesets and analyses the
+/// table, as a long-lived installation's statistics would be: a realistic table the planner
+/// knows the size of (D-219).
+async fn pad_and_analyse(db: &TestDb, project: Uuid, created_by: Uuid, count: i64) {
+    let owner = db.owner().await;
+    sqlx::query(
+        "INSERT INTO changesets (project_id, environment_id, id, title, hash, created_by)
+         SELECT e.project_id, e.id, gen_random_uuid(), 'Padding', decode(repeat('00', 32), 'hex'), $2
+         FROM environments e, generate_series(1, $3)
+         WHERE e.project_id = $1 AND e.slug = 'production'",
+    )
+    .bind(project)
+    .bind(created_by)
+    .bind(count)
+    .execute(&owner)
+    .await
+    .expect("padding");
+    sqlx::query("ANALYZE changesets")
+        .execute(&owner)
+        .await
+        .expect("analyse");
+    owner.close().await;
+}
+
 /// Changeset rows this transaction has read so far, by any kind of scan (an index scan's rows
 /// are counted against the index).
 async fn changesets_read(tx: &mut ProjectTransaction) -> i64 {
@@ -511,9 +535,12 @@ async fn seed(db: &TestDb, ready: &Ready, many: usize) {
 #[ignore = "needs the local stack: scripts/stack.sh up"]
 async fn lists_read_only_the_changesets_they_show_however_many_the_environment_had() {
     const MANY: usize = 300;
+    const PADDING: i64 = 20_000;
     let db = TestDb::new().await;
     let ready = ready(&db).await;
     seed(&db, &ready, MANY).await;
+    // A realistic table whose size the statistics know (D-219): the stale case is tested below.
+    pad_and_analyse(&db, ready.project, ready.alice, PADDING).await;
 
     // As the server runs it after a few calls: one generic plan for every project, from
     // estimates that can't know this project's size.
@@ -545,7 +572,7 @@ async fn lists_read_only_the_changesets_they_show_however_many_the_environment_h
     assert!(
         read <= shown,
         "a list of {shown} schedules read {read} changeset rows (the environment has {})",
-        MANY + 1
+        i64::try_from(MANY + 1).expect("small") + PADDING
     );
 
     // Every one of those changesets pins the entry: deleting it lists the newest few.
@@ -569,5 +596,57 @@ async fn lists_read_only_the_changesets_they_show_however_many_the_environment_h
         "the {shown} changesets stopping a deletion read {read} changeset rows"
     );
     drop(tx);
+    db.drop().await;
+}
+
+/// D-219: the list reads its schedules' changesets as one set, so the read stays one pass
+/// whatever the planner believes: here the statistics say the environment has two changesets when
+/// it has 301 (analysed early, autovacuum off for the table), the belief under which a lookup per
+/// schedule could scan the whole table once per schedule. As the application login, under
+/// row-level security, with the server's generic plan.
+#[tokio::test]
+#[ignore = "needs the local stack: scripts/stack.sh up"]
+async fn a_list_reads_its_changesets_in_one_pass_even_on_stale_statistics() {
+    const MANY: usize = 300;
+    let db = TestDb::new().await;
+    let ready = ready(&db).await;
+    let owner = db.owner().await;
+    sqlx::query("ALTER TABLE changesets SET (autovacuum_enabled = false)")
+        .execute(&owner)
+        .await
+        .expect("no autovacuum");
+    seed(&db, &ready, 1).await;
+    sqlx::query("ANALYZE changesets")
+        .execute(&owner)
+        .await
+        .expect("analyse while small");
+    seed(&db, &ready, MANY - 1).await;
+    let environment_changesets = i64::try_from(MANY + 1).expect("small");
+
+    let mut tx = enter(&db.app, ready.alice, ready.project).await;
+    sqlx::query("SET LOCAL plan_cache_mode = force_generic_plan")
+        .execute(&mut *tx.transaction)
+        .await
+        .expect("set");
+    let before = changesets_read(&mut tx).await;
+    let listed = schedules::list(&mut tx).await.expect("list");
+    let read = changesets_read(&mut tx).await - before;
+    let pending = listed.iter().filter(|s| s.state == "scheduled").count();
+    assert_eq!(
+        (pending, listed.len() - pending),
+        (100, 20),
+        "both halves are bounded"
+    );
+    assert!(
+        listed.iter().all(|s| s.title.starts_with("Menu ")),
+        "each keeps its title"
+    );
+    assert!(
+        read <= environment_changesets,
+        "a list of {} schedules read {read} changeset rows: more than one pass over the environment's {environment_changesets}",
+        listed.len()
+    );
+    drop(tx);
+    owner.close().await;
     db.drop().await;
 }

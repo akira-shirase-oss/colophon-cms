@@ -333,6 +333,26 @@ impl Worker {
                     if cancel.is_cancelled() {
                         return;
                     }
+                    // Delivery jobs whose worker stopped answering wait again, for the next
+                    // claim (D-237: the claim itself looks only at waiting jobs).
+                    match jobs::release_lapsed_all(
+                        &self.pool,
+                        jobs::RELEASE_BUDGET,
+                        colophon_db::Stop::new(&stopping),
+                    )
+                    .await
+                    {
+                        Ok(0) | Err(colophon_db::DbError::Stopped) => {}
+                        Ok(released) => {
+                            tracing::info!(released, "lapsed delivery leases released");
+                        }
+                        Err(error) => {
+                            tracing::warn!(error = %error, "releasing lapsed delivery jobs failed; trying again later");
+                        }
+                    }
+                    if cancel.is_cancelled() {
+                        return;
+                    }
                     match colophon_db::assets::expire(&self.pool, colophon_db::Stop::new(&stopping))
                         .await
                     {

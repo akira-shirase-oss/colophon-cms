@@ -628,6 +628,10 @@ async fn scheduled(owner: &common::Session, project: &str, seconds: i64) -> Stri
 /// the schedule row is consumed in the publish's own transaction.
 #[tokio::test]
 #[ignore = "needs the stack and scripts/migrate.sh"]
+#[expect(
+    clippy::too_many_lines,
+    reason = "one schedule told in order: blocked at a stop, rolled back, published once"
+)]
 async fn a_scheduled_publish_blocked_at_a_stop_ends_by_the_deadline_and_publishes_once() {
     // The API alone: the test runs the scheduler itself, on the worker pool's settings.
     let _server = common::Server::start_with(&[("COLOPHON_ROLE", "api")]).await;
@@ -671,36 +675,45 @@ async fn a_scheduled_publish_blocked_at_a_stop_ends_by_the_deadline_and_publishe
         colophon_worker::schedules::Scheduler::new(worker_pool.clone(), Duration::from_millis(200))
             .run(cancel.clone()),
     );
+    // The blocked statement's own start: the bound under test, every pool's 5 s statement
+    // timeout, runs from there, not from the stop (measured from the stop, the margin was only
+    // how soon this loop saw the wait, and a loaded run tipped over it once).
     let deadline = Instant::now() + Duration::from_secs(15);
-    loop {
-        let waiting: i64 = sqlx::query_scalar(
-            "SELECT count(*) FROM pg_stat_activity WHERE $1 = ANY(pg_blocking_pids(pid))",
+    let started_ago: f64 = loop {
+        let started: Option<f64> = sqlx::query_scalar(
+            "SELECT extract(epoch FROM clock_timestamp() - min(query_start))::float8
+             FROM pg_stat_activity WHERE $1 = ANY(pg_blocking_pids(pid))",
         )
         .bind(holder_pid)
         .fetch_one(&database)
         .await
         .expect("pg_stat_activity");
-        if waiting > 0 {
-            break;
+        if let Some(started) = started {
+            break started;
         }
         assert!(
             Instant::now() < deadline,
             "the scheduled publish never reached the releases"
         );
         tokio::time::sleep(Duration::from_millis(20)).await;
-    }
+    };
+    let statement_started = Instant::now()
+        .checked_sub(Duration::from_secs_f64(started_ago.max(0.0)))
+        .expect("the statement started after the process");
 
-    let stopped = Instant::now();
     cancel.cancel();
-    tokio::time::timeout(CLEANUP_DEADLINE, scheduler)
+    // At most the statement timeout from the statement's start, then its rollback: a second
+    // for the rollback and the loop's exit.
+    let bound = Duration::from_secs(5) + Duration::from_secs(1);
+    tokio::time::timeout(bound, scheduler)
         .await
-        .expect("the scheduler ends inside the cleanup deadline")
+        .expect("the scheduler ends within its statement's bound")
         .expect("joined");
-    let took = stopped.elapsed();
+    let took = statement_started.elapsed();
     holder.rollback().await.expect("release");
     assert!(
-        took < CLEANUP_DEADLINE,
-        "the blocked publish held the stop for {took:?}"
+        took < bound,
+        "the blocked publish ran {took:?} from its statement's start"
     );
     assert_eq!(
         releases().await,
