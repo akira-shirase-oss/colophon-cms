@@ -538,7 +538,7 @@ checksum = "0c9ea0ac24bc397ab3c98583a3c9ba74fa56b09a4449bbe172b9b1ddb016027a"
 
 [[package]]
 name = "colophon-api"
-version = "0.1.0-alpha.4"
+version = "0.1.0-alpha.5"
 dependencies = [
  "async-graphql",
  "aws-lc-rs",
@@ -571,7 +571,7 @@ dependencies = [
 
 [[package]]
 name = "colophon-auth"
-version = "0.1.0-alpha.4"
+version = "0.1.0-alpha.5"
 dependencies = [
  "aws-lc-rs",
  "base64 0.22.1",
@@ -587,7 +587,7 @@ dependencies = [
 
 [[package]]
 name = "colophon-bench"
-version = "0.1.0-alpha.4"
+version = "0.1.0-alpha.5"
 dependencies = [
  "colophon-api",
  "colophon-auth",
@@ -598,7 +598,7 @@ dependencies = [
 
 [[package]]
 name = "colophon-cli"
-version = "0.1.0-alpha.4"
+version = "0.1.0-alpha.5"
 dependencies = [
  "clap",
  "colophon-db",
@@ -617,7 +617,7 @@ dependencies = [
 
 [[package]]
 name = "colophon-db"
-version = "0.1.0-alpha.4"
+version = "0.1.0-alpha.5"
 dependencies = [
  "argon2",
  "aws-lc-rs",
@@ -637,7 +637,7 @@ dependencies = [
 
 [[package]]
 name = "colophon-domain"
-version = "0.1.0-alpha.4"
+version = "0.1.0-alpha.5"
 dependencies = [
  "base64 0.22.1",
  "jiff",
@@ -651,7 +651,7 @@ dependencies = [
 
 [[package]]
 name = "colophon-mcp"
-version = "0.1.0-alpha.4"
+version = "0.1.0-alpha.5"
 dependencies = [
  "proptest",
  "reqwest",
@@ -666,7 +666,7 @@ dependencies = [
 
 [[package]]
 name = "colophon-media"
-version = "0.1.0-alpha.4"
+version = "0.1.0-alpha.5"
 dependencies = [
  "image",
  "object_store",
@@ -677,7 +677,7 @@ dependencies = [
 
 [[package]]
 name = "colophon-server"
-version = "0.1.0-alpha.4"
+version = "0.1.0-alpha.5"
 dependencies = [
  "anyhow",
  "aws-lc-rs",
@@ -713,18 +713,18 @@ dependencies = [
 
 [[package]]
 name = "colophon-sim"
-version = "0.1.0-alpha.4"
+version = "0.1.0-alpha.5"
 dependencies = [
  "colophon-domain",
 ]
 
 [[package]]
 name = "colophon-version"
-version = "0.1.0-alpha.4"
+version = "0.1.0-alpha.5"
 
 [[package]]
 name = "colophon-worker"
-version = "0.1.0-alpha.4"
+version = "0.1.0-alpha.5"
 dependencies = [
  "aws-lc-rs",
  "bytes",
@@ -775,9 +775,9 @@ checksum = "a6ef517f0926dd24a1582492c791b6a4818a4d94e789a334894aa15b0d12f55c"
 
 [[package]]
 name = "cookie"
-version = "0.18.2"
+version = "0.18.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1a373e3602691c3cdea496d2f0ee5935151e6168fe87739483c463db1b2f2f87"
+checksum = "d55f2d6c30eeec7d5c6f98bd4395d4abb1895629eab97ee6522d340623615f8a"
 dependencies = [
  "percent-encoding",
  "time",

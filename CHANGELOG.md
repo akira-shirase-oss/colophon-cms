@@ -52,6 +52,47 @@ through `--version` and `GET /version`.
   magic links and sign-out take the project from the site's URL; they now switch to `colophon_audience`, which can
   reach only the audience's own tables, so the database itself refuses them any project's entries, revisions,
   assets, tokens, members or environments. Before, only review kept those statements to the audience tables.
+- `cookie` 0.18.3 (RUSTSEC-2026-0594). Not reachable: Colophon uses no private cookie jar and doesn't
+  fork.
+
+### Fixed
+
+- **The worker's claims and sweeps no longer slow down as an installation grows** (D-237). Claiming
+  deliveries read every waiting job, and every job of an environment, to take a handful; the asset
+  jobs' deadline sweep read the whole table every 10 seconds; the delivery sweeps read an
+  environment's history for each row they changed; and the media retention sweep counted a
+  project's open work once per old asset, which at a few tens of thousands of assets took longer
+  than it is allowed and never finished. Each now reads its own few rows. A delivery whose worker
+  died mid-attempt resumes up to 10 seconds after its lease runs out (30 seconds by default),
+  instead of at the next claim; its receipt says the update is pending meanwhile.
+- **The releases page and the schedules list stay fast as an environment grows** (D-219). Each page
+  now reads its releases' or schedules' changesets once as a set, so a database whose statistics
+  lag behind its growth can no longer make one page read every changeset once per row.
+- **A flood of new clients while Valkey is down can no longer reset everyone's rate limits**
+  (D-238). With Valkey away each server keeps limits of its own, at most 100,000 keys; at that bound
+  it used to start over, so a flood of new addresses handed every limited client, a password
+  guesser's address included, a fresh burst. It now lets the least restrictive keys go first and
+  keeps the ones actually being limited.
+- **Stopping the server no longer cuts background work off mid-transaction**. The worker's
+  sweeps, the pending-work fold, the media and table retention sweeps and the change-hint sender
+  each stopped the moment shutdown began, even while a database transaction was committing, so
+  whether that work was saved could stay unknown and the database logged "there is no
+  transaction in progress". Each now finishes the step it is on and stops before the next; a step
+  stuck behind a lock gives up on its own within four seconds and is rolled back, so shutdown still
+  completes inside its deadline. Background work still waiting for a database connection when shutdown
+  begins no longer starts at all, so it can't hold the stop up either (D-236).
+
+## [0.1.0-alpha.5] — 2026-11-22
+
+### Security
+
+- **The key that signs media addresses rotates** (D-233): `colophon admin media-key rotate` makes a new one, and the
+  one before it keeps verifying the links it signed; `--retire-previous` drops every older key at once, for a key
+  that leaked. Every restore makes a new key and retires its source's, so a staging copy restored from production
+  can no longer sign or verify production's links. Addresses now carry the key's id (`?kid=`): links signed
+  before upgrading (at most 15 minutes old) stop working at the upgrade. Each rotation is recorded, never the key.
+  A server reads the keys one read at a time, so an older read can never bring back a key a rotation retired.
+  Upgrading runs migration 0086 (it works under a non-superuser owner such as Neon's, D-234).
 
 ## [0.1.0-alpha.4] — 2026-11-22
 
@@ -183,11 +224,6 @@ through `--version` and `GET /version`.
 
 ### Security
 
-- The key that signs media addresses rotates (D-233): `colophon admin media-key rotate` makes a new one, and the
-  one before it keeps verifying the links it signed; `--retire-previous` drops every older key at once, for a key
-  that leaked. Every restore makes a new key and retires its source's, so a staging copy restored from production
-  can no longer sign or verify production's links. Addresses now carry the key's id (`?kid=`): links signed
-  before upgrading (at most 15 minutes old) stop working at the upgrade. Each rotation is recorded, never the key.
 - A project API token is held to its creator's role as it is now (D-228): demoting the person who
   made it narrows it at its next request, and removing them (or their leaving) revokes it, with a
   `token.revoked` audit row giving the reason. Before, a removed owner's token kept working.

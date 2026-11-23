@@ -102,12 +102,15 @@ pub struct Claimed {
 /// claim); how many. A sweep never waits: it takes only the rows it can lock at once (`SKIP
 /// LOCKED`), and a job another transaction holds (a release superseding it, a worker finishing
 /// it) is the next pass's, so the sweep can never be part of a lock cycle (CI 44719897863: two
-/// sweeps and a supersede, each locking rows in its own order, deadlocked).
-pub async fn expire(pool: &PgPool) -> Result<u64, DbError> {
-    let mut transaction = worker(pool).await?;
+/// sweeps and a supersede, each locking rows in its own order, deadlocked). Each row it takes is
+/// updated by its key and generation (D-237): on the key alone the planner, taking a project and an
+/// environment as independent, found rows through `jobs_by_generation` on the environment and read
+/// every job of the environment for each.
+pub async fn expire(pool: &PgPool, stop: crate::Stop<'_>) -> Result<u64, DbError> {
+    let mut transaction = crate::transactions::background_worker(pool, stop).await?;
     let expired = sqlx::query!(
         "WITH due AS (
-             SELECT project_id, environment_id, id FROM jobs
+             SELECT project_id, environment_id, id, generation FROM jobs
              WHERE deadline_at <= now() AND status IN ('pending', 'retrying', 'running')
                AND (status <> 'running' OR lease_expires_at < now())
              ORDER BY id
@@ -116,7 +119,8 @@ pub async fn expire(pool: &PgPool) -> Result<u64, DbError> {
          UPDATE jobs j SET status = 'failed', last_error = 'ran out of time', lease_owner = NULL,
                            lease_expires_at = NULL, updated_at = now(), finished_at = now()
          FROM due
-         WHERE j.project_id = due.project_id AND j.environment_id = due.environment_id AND j.id = due.id"
+         WHERE j.project_id = due.project_id AND j.environment_id = due.environment_id AND j.id = due.id
+           AND j.generation = due.generation"
     )
     .execute(&mut *transaction)
     .await
@@ -126,26 +130,45 @@ pub async fn expire(pool: &PgPool) -> Result<u64, DbError> {
 }
 
 /// Claims up to `limit` due jobs for `owner`, a worker at `location`, for `lease`: waiting jobs
-/// whose time has come, and running ones whose lease ran out, within their lifetime, whose
-/// destination has no other job in flight under a live lease (one announcement in flight per
-/// destination, D-047) and isn't a probe pinned to another location (D-051). Rows another
-/// worker is claiming are skipped, not waited for.
+/// whose time has come, within their lifetime, whose destination has no other job in flight
+/// under a live lease (one announcement in flight per destination, D-047) and isn't a probe
+/// pinned to another location (D-051). Rows another worker is claiming are skipped, not waited
+/// for.
+///
+/// A claim reads a few blocks however large the backlog, the history and the installation
+/// (D-237): waiting jobs only, by an ordered scan of `jobs_due` that stops at the limit; each
+/// claimed job found by its key and generation carried out of `due`, and its destination's
+/// fields by scalar subqueries on the destination's full key (joining `destinations` on the
+/// environment alone made the planner find each claimed job by reading every job of its
+/// environment). Planned for its own limit every call (`plan_cache_mode = force_custom_plan`):
+/// a generic plan, which a prepared statement settles on after five calls, can't know `LIMIT
+/// $3` is a handful, and read every destination of the installation twice (1,650 buffers a claim
+/// at 12,000 destinations, against 309) or every job (36,000) for the UPDATE's join. A job whose worker stopped answering is made
+/// waiting again by [`release_lapsed`] on the sweep's interval, rather than looked for here: an
+/// `OR` over running jobs whose lease ran out could use no index in order, so every claim read
+/// and sorted the whole backlog to keep a handful (631-655 blocks a claim at 6,000 waiting).
 pub async fn claim(
     pool: &PgPool,
     owner: &str,
     location: &str,
     lease: Duration,
     limit: i64,
+    stop: crate::Stop<'_>,
 ) -> Result<Vec<Claimed>, DbError> {
-    let mut transaction = worker(pool).await?;
+    // A background unit: a stop while it waits for a connection ends it, nothing claimed.
+    let mut transaction = crate::transactions::background_worker(pool, stop).await?;
+    // Planned for this call's limit every time, never once for all (see above).
+    sqlx::query("SET LOCAL plan_cache_mode = force_custom_plan")
+        .execute(&mut *transaction)
+        .await
+        .map_err(DbError::from_query)?;
     let lease_ms = i64::try_from(lease.as_millis()).unwrap_or(i64::MAX);
     let claimed = sqlx::query_as!(
         Claimed,
-        "WITH due AS (
-             SELECT j.project_id, j.environment_id, j.id
+        r#"WITH due AS (
+             SELECT j.project_id, j.environment_id, j.id, j.destination_id, j.generation
              FROM jobs j
-             WHERE ((j.status IN ('pending', 'retrying') AND j.next_attempt_at <= now())
-                    OR (j.status = 'running' AND j.lease_expires_at < now()))
+             WHERE j.status IN ('pending', 'retrying') AND j.next_attempt_at <= now()
                AND j.deadline_at > now()
                AND NOT EXISTS (
                    SELECT 1 FROM jobs busy
@@ -165,11 +188,17 @@ pub async fn claim(
          UPDATE jobs j SET status = 'running', lease_owner = $1,
                            lease_expires_at = now() + make_interval(secs => $2::bigint / 1000.0),
                            lease_generation = j.lease_generation + 1, attempts = j.attempts + 1, updated_at = now()
-         FROM due, destinations d
+         FROM due
          WHERE j.project_id = due.project_id AND j.environment_id = due.environment_id AND j.id = due.id
-           AND d.project_id = j.project_id AND d.environment_id = j.environment_id AND d.id = j.destination_id
-         RETURNING j.project_id, j.environment_id, j.id, j.destination_id, d.kind, d.url, j.generation,
-                   j.idempotency_key, j.attempts, j.lease_generation, j.deadline_at",
+           AND j.generation = due.generation
+         RETURNING j.project_id, j.environment_id, j.id, j.destination_id,
+                   (SELECT d.kind FROM destinations d
+                    WHERE d.project_id = j.project_id AND d.environment_id = j.environment_id
+                      AND d.id = j.destination_id) AS "kind!",
+                   (SELECT d.url FROM destinations d
+                    WHERE d.project_id = j.project_id AND d.environment_id = j.environment_id
+                      AND d.id = j.destination_id) AS "url!",
+                   j.generation, j.idempotency_key, j.attempts, j.lease_generation, j.deadline_at"#,
         owner,
         lease_ms,
         limit.clamp(1, 100),
@@ -180,6 +209,72 @@ pub async fn claim(
     .map_err(DbError::from_query)?;
     transaction.commit().await.map_err(DbError::from_query)?;
     Ok(claimed)
+}
+
+/// How many lapsed jobs one [`release_lapsed`] pass makes waiting again.
+pub const RELEASE_BATCH: i64 = 200;
+
+/// The longest one sweep keeps starting [`release_lapsed`] passes: under the worker's 10 s sweep
+/// interval, so a sweep never runs into the next.
+pub const RELEASE_BUDGET: Duration = Duration::from_secs(5);
+
+/// Makes delivery jobs whose lease ran out waiting again (D-237): the worker that held one
+/// stopped answering (a crash, a kill, a partition) and the job is anyone's. It goes back to
+/// `retrying` exactly as it was otherwise, its place kept (`next_attempt_at` was due when it was
+/// claimed, so the next [`claim`] takes it before newer work), its attempts, deadline, idempotency
+/// key and generation untouched: the attempt it lost may have reached the destination, so the
+/// next one re-announces under the same key (F03), and a newer release supersedes it as it does
+/// any waiting job. Its old holder's late [`finish`] is refused, since that needs the job running
+/// under that holder's lease and generation (F03, D-046). Runs on the worker's sweep interval, so
+/// such a job is claimed again within that interval of its lease running out. Never waits: a job
+/// another transaction holds is the next pass's (`SKIP LOCKED`, in id order, the one order every
+/// multi-row lock on the work tables uses). A pass is one bounded statement of at most
+/// [`RELEASE_BATCH`] jobs under the background bounds (D-236), each updated by its key and
+/// generation (as [`expire`]'s). How many it released.
+pub async fn release_lapsed(pool: &PgPool, stop: crate::Stop<'_>) -> Result<u64, DbError> {
+    let mut transaction = crate::transactions::background_worker(pool, stop).await?;
+    let released = sqlx::query!(
+        "WITH lapsed AS (
+             SELECT project_id, environment_id, id, generation FROM jobs
+             WHERE status = 'running' AND lease_expires_at < now() AND deadline_at > now()
+             ORDER BY id
+             LIMIT $1
+             FOR UPDATE SKIP LOCKED
+         )
+         UPDATE jobs j SET status = 'retrying', lease_owner = NULL, lease_expires_at = NULL,
+                           updated_at = now()
+         FROM lapsed
+         WHERE j.project_id = lapsed.project_id AND j.environment_id = lapsed.environment_id
+           AND j.id = lapsed.id AND j.generation = lapsed.generation",
+        RELEASE_BATCH
+    )
+    .execute(&mut *transaction)
+    .await
+    .map_err(DbError::from_query)?
+    .rows_affected();
+    transaction.commit().await.map_err(DbError::from_query)?;
+    Ok(released)
+}
+
+/// One sweep's release of lapsed delivery jobs: [`release_lapsed`] passes, each its own short
+/// transaction, back to back until one comes back short of [`RELEASE_BATCH`], `stop` is requested
+/// (asked between passes and before each begins, D-236) or `budget` has gone by. How many it
+/// released.
+pub async fn release_lapsed_all(
+    pool: &PgPool,
+    budget: Duration,
+    stop: crate::Stop<'_>,
+) -> Result<u64, DbError> {
+    let started = std::time::Instant::now();
+    let full = u64::try_from(RELEASE_BATCH).unwrap_or(u64::MAX);
+    let mut total = 0;
+    loop {
+        let released = release_lapsed(pool, stop).await?;
+        total += released;
+        if released < full || stop.requested() || started.elapsed() >= budget {
+            return Ok(total);
+        }
+    }
 }
 
 /// What a release announcement says.

@@ -73,7 +73,9 @@ async fn enter(pool: &PgPool, identity: Uuid, project: Uuid) -> ProjectTransacti
 /// Runs one pump pass, as a server's pump does every 100 ms (D-180): what writers queued is
 /// sent now.
 async fn pump(pool: &PgPool) -> u64 {
-    events::pump(pool).await.expect("the pump runs")
+    events::pump(pool, colophon_db::Stop::NEVER)
+        .await
+        .expect("the pump runs")
 }
 
 /// The next decoded hint; fails if none arrives or the payload doesn't parse.

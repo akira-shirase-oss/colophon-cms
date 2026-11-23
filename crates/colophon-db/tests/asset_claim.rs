@@ -152,7 +152,9 @@ async fn a_claim_reads_its_limit_not_the_table() {
     .expect("a lapsed lease");
     // The sweep makes it waiting again, keeping its place.
     assert_eq!(
-        assets::release_lapsed(&db.app).await.expect("released"),
+        assets::release_lapsed(&db.app, colophon_db::Stop::NEVER)
+            .await
+            .expect("released"),
         1,
         "the lapsed lease, and only it"
     );
@@ -165,7 +167,7 @@ async fn a_claim_reads_its_limit_not_the_table() {
     flush_app(&db).await;
 
     let (scans_before, tuples_before) = reads(&owner).await;
-    let claimed = assets::claim(&db.app, "worker-a", HOUR, 4)
+    let claimed = assets::claim(&db.app, "worker-a", HOUR, 4, colophon_db::Stop::NEVER)
         .await
         .expect("claim");
     flush_app(&db).await;
@@ -242,7 +244,7 @@ async fn a_claim_never_walks_finished_jobs_leases() {
     flush_app(&db).await;
 
     let before = index_reads(&owner, "asset_jobs_leased").await;
-    let claimed = assets::claim(&db.app, "worker-a", HOUR, 4)
+    let claimed = assets::claim(&db.app, "worker-a", HOUR, 4, colophon_db::Stop::NEVER)
         .await
         .expect("claim");
     flush_app(&db).await;
@@ -261,9 +263,13 @@ async fn a_claim_never_walks_finished_jobs_leases() {
 
 /// A pass is bounded, a sweep is not: 250 lapsed leases are all released in one sweep, a
 /// pass of 200 then one of 50, and a live lease is never touched; a stop asked for between
-/// passes ends the sweep without starting another.
+/// passes ends the sweep without starting another, and one asked for before it begins nothing.
 #[tokio::test]
 #[ignore = "needs the local stack: scripts/stack.sh up"]
+#[expect(
+    clippy::too_many_lines,
+    reason = "one sweep, a stop under way, and a stop before: one table's leases in order"
+)]
 async fn one_sweep_releases_every_lapsed_lease_a_bounded_pass_at_a_time() {
     let db = TestDb::new().await;
     one_upload(&db).await;
@@ -292,9 +298,8 @@ async fn one_sweep_releases_every_lapsed_lease_a_bounded_pass_at_a_time() {
     .execute(&owner)
     .await
     .expect("a live lease");
-    let never = || false;
     assert_eq!(
-        assets::release_lapsed_all(&db.app, assets::RELEASE_BUDGET, &never)
+        assets::release_lapsed_all(&db.app, assets::RELEASE_BUDGET, colophon_db::Stop::NEVER)
             .await
             .expect("a sweep"),
         250,
@@ -307,39 +312,96 @@ async fn one_sweep_releases_every_lapsed_lease_a_bounded_pass_at_a_time() {
             .expect("the live job");
     assert_eq!(live, "running", "a live lease is never released");
 
-    // Another 250, and a stop asked for during the first pass: the sweep ends after it.
+    // Another 250, and a stop asked for while the first pass is under way (its release waits on
+    // the table, held): the pass finishes, and the sweep ends after it.
     strand().await;
-    let asked = std::sync::atomic::AtomicUsize::new(0);
-    let stopped = || {
-        asked.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-        true
+    let lapsed = async || -> i64 {
+        sqlx::query_scalar(
+            "SELECT count(*) FROM asset_jobs WHERE status = 'running' AND lease_owner = 'gone'",
+        )
+        .fetch_one(&owner)
+        .await
+        .expect("the lapsed leases")
     };
-    assert_eq!(
-        assets::release_lapsed_all(&db.app, assets::RELEASE_BUDGET, &stopped)
+    let stop_now = std::sync::atomic::AtomicBool::new(false);
+    let stopped = || stop_now.load(std::sync::atomic::Ordering::SeqCst);
+    let mut holder = owner.begin().await.expect("begin");
+    sqlx::query("LOCK TABLE asset_jobs IN SHARE MODE")
+        .execute(&mut *holder)
+        .await
+        .expect("hold the table");
+    let driver = async {
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        loop {
+            let waiting: i64 = sqlx::query_scalar(
+                "SELECT count(*) FROM pg_stat_activity
+                 WHERE datname = current_database() AND wait_event_type = 'Lock'
+                   AND query LIKE '%asset_jobs%' AND pid <> pg_backend_pid()",
+            )
+            .fetch_one(&owner)
             .await
-            .expect("a stopped sweep"),
-        u64::try_from(assets::RELEASE_BATCH).expect("a count"),
-        "one pass, then the stop"
+            .expect("pg_stat_activity");
+            if waiting > 0 {
+                break;
+            }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "the pass never waited"
+            );
+            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        }
+        stop_now.store(true, std::sync::atomic::Ordering::SeqCst);
+        holder.rollback().await.expect("release the table");
+    };
+    let (released, ()) = tokio::join!(
+        assets::release_lapsed_all(
+            &db.app,
+            assets::RELEASE_BUDGET,
+            colophon_db::Stop::new(&stopped),
+        ),
+        driver
     );
     assert_eq!(
-        asked.load(std::sync::atomic::Ordering::SeqCst),
-        1,
-        "asked once, between passes"
+        released.expect("a stopped sweep"),
+        u64::try_from(assets::RELEASE_BATCH).expect("a count"),
+        "the pass under way finished, then the stop"
+    );
+    assert_eq!(
+        lapsed().await,
+        250 - assets::RELEASE_BATCH,
+        "no second pass"
+    );
+
+    // A stop asked for before the sweep: it begins nothing (colophon_db::begin_background).
+    assert!(matches!(
+        assets::release_lapsed_all(
+            &db.app,
+            assets::RELEASE_BUDGET,
+            colophon_db::Stop::new(&stopped),
+        )
+        .await,
+        Err(colophon_db::DbError::Stopped)
+    ));
+    assert_eq!(
+        lapsed().await,
+        250 - assets::RELEASE_BATCH,
+        "nothing released"
     );
     owner.close().await;
     db.drop().await;
 }
 
-/// Blocks `asset_jobs` and `assets` were read for, heap and index, as the stats now say.
-async fn blocks(pool: &PgPool) -> i64 {
+/// Blocks the backend `pid` read or found in shared buffers for relations, by its own I/O
+/// statistics: nothing another backend did (an autovacuum, another test) is counted.
+async fn own_reads(pool: &PgPool, pid: i32) -> i64 {
     sqlx::query_scalar(
-        "SELECT coalesce(sum(coalesce(heap_blks_hit, 0) + coalesce(heap_blks_read, 0)
-                          + coalesce(idx_blks_hit, 0) + coalesce(idx_blks_read, 0)), 0)::int8
-         FROM pg_statio_user_tables WHERE relname IN ('asset_jobs', 'assets')",
+        "SELECT coalesce(sum(coalesce(hits, 0) + coalesce(reads, 0)), 0)::int8
+         FROM pg_stat_get_backend_io($1) WHERE object = 'relation' AND context = 'normal'",
     )
+    .bind(pid)
     .fetch_one(pool)
     .await
-    .expect("pg_statio_user_tables")
+    .expect("pg_stat_get_backend_io")
 }
 
 /// A claim's reads stay a handful of blocks at the size the assets smoke reaches on a fast
@@ -349,19 +411,32 @@ async fn blocks(pool: &PgPool) -> i64 {
 /// (457,559 buffers measured at this size); and the generic plan, not knowing `LIMIT $3` is a
 /// handful, scanned all of `asset_jobs` for the UPDATE's join (1,130 blocks here, and 1,160 with
 /// the subqueries but without the claim's `force_custom_plan`: that setting carries the fix).
-/// With both, a claim reads only what the snapshot the smoke holds open makes it step over: the
-/// due-index entries of the jobs that finished under it (241 blocks for 500).
+/// With both, a claim reads its own work and a step over what died under the snapshot the
+/// smoke holds open.
+///
+/// Measured on the claim's backend alone (`pg_stat_get_backend_io`), after a warming claim, so
+/// nothing another session reads is counted: CI 44894906554 failed this at 708 blocks when the
+/// test still counted every backend's reads of the two tables (an autovacuum landing in the
+/// window is the likely reading). Another backend's read, flushed inside the window, now
+/// shows that: counted table-wide it made the claim 893 blocks; counted on the claim's backend
+/// it changes nothing (229-234 over six runs).
 ///
 /// The lesson for every fixture: seed the cardinalities production has. Here that's many
 /// assets in one environment, each with its own jobs. The other tests in this file name a
 /// single asset from every job, which made the join to `assets` one row and hid this twice.
 #[tokio::test]
 #[ignore = "needs the local stack: scripts/stack.sh up"]
+#[expect(
+    clippy::too_many_lines,
+    reason = "one fixture at production's cardinalities, then one measured claim"
+)]
 async fn a_claim_reads_a_handful_of_blocks_at_a_fast_runners_scale() {
     const ASSETS: i64 = 23_000;
     const WAITING: i64 = 3_000;
     /// Finished while the snapshot is open: a few seconds' worth on a fast runner.
     const RECENT: i64 = 500;
+    /// The most one claim of four may read on its own backend (see the assertion).
+    const MAX_CLAIM_BLOCKS: i64 = 500;
     let db = TestDb::new().await;
     one_upload(&db).await;
     let owner = db.owner().await;
@@ -402,7 +477,7 @@ async fn a_claim_reads_a_handful_of_blocks_at_a_fast_runners_scale() {
         .execute(&mut *seed)
         .await
         .expect("the history finished");
-    assets::claim(&db.app, "worker-a", HOUR, 1)
+    assets::claim(&db.app, "worker-a", HOUR, 1, colophon_db::Stop::NEVER)
         .await
         .expect("a first claim");
     // A snapshot held through the claim, as the smoke's are (up to 3.7 s), and the uploads
@@ -437,14 +512,36 @@ async fn a_claim_reads_a_handful_of_blocks_at_a_fast_runners_scale() {
     }
     flush_app(&db).await;
 
+    let pid: i32 = sqlx::query_scalar("SELECT pg_backend_pid()")
+        .fetch_one(&db.app)
+        .await
+        .expect("the claim's backend");
+    // One unmeasured claim first, on this session's plan settings, after the ANALYZE: catalog,
+    // relation and plan caches are hot for the measured one, so what it reads is its own work.
+    assets::claim(&db.app, "worker-a", HOUR, 1, colophon_db::Stop::NEVER)
+        .await
+        .expect("a warming claim");
+    flush_app(&db).await;
     let (scans_before, _) = reads(&owner).await;
-    let before = blocks(&owner).await;
-    let claimed = assets::claim(&db.app, "worker-a", HOUR, 4)
+    let before = own_reads(&owner, pid).await;
+    // Another backend reads these tables inside the window, as an autovacuum may after a
+    // burst of updates, or any other session: the likely reading of CI 44894906554's 708
+    // blocks, when the test counted every backend's reads of both tables as the claim's. Only
+    // the claim's own backend is measured now, so this read changes nothing.
+    {
+        let mut other = owner.acquire().await.expect("another backend");
+        sqlx::query("SELECT sum(size_bytes) FROM assets WHERE file_name LIKE 'f%'")
+            .execute(&mut *other)
+            .await
+            .expect("another backend's read");
+        flush(&mut other).await;
+    }
+    let claimed = assets::claim(&db.app, "worker-a", HOUR, 4, colophon_db::Stop::NEVER)
         .await
         .expect("claim");
     flush_app(&db).await;
     let (scans_after, _) = reads(&owner).await;
-    let read = blocks(&owner).await - before;
+    let read = own_reads(&owner, pid).await - before;
 
     assert_eq!(claimed.len(), 4, "four waiting jobs claimed");
     // The worker's own transaction set the plan for this call: generic is the session's.
@@ -454,13 +551,179 @@ async fn a_claim_reads_a_handful_of_blocks_at_a_fast_runners_scale() {
         0,
         "a claim scanned a whole table ({read} blocks)"
     );
-    // What an open snapshot costs a claim: a step over each entry that died under it (they
-    // can't be marked dead until it closes), so at most one block each, and never the table's.
+    // The claim's own work, counted on its backend alone, its caches warm: about 214 blocks
+    // with nothing dead under the snapshot (planning, the four rows' index entries, the
+    // triggers), 229-234 with the 500 that finished under it (measured six times each). A
+    // whole-table read or a per-asset join is thousands to hundreds of thousands; 500 sits
+    // between with room on both sides.
     assert!(
-        read <= RECENT,
+        read <= MAX_CLAIM_BLOCKS,
         "a claim read {read} blocks for four jobs ({RECENT} finished under the snapshot)"
     );
     snapshot.rollback().await.expect("release the snapshot");
+    owner.close().await;
+    db.drop().await;
+}
+
+/// The deadline sweep (`assets::expire`, every 10 s on every worker) reads the jobs that ran out
+/// of time, not the table (D-237). At the size the assets smoke reaches, 23,000 jobs (20,000
+/// finished, 3,000 waiting) and five past their deadline, it reads a handful of blocks on its
+/// own backend (about 120, against 1,041 before). It failed first on main: `asset_jobs` had no index on the open jobs' deadline
+/// (`jobs` has `jobs_open_by_deadline`), so every sweep read the whole table.
+#[tokio::test]
+#[ignore = "needs the local stack: scripts/stack.sh up"]
+async fn the_deadline_sweep_reads_the_expired_not_the_table() {
+    const JOBS: i64 = 23_000;
+    const WAITING: i64 = 3_000;
+    const EXPIRED: i64 = 5;
+    /// The most one sweep that fails five jobs may read on its own backend: finding them is a
+    /// few blocks of the open jobs' deadline index; updating them (their keys, their index
+    /// entries, the hint and payload triggers) is the rest, about 100 in all, at any table size.
+    const MAX_EXPIRE_BLOCKS: i64 = 250;
+    let db = TestDb::new().await;
+    one_upload(&db).await;
+    let owner = db.owner().await;
+    sqlx::query(
+        "INSERT INTO assets (project_id, environment_id, id, file_name, declared_type, size_bytes,
+                             quarantine_key, created_by)
+         SELECT a.project_id, a.environment_id, gen_random_uuid(), 'f' || n || '.png', 'image/png',
+                1024, 'quarantine/f' || n, a.created_by
+         FROM assets a, generate_series(1, $1) n",
+    )
+    .bind(JOBS)
+    .execute(&owner)
+    .await
+    .expect("assets");
+    sqlx::query(
+        "INSERT INTO asset_jobs (project_id, environment_id, id, asset_id, kind, idempotency_key,
+                                 next_attempt_at, deadline_at)
+         SELECT a.project_id, a.environment_id, gen_random_uuid(), a.id, 'verify',
+                'job:' || a.file_name, now() - interval '2 hours', now() + interval '1 hour'
+         FROM assets a WHERE a.file_name LIKE 'f%'",
+    )
+    .execute(&owner)
+    .await
+    .expect("one job each");
+    sqlx::query(
+        "UPDATE asset_jobs SET status = 'succeeded', finished_at = now() - interval '1 hour'
+         WHERE id IN (SELECT id FROM asset_jobs WHERE idempotency_key LIKE 'job:%'
+                      ORDER BY idempotency_key LIMIT $1)",
+    )
+    .bind(JOBS - WAITING)
+    .execute(&owner)
+    .await
+    .expect("the history finished");
+    sqlx::raw_sql("VACUUM ANALYZE asset_jobs, assets")
+        .execute(&owner)
+        .await
+        .expect("vacuum");
+    let pid: i32 = sqlx::query_scalar("SELECT pg_backend_pid()")
+        .fetch_one(&db.app)
+        .await
+        .expect("the sweep's backend");
+    // An unmeasured sweep with nothing to expire: caches hot for the measured one.
+    assert_eq!(
+        assets::expire(&db.app, colophon_db::Stop::NEVER)
+            .await
+            .expect("a warming sweep"),
+        0
+    );
+    sqlx::query(
+        "UPDATE asset_jobs SET deadline_at = now() - interval '1 minute'
+         WHERE id IN (SELECT id FROM asset_jobs WHERE status = 'pending'
+                      AND idempotency_key LIKE 'job:%' ORDER BY idempotency_key LIMIT $1)",
+    )
+    .bind(EXPIRED)
+    .execute(&owner)
+    .await
+    .expect("five out of time");
+    flush_app(&db).await;
+    let before = own_reads(&owner, pid).await;
+    let expired = assets::expire(&db.app, colophon_db::Stop::NEVER)
+        .await
+        .expect("the sweep");
+    flush_app(&db).await;
+    let read = own_reads(&owner, pid).await - before;
+    eprintln!("one deadline sweep at {JOBS} jobs, {EXPIRED} expired: {read} blocks");
+    assert_eq!(expired, u64::try_from(EXPIRED).expect("a count"));
+    assert!(
+        read <= MAX_EXPIRE_BLOCKS,
+        "a deadline sweep read {read} blocks at {JOBS} jobs"
+    );
+    owner.close().await;
+    db.drop().await;
+}
+
+/// The expiry enqueue (`assets::enqueue_expired`, the asset retention sweep's first half) counts
+/// each project's open work once a pass, not once per asset (D-237). At 23,000 collectable assets
+/// in a project with 3,000 open asset jobs, the count ran for every asset before the limit
+/// applied: 4.7 million buffers and 7.5 s a pass, past the background units' 4 s statement bound
+/// (D-236), so the sweep could never enqueue an expiry at that size. Counted once per project, a
+/// pass reads its per-asset checks and the project's open work once.
+#[tokio::test]
+#[ignore = "needs the local stack: scripts/stack.sh up"]
+async fn the_expiry_enqueue_counts_a_project_s_open_work_once() {
+    const ASSETS: i64 = 23_000;
+    const WAITING: i64 = 3_000;
+    /// The most one pass enqueueing 200 may read: about 3 a collectable asset and the
+    /// project's open work once (about 99,000 measured here), against 4.7 million before.
+    const MAX_ENQUEUE_BLOCKS: i64 = 150_000;
+    let db = TestDb::new().await;
+    one_upload(&db).await;
+    let owner = db.owner().await;
+    sqlx::query(
+        "INSERT INTO assets (project_id, environment_id, id, file_name, declared_type, size_bytes,
+                             quarantine_key, created_by, created_at)
+         SELECT a.project_id, a.environment_id, gen_random_uuid(), 'f' || n || '.png', 'image/png',
+                1024, 'quarantine/f' || n, a.created_by, now() - interval '2 days'
+         FROM assets a, generate_series(1, $1) n",
+    )
+    .bind(ASSETS)
+    .execute(&owner)
+    .await
+    .expect("old assets");
+    sqlx::query(
+        "INSERT INTO asset_jobs (project_id, environment_id, id, asset_id, kind, idempotency_key,
+                                 next_attempt_at, deadline_at, status, finished_at)
+         SELECT a.project_id, a.environment_id, gen_random_uuid(), a.id, 'verify',
+                'job:' || a.file_name, now() - interval '2 days', now() + interval '1 hour',
+                CASE WHEN row_number() OVER (ORDER BY a.file_name) <= $1 THEN 'pending'
+                     ELSE 'succeeded' END,
+                CASE WHEN row_number() OVER (ORDER BY a.file_name) <= $1 THEN NULL
+                     ELSE now() - interval '1 day' END
+         FROM assets a WHERE a.file_name LIKE 'f%'",
+    )
+    .bind(WAITING)
+    .execute(&owner)
+    .await
+    .expect("one job each, 3,000 still open");
+    sqlx::raw_sql("VACUUM ANALYZE assets, asset_jobs")
+        .execute(&owner)
+        .await
+        .expect("vacuum");
+    let pid: i32 = sqlx::query_scalar("SELECT pg_backend_pid()")
+        .fetch_one(&db.app)
+        .await
+        .expect("the sweep's backend");
+    flush_app(&db).await;
+    let before = own_reads(&owner, pid).await;
+    let enqueued = assets::enqueue_expired(
+        &db.app,
+        OffsetDateTime::now_utc() - time::Duration::days(1),
+        OffsetDateTime::now_utc() + HOUR,
+        200,
+        i64::MAX,
+        colophon_db::Stop::NEVER,
+    )
+    .await;
+    flush_app(&db).await;
+    let read = own_reads(&owner, pid).await - before;
+    eprintln!("one expiry enqueue at {ASSETS} collectable assets: {read} blocks");
+    assert_eq!(enqueued.expect("the enqueue, inside its bounds"), 200);
+    assert!(
+        read <= MAX_ENQUEUE_BLOCKS,
+        "an expiry enqueue read {read} blocks at {ASSETS} assets"
+    );
     owner.close().await;
     db.drop().await;
 }

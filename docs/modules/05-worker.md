@@ -17,9 +17,22 @@ Step 2.3 (D-046): `crates/colophon-worker`, run by `colophon-server --role worke
 
 - **The outbox:** committing a release inserts one job per enabled destination in the same transaction, and
   supersedes that destination's older jobs that haven't started (migration 0009).
-- **Claims and leases:** `colophon_db::jobs::claim` fails jobs past their one-hour lifetime, then claims due jobs and
-  running ones whose lease ran out, with `FOR UPDATE SKIP LOCKED`, raising the lease generation each time; `finish`
-  lands only for the current owner and lease generation. All of it runs as `colophon_worker`.
+- **Claims and leases:** `colophon_db::jobs::claim` claims due waiting jobs within their one-hour lifetime, with
+  `FOR UPDATE SKIP LOCKED`, raising the lease generation each time; `finish` lands only for the current owner and
+  lease generation. All of it runs as `colophon_worker`. A claim reads its own handful of jobs whatever the backlog,
+  the history or the installation (D-237): an ordered scan of `jobs_due` that stops at the limit, each claimed job
+  found by its key and generation and its destination's fields by the destination's full key, planned for its own
+  limit every call (`plan_cache_mode = force_custom_plan`; a generic plan read every destination of the
+  installation). `colophon-db/tests/job_claims.rs` measures it on its own backend at 6,000 waiting, at 30 and 90
+  releases an environment, and across 12,000 destinations.
+- **A lapsed lease is the sweep's to release (D-237).** A running job whose lease ran out (its worker crashed or
+  was cut off) goes back to `retrying` in `jobs::release_lapsed`, run in the sweeps below as the worker starts and
+  every 10 s, so a dead worker's delivery resumes up to 10 s after its lease runs out (30 s by default) instead of
+  at the next claim. Nothing else of the job changes: its place, its attempt count, its deadline, its idempotency
+  key and its generation, so the next attempt re-announces under the same key (F03), counts as the attempt it
+  always did, and is superseded by a newer release like any waiting job; its old holder's late `finish` is refused.
+  It takes rows in id order under `SKIP LOCKED` (the one order every multi-row lock on the work tables uses), 200
+  a pass, passes back to back for up to 5 s, begun through `background_worker` (D-236).
 - **Attempts:** a supersession check, then a `release.committed` POST with `Idempotency-Key` and
   `Colophon-Generation`, a 10-second deadline, no redirects and no transaction open; the outcome follows
   `colophon_domain::job` (2xx succeeds; 408, 425, 429, 500, 502, 503 and 504 retry with full-jitter backoff up to five
@@ -31,8 +44,11 @@ Step 2.3 (D-046): `crates/colophon-worker`, run by `colophon-server --role worke
   proxy from the environment (`HTTP_PROXY`, `HTTPS_PROXY`, `ALL_PROXY`): a proxy resolves the destination itself,
   past the resolver, so the checks would no longer say where the request goes.
 - **The loop:** it claims as soon as a slot is free (eight by default) and sleeps only when there's nothing to do;
-  it fails jobs that ran out of time every 10 seconds; on shutdown it stops claiming and lets attempts finish within
-  the cleanup deadline.
+  every 10 seconds (and as it starts) it sweeps: delivery jobs that ran out of time fail (`jobs::expire`), lapsed
+  delivery leases are released (`jobs::release_lapsed_all`), asset jobs that ran out of time fail (`assets::expire`,
+  on the open asset jobs' deadline index, migration 0091), lapsed asset leases are released, budgets reconcile. The
+  sweeps update each row by its key and generation, never the environment's prefix (D-237). On shutdown it stops
+  claiming and lets attempts finish within the cleanup deadline.
 - **Its own database pool** (`COLOPHON_WORKER_DB_CONNECTIONS`, default 4), so deliveries can never take the
   connections editors' requests need. The first publishing load test found the worker sharing the API's pool: at a
   hundred deliveries a second, editors' requests queued behind it.
@@ -197,9 +213,57 @@ Each pool is a separate semaphore, so expensive work can never starve editorial 
 ### Retention (spec §27, D-135)
 - `colophon_worker::tables::Sweeper` runs beside the delivery loop and the scheduler on the worker's pool,
   ticking every `COLOPHON_TABLE_SWEEP_MS` (default 3_600_000 — hourly; 1 s to 24 h accepted). Each tick runs
-  `colophon_db::retention::sweep` up to 20 times, stopping when a pass removed nothing; a stalled tick is
-  abandoned at a 120-second deadline and retried whole next interval — every pass commits on its own, so a
-  partial tick is progress kept, never work to undo.
+  `colophon_db::retention::sweep` up to 20 times, stopping when a pass removed nothing; a tick starts no
+  pass after 120 seconds and the next interval carries on — every pass commits on its own, so a partial tick
+  is progress kept, never work to undo.
+- **Stopping never drops a transaction (D-236).** Every background loop (the delivery sweeps, both
+  claims, the payload fold, this sweep, the asset retention pass, the change-hint pump) hears a stop
+  only between its units: the unit under way runs to its end, since a unit dropped mid-COMMIT would
+  leave unknown whether it committed (the server logs "there is no transaction in progress" for the
+  ROLLBACK queued behind it).
+  - **Begun only while not stopping.** Every unit begins through `colophon_db::begin_background(pool,
+    stop)` (`background_worker` adds `SET LOCAL ROLE colophon_worker`): the wait for a connection and
+    the `BEGIN` are raced against the stop, asked every 25 ms. Dropping a `begin_tx` is safe at any
+    point (its task finishes the `BEGIN`, and a transaction nobody holds rolls back before its
+    connection is pooled again, D-217), so a unit still queued for a connection when the stop comes
+    never begins, and one stopped during its `BEGIN` rolls back before its first statement. Without
+    this a shutdown could wait on the worker pool's 2 s acquire timeout and then a whole statement.
+  - **Bounded server side.** `begin_background` applies `colophon_db::bound_background` (statements
+    4 s, lock waits 3 s) to every unit, the two claims (`jobs::claim`, `assets::claim`) included.
+    Those bound one statement, not a unit, so a unit of several (the table sweep's 20, the budget
+    reconciler's 3, the hint pump's 2, the lapsed-lease release's passes) also checks its `Stop`
+    before each statement after its first: told to stop, it rolls back explicitly
+    (`DbError::Stopped`, logged as nothing) and its loop runs it again next start. A loop's trailing
+    read (the fold's log length, the asset sweep's payload count) is skipped once stopping.
+  - **The bound after a stop.** At most the one statement a unit already began (4 s) and its
+    `ROLLBACK`, inside D-197's 5-second cleanup budget; never an acquire wait first. Only object-store
+    I/O, which no transaction holds, is still cut short by a stop. `tests/stopping.rs` proves each
+    part, every one of the table sweep's stop checks by itself included.
+- **A scheduled publish is an editorial publish, not a background unit.** `schedules::run` publishes a
+  release; it takes neither the 4-second bound nor a `Stop` (a large publish may need longer statements,
+  and a stop between its statements would roll back a release an editor scheduled). It keeps the HTTP
+  publish's own server-side bound, the 5 s `statement_timeout` every pool's connections carry (which
+  ends a lock wait too), and is counted under D-197 like a delivery attempt: shutdown waits for it up to
+  the cleanup deadline, then abandons it (the connection drops; Postgres rolls back an unfinished
+  transaction). Retrying is safe whatever happened: the publish locks its schedule row `FOR UPDATE SKIP
+  LOCKED` and marks it `published` in its own transaction, so a publish that committed is never
+  published again and one that didn't is still due at the next poll. The grace (25 s) plus the cleanup
+  budget (5 s) stays under the production unit's `TimeoutStopSec` (35 s), pinned by a unit test in
+  `colophon-server`, so a stop never relies on SIGKILL. `tests/stopping.rs` blocks a scheduled publish
+  on a held lock at the stop: the loop ends inside the deadline, the publish rolls back, and the next
+  start publishes it exactly once (one release, generation 1), and once more nothing.
+- **Repeated stops can't starve a backlog.** A stop rolls back only the pass under way, never the tick:
+  each pass commits on its own, and every start runs a tick at once. A full pass is a matter of
+  moments. Measured with `colophon-db/tests/retention.rs`'s
+  `a_full_pass_takes_moments_not_a_restart_interval` (which fails past 5 s): one pass deleting 12,000
+  rows (5,000 from each of the two tables that get ten batches, `audience_magic_links` and
+  `sign_in_throttle`, and 500 from each of `sign_in_attempts`, `device_logins`, `idempotency_records`
+  and `setup_attempts`) took 30.2, 30.1 and 32.5 ms in three runs on the development machine (arm64
+  laptop, the local stack's PostgreSQL 18.6 over loopback), 2026-11-22. A pass stays short on a remote
+  Postgres too: every table's delete is bounded by its batch and reads oldest first through an index on the age
+  it orders by (`*_retention`, `*_by_age`, `*_by_expiry`), so a pass costs
+  its 20 statements' round trips plus at most those rows, never the table's size. So a server restarted
+  every few minutes still clears its backlog pass by pass; committing per table group would buy nothing.
 - One pass is one `colophon_worker` transaction, at most `retention::BATCH` (500) rows a table, oldest
   first, in an order that orphans nothing mid-pass: settled `budget_reservations`, then `observations`,
   then terminal `jobs`/`asset_jobs`, then `bulk_items`/`bulk_jobs`, `migration_items`/`migration_plans`,

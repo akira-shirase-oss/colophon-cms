@@ -258,9 +258,53 @@ fn is_password_work(path: &str) -> bool {
     }
 }
 
-/// The keys this process keeps on its own while Valkey is away. Past this many live keys, the
-/// local limits start over: a flood of new addresses can't make a server run out of memory.
+/// The keys this process keeps on its own while Valkey is away: a flood of new addresses can't
+/// make a server run out of memory. At the bound, [`make_room`] lets the least restrictive keys
+/// go, never the ones actually being limited (D-238).
 const MAX_LOCAL_KEYS: usize = 100_000;
+
+/// How far under [`MAX_LOCAL_KEYS`] one [`make_room`] pass leaves a map: a tenth, so the next
+/// ten thousand new keys are plain inserts and the pass, O(n), runs at most once per that many.
+const EVICT_BATCH: usize = MAX_LOCAL_KEYS / 10;
+
+/// Makes room in `map` for `incoming` new keys under [`MAX_LOCAL_KEYS`] (D-238). Each value is a
+/// time a key holds something until (a GCRA arrival, the end of a throttle episode). Entries
+/// already behind `now` go first: they hold nothing. If that isn't enough, the least restrictive
+/// go next, the earliest times, down to [`EVICT_BATCH`] under the bound: a flood's keys, each one
+/// request old, sit an interval ahead and go before a key that is actually being limited, which
+/// sits far ahead (a password counter that spent its burst, a token over its quota). Clearing the
+/// whole map instead gave every limited key a fresh burst whenever a flood filled it.
+fn make_room<K, V>(map: &mut HashMap<K, V>, now: V, incoming: usize)
+where
+    K: Eq + std::hash::Hash,
+    V: Copy + Ord,
+{
+    if map.len() + incoming <= MAX_LOCAL_KEYS {
+        return;
+    }
+    let target = MAX_LOCAL_KEYS.saturating_sub(EVICT_BATCH + incoming);
+    map.retain(|_, until| *until > now);
+    if map.len() <= target {
+        return;
+    }
+    // The `excess` earliest times, found in one pass: those before `cutoff` all go, and as many
+    // at `cutoff` as make up the rest.
+    let excess = map.len() - target;
+    let mut times: Vec<V> = map.values().copied().collect();
+    let (before, cutoff, _) = times.select_nth_unstable(excess - 1);
+    let cutoff = *cutoff;
+    let mut at_cutoff = excess - before.iter().filter(|time| **time < cutoff).count();
+    map.retain(|_, until| {
+        if *until < cutoff {
+            false
+        } else if *until == cutoff && at_cutoff > 0 {
+            at_cutoff -= 1;
+            false
+        } else {
+            true
+        }
+    });
+}
 
 /// GCRA over every limit a request counts against, in Valkey, on Valkey's clock (microseconds).
 /// `KEYS` are the limits' keys; `ARGV` holds each one's interval and tolerance in turn. Returns
@@ -305,12 +349,7 @@ struct Local {
 impl Local {
     /// GCRA at `now` (microseconds since `epoch`): the wait, or `None` after moving every key.
     fn check(&mut self, now: u64, keys: &[(String, Cell)]) -> Option<u64> {
-        if self.arrivals.len() >= MAX_LOCAL_KEYS {
-            self.arrivals.retain(|_, arrival| *arrival > now);
-            if self.arrivals.len() >= MAX_LOCAL_KEYS {
-                self.arrivals.clear();
-            }
-        }
+        make_room(&mut self.arrivals, now, keys.len());
         let mut wait = 0;
         let mut next = Vec::with_capacity(keys.len());
         for (key, cell) in keys {
@@ -779,19 +818,14 @@ impl Admission {
     /// Whether this refusal starts a throttle episode (`true`) or continues one the marker
     /// already covers: each wait moves the marker out, so a token that stays refused keeps
     /// one entry — and the audit log hears the transition once, never per call (D-118).
-    /// Bounded like [`Local`]'s arrivals.
+    /// Bounded like [`Local`]'s arrivals ([`make_room`], D-238).
     fn mark_throttled(&self, token: Uuid, wait_us: u64) -> bool {
         let mut throttled = self
             .throttled
             .lock()
             .unwrap_or_else(PoisonError::into_inner);
         let now = Instant::now();
-        if throttled.len() >= MAX_LOCAL_KEYS {
-            throttled.retain(|_, until| *until > now);
-            if throttled.len() >= MAX_LOCAL_KEYS {
-                throttled.clear();
-            }
-        }
+        make_room(&mut throttled, now, 1);
         let known = throttled.get(&token).is_some_and(|until| *until > now);
         throttled.insert(token, now + Duration::from_micros(wait_us));
         !known
@@ -1287,6 +1321,94 @@ mod tests {
         let biggest = quota_cell(100_000, 60_000);
         assert!(biggest.interval_us >= 1);
         assert_eq!(biggest.tolerance_us, biggest.interval_us * 99_999);
+    }
+
+    /// D-238: a key that is actually being limited (its arrival far ahead: a password counter that
+    /// spent its burst) stays limited through a flood of new keys while Valkey is away, and the
+    /// map never holds more than [`MAX_LOCAL_KEYS`]. The flood is ten times the bound, so room is
+    /// made some ninety times: an eviction in any order that doesn't favour limited keys (the
+    /// map's own, say) loses the victim (it survives all ninety with odds of about 1 in 12,000). Clearing the whole map at the bound handed
+    /// every limited key a fresh burst: it failed first that way.
+    #[test]
+    fn a_limited_key_stays_limited_through_a_flood_of_new_keys() {
+        let mut local = Local {
+            epoch: Instant::now(),
+            arrivals: HashMap::new(),
+        };
+        let victim = [("victim".to_owned(), rate(1, 5).cell())];
+        for _ in 0..5 {
+            assert_eq!(local.check(0, &victim), None, "its burst");
+        }
+        assert!(
+            local.check(0, &victim).is_some(),
+            "limited before the flood"
+        );
+        for n in 0..(MAX_LOCAL_KEYS * 10) {
+            local.check(0, &[(format!("flood{n}"), rate(1, 1).cell())]);
+            assert!(
+                local.arrivals.len() <= MAX_LOCAL_KEYS,
+                "{} keys after {n}",
+                local.arrivals.len()
+            );
+            if n % 10_000 == 0 {
+                assert!(
+                    local.check(0, &victim).is_some(),
+                    "limited during the flood ({n})"
+                );
+            }
+        }
+        assert!(local.check(0, &victim).is_some(), "still limited after it");
+    }
+
+    /// D-238: a token over its D-118 quota keeps its throttle marker through a flood of new
+    /// markers (each episode is audited once; a lost marker would audit it again and again), and
+    /// the markers never number more than [`MAX_LOCAL_KEYS`].
+    #[test]
+    fn an_over_quota_token_stays_marked_through_a_flood() {
+        let admission = Admission::new(AdmissionSettings::default(), None).expect("no URL");
+        let over = Uuid::now_v7();
+        assert!(admission.mark_throttled(over, 60_000_000), "a long episode");
+        for n in 0..(MAX_LOCAL_KEYS * 10) {
+            admission.mark_throttled(Uuid::now_v7(), 1_000_000);
+            if n % 10_000 == 0 {
+                let markers = admission
+                    .throttled
+                    .lock()
+                    .unwrap_or_else(PoisonError::into_inner)
+                    .len();
+                assert!(markers <= MAX_LOCAL_KEYS, "{markers} markers after {n}");
+            }
+        }
+        assert!(
+            !admission.mark_throttled(over, 60_000_000),
+            "the episode is still the one already told"
+        );
+    }
+
+    /// D-238's cost: a flood of 200,000 distinct keys, each one request, timed per request. Making
+    /// room evicts a tenth of the bound in one pass, so all but one request in ten thousand is a
+    /// map insert. Prints the p99 and the worst, which D-238 records; bounds them loosely (a debug
+    /// build on a shared runner) so only a per-request scan fails it.
+    #[test]
+    fn a_flood_costs_a_map_insert_a_request() {
+        let mut local = Local {
+            epoch: Instant::now(),
+            arrivals: HashMap::new(),
+        };
+        let cell = rate(1, 1).cell();
+        let mut took: Vec<Duration> = Vec::with_capacity(200_000);
+        for n in 0..200_000_u64 {
+            let key = [(format!("flood{n}"), cell)];
+            let started = Instant::now();
+            local.check(n, &key);
+            took.push(started.elapsed());
+        }
+        took.sort_unstable();
+        let p99 = took[took.len() * 99 / 100];
+        let worst = took[took.len() - 1];
+        eprintln!("200,000-key flood: p99 {p99:?}, worst {worst:?}");
+        assert!(p99 < Duration::from_millis(1), "p99 {p99:?}");
+        assert!(worst < Duration::from_secs(1), "worst {worst:?}");
     }
 
     #[test]

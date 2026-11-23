@@ -623,8 +623,10 @@ pub async fn claim(
     owner: &str,
     lease: Duration,
     limit: i64,
+    stop: crate::Stop<'_>,
 ) -> Result<Vec<Claimed>, DbError> {
-    let mut transaction = worker(pool).await?;
+    // A background unit: a stop while it waits for a connection ends it, nothing claimed.
+    let mut transaction = crate::transactions::background_worker(pool, stop).await?;
     // Planned for this call's limit every time, never once for all (see above).
     sqlx::query("SET LOCAL plan_cache_mode = force_custom_plan")
         .execute(&mut *transaction)
@@ -687,14 +689,8 @@ pub const RELEASE_BATCH: i64 = 200;
 /// one bounded statement: at most [`RELEASE_BATCH`] jobs, a 4 s statement and a 3 s lock wait,
 /// server side, so a stop that lets it finish waits under the 5 s cleanup deadline. How many
 /// it released. The sweep runs passes back to back ([`release_lapsed_all`]).
-pub async fn release_lapsed(pool: &PgPool) -> Result<u64, DbError> {
-    let mut transaction = worker(pool).await?;
-    sqlx::query(
-        "SELECT set_config('statement_timeout', '4000', true), set_config('lock_timeout', '3000', true)",
-    )
-    .execute(&mut *transaction)
-    .await
-    .map_err(DbError::from_query)?;
+pub async fn release_lapsed(pool: &PgPool, stop: crate::Stop<'_>) -> Result<u64, DbError> {
+    let mut transaction = crate::transactions::background_worker(pool, stop).await?;
     let released = sqlx::query!(
         "WITH lapsed AS (
              SELECT project_id, environment_id, id FROM asset_jobs
@@ -723,23 +719,23 @@ pub async fn release_lapsed(pool: &PgPool) -> Result<u64, DbError> {
 pub const RELEASE_BUDGET: Duration = Duration::from_secs(5);
 
 /// One sweep's release of lapsed leases: [`release_lapsed`] passes, each its own short
-/// transaction, back to back until one comes back short of [`RELEASE_BATCH`], `stop()` says
-/// so (asked between passes, never during one) or `budget` has gone by. So every lease that
+/// transaction, back to back until one comes back short of [`RELEASE_BATCH`], `stop` is
+/// requested (asked between passes, never during one) or `budget` has gone by. So every lease that
 /// lapsed is released by the next sweep, however many a crash stranded, unless releasing them
 /// takes longer than `budget`; only then does the rest wait for the sweeps after. How many it
 /// released.
 pub async fn release_lapsed_all(
     pool: &PgPool,
     budget: Duration,
-    stop: &(dyn Fn() -> bool + Send + Sync),
+    stop: crate::Stop<'_>,
 ) -> Result<u64, DbError> {
     let started = std::time::Instant::now();
     let full = u64::try_from(RELEASE_BATCH).unwrap_or(u64::MAX);
     let mut total = 0;
     loop {
-        let released = release_lapsed(pool).await?;
+        let released = release_lapsed(pool, stop).await?;
         total += released;
-        if released < full || stop() || started.elapsed() >= budget {
+        if released < full || stop.requested() || started.elapsed() >= budget {
             return Ok(total);
         }
     }
@@ -1119,8 +1115,8 @@ async fn land_usable(
 
 /// Fails unfinished asset jobs that ran out of time (swept with the delivery jobs'); how many.
 /// Like `jobs::expire` it never waits: a job another transaction holds is the next pass's.
-pub async fn expire(pool: &PgPool) -> Result<u64, DbError> {
-    let mut transaction = worker(pool).await?;
+pub async fn expire(pool: &PgPool, stop: crate::Stop<'_>) -> Result<u64, DbError> {
+    let mut transaction = crate::transactions::background_worker(pool, stop).await?;
     let expired = sqlx::query!(
         "WITH due AS (
              SELECT project_id, environment_id, id FROM asset_jobs
@@ -1153,9 +1149,12 @@ pub async fn expire(pool: &PgPool) -> Result<u64, DbError> {
 /// it: what is running decides what it becomes. Two passes racing the same asset can both
 /// enqueue; the second job finds `deleted` and finishes having removed nothing. A project at
 /// the work bound keeps its assets instead: one statement can't honestly hold one project's
-/// admission lock, so each row counts the same open work [`crate::work::admit`] does, under
-/// the statement's own snapshot — a pass may overshoot [`crate::work::MAX_OPEN`] by at most
-/// its own `limit`, and the next pass sees the truth and enqueues nothing (D-131). The byte
+/// admission lock, so each project with collectable assets has the same open work
+/// [`crate::work::admit`] counts counted once, under the statement's own snapshot — a pass may
+/// overshoot [`crate::work::MAX_OPEN`] by at most its own `limit`, and the next pass sees the
+/// truth and enqueues nothing (D-131). Once a project, not once an asset (D-237): counted per
+/// asset before the limit applied, it read 4.7 million buffers and took 7.5 s a pass at 23,000
+/// collectable assets and 3,000 open jobs, past the background units' 4 s bound (D-236). The byte
 /// bound is enforced the same way, from the caller's `room` — what
 /// [`crate::work::install_payload`] left under [`crate::work::MAX_PENDING_PAYLOAD`]: a
 /// running sum of each candidate's recorded size plus its key caps the pass's enqueue at
@@ -1168,14 +1167,39 @@ pub async fn enqueue_expired(
     deadline_at: OffsetDateTime,
     limit: i64,
     room: i64,
+    stop: crate::Stop<'_>,
 ) -> Result<u64, DbError> {
-    let mut transaction = worker(pool).await?;
+    let mut transaction = crate::transactions::background_worker(pool, stop).await?;
     let enqueued = sqlx::query!(
-        "WITH collectable AS (
+        "WITH candidate_projects AS (
+             SELECT DISTINCT a.project_id FROM assets a
+             WHERE a.created_at < $1 AND a.state IN ('quarantined', 'usable', 'rejected')
+         ), full_projects AS (
+             SELECT c.project_id FROM candidate_projects c
+             WHERE (
+                 SELECT count(*) FROM (
+                     SELECT 1 FROM jobs j
+                     WHERE j.project_id = c.project_id
+                       AND j.status IN ('pending', 'retrying', 'running', 'held')
+                     UNION ALL
+                     SELECT 1 FROM asset_jobs j
+                     WHERE j.project_id = c.project_id
+                       AND j.status IN ('pending', 'running', 'retrying')
+                     UNION ALL
+                     SELECT 1 FROM bulk_jobs b
+                     WHERE b.project_id = c.project_id AND b.state IN ('accepting', 'running')
+                     UNION ALL
+                     SELECT 1 FROM migration_plans m
+                     WHERE m.project_id = c.project_id
+                       AND m.state IN ('proposed', 'approved', 'running')
+                 ) open_work
+             ) >= $4
+         ), collectable AS (
              SELECT a.project_id, a.environment_id, a.id, a.created_at, a.size_bytes,
                     'expire:' || a.id::text || ':' || gen_random_uuid()::text AS key
              FROM assets a
              WHERE a.created_at < $1 AND a.state IN ('quarantined', 'usable', 'rejected')
+               AND NOT EXISTS (SELECT 1 FROM full_projects f WHERE f.project_id = a.project_id)
                AND NOT EXISTS (
                    SELECT 1 FROM asset_references r
                    JOIN entries e
@@ -1195,24 +1219,6 @@ pub async fn enqueue_expired(
                    WHERE j.project_id = a.project_id AND j.environment_id = a.environment_id
                      AND j.asset_id = a.id
                      AND j.status IN ('pending', 'running', 'retrying'))
-               AND (
-                   SELECT count(*) FROM (
-                       SELECT 1 FROM jobs j
-                       WHERE j.project_id = a.project_id
-                         AND j.status IN ('pending', 'retrying', 'running', 'held')
-                       UNION ALL
-                       SELECT 1 FROM asset_jobs j
-                       WHERE j.project_id = a.project_id
-                         AND j.status IN ('pending', 'running', 'retrying')
-                       UNION ALL
-                       SELECT 1 FROM bulk_jobs b
-                       WHERE b.project_id = a.project_id AND b.state IN ('accepting', 'running')
-                       UNION ALL
-                       SELECT 1 FROM migration_plans m
-                       WHERE m.project_id = a.project_id
-                         AND m.state IN ('proposed', 'approved', 'running')
-                   ) open_work
-               ) < $4
              ORDER BY a.created_at
              LIMIT $3
          ), fitting AS (
