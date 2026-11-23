@@ -581,6 +581,8 @@
 			]);
 		}
 	}
+	/** The request's keys: kept after no answer, so asking again replays rather than doubles (D-245). */
+	let republishKeys = newKeys();
 	/** Where review is required: a publish request for the saved version, sent for review. */
 	async function askToRepublish() {
 		const done = await publishInOneClick({
@@ -589,10 +591,11 @@
 			entries: [entry],
 			oneClick: false,
 			seenGeneration: undefined,
-			keys: newKeys(),
+			keys: republishKeys,
 			step: () => {},
 			doing: 'ask for review here'
 		});
+		if (!(done.kind === 'stopped' && done.noAnswer)) republishKeys = newKeys();
 		if (done.kind === 'requested') toast.success('Sent for review', { description: 'Someone who can publish approves it.' });
 		else if (done.kind === 'stopped') toast.error('Not sent', { description: done.message });
 		await queryClient.invalidateQueries({ queryKey: ['changesets', project] });

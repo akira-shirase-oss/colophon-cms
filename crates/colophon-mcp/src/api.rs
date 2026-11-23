@@ -283,6 +283,24 @@ pub trait Backend: Send + Sync {
 }
 
 /// A fresh idempotency key: 36 characters, within the API's 16 to 128 of `A-Z a-z 0-9 - _`.
+/// The absolute path a request goes to: a path under `{P}` (`/content-types`), or one of the
+/// project's own routes given whole (`/api/v1/projects/{this project}/members`, D-247). A whole
+/// path for any other project, or outside the project's routes, is refused before it is sent.
+pub fn full_path(project: Uuid, path: &str) -> Result<String, ApiError> {
+    if path.starts_with("/api/") {
+        let mine = format!("/api/v1/projects/{project}/");
+        if path.starts_with(&mine) && !path.contains("..") {
+            Ok(path.to_owned())
+        } else {
+            Err(ApiError::BadUrl)
+        }
+    } else {
+        Ok(format!(
+            "/api/v1/projects/{project}/environments/{ENVIRONMENT}{path}"
+        ))
+    }
+}
+
 pub fn new_idempotency_key() -> String {
     format!("mcp-{}", Uuid::now_v7().simple())
 }
@@ -330,10 +348,7 @@ impl Backend for Api {
     ) -> Result<Answer, ApiError> {
         let mut url = self
             .base
-            .join(&format!(
-                "/api/v1/projects/{}/environments/{ENVIRONMENT}{}",
-                self.project, request.path
-            ))
+            .join(&full_path(self.project, &request.path)?)
             .map_err(|_| ApiError::BadUrl)?;
         if !request.query.is_empty() {
             url.query_pairs_mut().extend_pairs(&request.query);

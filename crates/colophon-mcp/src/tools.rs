@@ -412,6 +412,52 @@ pub struct Outcome {
 }
 
 impl Outcome {
+    /// Arguments a catalog tool can't send (D-247).
+    pub(crate) fn invalid(tool: &str, problem: &str) -> Self {
+        Self::failure(
+            format!("Invalid arguments for {tool}: {problem}. Nothing was sent."),
+            json!({"code": "invalid_arguments", "message": problem}),
+        )
+    }
+
+    /// A catalog tool that needs the person's yes first: not an error, a question (D-247).
+    pub(crate) fn needs_confirmation(text: String) -> Self {
+        Self {
+            structured: json!({"needs_confirmation": true, "message": text}),
+            text,
+            is_error: false,
+        }
+    }
+
+    /// A catalog tool's answer: its JSON body, as the API gave it.
+    pub(crate) fn from_answer(answer: &crate::api::Answer) -> Self {
+        Self::success(answer.body.clone())
+    }
+
+    /// A catalog tool's failure, said the same way the hand-written tools say theirs.
+    pub(crate) fn from_api_error(tool: &str, read_only: bool, key: &str, error: &ApiError) -> Self {
+        match error {
+            ApiError::Refused(refusal) => Self::failure(refused(refusal), refusal_json(refusal)),
+            ApiError::TimedOut(_)
+            | ApiError::Unreachable(_)
+            | ApiError::TooLarge { .. }
+            | ApiError::BadAnswer
+                if !read_only =>
+            {
+                Self::failure(
+                    format!(
+                        "Colophon didn't answer ({error}), so {tool} may or may not have happened. Calling it again with the same arguments is safe only for idempotent calls (key {key})."
+                    ),
+                    json!({"code": "outcome_unknown", "message": error.to_string()}),
+                )
+            }
+            other => Self::failure(
+                format!("Colophon couldn't answer: {other}. Nothing was changed by this call."),
+                json!({"code": "unavailable", "message": other.to_string()}),
+            ),
+        }
+    }
+
     fn success(structured: Value) -> Self {
         Self {
             text: structured.to_string(),

@@ -428,12 +428,8 @@ mod tests {
             )
             .await;
         assert_eq!(replied(reply)["error"]["code"], METHOD_NOT_FOUND);
-        // A tool the platform does not allow an agent — the boundary every transport keeps.
-        for name in [
-            "publish_release",
-            "approve_publish_request",
-            "resolve_comment",
-        ] {
+        // A tool that doesn't exist, and deleting a project, which is never offered (D-247).
+        for name in ["delete_project", "no_such_tool", "drop_everything"] {
             let call = format!(
                 r#"{{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{{"name":"{name}","arguments":{{}}}}}}"#
             );
@@ -461,7 +457,17 @@ mod tests {
             .as_array()
             .expect("a tool list")
             .clone();
-        assert_eq!(tools.len(), 12, "a read-only token sees the read tools");
+        // The hand-written read tools, then the whole API catalog (D-247): the API decides
+        // each call with the token's permissions, so a catalog tool is listed for everyone.
+        assert!(
+            tools.len() > 12 + 80,
+            "the catalog is listed too: {}",
+            tools.len()
+        );
+        assert!(
+            tools.iter().all(|tool| tool["name"] != "delete_project"),
+            "deleting a project is never offered"
+        );
         // The six write tools are absent: nothing that changes content is offered.
         for writer in [
             "create_draft",

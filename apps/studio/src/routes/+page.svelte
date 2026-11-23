@@ -48,6 +48,9 @@
 	// Whether a provider exists — the signed-out note's "close the browser" advice only makes
 	// sense when sign-in could live somewhere else too (D-146).
 	const providers = createQuery(providersQuery);
+	// Who may create projects (D-235): an administrator always; anyone else when registration is open
+	// (self-serve). The server still holds each account to its project cap (409 project_limit).
+	const canCreate = $derived(who.data?.administrator === true || providers.data?.registration === 'open');
 	let creating = $state(false);
 
 	// The setup code (D-061): typed or pasted from the server's terminal, or filled in from the setup
@@ -236,13 +239,13 @@
 			<span data-testid="signed-in">Signed in as {who.data?.display_name ?? who.data?.id}{who.data?.administrator ? ', administrator' : ''}</span>
 		{/snippet}
 		{#snippet actions()}
-			{#if who.data?.administrator && who.data.projects.length > 0}
+			{#if canCreate && (who.data?.projects.length ?? 0) > 0}
 				<Button onclick={() => (creating = true)}><PlusIcon data-icon="inline-start" />New project</Button>
 			{/if}
 		{/snippet}
 	</PageHeader>
 
-	{#if who.data.projects.length === 0 && who.data.administrator}
+	{#if who.data.projects.length === 0 && canCreate}
 		<section class="max-w-4xl" aria-labelledby="first-project" data-testid="first-project">
 			<h2 id="first-project" class="mb-1 text-lg font-semibold">Create your first project</h2>
 			<p class="mb-6 text-sm text-muted-foreground">A project is one website's content: its articles or pages, the people who write them, and what has gone live.</p>
@@ -319,7 +322,7 @@
 				{/if}
 			{/if}
 		{/if}
-		{#if !who.data.administrator}
+		{#if !canCreate}
 			<p class="mt-8 text-sm text-muted-foreground" data-testid="not-administrator">To work on another project, ask its owner for an invitation link.</p>
 		{/if}
 	{/if}

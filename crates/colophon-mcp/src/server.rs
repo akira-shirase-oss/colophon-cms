@@ -112,7 +112,23 @@ async fn write_lines<W: AsyncWrite + Unpin>(
 /// Work that needs the API, run in its own task.
 pub(crate) enum Work {
     List,
-    Call(Tool, Value),
+    Call(Callable, Value),
+}
+
+/// A tool a call names: a hand-written one, or an API operation from the catalog (D-247).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Callable {
+    Tool(Tool),
+    Api(&'static crate::catalog::Op),
+}
+
+impl Callable {
+    fn name(self) -> &'static str {
+        match self {
+            Self::Tool(tool) => tool.name(),
+            Self::Api(op) => op.name.as_str(),
+        }
+    }
 }
 
 impl Work {
@@ -120,7 +136,12 @@ impl Work {
     pub(crate) async fn run<B: Backend>(self, api: &B, id: &RequestId) -> String {
         match self {
             Self::List => match discovery::discover(api).await {
-                Ok(allowed) => jsonrpc::success(id, &json!({ "tools": allowed.tools() })),
+                Ok(allowed) => {
+                    let mut tools = allowed.tools();
+                    let taken: Vec<&str> = Tool::ALL.iter().map(|tool| tool.name()).collect();
+                    tools.extend(crate::catalog::definitions(&taken));
+                    jsonrpc::success(id, &json!({ "tools": tools }))
+                }
                 Err(error) => {
                     tracing::warn!(%error, "tools/list: could not learn what the token may do");
                     let (message, data) = unavailable(api, &error);
@@ -129,7 +150,10 @@ impl Work {
             },
             Self::Call(tool, arguments) => {
                 let started = Instant::now();
-                let outcome = tools::call(api, tool, arguments).await;
+                let outcome = match tool {
+                    Callable::Tool(hand) => tools::call(api, hand, arguments).await,
+                    Callable::Api(op) => crate::catalog::call(api, op, arguments).await,
+                };
                 tracing::info!(
                     tool = tool.name(),
                     is_error = outcome.is_error,
@@ -167,14 +191,17 @@ pub(crate) fn unavailable<B: Backend>(api: &B, error: &ApiError) -> (String, Val
 }
 
 /// The `tools/call` parameters: a known tool and its arguments, or why not.
-pub(crate) fn tool_call(mut params: Map<String, Value>) -> Result<(Tool, Value), String> {
+pub(crate) fn tool_call(mut params: Map<String, Value>) -> Result<(Callable, Value), String> {
     let Some(Value::String(name)) = params.get("name") else {
         return Err("params.name must be the name of a tool".into());
     };
-    let tool = Tool::named(name).ok_or_else(|| {
-        let shown: String = name.chars().take(64).collect();
-        format!("Unknown tool: {shown}")
-    })?;
+    let tool = Tool::named(name)
+        .map(Callable::Tool)
+        .or_else(|| crate::catalog::named(name).map(Callable::Api))
+        .ok_or_else(|| {
+            let shown: String = name.chars().take(64).collect();
+            format!("Unknown tool: {shown}")
+        })?;
     let arguments = match params.remove("arguments") {
         None | Some(Value::Null) => Value::Object(Map::new()),
         Some(arguments @ Value::Object(_)) => arguments,
@@ -620,7 +647,7 @@ mod tests {
             json!({"name": "list_content_types", "arguments": null}),
         ))
         .expect("known");
-        assert_eq!(tool, Tool::ListContentTypes);
+        assert_eq!(tool, Callable::Tool(Tool::ListContentTypes));
         assert_eq!(arguments, json!({}));
     }
 }

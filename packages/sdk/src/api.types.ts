@@ -1861,6 +1861,24 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/mcp": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** The public MCP address: one JSON-RPC message, on the token's own project (D-244) */
+        post: operations["mcpPublicPost"];
+        /** End the remote-MCP session early */
+        delete: operations["mcpPublicDelete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/me": {
         parameters: {
             query?: never;
@@ -15292,6 +15310,176 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["Liveness"];
+                };
+            };
+            /** @description any other failure, in the one error envelope */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    mcpPublicPost: {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description the session `initialize` minted; required on every message after it */
+                "mcp-session-id"?: string;
+                /** @description `2025-11-25`; required once a session exists */
+                "mcp-protocol-version"?: string;
+                /** @description when present it must be an origin this server trusts, exactly — the transport's DNS-rebinding check */
+                origin?: string;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["McpMessage"];
+            };
+        };
+        responses: {
+            /** @description the request's own JSON-RPC response; `Mcp-Session-Id` rides on the `initialize` answer only */
+            200: {
+                headers: {
+                    "Mcp-Session-Id"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["McpResponse"];
+                };
+            };
+            /** @description a notification or a stray response — accepted, nothing to answer */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description `bad_request` — not acceptable JSON-RPC, or `MCP-Protocol-Version`/`Accept` failed the transport's checks */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description `unauthorized` — not signed in, the credential is invalid, or the token was revoked */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description `api_token_required` — a person's credential — a browser session or a personal access token; agents sign in as project API tokens; `origin_not_allowed` — an `Origin` this server does not trust */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description `not_found` — no such session — or one another token holds, which looks the same */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description `rate_limited` — the token's session cap is full; `Retry-After` */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description `unavailable` — the project's or the server's session cap is full */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description any other failure, in the one error envelope */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    mcpPublicDelete: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description the session to end */
+                "mcp-session-id": string;
+                /** @description `2025-11-25` */
+                "mcp-protocol-version": string;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description the session ended; its in-flight requests answer `request cancelled` */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description `bad_request` — the `Mcp-Session-Id` or `MCP-Protocol-Version` header is missing or wrong */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description `unauthorized` — not signed in, the credential is invalid, or the token was revoked */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description `api_token_required` — a person's credential — a browser session or a personal access token; agents sign in as project API tokens; `origin_not_allowed` — an `Origin` this server does not trust */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description `not_found` — no such session — or one another token holds, which looks the same */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
                 };
             };
             /** @description any other failure, in the one error envelope */

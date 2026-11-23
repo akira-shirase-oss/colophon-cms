@@ -1591,6 +1591,127 @@ pub(crate) static TABLE: &[Route] = &[
         ],
     ),
     route(
+        ("", "/mcp"),
+        &[
+            op(
+                Verb::Post,
+                |f| on(f, mcp::post_public),
+                OpDoc {
+                    id: "mcpPublicPost",
+                    summary: "The public MCP address: one JSON-RPC message, on the token's own project (D-244)",
+                    tag: "mcp",
+                    security: Security::ApiToken,
+                    headers: &[
+                        header_maybe(
+                            "mcp-session-id",
+                            Kind::Uuid,
+                            "the session `initialize` minted; required on every message after it",
+                        ),
+                        header_maybe(
+                            "mcp-protocol-version",
+                            Kind::Str,
+                            "`2025-11-25`; required once a session exists",
+                        ),
+                        header_maybe(
+                            "origin",
+                            Kind::Str,
+                            "when present it must be an origin this server trusts, exactly — the transport's DNS-rebinding check",
+                        ),
+                    ],
+                    body: Some(json("McpMessage")),
+                    ok: Res {
+                        status: 200,
+                        shape: Shape::It("McpResponse"),
+                        headers: &["Mcp-Session-Id"],
+                        media: "",
+                        note: "the request's own JSON-RPC response; `Mcp-Session-Id` rides on the `initialize` answer only",
+                    },
+                    also: Some(ok(
+                        202,
+                        Shape::Empty,
+                        "a notification or a stray response — accepted, nothing to answer",
+                    )),
+                    extra: &[
+                        refusal(
+                            400,
+                            "bad_request",
+                            "not acceptable JSON-RPC, or `MCP-Protocol-Version`/`Accept` failed the transport's checks",
+                        ),
+                        refusal(
+                            403,
+                            "api_token_required",
+                            "a person's credential — a browser session or a personal access token; agents sign in as project API tokens",
+                        ),
+                        refusal(
+                            403,
+                            "origin_not_allowed",
+                            "an `Origin` this server does not trust",
+                        ),
+                        refusal(
+                            404,
+                            "not_found",
+                            "no such session — or one another token holds, which looks the same",
+                        ),
+                        refusal(
+                            429,
+                            "rate_limited",
+                            "the token's session cap is full; `Retry-After`",
+                        ),
+                        refusal(
+                            503,
+                            "unavailable",
+                            "the project's or the server's session cap is full",
+                        ),
+                    ],
+                    body_limit: Some(MCP_BODY_BYTES),
+                    ..MIN
+                },
+            ),
+            op(
+                Verb::Delete,
+                |f| on(f, mcp::delete_public),
+                OpDoc {
+                    id: "mcpPublicDelete",
+                    summary: "End the remote-MCP session early",
+                    tag: "mcp",
+                    security: Security::ApiToken,
+                    headers: &[
+                        header("mcp-session-id", Kind::Uuid, "the session to end"),
+                        header("mcp-protocol-version", Kind::Str, "`2025-11-25`"),
+                    ],
+                    ok: ok(
+                        200,
+                        Shape::Empty,
+                        "the session ended; its in-flight requests answer `request cancelled`",
+                    ),
+                    extra: &[
+                        refusal(
+                            400,
+                            "bad_request",
+                            "the `Mcp-Session-Id` or `MCP-Protocol-Version` header is missing or wrong",
+                        ),
+                        refusal(
+                            403,
+                            "api_token_required",
+                            "a person's credential — a browser session or a personal access token; agents sign in as project API tokens",
+                        ),
+                        refusal(
+                            403,
+                            "origin_not_allowed",
+                            "an `Origin` this server does not trust",
+                        ),
+                        refusal(
+                            404,
+                            "not_found",
+                            "no such session — or one another token holds, which looks the same",
+                        ),
+                    ],
+                    ..MIN
+                },
+            ),
+        ],
+    ),
+    route(
         ("", "/api/v1/rich-text/validate"),
         &[op(
             Verb::Post,
