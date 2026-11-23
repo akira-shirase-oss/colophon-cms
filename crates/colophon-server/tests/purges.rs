@@ -451,3 +451,57 @@ async fn a_new_entry_reaches_a_listing_the_cdn_held_without_it() {
     titles.sort_unstable();
     assert_eq!(titles, ["First", "Second"]);
 }
+
+/// F08 (module 17): a release published while Valkey is down is delivered, once. Valkey holds
+/// only answers and limiter counts; the release, its delivery job and the job's key are
+/// Postgres's, so the worker carries the purge out as at any other time, and Valkey coming back
+/// (empty) neither repeats it nor loses it. Needs a stack of its own (it stops Valkey).
+#[tokio::test]
+#[ignore = "needs the local stack, and stops Valkey: scripts/stack.sh up"]
+async fn a_release_published_while_valkey_is_down_is_delivered_once() {
+    let _server = Server::start_with(&FAST).await;
+    let owner = sign_in("dev-owner").await;
+    let id = project(&owner).await;
+    let cdn = FakeCdn::start().await;
+    cdn_destination(&owner, &id, &cdn).await;
+    let first = create_article(&owner, &id, "Before").await;
+    assert_eq!(
+        release(&owner, &id, &json!({"title": "One", "entries": [first]})).await,
+        1
+    );
+    assert_eq!(
+        finished_job(&owner, &id, 1, 15).await["status"],
+        "succeeded"
+    );
+    let before = cdn.purges().len();
+
+    {
+        let _stopped = common::Stopped::new("valkey");
+        let second = create_article(&owner, &id, "While down").await;
+        assert_eq!(
+            release(&owner, &id, &json!({"title": "Two", "entries": [second]})).await,
+            2
+        );
+        let job = finished_job(&owner, &id, 2, 15).await;
+        assert_eq!(job["status"], "succeeded", "{job}");
+        assert_eq!(purge_state(&owner, &id, 2).await, "accepted");
+        assert_eq!(cdn.purges().len(), before + 1, "one purge for the release");
+    }
+
+    // Valkey back, empty: nothing repeats. The worker polls every 50 ms here (FAST): five
+    // seconds is a hundred chances to send it again.
+    tokio::time::sleep(Duration::from_secs(5)).await;
+    assert_eq!(cdn.purges().len(), before + 1, "delivered once, not again");
+    let (status, _, listed) = cdn
+        .get(&format!("/content/v1/{id}/production/articles"))
+        .await;
+    assert_eq!(status, 200);
+    let mut titles: Vec<&str> = listed["data"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|item| item["title"].as_str())
+        .collect();
+    titles.sort_unstable();
+    assert_eq!(titles, ["Before", "While down"]);
+}

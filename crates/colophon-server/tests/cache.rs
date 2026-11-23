@@ -369,3 +369,110 @@ async fn answers_survive_valkey_going_away_and_caching_resumes_when_it_is_back()
         tokio::time::sleep(Duration::from_millis(200)).await;
     }
 }
+
+/// Puts Valkey's memory cap back to the stack's 128 MB when dropped, whatever the test did.
+struct CapRestored;
+
+impl Drop for CapRestored {
+    fn drop(&mut self) {
+        common::valkey_cli(&["CONFIG", "SET", "maxmemory", "128mb"]);
+    }
+}
+
+/// F08 (module 17): the cache losing what it holds, all at once (a flush, a restart's empty
+/// memory) or a key at a time (eviction at its memory cap, `allkeys-lru` as every install sets it),
+/// costs answers and never content: every read is still the release's, read from Postgres and
+/// cached again. Needs a stack of its own (it flushes Valkey and changes its cap).
+#[tokio::test]
+#[ignore = "needs the local stack, and flushes Valkey: scripts/stack.sh up"]
+async fn a_flushed_or_full_cache_loses_answers_never_content() {
+    const ARTICLES: usize = 30;
+    let _server = Server::start().await;
+    let owner = sign_in("dev-owner").await;
+    let id = project(&owner).await;
+    let mut entries = Vec::new();
+    for n in 0..ARTICLES {
+        entries.push(create_article(&owner, &id, &format!("Article {n:02}")).await);
+    }
+    assert_eq!(
+        release(
+            &owner,
+            &id,
+            &serde_json::json!({"title": "All", "entries": entries})
+        )
+        .await,
+        1
+    );
+    let list = format!("/content/v1/{id}/production/articles");
+    let first = read(&list, None).await;
+    assert_eq!(first.served, "miss");
+    let mut expected = titles(&first.body);
+    expected.sort();
+    assert_eq!(expected.len(), ARTICLES);
+    assert_eq!(read(&list, None).await.served, "hit");
+
+    // A flush: every answer gone at once.
+    common::valkey_cli(&["FLUSHALL"]);
+    let flushed = read(&list, None).await;
+    assert_eq!(
+        (flushed.status, flushed.served.as_str()),
+        (StatusCode::OK, "miss")
+    );
+    let mut after = titles(&flushed.body);
+    after.sort();
+    assert_eq!(after, expected, "the same release, read again");
+    assert_eq!(read(&list, None).await.served, "hit", "and cached again");
+
+    // A cap just above what Valkey holds now: answers past it evict the least recently used.
+    let _restored = CapRestored;
+    let cap = common::valkey_info("used_memory") + 200_000;
+    common::valkey_cli(&["CONFIG", "SET", "maxmemory", &cap.to_string()]);
+    let evicted = common::valkey_info("evicted_keys");
+    for limit in 1..=100_usize {
+        let page = read(&format!("{list}?limit={limit}"), None).await;
+        assert_eq!(page.status, StatusCode::OK, "limit {limit}: {}", page.body);
+        assert_eq!(
+            titles(&page.body).len(),
+            limit.min(ARTICLES),
+            "limit {limit}"
+        );
+    }
+    for entry in &entries {
+        let one = read(&format!("{list}/{entry}"), None).await;
+        assert_eq!(one.status, StatusCode::OK, "{}", one.body);
+        assert_eq!(one.body["data"]["id"].as_str(), Some(entry.as_str()));
+    }
+    assert!(
+        common::valkey_info("evicted_keys") > evicted,
+        "the cap evicted answers"
+    );
+    let mut finally = titles(&read(&list, None).await.body);
+    finally.sort();
+    assert_eq!(finally, expected, "content intact through the evictions");
+}
+
+/// F08: sessions live in Postgres, not the cache: a signed-in editor stays signed in, and can
+/// write, while Valkey is stopped, after it starts again empty, and after it is flushed.
+#[tokio::test]
+#[ignore = "needs the local stack, and stops Valkey: scripts/stack.sh up"]
+async fn a_session_outlives_valkey_stopping_starting_and_flushing() {
+    let _server = Server::start().await;
+    let owner = sign_in("dev-owner").await;
+    let id = project(&owner).await;
+    let me = || async {
+        common::call(&owner, reqwest::Method::GET, "/me", None, &[])
+            .await
+            .expect("request")
+            .status
+    };
+    assert_eq!(me().await, StatusCode::OK);
+    {
+        let _stopped = ValkeyStopped::new();
+        assert_eq!(me().await, StatusCode::OK, "signed in while Valkey is down");
+        create_article(&owner, &id, "Written while down").await;
+    }
+    assert_eq!(me().await, StatusCode::OK, "after it starts again, empty");
+    common::valkey_cli(&["FLUSHALL"]);
+    assert_eq!(me().await, StatusCode::OK, "after a flush");
+    create_article(&owner, &id, "Written after the flush").await;
+}

@@ -182,6 +182,41 @@ pub(crate) fn compose(args: &[&str]) {
     assert!(status.success(), "docker compose {args:?} failed");
 }
 
+/// `valkey-cli <args>` inside the stack's Valkey, its output: flushing it, setting its memory cap
+/// or reading its stats (F08). Refuses the shared stack before any docker call ([`stack_guard`]).
+pub(crate) fn valkey_cli(args: &[&str]) -> String {
+    if let Err(refusal) = stack_guard(|key| std::env::var(key).ok()) {
+        panic!("{refusal}");
+    }
+    let file = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../deploy/compose.yaml");
+    let output = Command::new("docker")
+        .args(["compose", "-f"])
+        .arg(file)
+        .args([
+            "exec",
+            "-T",
+            "valkey",
+            "valkey-cli",
+            "-a",
+            "colophon-dev",
+            "--no-auth-warning",
+        ])
+        .args(args)
+        .output()
+        .expect("docker compose runs");
+    assert!(output.status.success(), "valkey-cli {args:?} failed");
+    String::from_utf8_lossy(&output.stdout).into_owned()
+}
+
+/// A field of Valkey's `INFO` (`evicted_keys`, `used_memory`), as a number.
+pub(crate) fn valkey_info(field: &str) -> u64 {
+    let info = valkey_cli(&["INFO"]);
+    info.lines()
+        .find_map(|line| line.strip_prefix(&format!("{field}:")))
+        .and_then(|value| value.trim().parse().ok())
+        .unwrap_or_else(|| panic!("no {field} in INFO"))
+}
+
 /// Stops a stack service and starts it again when dropped, whatever the test did. Refuses the
 /// shared stack ([`stack_guard`]).
 pub(crate) struct Stopped(&'static str);

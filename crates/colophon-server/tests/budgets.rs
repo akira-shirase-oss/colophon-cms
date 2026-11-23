@@ -513,3 +513,67 @@ async fn a_publish_reserves_a_slot_per_job_or_is_refused() {
         one.body
     );
 }
+
+/// F08 (module 17), the hard half of budget accounting: a token's daily document budget is
+/// counted in Postgres, so Valkey stopping, starting empty or being flushed neither resets it
+/// nor loosens it: the writes it allows, and no more, whether the cache is there or not. (The
+/// soft half, the rate limits and the token request quota, falls back to a count per server
+/// while Valkey is down (D-076, D-118): `admission.rs` and `quotas.rs` `without_valkey_*`, bounded
+/// by D-238 against a flood of keys.) Needs a stack of its own (it stops and flushes Valkey).
+#[tokio::test]
+#[ignore = "needs the local stack, and stops Valkey: scripts/stack.sh up"]
+async fn a_documents_budget_counts_the_same_with_valkey_down_restarted_or_flushed() {
+    let _server = Server::start().await;
+    let owner = sign_in("dev-owner").await;
+    let project = project(&owner).await;
+    let (secret, _) = make(
+        &owner,
+        &project,
+        &json!({
+            "name": "Three a day", "kind": "full-access", "expires_in_days": 30,
+            "limits": {"documents_per_day": 3}
+        }),
+    )
+    .await;
+    let write = |title: &'static str| {
+        let (secret, path) = (secret.clone(), entries(&project));
+        async move {
+            as_token(
+                &secret,
+                Method::POST,
+                &path,
+                Some(&article(title, "x")),
+                &[],
+            )
+            .await
+        }
+    };
+    assert_eq!(write("One, cache up").await.status, StatusCode::CREATED);
+    {
+        let _stopped = common::Stopped::new("valkey");
+        assert_eq!(write("Two, cache down").await.status, StatusCode::CREATED);
+        assert_eq!(write("Three, cache down").await.status, StatusCode::CREATED);
+        let refused = write("Four, cache down").await;
+        assert_eq!(
+            (refused.status, reason(&refused)),
+            (StatusCode::FORBIDDEN, &json!("budget_exceeded")),
+            "{}",
+            refused.body
+        );
+    }
+    let refused = write("Four, cache back empty").await;
+    assert_eq!(
+        (refused.status, reason(&refused)),
+        (StatusCode::FORBIDDEN, &json!("budget_exceeded")),
+        "{}",
+        refused.body
+    );
+    common::valkey_cli(&["FLUSHALL"]);
+    let refused = write("Four, cache flushed").await;
+    assert_eq!(
+        (refused.status, reason(&refused)),
+        (StatusCode::FORBIDDEN, &json!("budget_exceeded")),
+        "{}",
+        refused.body
+    );
+}
