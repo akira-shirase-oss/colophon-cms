@@ -11,6 +11,7 @@
 	import LayoutGridIcon from '@lucide/svelte/icons/layout-grid';
 	import LogOutIcon from '@lucide/svelte/icons/log-out';
 	import GaugeIcon from '@lucide/svelte/icons/gauge';
+	import PlugIcon from '@lucide/svelte/icons/plug';
 	import { resolve } from '$app/paths';
 	import { createQuery } from '@tanstack/svelte-query';
 	import { toast } from 'svelte-sonner';
@@ -67,6 +68,9 @@
 			</DropdownMenu.Item>
 			<DropdownMenu.Item>
 				{#snippet child({ props })}<a {...props} href={resolve('/usage')} data-testid="open-usage"><GaugeIcon />Usage</a>{/snippet}
+			</DropdownMenu.Item>
+			<DropdownMenu.Item>
+				{#snippet child({ props })}<a {...props} href={resolve('/connected-apps')} data-testid="open-connected-apps"><PlugIcon />Connected apps</a>{/snippet}
 			</DropdownMenu.Item>
 			<DropdownMenu.Item onSelect={() => (about = true)} data-testid="about-colophon"><InfoIcon />About Colophon</DropdownMenu.Item>
 			<DropdownMenu.Separator />

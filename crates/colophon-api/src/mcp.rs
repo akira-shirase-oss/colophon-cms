@@ -281,6 +281,12 @@ fn count_by(
     counts
 }
 
+/// Marks a request `/mcp`'s tools make through the server's own router (D-246): an extension, so
+/// no request from the network can carry it. An OAuth access token is accepted on these (to its
+/// grant's project) and on `/mcp` itself, and refused everywhere else (session.rs).
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct InProcess;
+
 /// The `{P}` of `{P}/mcp`.
 #[derive(Deserialize)]
 pub(crate) struct McpPath {
@@ -320,12 +326,19 @@ pub(crate) async fn page() -> Response {
 /// `POST {P}/mcp`'s.
 pub(crate) async fn post_public(
     State(state): State<AppState>,
-    caller: SignedIn,
+    caller: Result<SignedIn, ApiError>,
     headers: HeaderMap,
     body: Bytes,
 ) -> Result<Response, ApiError> {
+    let caller = match caller {
+        Ok(caller) => caller,
+        Err(refused) => return Ok(challenged(&state, refused)),
+    };
     let id = admitted(services(&state)?, &caller, &headers, false)?;
-    let project = caller.project.ok_or(ApiError::NotFound)?;
+    let project = caller
+        .project
+        .or(caller.oauth_project)
+        .ok_or(ApiError::NotFound)?;
     post_on(
         &state,
         &caller,
@@ -336,6 +349,21 @@ pub(crate) async fn post_public(
         &body,
     )
     .await
+}
+
+/// The answer to `/mcp` without a credential it accepts: the refusal, and on a 401 the
+/// `WWW-Authenticate` that names this server's protected-resource metadata (RFC 9728 §5.1), from
+/// which an agent finds where to sign in (D-246).
+fn challenged(state: &AppState, refused: ApiError) -> Response {
+    let mut response = refused.into_response();
+    if response.status() == StatusCode::UNAUTHORIZED
+        && let Some(value) = crate::oauth::challenge(state)
+    {
+        response
+            .headers_mut()
+            .insert(header::WWW_AUTHENTICATE, value);
+    }
+    response
 }
 
 /// One message on `(project, environment)`, after the door checks.
@@ -403,11 +431,18 @@ pub(crate) async fn delete(
 /// `DELETE /mcp`: the public address's session end (D-244), on the token's project.
 pub(crate) async fn delete_public(
     State(state): State<AppState>,
-    caller: SignedIn,
+    caller: Result<SignedIn, ApiError>,
     headers: HeaderMap,
 ) -> Result<Response, ApiError> {
+    let caller = match caller {
+        Ok(caller) => caller,
+        Err(refused) => return Ok(challenged(&state, refused)),
+    };
     let id = admitted(services(&state)?, &caller, &headers, true)?;
-    let project = caller.project.ok_or(ApiError::NotFound)?;
+    let project = caller
+        .project
+        .or(caller.oauth_project)
+        .ok_or(ApiError::NotFound)?;
     delete_on(&state, &caller, id, project, "production")
 }
 
@@ -446,10 +481,10 @@ fn admitted(
     headers: &HeaderMap,
     session_required: bool,
 ) -> Result<Option<Uuid>, ApiError> {
-    if caller.credential != Credential::ApiToken {
+    if caller.credential != Credential::ApiToken && caller.credential != Credential::OAuth {
         return Err(ApiError::forbidden(
             "api_token_required",
-            "the MCP endpoint speaks to agents: sign a project API token in, not a person",
+            "the MCP endpoint speaks to agents: sign a project API token or an OAuth connection in, not a person",
         ));
     }
     if let Some(origin) = headers.get(header::ORIGIN) {
@@ -654,7 +689,10 @@ impl Backend for Dispatch {
             }
             None => Body::empty(),
         };
-        let request = builder.body(body).map_err(|_| api::ApiError::BadUrl)?;
+        let mut request = builder.body(body).map_err(|_| api::ApiError::BadUrl)?;
+        // The mark of a tool's own request (D-246): an OAuth token is accepted here, in-process,
+        // and nowhere a network request reaches.
+        request.extensions_mut().insert(InProcess);
         let exchange = async {
             // The router's service is infallible: it answers with a status, never an error.
             let response = router
