@@ -8,6 +8,16 @@ through `--version` and `GET /version`.
 
 ## [Unreleased]
 
+### Added
+
+- **Connect an AI app by the MCP address alone** (D-246): add `https://<your server>/mcp` to Claude, ChatGPT
+  or Cursor as a custom connector, sign in, pick a project and approve. No API token to copy; the app acts as
+  you, with your role, in that one project, and the Studio's Connected apps page disconnects it.
+
+### Security
+
+- The Studio's sign-in only returns to an address on its own origin (`/\evil.example` used to pass).
+
 ### Fixed
 
 - **The Studio never waits past 15 seconds for an answer** (D-245): a request whose answer stalls on a
