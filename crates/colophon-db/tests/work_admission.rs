@@ -1,9 +1,9 @@
-//! The per-project work bound under concurrency (D-131; D-216 phase 2's gate). These proofs are
-//! written against what can be observed: the admission's answer (admitted, or `WorkFull`) and the
-//! true count of a project's open work across the four tables `work::admit` counts. They pass
-//! today on WA's serialisation and stay as guards when phase 2 replaces WA's count with a
-//! counter row taken at the end. The one proof that needs phase 2's internals (its open-deltas
-//! fold) skips until those exist. Needs the local stack.
+//! The per-project work bound under concurrency (D-131). These proofs are written against what
+//! can be observed: the admission's answer (admitted, or `WorkFull`) and the true count of a
+//! project's open work across the four tables `work::admit` counts. They pass on WA's
+//! serialisation and stay as guards if D-216's phase 2 (parked) ever replaces WA's count with a
+//! counter row taken at the end; the proof of that phase's own fold is kept out of this file
+//! until it returns (D-216). Needs the local stack.
 //!
 //! The proofs are themselves proven: each must FAIL on an admission that doesn't hold the bound.
 //! To re-run that check, delete the `admission(tx).await?;` line in `work::admit` (the project's
@@ -20,8 +20,8 @@
 //! weaker versions passed that mutant and were fixed: racers that reached the count one after
 //! another (now every racer's transaction is open before a barrier releases them together), and
 //! a stress run whose finishers outran its admitters so the bound was never reached (now it
-//! asserts the bound was reached and admissions were refused there). Phase 2 re-runs the check
-//! with its own mutant: the guard `open + n <= MAX_OPEN` removed from its UPDATE.
+//! asserts the bound was reached and admissions were refused there). If phase 2 returns, it
+//! re-runs the check with its own mutant: the guard `open + n <= MAX_OPEN` removed from its UPDATE.
 #![expect(
     clippy::expect_used,
     reason = "database tests: a failed connection or setup step is a test failure"
@@ -354,80 +354,5 @@ async fn admitters_and_finishers_never_pass_the_bound_at_any_commit() {
         "at rest, admissions and finishes account for the count exactly"
     );
     drop(owner);
-    db.drop().await;
-}
-
-/// Phase 2's fold: workers' open-count deltas, inserted while admissions fold them, are folded
-/// exactly once, so at rest the counter row equals the true count. Until phase 2 there is
-/// nothing to compare and it skips; the skip can't outlive phase 2, because it applies only while
-/// no migration creates `work_open`: once one does, a missing table fails the test (phase 2's
-/// commit turns the skip into a plain assertion).
-#[tokio::test]
-#[ignore = "needs the local stack: scripts/stack.sh up"]
-async fn the_open_counter_equals_the_true_count_at_rest() {
-    let db = TestDb::new().await;
-    let owner = db.owner().await;
-    let built: bool = sqlx::query_scalar("SELECT to_regclass('work_open') IS NOT NULL")
-        .fetch_one(&owner)
-        .await
-        .expect("catalog");
-    let migrated = std::fs::read_dir(concat!(env!("CARGO_MANIFEST_DIR"), "/migrations"))
-        .expect("the migrations directory")
-        .filter_map(Result::ok)
-        .any(|file| {
-            std::fs::read_to_string(file.path())
-                .is_ok_and(|sql| sql.contains("CREATE TABLE work_open"))
-        });
-    assert!(
-        built || !migrated,
-        "a migration creates work_open but the database has none: phase 2 is half-deployed"
-    );
-    if !built {
-        eprintln!(
-            "pending: D-216 phase 2's work_open counter isn't built yet; its commit removes this skip"
-        );
-        owner.close().await;
-        db.drop().await;
-        return;
-    }
-    let (alice, project) = project_with_open(&db, "alpha", 100).await;
-    let pool = db.app_pool(6).await;
-    let mut set = tokio::task::JoinSet::new();
-    for _ in 0..4 {
-        let pool = pool.clone();
-        set.spawn(async move {
-            for _ in 0..25 {
-                admit_one(&pool, alice, project).await.expect("admit");
-            }
-        });
-    }
-    let finisher = owner.clone();
-    set.spawn(async move {
-        for _ in 0..60 {
-            sqlx::query(
-                "UPDATE asset_jobs SET status = 'succeeded', finished_at = now()
-                 WHERE ctid = (SELECT ctid FROM asset_jobs WHERE project_id = $1 AND status = 'pending'
-                               LIMIT 1 FOR UPDATE SKIP LOCKED)",
-            )
-            .bind(project)
-            .execute(&finisher)
-            .await
-            .expect("finish");
-        }
-    });
-    while let Some(result) = set.join_next().await {
-        result.expect("task");
-    }
-    let counted: i64 = sqlx::query_scalar(
-        "SELECT w.open + coalesce((SELECT sum(d.delta) FROM open_deltas d WHERE d.project_id = $1), 0)
-         FROM work_open w WHERE w.project_id = $1",
-    )
-    .bind(project)
-    .fetch_one(&owner)
-    .await
-    .expect("counter");
-    assert_eq!(counted, open_work(&owner, project).await);
-    pool.close().await;
-    owner.close().await;
     db.drop().await;
 }
