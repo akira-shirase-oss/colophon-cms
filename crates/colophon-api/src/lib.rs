@@ -26,6 +26,7 @@ pub mod events;
 mod fault;
 mod graphql;
 pub mod health;
+mod hint;
 mod legacy_cookie;
 pub mod mail;
 pub mod mcp;
@@ -89,6 +90,8 @@ pub fn routes(state: AppState) -> Router {
     // The session cookies' old names, for one release (D-235): inside admission, so a flood of
     // old cookies is rate-limited before it reaches Postgres.
     let legacy_cookie = axum::middleware::from_fn_with_state(state.clone(), legacy_cookie::upgrade);
+    // The signed-in hint (D-235): outside the legacy swap, so a swapped session counts as a new one.
+    let hint = axum::middleware::from_fn_with_state(state.clone(), hint::signed_in);
     let served = std::sync::Arc::new(openapi::Served::new(&state.build));
     let mut router = Router::new();
     for route in openapi::TABLE {
@@ -108,6 +111,7 @@ pub fn routes(state: AppState) -> Router {
         // before any reaches the database (D-231, gap G).
         .layer(preview_cors)
         .layer(legacy_cookie)
+        .layer(hint)
         // Rate limits (D-076): inside the error envelope, before any handler or lookup does work.
         .layer(admission)
         .with_state(state)

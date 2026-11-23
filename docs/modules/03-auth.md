@@ -145,6 +145,13 @@ operation, and the cross-project and identity test families from spec §27 pass.
      unless it is Cloudflare's endpoint or a loopback address. `GET /auth/providers` publishes the site key
      (`turnstile_site_key`) for the form;
   5. invite-only's early refusal, then Argon2, then the sign-up's transaction.
+- **The signed-in hint (D-235).** With `COLOPHON_SIGNED_IN_HINT_DOMAIN` set (the public host or a parent, two
+  labels at least), responses carry `colophon_signed_in=1; Domain=<it>; Path=/; Secure; SameSite=Lax`, not
+  `HttpOnly`, so a static site under that domain can offer "Open the Studio" without calling the API. One
+  middleware (`hint.rs`) owns it: set with every new session (sign-in, sign-up, the provider's callback, setup),
+  `Max-Age` the idle timeout, refreshed when a session is touched (at most once a minute), and cleared when a
+  response ends the session or refuses (401) a request that carried a session or the hint. It authorises nothing:
+  a request with only the hint is 401 everywhere. Unset, no response carries it.
 - **Disabling an account (D-235, migration 0096).** `POST /api/v1/accounts/{identity}/disable` and `/enable`,
   administrators only, answer 204 whether or not anything changed. Disabling is one transaction in
   `colophon_account_set_disabled` (owned by `colophon_accounts`; the acting administrator is the transaction's own

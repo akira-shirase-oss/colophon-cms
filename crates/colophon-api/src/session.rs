@@ -334,10 +334,16 @@ impl FromRequestParts<AppState> for SignedIn {
             }
         }
         // At most one write a minute per session: most requests only read.
-        if unused_for >= identity::TOUCH_INTERVAL
-            && let Err(error) = identity::touch_session(&services.pool, session.id).await
-        {
-            tracing::warn!(%error, "could not record session use");
+        if unused_for >= identity::TOUCH_INTERVAL {
+            match identity::touch_session(&services.pool, session.id).await {
+                // The signed-in hint's lifetime starts again with the session's (D-235).
+                Ok(()) => {
+                    if let Some(touched) = parts.extensions.get::<crate::hint::Touched>() {
+                        touched.mark();
+                    }
+                }
+                Err(error) => tracing::warn!(%error, "could not record session use"),
+            }
         }
         Ok(Self {
             identity: session.identity_id,

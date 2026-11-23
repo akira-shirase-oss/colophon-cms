@@ -509,3 +509,144 @@ async fn misses_from_many_addresses_hit_a_per_account_ceiling_the_owner_bypasses
     let (status, body) = sign_in_from(owner_address, &right).await;
     assert_eq!(status, StatusCode::NO_CONTENT, "{body}");
 }
+
+/// The signed-in hint's `Set-Cookie`, if the response carries one.
+fn hint_of(headers: &header::HeaderMap) -> Option<String> {
+    headers
+        .get_all(header::SET_COOKIE)
+        .iter()
+        .filter_map(|value| value.to_str().ok())
+        .find(|value| value.starts_with("colophon_signed_in="))
+        .map(str::to_owned)
+}
+
+/// A request with exactly these cookies (and, for a write, the hint server's origin and `csrf`).
+async fn with_cookies(
+    method: Method,
+    path: &str,
+    cookies: &str,
+    csrf: Option<&str>,
+) -> reqwest::Response {
+    let mut request = app()
+        .request(method, format!("{ORIGIN}{path}"))
+        .header(header::COOKIE, cookies);
+    if let Some(csrf) = csrf {
+        request = request
+            .header(header::ORIGIN, format!("http://127.0.0.1:{}", common::PORT))
+            .header("x-csrf-token", csrf)
+            .json(&json!({}));
+    }
+    request.send().await.expect("request")
+}
+
+/// The signed-in hint (D-235): set with every new session, refreshed when a session is touched,
+/// cleared on sign-out and on any refusal of a presented session or hint, readable by scripts,
+/// and worth nothing on its own. The public host is 127.0.0.1 here so a hint domain can cover it.
+#[tokio::test]
+#[ignore = "needs the local stack and migrations: scripts/stack.sh up && scripts/migrate.sh"]
+async fn the_signed_in_hint_follows_the_session_and_authorises_nothing() {
+    let public = format!("http://127.0.0.1:{}", common::PORT);
+    let _server = Server::start_with(&[
+        ("COLOPHON_REGISTRATION", "open"),
+        ("COLOPHON_PUBLIC_URL", public.as_str()),
+        ("COLOPHON_SIGNED_IN_HINT_DOMAIN", "127.0.0.1"),
+    ])
+    .await;
+    let set = "colophon_signed_in=1; Domain=127.0.0.1; Path=/; Max-Age=7200; Secure; SameSite=Lax";
+    let cleared = "colophon_signed_in=1; Domain=127.0.0.1; Path=/; Max-Age=0; Secure; SameSite=Lax";
+
+    let email = an_email();
+    let (status, headers, body) = post_auth(
+        "/auth/signup",
+        &json!({"email": email, "password": "colophon-dev"}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "{body}");
+    assert_eq!(
+        hint_of(&headers).as_deref(),
+        Some(set),
+        "sign-up sets the hint"
+    );
+    let (status, headers, body) = post_auth(
+        "/auth/signin",
+        &json!({"email": email, "password": "colophon-dev"}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::NO_CONTENT, "{body}");
+    assert_eq!(hint_of(&headers).as_deref(), Some(set), "sign-in sets it");
+    let session = session_from(&cookies_from_headers(&headers));
+
+    // Refreshed when the session is touched, at most once a minute.
+    let quiet = with_cookies(Method::GET, "/me", &session.cookie, None).await;
+    assert_eq!(
+        (quiet.status(), hint_of(quiet.headers())),
+        (StatusCode::OK, None)
+    );
+    sqlx::query(
+        "UPDATE sessions SET last_seen_at = now() - interval '2 minutes'
+         WHERE identity_id = (SELECT id FROM identities WHERE subject = $1) AND revoked_at IS NULL",
+    )
+    .bind(&email)
+    .execute(&common::owner_database().await)
+    .await
+    .expect("age the session");
+    let touched = with_cookies(Method::GET, "/me", &session.cookie, None).await;
+    assert_eq!(touched.status(), StatusCode::OK);
+    assert_eq!(
+        hint_of(touched.headers()).as_deref(),
+        Some(set),
+        "a touch refreshes it"
+    );
+
+    // The hint alone is nobody: 401 everywhere, and each refusal clears it.
+    for (method, path) in [
+        (Method::GET, "/me"),
+        (Method::GET, "/api/v1/me/usage"),
+        (Method::GET, "/api/v1/projects"),
+        (Method::POST, "/api/v1/projects"),
+    ] {
+        let csrf = (method == Method::POST).then_some("x");
+        let reply = with_cookies(method.clone(), path, "colophon_signed_in=1", csrf).await;
+        assert_eq!(reply.status(), StatusCode::UNAUTHORIZED, "{method} {path}");
+        assert_eq!(
+            hint_of(reply.headers()).as_deref(),
+            Some(cleared),
+            "{method} {path}"
+        );
+    }
+
+    // Sign-out clears it.
+    let out = with_cookies(
+        Method::POST,
+        "/auth/logout",
+        &session.cookie,
+        Some(&session.csrf),
+    )
+    .await;
+    assert!(out.status().is_success(), "{}", out.status());
+    assert_eq!(
+        hint_of(out.headers()).as_deref(),
+        Some(cleared),
+        "sign-out clears it"
+    );
+
+    // A session refused later (here, revoked) clears it on its next request.
+    let (_, headers, _) = post_auth(
+        "/auth/signin",
+        &json!({"email": email, "password": "colophon-dev"}),
+    )
+    .await;
+    let again = session_from(&cookies_from_headers(&headers));
+    sqlx::query("UPDATE sessions SET revoked_at = now() WHERE identity_id = (SELECT id FROM identities WHERE subject = $1)")
+        .bind(&email)
+        .execute(&common::owner_database().await)
+        .await
+        .expect("revoke");
+    let refused = with_cookies(Method::GET, "/me", &again.cookie, None).await;
+    assert_eq!(refused.status(), StatusCode::UNAUTHORIZED);
+    assert_eq!(
+        hint_of(refused.headers()).as_deref(),
+        Some(cleared),
+        "a refused session clears it"
+    );
+}

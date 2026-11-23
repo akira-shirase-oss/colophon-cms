@@ -10,6 +10,10 @@ through `--version` and `GET /version`.
 
 ### Added
 
+- **A signed-in hint for sites on the same domain** (D-235): with `COLOPHON_SIGNED_IN_HINT_DOMAIN` set, a readable
+  `colophon_signed_in=1` cookie follows the session (set on sign-in, refreshed with use, cleared on sign-out or a
+  refused session), so a landing page can show "Open the Studio". It grants nothing: every request is still judged
+  by its session.
 - **Administrators disable and enable accounts** (D-235, migration 0096): `POST /api/v1/accounts/{identity}/disable`
   revokes every session the account holds and every API token it made in one transaction and logs it; the
   account then signs in like a wrong password until `/enable`. Nobody can disable their own account, and the last
