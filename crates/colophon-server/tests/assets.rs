@@ -1988,3 +1988,78 @@ async fn uploads_in_flight_are_bounded_by_memory_and_by_credential() {
     let (status, text) = answer(&mut over, 5).await;
     assert_eq!(status, "413", "{text}");
 }
+
+/// F07 (module 17), the media half: an unpublished entry's upload follows it. While another
+/// published entry still names the upload, the public keeps it; once the only entries naming it
+/// are unpublished, the public origin no longer serves it, at its bare or its versioned address,
+/// while a member still can, privately (D-229). And the entries' pinned historical URLs are dead:
+/// a link to the release that published one is refused, not served from that release.
+#[tokio::test]
+#[ignore = "needs the stack and scripts/migrate.sh"]
+async fn an_unpublished_entry_s_upload_and_its_pinned_links_leave_the_public() {
+    let (_server, owner, project, asset, sha1, _) = usable_asset().await;
+    covers(&owner, &project).await;
+    let first = cover(&owner, &project, "First", &asset).await;
+    let second = cover(&owner, &project, "Second", &asset).await;
+    let published = common::release(
+        &owner,
+        &project,
+        &json!({"title": "Both", "entries": [first, second]}),
+    )
+    .await;
+    let bare = media(&project, &asset);
+    let versioned = format!("{bare}/{sha1}");
+    for path in [&bare, &versioned] {
+        assert_eq!(media_status(None, path).await, StatusCode::OK, "{path}");
+    }
+    let entry = |id: &str| format!("/content/v1/{project}/production/covers/{id}");
+    let pinned = |id: &str| format!("{}?generation={published}", entry(id));
+    for id in [&first, &second] {
+        assert_eq!(media_status(None, &pinned(id)).await, StatusCode::OK);
+    }
+
+    // One of the two taken down: the other still names the upload, so it stays public.
+    common::release(
+        &owner,
+        &project,
+        &json!({"title": "First down", "unpublish": [first]}),
+    )
+    .await;
+    for path in [&bare, &versioned] {
+        assert_eq!(
+            media_status(None, path).await,
+            StatusCode::OK,
+            "{path}: still named by a published entry"
+        );
+    }
+    for path in [entry(&first), pinned(&first)] {
+        assert_eq!(media_status(None, &path).await, StatusCode::GONE, "{path}");
+    }
+
+    // The last one down: nothing published names it any more.
+    common::release(
+        &owner,
+        &project,
+        &json!({"title": "Second down", "unpublish": [second]}),
+    )
+    .await;
+    for path in [&bare, &versioned] {
+        assert_eq!(
+            media_status(None, path).await,
+            StatusCode::NOT_FOUND,
+            "{path}: the public no longer gets it"
+        );
+        let member = media_get(Some(&owner), path).await;
+        assert_eq!(
+            member.status(),
+            StatusCode::OK,
+            "{path}: a member still does"
+        );
+        assert_eq!(member.headers()["cache-control"], "private, no-store");
+    }
+    for id in [&first, &second] {
+        for path in [entry(id), pinned(id)] {
+            assert_eq!(media_status(None, &path).await, StatusCode::GONE, "{path}");
+        }
+    }
+}
