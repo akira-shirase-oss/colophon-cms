@@ -1036,13 +1036,16 @@ fn run_admin(runtime: &Runtime, command: AdminCommand) -> ExitCode {
             ))
             .into(),
         AdminCommand::Restore { step } => run_restore(runtime, step),
-        AdminCommand::MediaKey {
-            step:
-                MediaKeyStep::Rotate {
-                    database,
-                    retire_previous,
-                    json,
-                },
+        AdminCommand::MediaKey { step } => run_media_key(runtime, step),
+    }
+}
+
+fn run_media_key(runtime: &Runtime, step: MediaKeyStep) -> ExitCode {
+    match step {
+        MediaKeyStep::Rotate {
+            database,
+            retire_previous,
+            json,
         } => runtime
             .block_on(admin::media_key_rotate(
                 &database,
