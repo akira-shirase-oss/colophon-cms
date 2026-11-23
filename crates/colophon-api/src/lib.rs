@@ -4,6 +4,7 @@
 //!
 //! Design: `docs/modules/04-api.md`.
 
+mod accounts;
 pub mod admission;
 mod assets;
 mod audience;

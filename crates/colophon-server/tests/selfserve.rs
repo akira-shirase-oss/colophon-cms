@@ -195,8 +195,9 @@ async fn colophon_accounts_holds_exactly_the_grants_it_counts_with() {
         .expect("privilege");
         assert!(!can, "colophon_accounts may read projects.{column}");
     }
-    // Exactly the grants it counts and reconciles with (0092, 0093) and the sign-up cap's
-    // (0095), table and column, and no
+    // Exactly the grants it counts and reconciles with (0092, 0093), the sign-up cap's (0095)
+    // and disabling an account's (0096: the account, its sessions and tokens, the log and the
+    // tokens' live-list hint), table and column, and no
     // privilege on any other table by any route (PUBLIC included).
     let granted: Vec<String> = sqlx::query_scalar(
         "SELECT c.relname || ':' || a.privilege_type
@@ -226,27 +227,41 @@ async fn colophon_accounts_holds_exactly_the_grants_it_counts_with() {
             "account_usage:SELECT",
             "account_usage:UPDATE",
             "administrators.identity_id:SELECT",
+            "api_tokens.created_by:SELECT",
+            "api_tokens.revoked_at:SELECT",
+            "api_tokens.revoked_at:UPDATE",
+            "api_tokens.revoked_by:UPDATE",
             "asset_versions.project_id:SELECT",
             "asset_versions.size_bytes:SELECT",
             "assets.project_id:SELECT",
             "assets.size_bytes:SELECT",
             "assets.state:SELECT",
+            "change_hints:INSERT",
             "entries.project_id:SELECT",
+            "identities.disabled_at:SELECT",
+            "identities.disabled_at:UPDATE",
+            "identities.id:SELECT",
+            "identities.issuer:SELECT",
             "projects.id:SELECT",
             "projects.owner_account:SELECT",
+            "sessions.identity_id:SELECT",
+            "sessions.revoked_at:SELECT",
+            "sessions.revoked_at:UPDATE",
             "sign_in_log_budget:INSERT",
             "sign_in_log_budget:SELECT",
             "sign_in_log_budget:UPDATE",
             "signup_throttle:INSERT",
             "signup_throttle:SELECT",
             "signup_throttle:UPDATE",
+            "staff_auth_events:INSERT",
         ]
     );
     let others: Vec<String> = sqlx::query_scalar(
         "SELECT c.relname::text FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
          WHERE n.nspname = 'public' AND c.relkind IN ('r', 'p', 'v')
            AND c.relname NOT IN ('account_quotas', 'account_upload_reservations', 'account_usage',
-                                 'signup_throttle', 'sign_in_log_budget')
+                                 'signup_throttle', 'sign_in_log_budget', 'staff_auth_events',
+                                 'change_hints')
            AND (has_table_privilege('colophon_accounts', c.oid, 'SELECT')
              OR has_table_privilege('colophon_accounts', c.oid, 'INSERT')
              OR has_table_privilege('colophon_accounts', c.oid, 'UPDATE')
@@ -680,7 +695,152 @@ async fn an_administrator_s_usage_is_unbounded_and_a_stranger_gets_401() {
 #[tokio::test]
 #[ignore = "needs the stack and scripts/migrate.sh"]
 async fn where_members_create_no_projects_their_project_limit_is_zero() {
+    // Made while registration is open; an invite-only server then takes no sign-up without an
+    // invitation, but the account and its session remain.
+    let member = {
+        let _open = Server::start_with(&[("COLOPHON_REGISTRATION", "open")]).await;
+        account().await
+    };
     let _server = Server::start_with(&[("COLOPHON_REGISTRATION", "invite")]).await;
-    let member = account().await;
     assert_eq!(usage(&member).await[0], (0, Some(0)));
+}
+
+/// The signed-in account's identity id.
+async fn identity_of(session: &Session) -> String {
+    let (status, body) = get(Some(session), "/me").await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    body["data"]["id"].as_str().expect("an id").to_owned()
+}
+
+/// `POST /api/v1/accounts/{identity}/{action}` as `session`.
+async fn account_action(session: &Session, identity: &str, action: &str) -> common::Reply {
+    call(
+        session,
+        Method::POST,
+        &format!("/api/v1/accounts/{identity}/{action}"),
+        None,
+        &[],
+    )
+    .await
+    .expect("request")
+}
+
+/// What listing its project's articles answers a request carrying only an API token's secret.
+async fn token_reads(secret: &str, project: &str) -> StatusCode {
+    common::app()
+        .get(format!("{}{}", common::ORIGIN, common::entries(project)))
+        .header(reqwest::header::AUTHORIZATION, format!("Bearer {secret}"))
+        .send()
+        .await
+        .expect("request")
+        .status()
+}
+
+/// A password sign-in's status and error code, with no session.
+async fn password_sign_in(email: &str, password: &str) -> (StatusCode, serde_json::Value) {
+    let response = common::app()
+        .post(format!("{}/auth/signin", common::ORIGIN))
+        .json(&json!({"email": email, "password": password}))
+        .send()
+        .await
+        .expect("request");
+    let status = response.status();
+    (status, response.json().await.unwrap_or_default())
+}
+
+#[tokio::test]
+#[ignore = "needs the stack and scripts/migrate.sh, which bootstraps dev-owner"]
+async fn a_disabled_account_loses_its_sessions_and_tokens_at_once_and_signs_in_like_a_wrong_password()
+ {
+    let _server = Server::start_with(&[("COLOPHON_REGISTRATION", "open")]).await;
+    let admin = sign_in("dev-owner").await;
+    let name = format!("ss-{}", unique_slug());
+    let member = sign_in(&name).await;
+    let email = format!("{name}@colophon.test");
+    let id = identity_of(&member).await;
+    let made = create(&member).await;
+    assert_eq!(made.status, StatusCode::CREATED, "{}", made.body);
+    let project = made.body["data"]["id"].as_str().expect("id").to_owned();
+    let token = call(
+        &member,
+        Method::POST,
+        &format!("/api/v1/projects/{project}/tokens"),
+        Some(&json!({"name": "Deploys", "kind": "read-only", "expires_in_days": 1})),
+        &[],
+    )
+    .await
+    .expect("request");
+    assert_eq!(token.status, StatusCode::CREATED, "{}", token.body);
+    let secret = token.body["data"]["secret"]
+        .as_str()
+        .expect("the secret")
+        .to_owned();
+    assert_eq!(token_reads(&secret, &project).await, StatusCode::OK);
+    let wrong = password_sign_in(&email, "not-the-password").await;
+    assert_eq!(wrong.0, StatusCode::BAD_REQUEST, "{}", wrong.1);
+
+    let disabled = account_action(&admin, &id, "disable").await;
+    assert_eq!(disabled.status, StatusCode::NO_CONTENT, "{}", disabled.body);
+    let (status, body) = get(Some(&member), "/me").await;
+    assert_eq!(
+        status,
+        StatusCode::UNAUTHORIZED,
+        "the live session ends at once: {body}"
+    );
+    assert_eq!(
+        token_reads(&secret, &project).await,
+        StatusCode::UNAUTHORIZED,
+        "its token too"
+    );
+    let refused = password_sign_in(&email, "colophon-dev").await;
+    assert_eq!(
+        (refused.0, &refused.1["error"]["code"]),
+        (wrong.0, &wrong.1["error"]["code"]),
+        "the right password answers exactly like a wrong one: {}",
+        refused.1
+    );
+
+    let enabled = account_action(&admin, &id, "enable").await;
+    assert_eq!(enabled.status, StatusCode::NO_CONTENT, "{}", enabled.body);
+    let back = password_sign_in(&email, "colophon-dev").await;
+    assert_eq!(back.0, StatusCode::NO_CONTENT, "{}", back.1);
+    assert_eq!(
+        token_reads(&secret, &project).await,
+        StatusCode::UNAUTHORIZED,
+        "a revoked token stays revoked"
+    );
+}
+
+#[tokio::test]
+#[ignore = "needs the stack and scripts/migrate.sh, which bootstraps dev-owner"]
+async fn only_an_administrator_disables_an_account_and_never_their_own() {
+    let _server = Server::start_with(&[("COLOPHON_REGISTRATION", "open")]).await;
+    let admin = sign_in("dev-owner").await;
+    let member = account().await;
+    let other = account().await;
+    let (admin_id, other_id) = (identity_of(&admin).await, identity_of(&other).await);
+
+    let by_member = account_action(&member, &other_id, "disable").await;
+    assert_eq!(
+        by_member.status,
+        StatusCode::FORBIDDEN,
+        "{}",
+        by_member.body
+    );
+    assert_eq!(
+        by_member.body["error"]["details"]["reason"], "administrators_only",
+        "{}",
+        by_member.body
+    );
+    let own = account_action(&admin, &admin_id, "disable").await;
+    assert_eq!(own.status, StatusCode::CONFLICT, "{}", own.body);
+    assert_eq!(
+        own.body["error"]["details"]["reason"], "own_account",
+        "{}",
+        own.body
+    );
+    let nobody = account_action(&admin, &uuid::Uuid::now_v7().to_string(), "disable").await;
+    assert_eq!(nobody.status, StatusCode::NOT_FOUND, "{}", nobody.body);
+    let (status, _) = get(Some(&other), "/me").await;
+    assert_eq!(status, StatusCode::OK, "a refusal disabled nobody");
 }

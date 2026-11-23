@@ -24,7 +24,7 @@ use axum::{
 use serde_json::{Map, Value, json};
 
 use crate::{
-    AppState, BuildInfo, assets, audience, audit, auth, bulk, changesets, collaboration,
+    AppState, BuildInfo, accounts, assets, audience, audit, auth, bulk, changesets, collaboration,
     components, content_types, delivery, destinations, device, entries, graphql, health, mcp,
     me_usage, members, migrations, preview, projects, receipts, rich_text, roles, schedules, setup,
     tokens, undo, version,
@@ -876,6 +876,56 @@ pub(crate) static TABLE: &[Route] = &[
                 summary: "Who the caller is, and every project they belong to",
                 tag: "auth",
                 ok: data("Me"),
+                ..MIN
+            },
+        )],
+    ),
+    route(
+        ("", "/api/v1/accounts/{identity}/disable"),
+        &[op(
+            Verb::Post,
+            |f| on(f, accounts::disable),
+            OpDoc {
+                id: "disableAccount",
+                summary: "Disable an account: every session and API token it made is revoked, and it can't sign in (D-235)",
+                tag: "auth",
+                ok: ok(204, Shape::Empty, "disabled, or it already was"),
+                extra: &[
+                    NOT_FOUND,
+                    refusal(
+                        403,
+                        "administrators_only",
+                        "only an administrator can disable an account",
+                    ),
+                    refusal(
+                        409,
+                        "own_account, last_administrator",
+                        "your own account, or the last enabled administrator",
+                    ),
+                ],
+                ..MIN
+            },
+        )],
+    ),
+    route(
+        ("", "/api/v1/accounts/{identity}/enable"),
+        &[op(
+            Verb::Post,
+            |f| on(f, accounts::enable),
+            OpDoc {
+                id: "enableAccount",
+                summary: "Enable a disabled account again; it signs in afresh (D-235)",
+                tag: "auth",
+                ok: ok(204, Shape::Empty, "enabled, or it already was"),
+                extra: &[
+                    NOT_FOUND,
+                    refusal(
+                        403,
+                        "administrators_only",
+                        "only an administrator can enable an account",
+                    ),
+                    refusal(409, "own_account", "your own account"),
+                ],
                 ..MIN
             },
         )],

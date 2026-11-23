@@ -134,6 +134,9 @@ pub enum DbError {
     /// No answer within the deadline.
     #[error("database did not answer within {0:?}")]
     Timeout(Duration),
+    /// The account is disabled (D-235): it gets no session by any route.
+    #[error("the account is disabled")]
+    AccountDisabled,
     /// The account already owns as many projects as the cap allows (D-235); nothing was created.
     #[error("the account owns {used} of the {limit} projects an account may own")]
     ProjectLimit {

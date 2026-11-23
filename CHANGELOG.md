@@ -10,6 +10,14 @@ through `--version` and `GET /version`.
 
 ### Added
 
+- **Administrators disable and enable accounts** (D-235, migration 0096): `POST /api/v1/accounts/{identity}/disable`
+  revokes every session the account holds and every API token it made in one transaction and logs it; the
+  account then signs in like a wrong password until `/enable`. Nobody can disable their own account, and the last
+  enabled administrator stays enabled.
+- **The caller's usage** (D-235): `GET /api/v1/me/usage` answers projects, entries, files and storage, each with its
+  limit (`null` when unbounded), and the Studio has a Usage page. `GET /auth/providers` also says whether
+  registration is `open`, `invite` or `closed`, so the Studio's new `/studio/signin` and `/studio/signup` pages
+  show a closed or invite-only installation before anyone fills a form.
 - **Self-serve projects and per-account quotas** (D-235). `COLOPHON_REGISTRATION=open` lets any signed-in account
   create up to `COLOPHON_PROJECTS_PER_ACCOUNT` (3) projects it owns; `invite` (the default) and `closed` keep project
   creation to administrators. Each account's entries, assets and stored bytes are counted in the database by

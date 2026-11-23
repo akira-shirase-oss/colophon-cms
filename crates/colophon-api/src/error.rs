@@ -666,6 +666,8 @@ impl ApiError {
             // installation's payload bound answers the same way (D-135).
             DbError::WorkFull { open, limit } => Self::WorkFull { open, limit },
             DbError::ProjectLimit { limit, used } => Self::ProjectLimit { limit, used },
+            // A session asked for a disabled account (D-235): no more than a stranger hears.
+            DbError::AccountDisabled => Self::Unauthorized,
             DbError::QuotaExceeded { quota, limit, used } => Self::QuotaExceeded {
                 quota: quota.as_str(),
                 limit,

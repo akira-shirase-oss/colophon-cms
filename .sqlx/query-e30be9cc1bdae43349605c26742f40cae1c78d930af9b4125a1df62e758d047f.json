@@ -1,0 +1,18 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO sessions (id, token_hash, csrf_hash, identity_id, expires_at)\n         SELECT $1, $2, $3, i.id, $5 FROM identities i WHERE i.id = $4 AND i.disabled_at IS NULL",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Bytea",
+        "Bytea",
+        "Uuid",
+        "Timestamptz"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "e30be9cc1bdae43349605c26742f40cae1c78d930af9b4125a1df62e758d047f"
+}

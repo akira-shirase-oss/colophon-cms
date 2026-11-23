@@ -314,7 +314,8 @@ pub async fn password_sign_in(
         return Ok(PasswordSignIn::Refused);
     }
     let row = sqlx::query!(
-        "SELECT id, password_hash FROM identities WHERE issuer = $1 AND subject = $2",
+        "SELECT id, password_hash FROM identities
+         WHERE issuer = $1 AND subject = $2 AND disabled_at IS NULL",
         PASSWORD_ISSUER,
         email
     )
@@ -366,8 +367,10 @@ pub async fn create_session(
     expires_at: OffsetDateTime,
 ) -> Result<Uuid, DbError> {
     let id = Uuid::now_v7();
-    sqlx::query!(
-        "INSERT INTO sessions (id, token_hash, csrf_hash, identity_id, expires_at) VALUES ($1, $2, $3, $4, $5)",
+    // A disabled account (D-235) gets no session, whichever route asks.
+    let made = sqlx::query!(
+        "INSERT INTO sessions (id, token_hash, csrf_hash, identity_id, expires_at)
+         SELECT $1, $2, $3, i.id, $5 FROM identities i WHERE i.id = $4 AND i.disabled_at IS NULL",
         id,
         &token_hash[..],
         &csrf_hash[..],
@@ -377,7 +380,71 @@ pub async fn create_session(
     .execute(pool)
     .await
     .map_err(DbError::from_query)?;
+    if made.rows_affected() == 0 {
+        return Err(DbError::AccountDisabled);
+    }
     Ok(id)
+}
+
+/// What [`set_disabled`] did.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SetDisabled {
+    /// The account is now as asked: disabled, with every session and API token it made revoked,
+    /// or enabled again; the staff auth log has its row.
+    Done,
+    /// It already was.
+    Unchanged,
+    /// No such account (an API token's identity isn't one).
+    NotFound,
+    /// The caller isn't an enabled administrator.
+    NotAdministrator,
+    /// Nobody disables their own account.
+    OwnAccount,
+    /// The last enabled administrator stays enabled.
+    LastAdministrator,
+}
+
+/// Disables or enables `target` as `actor` (D-235), in one transaction run as `actor`'s
+/// identity: `colophon_account_set_disabled` takes the actor from it, never from an argument.
+///
+/// # Errors
+///
+/// The database's.
+pub async fn set_disabled(
+    pool: &PgPool,
+    actor: Uuid,
+    target: Uuid,
+    disable: bool,
+) -> Result<SetDisabled, DbError> {
+    let mut tx = crate::scope::begin(
+        pool,
+        crate::scope::Scope {
+            identity: Some(actor),
+            project: None,
+        },
+    )
+    .await?;
+    let outcome: String = sqlx::query_scalar("SELECT colophon_account_set_disabled($1, $2, $3)")
+        .bind(target)
+        .bind(disable)
+        .bind(Uuid::now_v7())
+        .fetch_one(&mut *tx)
+        .await
+        .map_err(DbError::from_query)?;
+    tx.commit().await.map_err(DbError::from_query)?;
+    Ok(match outcome.as_str() {
+        "done" => SetDisabled::Done,
+        "unchanged" => SetDisabled::Unchanged,
+        "not_found" => SetDisabled::NotFound,
+        "not_admin" => SetDisabled::NotAdministrator,
+        "self" => SetDisabled::OwnAccount,
+        "last_admin" => SetDisabled::LastAdministrator,
+        _ => {
+            return Err(DbError::Corrupt(
+                "an unknown answer from colophon_account_set_disabled",
+            ));
+        }
+    })
 }
 
 /// The session with this token hash, if it exists, isn't revoked and hasn't expired.

@@ -145,6 +145,16 @@ operation, and the cross-project and identity test families from spec §27 pass.
      unless it is Cloudflare's endpoint or a loopback address. `GET /auth/providers` publishes the site key
      (`turnstile_site_key`) for the form;
   5. invite-only's early refusal, then Argon2, then the sign-up's transaction.
+- **Disabling an account (D-235, migration 0096).** `POST /api/v1/accounts/{identity}/disable` and `/enable`,
+  administrators only, answer 204 whether or not anything changed. Disabling is one transaction in
+  `colophon_account_set_disabled` (owned by `colophon_accounts`; the acting administrator is the transaction's own
+  identity, never an argument): `identities.disabled_at` is set, every session the account holds and every API
+  token it made are revoked, and `staff_auth_events` gets `account_disabled` with the actor (enabling writes
+  `account_enabled`; revoked tokens stay revoked). A disabled account's password answers exactly like a wrong one,
+  and `identity::create_session` makes no session for it by any route. Nobody disables their own account
+  (409 `own_account`); one advisory lock serialises every change and each re-checks that its actor is still an
+  enabled administrator, so two administrators disabling each other at once leave one enabled
+  (409 `last_administrator` guards the rest).
 - **The staff auth log (D-235, migration 0095).** `staff_auth_events`: `signed_up` (marked `pre_setup` for the
   first-run account, `invitation` when it claimed one; written in the sign-up's own transaction),
   `sign_up_refused` (`bot_check_failed`, `invitation_required`, `email_taken`; written only past the cap, so a
