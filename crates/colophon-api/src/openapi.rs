@@ -5238,12 +5238,17 @@ fn identity() -> Value {
         },
         "AuthProviders": {
             "type": "object",
-            "required": ["sso", "turnstile_site_key"],
+            "required": ["sso", "turnstile_site_key", "registration"],
             "properties": {
                 "sso": { "type": "boolean", "description": "an external identity provider is configured" },
                 "turnstile_site_key": {
                     "type": ["string", "null"],
                     "description": "Cloudflare Turnstile's site key when sign-ups must carry a token (D-235); null when none is checked",
+                },
+                "registration": {
+                    "type": "string",
+                    "enum": ["open", "invite", "closed"],
+                    "description": "who may sign up (D-235): anyone, only with an invitation, or nobody",
                 },
             },
         },

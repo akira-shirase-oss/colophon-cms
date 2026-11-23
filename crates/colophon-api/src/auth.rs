@@ -67,6 +67,8 @@ pub(crate) struct Providers {
     /// Cloudflare Turnstile's site key, where sign-ups must carry a token (D-235); `null` when
     /// the installation checks none. Public by design: it only renders the widget.
     turnstile_site_key: Option<String>,
+    /// Who may sign up here (D-235), so the page can say "closed" before anyone fills a form.
+    registration: &'static str,
 }
 
 /// `GET /auth/providers`: public — a sign-in page asks before offering the provider button.
@@ -83,6 +85,7 @@ pub(crate) async fn providers(
                 .turnstile
                 .as_ref()
                 .and(services.selfserve.turnstile_site_key.clone()),
+            registration: services.selfserve.registration.as_str(),
         },
     }))
 }

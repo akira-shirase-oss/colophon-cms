@@ -2132,6 +2132,11 @@ export interface components {
             role?: string;
         };
         AuthProviders: {
+            /**
+             * @description who may sign up (D-235): anyone, only with an invitation, or nobody
+             * @enum {string}
+             */
+            registration: "open" | "invite" | "closed";
             /** @description an external identity provider is configured */
             sso: boolean;
             /** @description Cloudflare Turnstile's site key when sign-ups must carry a token (D-235); null when none is checked */

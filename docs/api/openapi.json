@@ -381,6 +381,15 @@
       },
       "AuthProviders": {
         "properties": {
+          "registration": {
+            "description": "who may sign up (D-235): anyone, only with an invitation, or nobody",
+            "enum": [
+              "open",
+              "invite",
+              "closed"
+            ],
+            "type": "string"
+          },
           "sso": {
             "description": "an external identity provider is configured",
             "type": "boolean"
@@ -395,7 +404,8 @@
         },
         "required": [
           "sso",
-          "turnstile_site_key"
+          "turnstile_site_key",
+          "registration"
         ],
         "type": "object"
       },

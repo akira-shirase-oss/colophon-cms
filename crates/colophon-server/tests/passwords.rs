@@ -92,13 +92,17 @@ fn an_email() -> String {
 #[tokio::test]
 #[ignore = "needs the local stack and migrations: scripts/stack.sh up && scripts/migrate.sh"]
 async fn the_sign_in_page_asks_which_methods_this_server_offers() {
-    let _server = Server::start().await;
-    let (status, body) = get(None, "/auth/providers").await;
-    assert_eq!(
-        (status, body["data"]["sso"].as_bool()),
-        (StatusCode::OK, Some(false)),
-        "{body}"
-    );
+    for mode in ["open", "invite", "closed"] {
+        let _server = Server::start_with(&[("COLOPHON_REGISTRATION", mode)]).await;
+        let (status, body) = get(None, "/auth/providers").await;
+        assert_eq!(
+            (status, body["data"]["sso"].as_bool()),
+            (StatusCode::OK, Some(false)),
+            "{body}"
+        );
+        // The page shows "closed" or asks for the invitation before anyone fills the form.
+        assert_eq!(body["data"]["registration"], mode, "{body}");
+    }
 }
 
 #[tokio::test]
