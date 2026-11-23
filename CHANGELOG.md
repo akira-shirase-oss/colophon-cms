@@ -10,6 +10,8 @@ through `--version` and `GET /version`.
 
 ### Added
 
+- **One connection for all your projects** (D-248): connecting an AI app by signing in now covers every project you're in, with your role in each, and ones you join later; there is no project to pick. Ask the app to list your projects and work in any of them. Connections made for one project keep working there.
+
 - **Connect an AI app by the MCP address alone** (D-246): add `https://<your server>/mcp` to Claude, ChatGPT
   or Cursor as a custom connector, sign in, pick a project and approve. No API token to copy; the app acts as
   you, with your role, in that one project, and the Studio's Connected apps page disconnects it.

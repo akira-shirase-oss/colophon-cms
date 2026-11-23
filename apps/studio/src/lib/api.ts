@@ -2160,17 +2160,19 @@ export async function oauthRequest(id: string): Promise<OAuthRequest> {
 }
 
 /** Approves the app for `project`, or denies it; where the browser goes next (the app). */
-export async function answerOAuth(id: string, decision: 'approve' | 'deny', project?: string): Promise<string> {
-	const body = decision === 'approve' ? { decision, project } : { decision };
-	return ((await (await send('POST', `/oauth/requests/${id}`, body)).json()) as { data: { redirect: string } }).data.redirect;
+/** Answers a connect request: approving connects the app in all the person's projects, with their
+ *  role in each (D-248). */
+export async function answerOAuth(id: string, decision: 'approve' | 'deny'): Promise<string> {
+	return ((await (await send('POST', `/oauth/requests/${id}`, { decision })).json()) as { data: { redirect: string } }).data.redirect;
 }
 
 /** An app the person connected and hasn't revoked (D-246). */
 export interface ConnectedApp {
 	id: string;
 	client_name: string;
-	project: string;
-	project_name: string;
+	/** `null`: all the person's projects (D-248); else the one project an older connection acts in. */
+	project: string | null;
+	project_name: string | null;
 	created_at: string;
 	last_used_at: string | null;
 }

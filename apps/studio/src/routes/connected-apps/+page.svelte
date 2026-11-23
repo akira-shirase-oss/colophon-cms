@@ -1,6 +1,7 @@
 <!--
-  Connected apps (D-246): every app connected to Colophon over OAuth as this person, in which
-  project, since when and when last used, each with Disconnect (its tokens stop working at once).
+  Connected apps (D-246, D-248): every app connected to Colophon over OAuth as this person, in all
+  their projects (or an older connection's one project), since when and when last used, each with
+  Disconnect (its tokens stop working at once).
 -->
 <script lang="ts">
 	import { createQuery, useQueryClient } from '@tanstack/svelte-query';
@@ -34,7 +35,7 @@
 <div class="mx-auto max-w-2xl space-y-4">
 	<h1 class="page-title">Connected apps</h1>
 	<p class="text-sm text-muted-foreground">
-		AI apps you connected to Colophon. Each acts as you, with your role, in one project. Disconnect one and it stops working at once.
+		AI apps you connected to Colophon. Each acts as you, with your role in each of your projects. Disconnect one and it stops working at once.
 	</p>
 	{#if error}<p role="alert" class="text-sm text-destructive">{error}</p>{/if}
 	{#if apps.isPending}
@@ -49,7 +50,7 @@
 				<li class="flex flex-wrap items-center justify-between gap-3 p-4">
 					<div class="min-w-0 space-y-0.5">
 						<p class="font-medium">{app.client_name} <span class="text-sm font-normal text-muted-foreground">(unverified name)</span></p>
-						<p class="text-sm text-muted-foreground">In {app.project_name} · connected {when(app.created_at)} · last used {when(app.last_used_at)}</p>
+						<p class="text-sm text-muted-foreground">{app.project_name === null ? 'All your projects' : `In ${app.project_name}`} · connected {when(app.created_at)} · last used {when(app.last_used_at)}</p>
 					</div>
 					<Button variant="outline" onclick={() => disconnect(app.id)} disabled={busy === app.id} data-testid="disconnect-app">
 						{busy === app.id ? 'Disconnecting…' : 'Disconnect'}
