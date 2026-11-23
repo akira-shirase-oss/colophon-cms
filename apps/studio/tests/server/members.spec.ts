@@ -58,7 +58,7 @@ test('an owner invites with a link, the invitee signs in and joins, and roles de
 	await stranger.context().close();
 
 	// As an editor: the members are visible, but there's nothing to manage.
-	await guest.getByRole('link', { name: 'Open the project' }).click();
+	await guest.goto(`/studio/projects/${project}`);
 	await guest.getByTestId('members-link').click();
 	await expect(guest.getByTestId('member')).toHaveCount(2);
 	await expect(guest.getByRole('combobox')).toHaveCount(0);
