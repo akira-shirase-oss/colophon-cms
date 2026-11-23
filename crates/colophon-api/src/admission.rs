@@ -1246,6 +1246,92 @@ mod tests {
         assert_eq!(biggest.tolerance_us, biggest.interval_us * 99_999);
     }
 
+    /// D-238: a key that is actually being limited (its arrival far ahead: a password counter that
+    /// spent its burst) stays limited through a flood of new keys while Valkey is away, and the
+    /// map never holds more than [`MAX_LOCAL_KEYS`]. Clearing the whole map at the bound handed
+    /// every limited key a fresh burst: it failed first that way.
+    #[test]
+    fn a_limited_key_stays_limited_through_a_flood_of_new_keys() {
+        let mut local = Local {
+            epoch: Instant::now(),
+            arrivals: HashMap::new(),
+        };
+        let victim = [("victim".to_owned(), rate(1, 5).cell())];
+        for _ in 0..5 {
+            assert_eq!(local.check(0, &victim), None, "its burst");
+        }
+        assert!(
+            local.check(0, &victim).is_some(),
+            "limited before the flood"
+        );
+        for n in 0..(MAX_LOCAL_KEYS + 5_000) {
+            local.check(0, &[(format!("flood{n}"), rate(1, 1).cell())]);
+            assert!(
+                local.arrivals.len() <= MAX_LOCAL_KEYS,
+                "{} keys after {n}",
+                local.arrivals.len()
+            );
+            if n % 10_000 == 0 {
+                assert!(
+                    local.check(0, &victim).is_some(),
+                    "limited during the flood ({n})"
+                );
+            }
+        }
+        assert!(local.check(0, &victim).is_some(), "still limited after it");
+    }
+
+    /// D-238: a token over its D-118 quota keeps its throttle marker through a flood of new
+    /// markers (each episode is audited once; a lost marker would audit it again and again), and
+    /// the markers never number more than [`MAX_LOCAL_KEYS`].
+    #[test]
+    fn an_over_quota_token_stays_marked_through_a_flood() {
+        let admission = Admission::new(AdmissionSettings::default(), None).expect("no URL");
+        let over = Uuid::now_v7();
+        assert!(admission.mark_throttled(over, 60_000_000), "a long episode");
+        for n in 0..(MAX_LOCAL_KEYS + 5_000) {
+            admission.mark_throttled(Uuid::now_v7(), 1_000_000);
+            if n % 10_000 == 0 {
+                let markers = admission
+                    .throttled
+                    .lock()
+                    .unwrap_or_else(PoisonError::into_inner)
+                    .len();
+                assert!(markers <= MAX_LOCAL_KEYS, "{markers} markers after {n}");
+            }
+        }
+        assert!(
+            !admission.mark_throttled(over, 60_000_000),
+            "the episode is still the one already told"
+        );
+    }
+
+    /// D-238's cost: a flood of 200,000 distinct keys, each one request, timed per request. Making
+    /// room evicts a tenth of the bound in one pass, so all but one request in ten thousand is a
+    /// map insert. Prints the p99 and the worst, which D-238 records; bounds them loosely (a debug
+    /// build on a shared runner) so only a per-request scan fails it.
+    #[test]
+    fn a_flood_costs_a_map_insert_a_request() {
+        let mut local = Local {
+            epoch: Instant::now(),
+            arrivals: HashMap::new(),
+        };
+        let cell = rate(1, 1).cell();
+        let mut took: Vec<Duration> = Vec::with_capacity(200_000);
+        for n in 0..200_000_u64 {
+            let key = [(format!("flood{n}"), cell)];
+            let started = Instant::now();
+            local.check(n, &key);
+            took.push(started.elapsed());
+        }
+        took.sort_unstable();
+        let p99 = took[took.len() * 99 / 100];
+        let worst = took[took.len() - 1];
+        eprintln!("200,000-key flood: p99 {p99:?}, worst {worst:?}");
+        assert!(p99 < Duration::from_millis(1), "p99 {p99:?}");
+        assert!(worst < Duration::from_secs(1), "worst {worst:?}");
+    }
+
     #[test]
     fn a_throttle_episode_is_marked_once() {
         let admission = Admission::new(AdmissionSettings::default(), None).expect("no URL");
