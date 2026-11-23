@@ -8,6 +8,11 @@ through `--version` and `GET /version`.
 
 ## [Unreleased]
 
+### Security
+
+- `cookie` 0.18.3 (RUSTSEC-2026-0594). Not reachable: Colophon uses no private cookie jar and doesn't
+  fork.
+
 ### Fixed
 
 - **The worker's claims and sweeps no longer slow down as an installation grows** (D-237). Claiming
