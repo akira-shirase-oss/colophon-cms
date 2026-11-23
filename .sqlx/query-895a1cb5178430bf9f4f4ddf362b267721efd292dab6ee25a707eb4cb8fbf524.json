@@ -1,0 +1,14 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "WITH lapsed AS (\n             SELECT project_id, environment_id, id FROM jobs\n             WHERE status = 'running' AND lease_expires_at < now() AND deadline_at > now()\n             ORDER BY id\n             LIMIT $1\n             FOR UPDATE SKIP LOCKED\n         )\n         UPDATE jobs j SET status = 'retrying', lease_owner = NULL, lease_expires_at = NULL,\n                           updated_at = now()\n         FROM lapsed\n         WHERE j.project_id = lapsed.project_id AND j.environment_id = lapsed.environment_id\n           AND j.id = lapsed.id",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "895a1cb5178430bf9f4f4ddf362b267721efd292dab6ee25a707eb4cb8fbf524"
+}

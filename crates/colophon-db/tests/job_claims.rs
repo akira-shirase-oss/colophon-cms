@@ -19,12 +19,9 @@ use uuid::Uuid;
 
 const HOUR: Duration = Duration::from_secs(3600);
 
-/// Projects, environments a project, destinations an environment.
-const PROJECTS: i64 = 100;
+/// Environments a project, destinations an environment.
 const ENVIRONMENTS: i64 = 2;
 const DESTINATIONS: i64 = 3;
-/// Waiting generations a destination: 100 × 2 × 3 × 10 = 6,000 waiting jobs.
-const WAITING: i64 = 10;
 /// Finished while the snapshot is open: a few seconds' worth on a fast runner.
 const RECENT: i64 = 500;
 
@@ -113,11 +110,11 @@ async fn history(owner: &PgPool, me: Uuid, from: i64, to: i64, finished: i64) {
     }
 }
 
-/// [`PROJECTS`] projects with their environments and destinations, `generations` releases each,
-/// the last [`WAITING`] of them waiting, 30% of destinations busy (their first waiting job on a
+/// `projects` projects with their environments and destinations, `generations` releases each,
+/// the last `waiting` of them waiting, 30% of destinations busy (their first waiting job on a
 /// live lease, the rest of their backlog behind it), then `VACUUM`ed: the history's dead entries
 /// are gone, as a long-running installation's are.
-async fn installation(db: &TestDb, generations: i64) -> PgPool {
+async fn installation(db: &TestDb, projects: i64, generations: i64, waiting: i64) -> PgPool {
     let me = db.administrator("alice").await;
     let owner = db.owner().await;
     for template in [
@@ -133,7 +130,7 @@ async fn installation(db: &TestDb, generations: i64) -> PgPool {
     ] {
         // Audited: every value is the test's own (constants, a uuid it made).
         let statement = template
-            .replace("$1", &PROJECTS.to_string())
+            .replace("$1", &projects.to_string())
             .replace("$2", &ENVIRONMENTS.to_string())
             .replace("$3", &DESTINATIONS.to_string())
             .replace("$4", &format!("'{me}'::uuid"));
@@ -142,14 +139,14 @@ async fn installation(db: &TestDb, generations: i64) -> PgPool {
             .await
             .expect(template);
     }
-    history(&owner, me, 1, generations, generations - WAITING).await;
+    history(&owner, me, 1, generations, generations - waiting).await;
     sqlx::query(
         "UPDATE jobs j SET status = 'running', lease_owner = 'busy',
                            lease_expires_at = now() + interval '1 hour', attempts = 1
          WHERE j.idempotency_key LIKE 'jc:%' AND j.generation = $1
            AND hashtext(j.destination_id::text) % 10 IN (0, 1, 2)",
     )
-    .bind(generations - WAITING + 1)
+    .bind(generations - waiting + 1)
     .execute(&owner)
     .await
     .expect("busy destinations");
@@ -240,7 +237,8 @@ const MAX_CLAIM_BLOCKS: i64 = 400;
 #[ignore = "needs the local stack: scripts/stack.sh up"]
 async fn a_claim_reads_a_handful_of_blocks_at_production_cardinalities() {
     let db = TestDb::new().await;
-    let owner = installation(&db, 30).await;
+    // 100 projects: 600 destinations, 10 waiting releases each = 6,000 waiting jobs.
+    let owner = installation(&db, 100, 30, 10).await;
     let short = one_claim(&db, &owner).await;
     // Sixty releases more of history in every environment, finished and VACUUMed.
     let me: Uuid = sqlx::query_scalar("SELECT created_by FROM destinations LIMIT 1")
@@ -260,6 +258,25 @@ async fn a_claim_reads_a_handful_of_blocks_at_production_cardinalities() {
             "a claim read {read} blocks at {history} releases an environment"
         );
     }
+    owner.close().await;
+    db.drop().await;
+}
+
+/// The installation's size doesn't reach a claim either: at 2,000 projects (12,000 destinations,
+/// 12,000 waiting, one each), a claim reads its own work. A generic plan read every destination
+/// of the installation twice here (1,650 buffers a claim, scratch-database `EXPLAIN`), which is why
+/// the claim is planned for its own limit every call.
+#[tokio::test]
+#[ignore = "needs the local stack: scripts/stack.sh up"]
+async fn a_claim_reads_a_handful_of_blocks_across_a_large_installation() {
+    let db = TestDb::new().await;
+    let owner = installation(&db, 2_000, 3, 1).await;
+    let read = one_claim(&db, &owner).await;
+    eprintln!("one claim of four, 12,000 destinations, 12,000 waiting: {read} blocks");
+    assert!(
+        read <= MAX_CLAIM_BLOCKS,
+        "a claim read {read} blocks across 12,000 destinations"
+    );
     owner.close().await;
     db.drop().await;
 }
