@@ -66,13 +66,23 @@ impl Server {
     /// [`Self::start_with`] on another port of loopback: a second server beside the first,
     /// sharing its database and Valkey. Sign-in needs [`PORT`]'s registered origin.
     pub(crate) async fn start_on(port: u16, extra: &[(&str, &str)]) -> Self {
-        assert_no_foreign_server();
-        let mut command = Command::new(env!("CARGO_BIN_EXE_colophon-server"));
         // The server logs on stdout: COLOPHON_TEST_VERBOSE keeps it for a debugging run.
         let log = match std::env::var_os("COLOPHON_TEST_VERBOSE") {
             Some(_) => Stdio::inherit(),
             None => Stdio::null(),
         };
+        Self::start_logging(port, extra, log).await
+    }
+
+    /// [`Self::start_with`] with the server's log (its stdout) written to `file`, for a test that
+    /// reads what the server logged. Pass `COLOPHON_LOG` in `extra` to choose the level.
+    pub(crate) async fn start_logged_to(file: std::fs::File, extra: &[(&str, &str)]) -> Self {
+        Self::start_logging(PORT, extra, Stdio::from(file)).await
+    }
+
+    async fn start_logging(port: u16, extra: &[(&str, &str)], log: Stdio) -> Self {
+        assert_no_foreign_server();
+        let mut command = Command::new(env!("CARGO_BIN_EXE_colophon-server"));
         command
             .env_clear()
             .stdout(log)

@@ -177,3 +177,126 @@ async fn the_api_reads_keys_but_can_t_rotate_or_write_them() {
     }
     db.drop().await;
 }
+
+/// White-hat: not just the API's role. Every role the API's login can become (`colophon_api`, which it inherits,
+/// and `colophon_delivery` and `colophon_worker`, which it can `SET ROLE` to) can neither rotate nor write a key
+/// or a rotation line, and none can read the rotation log.
+#[tokio::test]
+#[ignore = "needs the local stack: scripts/stack.sh up"]
+async fn no_role_the_api_s_login_can_become_rotates_or_writes_keys() {
+    let db = TestDb::new().await;
+    let app = db.app_pool(1).await;
+    let mut connection = app.acquire().await.expect("a connection");
+    let roles: Vec<String> = sqlx::query_scalar(
+        "SELECT r.rolname::text FROM pg_auth_members m JOIN pg_roles r ON r.oid = m.roleid
+          WHERE m.member = 'colophon_app'::regrole AND m.set_option ORDER BY 1",
+    )
+    .fetch_all(&mut *connection)
+    .await
+    .expect("the roles");
+    assert_eq!(
+        roles,
+        ["colophon_api", "colophon_delivery", "colophon_worker"],
+        "a new role the login can become needs a look here"
+    );
+    for role in &roles {
+        // Audited: `role` is one of the three names asserted just above.
+        sqlx::raw_sql(sqlx::AssertSqlSafe(format!("SET ROLE {role}")))
+            .execute(&mut *connection)
+            .await
+            .expect("set role");
+        for statement in [
+            "SELECT colophon_rotate_media_key(false, 'admin')",
+            "SELECT colophon_rotate_media_key(true, 'restore')",
+            "INSERT INTO media_signing_keys (id, key) VALUES (7, '\\x00')",
+            "UPDATE media_signing_keys SET key = key",
+            "DELETE FROM media_signing_keys",
+            "TRUNCATE media_signing_keys",
+            "INSERT INTO media_key_rotations (kid, retired_previous, reason) VALUES (7, false, 'admin')",
+            "SELECT * FROM media_key_rotations",
+        ] {
+            let tried = sqlx::raw_sql(sqlx::AssertSqlSafe(statement))
+                .execute(&mut *connection)
+                .await;
+            assert!(tried.is_err(), "{role} ran: {statement}");
+        }
+        sqlx::raw_sql("RESET ROLE")
+            .execute(&mut *connection)
+            .await
+            .expect("reset role");
+    }
+    drop(connection);
+    let owner = db.owner().await;
+    assert_eq!(ids(&owner).await, [1], "nothing changed");
+    db.drop().await;
+}
+
+/// White-hat, a rotation racing the reads that sign: while rotations with `--retire-previous` run four at a
+/// time, every read of the keys (as the API's login reads them to sign) sees exactly one key, and never a key a
+/// rotation that already returned retired: a read never signs with a retired key, and never finds none.
+#[tokio::test]
+#[ignore = "needs the local stack: scripts/stack.sh up"]
+async fn reads_racing_retiring_rotations_never_see_a_retired_or_missing_key() {
+    use std::sync::{
+        Arc,
+        atomic::{AtomicBool, AtomicI16, AtomicU32, Ordering},
+    };
+
+    let db = TestDb::new().await;
+    let owner = db.owner().await;
+    let readers_pool = db.app_pool(8).await;
+    // Every id below this was retired by a rotation that has returned.
+    let floor = Arc::new(AtomicI16::new(1));
+    let done = Arc::new(AtomicBool::new(false));
+    let reads = Arc::new(AtomicU32::new(0));
+    let readers: Vec<_> = (0..8)
+        .map(|_| {
+            let (pool, floor, done, reads) = (
+                readers_pool.clone(),
+                Arc::clone(&floor),
+                Arc::clone(&done),
+                Arc::clone(&reads),
+            );
+            tokio::spawn(async move {
+                while !done.load(Ordering::SeqCst) {
+                    let retired_below = floor.load(Ordering::SeqCst);
+                    let seen = ids(&pool).await;
+                    assert_eq!(seen.len(), 1, "one key after a retiring rotation: {seen:?}");
+                    assert!(
+                        seen[0] >= retired_below,
+                        "read key {} after a rotation retired every key below {retired_below}",
+                        seen[0]
+                    );
+                    reads.fetch_add(1, Ordering::SeqCst);
+                }
+            })
+        })
+        .collect();
+    let rotators: Vec<_> = (0..4)
+        .map(|_| {
+            let (owner, floor) = (owner.clone(), Arc::clone(&floor));
+            tokio::spawn(async move {
+                for _ in 0..10 {
+                    let made = rotate_media_key(&owner, true, "admin")
+                        .await
+                        .expect("rotated");
+                    floor.fetch_max(made, Ordering::SeqCst);
+                }
+            })
+        })
+        .collect();
+    for rotator in rotators {
+        rotator.await.expect("a rotator");
+    }
+    done.store(true, Ordering::SeqCst);
+    for reader in readers {
+        reader.await.expect("a reader held every read to the rule");
+    }
+    assert!(
+        reads.load(Ordering::SeqCst) >= 40,
+        "the readers raced the rotations ({} reads)",
+        reads.load(Ordering::SeqCst)
+    );
+    assert_eq!(ids(&owner).await, [41], "forty rotations, one key left");
+    db.drop().await;
+}
