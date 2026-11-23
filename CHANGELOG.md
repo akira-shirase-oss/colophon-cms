@@ -26,7 +26,10 @@ through `--version` and `GET /version`.
   `invite` takes a sign-up only with a valid, unclaimed project invitation (`invitation` in the body), claimed for
   exactly one account in the same transaction (`403 invitation_required` otherwise, alike for every reason), plus
   the one first-run account a new installation makes before its setup code is entered. The sign-up's `201` now
-  says which project a claimed invitation joined, and the Studio's invitation page uses it.
+  says which project a claimed invitation joined, and the Studio's invitation page uses it. **Upgrading:** an
+  installation that never set `COLOPHON_REGISTRATION` is invite-only after this upgrade; set `open` deliberately
+  if anyone should be able to sign up. With a public identity provider (anyone can hold an account there), use
+  `closed`: under `invite` a first sign-in through the provider still makes an (inert) identity.
 - **Row security no longer lets an account create a project for another** (D-235): a new project's owner is the
   account creating it, enforced by a row policy and immutable afterwards. Only listed code may set the project
   context (`crates/colophon-db/context-writers.allow`, checked by a test), and SECURITY.md describes the threat model.

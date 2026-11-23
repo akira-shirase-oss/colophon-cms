@@ -118,7 +118,9 @@ operation, and the cross-project and identity test families from spec §27 pass.
     (system and token identities don't count), one sign-up without an invitation is admitted, decided under
     an installation-wide advisory lock so concurrent first sign-ups make exactly one. A handler that already
     sees the window closed refuses before Argon2 runs. A first OIDC sign-in is still admitted under
-    `invite`: the provider decides who exists, and the identity holds nothing until invited.
+    `invite`: the provider decides who exists, and the identity holds nothing until invited. With a public
+    provider (anyone can hold an account there) that admits strangers' identities, inert but real, so such an
+    installation should run `closed`; an allowlist of provider accounts is not built.
   - `open`: any new email. A valid invitation sent along is claimed the same way; an invalid one doesn't stop
     the sign-up.
   - `201` answers `{"data": {"joined": {"project_id", "role"} | null}}`: the project a claimed invitation

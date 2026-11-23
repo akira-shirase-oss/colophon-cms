@@ -62,6 +62,9 @@ sign-up only with a project invitation's link, `open` takes anyone, `closed` tak
 all. On an invite-only installation the account in step 2 is the one exception: before anyone
 is an administrator, exactly one account may be made without an invitation, and the setup code
 then makes it the administrator. Until the code is entered that account can do nothing.
+With single sign-on through a provider anyone can join (a public identity provider), choose
+`closed`: under `invite` a first sign-in through the provider still makes an account, which holds
+nothing until invited, but is a stranger's.
 
 If someone else reached the Studio first and took that one account, finish the setup from the
 host instead; nothing on the page is needed:
