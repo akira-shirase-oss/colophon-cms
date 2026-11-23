@@ -313,32 +313,42 @@ impl Worker {
             tracker.spawn(worker.run_bulk(cancel.clone()));
         }
         let mut last_expiry: Option<std::time::Instant> = None;
+        // Heard between units and while one waits for a connection (colophon_db::begin_background).
+        let stopping = || cancel.is_cancelled();
         loop {
             if last_expiry.is_none_or(|at| at.elapsed() >= EXPIRY_INTERVAL) {
                 last_expiry = Some(std::time::Instant::now());
-                // One cancel-aware block for the sweeps: each of them can sit in a pool
-                // acquisition for the acquire timeout, and a shutdown can't wait on a
-                // queued-up chain of them (SIGTERM still drains in seconds). A sweep
-                // abandoned mid-flight rolls back; the next pass repeats it.
+                // The sweeps, one after another, a stop heard between them: a sweep under way
+                // runs to its end (dropped mid-COMMIT, whether it committed would be unknown),
+                // bounded server side (colophon_db::bound_background), and a shutdown never
+                // waits on more than the one in flight.
                 let sweeps = async {
-                    match jobs::expire(&self.pool).await {
-                        Ok(0) => {}
+                    match jobs::expire(&self.pool, colophon_db::Stop::new(&stopping)).await {
+                        Ok(0) | Err(colophon_db::DbError::Stopped) => {}
                         Ok(expired) => tracing::info!(expired, "jobs ran out of time"),
                         Err(error) => {
                             tracing::warn!(error = %error, "expiring jobs failed; trying again later");
                         }
                     }
-                    match colophon_db::assets::expire(&self.pool).await {
+                    if cancel.is_cancelled() {
+                        return;
+                    }
+                    match colophon_db::assets::expire(&self.pool, colophon_db::Stop::new(&stopping))
+                        .await
+                    {
                         Ok(0) | Err(_) => {}
                         Ok(expired) => tracing::info!(expired, "asset jobs ran out of time"),
                     }
+                    if cancel.is_cancelled() {
+                        return;
+                    }
                     // Asset jobs whose worker stopped answering wait again, for the next
-                    // claim (the claim itself looks only at waiting jobs).
-                    let stopping = || cancel.is_cancelled();
+                    // claim (the claim itself looks only at waiting jobs): bounded passes,
+                    // the stop heard between them.
                     match colophon_db::assets::release_lapsed_all(
                         &self.pool,
                         colophon_db::assets::RELEASE_BUDGET,
-                        &stopping,
+                        colophon_db::Stop::new(&stopping),
                     )
                     .await
                     {
@@ -350,10 +360,18 @@ impl Worker {
                             tracing::warn!(error = %error, "releasing lapsed asset jobs failed; trying again later");
                         }
                     }
+                    if cancel.is_cancelled() {
+                        return;
+                    }
                     // The budget reconciler (D-113): free reservations of jobs that ended,
                     // flag held rows that outlived their work as `uncertain` and audit the
                     // discrepancy.
-                    match colophon_db::budgets::reconcile(&self.pool).await {
+                    match colophon_db::budgets::reconcile(
+                        &self.pool,
+                        colophon_db::Stop::new(&stopping),
+                    )
+                    .await
+                    {
                         Ok(done) if done.released == 0 && done.uncertain == 0 => {}
                         Ok(done) => {
                             tracing::info!(
@@ -362,14 +380,15 @@ impl Worker {
                                 "budgets reconciled"
                             );
                         }
+                        Err(colophon_db::DbError::Stopped) => {}
                         Err(error) => {
                             tracing::warn!(error = %error, "reconciling budgets failed; trying again later");
                         }
                     }
                 };
-                tokio::select! {
-                    () = cancel.cancelled() => break,
-                    () = sweeps => {}
+                sweeps.await;
+                if cancel.is_cancelled() {
+                    break;
                 }
             }
             let first = tokio::select! {
@@ -389,10 +408,13 @@ impl Worker {
                 &self.settings.location,
                 self.settings.lease,
                 i64::try_from(free).unwrap_or(1),
+                colophon_db::Stop::new(&stopping),
             )
             .await
             {
                 Ok(claimed) => claimed,
+                // Stopped while waiting for a connection: nothing was claimed.
+                Err(colophon_db::DbError::Stopped) => break,
                 Err(error) => {
                     tracing::warn!(error = %error, "claiming jobs failed; trying again");
                     Vec::new()
@@ -1954,6 +1976,7 @@ impl Worker {
             Arc::clone(&wake),
             cancel.clone(),
         ));
+        let stopping = || cancel.is_cancelled();
         loop {
             let first = tokio::select! {
                 () = cancel.cancelled() => break,
@@ -1969,10 +1992,13 @@ impl Worker {
                 &self.settings.owner,
                 self.settings.lease,
                 i64::try_from(free).unwrap_or(1),
+                colophon_db::Stop::new(&stopping),
             )
             .await
             {
                 Ok(claimed) => claimed,
+                // Stopped while waiting for a connection: nothing was claimed.
+                Err(colophon_db::DbError::Stopped) => break,
                 Err(error) => {
                     tracing::warn!(error = %error, "claiming asset jobs failed; trying again");
                     Vec::new()

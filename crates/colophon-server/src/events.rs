@@ -26,7 +26,9 @@ const PUMP_EVERY: Duration = Duration::from_millis(100);
 
 /// Sends queued change hints until `cancel` fires (D-180): one pass every 100 ms, and
 /// at once again while a pass comes back full. A failed pass waits for the next tick — the
-/// hints stay queued, so a database blip delays them and loses none that committed.
+/// hints stay queued, so a database blip delays them and loses none that committed. A pass
+/// under way when `cancel` fires runs to its end (dropped mid-COMMIT, whether its hints went
+/// out would be unknown), bounded server side ([`colophon_db::bound_background`]).
 pub async fn pump(pool: colophon_db::PgPool, cancel: CancellationToken) {
     let mut ticks = tokio::time::interval(PUMP_EVERY);
     ticks.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
@@ -36,30 +38,25 @@ pub async fn pump(pool: colophon_db::PgPool, cancel: CancellationToken) {
             _ = ticks.tick() => {}
         }
         loop {
-            let pass = tokio::select! {
-                () = cancel.cancelled() => return,
-                pass = tokio::time::timeout(PUMP_DEADLINE, colophon_db::events::pump(&pool)) => pass,
-            };
-            match pass {
-                Ok(Ok(drained))
+            if cancel.is_cancelled() {
+                return;
+            }
+            let stopping = || cancel.is_cancelled();
+            match colophon_db::events::pump(&pool, colophon_db::Stop::new(&stopping)).await {
+                Ok(drained)
                     if drained
                         >= u64::try_from(colophon_db::events::PUMP_BATCH).unwrap_or(u64::MAX) => {}
-                Ok(Ok(_)) => break,
-                Ok(Err(error)) => {
+                Ok(_) => break,
+                // Told to stop between its statements: the hints stay queued for the next start.
+                Err(colophon_db::DbError::Stopped) => return,
+                Err(error) => {
                     tracing::warn!(%error, "sending change hints failed; trying again");
-                    break;
-                }
-                Err(_) => {
-                    tracing::warn!("sending change hints timed out; trying again");
                     break;
                 }
             }
         }
     }
 }
-
-/// The deadline for one pump pass.
-const PUMP_DEADLINE: Duration = Duration::from_secs(5);
 
 /// How long to wait before reconnecting after a failure. Bounded, so a database that never
 /// comes back can't spin, and short, so a blip's streams resync quickly.

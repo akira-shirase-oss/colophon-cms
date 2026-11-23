@@ -55,7 +55,10 @@ use sqlx::{
 
 pub use sqlx::postgres::{PgConnection, PgListener, PgPool};
 pub use sqlx::{Postgres, Transaction};
-pub use transactions::{Phases, begin_tx, begin_tx_snapshot, with_phases};
+pub use transactions::{
+    BACKGROUND_LOCK_TIMEOUT, BACKGROUND_STATEMENT_TIMEOUT, Phases, Stop, begin_background,
+    begin_tx, begin_tx_snapshot, bound_background, with_phases,
+};
 
 /// The schema migrations, embedded at compile time from `migrations/`.
 pub static MIGRATOR: sqlx::migrate::Migrator = sqlx::migrate!("./migrations");
@@ -122,6 +125,10 @@ pub enum DbError {
     /// again" as for [`Self::Busy`], never a 500.
     #[error("the database aborted the transaction for a conflicting one; nothing was committed")]
     Contended,
+    /// A background unit told to stop between its statements: it rolled back, nothing
+    /// committed, and its loop runs it again next start ([`transactions::Stop`]).
+    #[error("stopped before finishing; rolled back, nothing committed")]
+    Stopped,
     /// No answer within the deadline.
     #[error("database did not answer within {0:?}")]
     Timeout(Duration),

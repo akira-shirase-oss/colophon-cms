@@ -191,13 +191,15 @@ async fn the_delivery_sweep_never_waits_on_a_held_job() {
         "jobs",
         earlier,
         later,
-        move || async move { jobs::expire(&pool).await },
+        move || async move { jobs::expire(&pool, colophon_db::Stop::NEVER).await },
         "UPDATE jobs SET status = 'failed'",
     )
     .await;
     assert_eq!(swept, 1, "the held job is left for the next pass");
     assert_eq!(
-        jobs::expire(&db.app).await.expect("next pass"),
+        jobs::expire(&db.app, colophon_db::Stop::NEVER)
+            .await
+            .expect("next pass"),
         1,
         "the next pass takes it"
     );
@@ -252,12 +254,17 @@ async fn the_asset_sweep_never_waits_on_a_held_job() {
         "asset_jobs",
         earlier,
         later,
-        move || async move { assets::expire(&pool).await },
+        move || async move { assets::expire(&pool, colophon_db::Stop::NEVER).await },
         "UPDATE asset_jobs SET status = 'failed'",
     )
     .await;
     assert_eq!(swept, 1, "the held job is left for the next pass");
-    assert_eq!(assets::expire(&db.app).await.expect("next pass"), 1);
+    assert_eq!(
+        assets::expire(&db.app, colophon_db::Stop::NEVER)
+            .await
+            .expect("next pass"),
+        1
+    );
     owner.close().await;
     db.drop().await;
 }

@@ -120,24 +120,45 @@ fn succeeded() -> Finish<'static> {
 async fn a_lease_hides_a_job_until_it_runs_out_and_a_late_result_is_refused() {
     let db = TestDb::new().await;
     released(&db, 1).await;
-    let first = jobs::claim(&db.app, "worker-a", "local", Duration::from_millis(300), 10)
-        .await
-        .expect("claim");
+    let first = jobs::claim(
+        &db.app,
+        "worker-a",
+        "local",
+        Duration::from_millis(300),
+        10,
+        colophon_db::Stop::NEVER,
+    )
+    .await
+    .expect("claim");
     assert_eq!(first.len(), 1, "one destination, one job");
     assert_eq!((first[0].attempts, first[0].lease_generation), (1, 1));
     assert!(first[0].idempotency_key.starts_with("colophon:"));
     assert!(
-        jobs::claim(&db.app, "worker-b", "local", Duration::from_millis(300), 10)
-            .await
-            .expect("claim")
-            .is_empty(),
+        jobs::claim(
+            &db.app,
+            "worker-b",
+            "local",
+            Duration::from_millis(300),
+            10,
+            colophon_db::Stop::NEVER
+        )
+        .await
+        .expect("claim")
+        .is_empty(),
         "leased: nobody else may take it"
     );
 
     tokio::time::sleep(Duration::from_millis(400)).await;
-    let again = jobs::claim(&db.app, "worker-b", "local", Duration::from_secs(30), 10)
-        .await
-        .expect("claim");
+    let again = jobs::claim(
+        &db.app,
+        "worker-b",
+        "local",
+        Duration::from_secs(30),
+        10,
+        colophon_db::Stop::NEVER,
+    )
+    .await
+    .expect("claim");
     assert_eq!(
         (again.len(), again[0].attempts, again[0].lease_generation),
         (1, 2, 2),
@@ -155,10 +176,17 @@ async fn a_lease_hides_a_job_until_it_runs_out_and_a_late_result_is_refused() {
             .expect("finish")
     );
     assert!(
-        jobs::claim(&db.app, "worker-c", "local", Duration::from_secs(30), 10)
-            .await
-            .expect("claim")
-            .is_empty(),
+        jobs::claim(
+            &db.app,
+            "worker-c",
+            "local",
+            Duration::from_secs(30),
+            10,
+            colophon_db::Stop::NEVER
+        )
+        .await
+        .expect("claim")
+        .is_empty(),
         "succeeded jobs are never claimed"
     );
     db.drop().await;
@@ -171,8 +199,22 @@ async fn two_workers_never_claim_the_same_job() {
     released(&db, 4).await;
     let pool = db.app_pool(4).await;
     let (a, b) = tokio::join!(
-        jobs::claim(&pool, "worker-a", "local", Duration::from_secs(30), 2),
-        jobs::claim(&pool, "worker-b", "local", Duration::from_secs(30), 2)
+        jobs::claim(
+            &pool,
+            "worker-a",
+            "local",
+            Duration::from_secs(30),
+            2,
+            colophon_db::Stop::NEVER
+        ),
+        jobs::claim(
+            &pool,
+            "worker-b",
+            "local",
+            Duration::from_secs(30),
+            2,
+            colophon_db::Stop::NEVER
+        )
     );
     let mut ids: Vec<Uuid> = a
         .expect("a")
@@ -203,13 +245,25 @@ async fn a_job_past_its_deadline_fails_and_the_worker_role_sees_no_drafts() {
         .await
         .expect("aged");
     assert!(
-        jobs::claim(&db.app, "worker-a", "local", Duration::from_secs(30), 10)
-            .await
-            .expect("claim")
-            .is_empty(),
+        jobs::claim(
+            &db.app,
+            "worker-a",
+            "local",
+            Duration::from_secs(30),
+            10,
+            colophon_db::Stop::NEVER
+        )
+        .await
+        .expect("claim")
+        .is_empty(),
         "out of its lifetime: not claimed"
     );
-    assert_eq!(jobs::expire(&db.app).await.expect("expire"), 1);
+    assert_eq!(
+        jobs::expire(&db.app, colophon_db::Stop::NEVER)
+            .await
+            .expect("expire"),
+        1
+    );
     let (status, error): (String, Option<String>) =
         sqlx::query_as("SELECT status, last_error FROM jobs")
             .fetch_one(&owner)
@@ -253,26 +307,47 @@ async fn a_job_past_its_deadline_fails_and_the_worker_role_sees_no_drafts() {
 async fn one_announcement_is_in_flight_per_destination() {
     let db = TestDb::new().await;
     let (alice, project) = released_by(&db, 1).await;
-    let first = jobs::claim(&db.app, "worker-a", "local", Duration::from_millis(400), 10)
-        .await
-        .expect("claim");
+    let first = jobs::claim(
+        &db.app,
+        "worker-a",
+        "local",
+        Duration::from_millis(400),
+        10,
+        colophon_db::Stop::NEVER,
+    )
+    .await
+    .expect("claim");
     assert_eq!((first.len(), first[0].generation), (1, 1));
 
     // Release 2 commits while release 1 is still being sent: its announcement waits.
     release(&db, alice, project, 1).await;
     assert!(
-        jobs::claim(&db.app, "worker-b", "local", Duration::from_secs(30), 10)
-            .await
-            .expect("claim")
-            .is_empty(),
+        jobs::claim(
+            &db.app,
+            "worker-b",
+            "local",
+            Duration::from_secs(30),
+            10,
+            colophon_db::Stop::NEVER
+        )
+        .await
+        .expect("claim")
+        .is_empty(),
         "the destination has an announcement in flight under a live lease"
     );
 
     // Once the lease runs out both are claimable; the older one is never sent after the newer.
     tokio::time::sleep(Duration::from_millis(500)).await;
-    let both = jobs::claim(&db.app, "worker-b", "local", Duration::from_secs(30), 10)
-        .await
-        .expect("claim");
+    let both = jobs::claim(
+        &db.app,
+        "worker-b",
+        "local",
+        Duration::from_secs(30),
+        10,
+        colophon_db::Stop::NEVER,
+    )
+    .await
+    .expect("claim");
     let older = both
         .iter()
         .find(|job| job.generation == 1)

@@ -166,9 +166,16 @@ async fn every_write_path_keeps_the_running_total_exact() {
     exact(&db, "a release's outbox").await;
     release(&db, alice, project, 1).await;
     exact(&db, "a release superseding the last").await;
-    let claimed = jobs::claim(&db.app, "worker-a", "local", HOUR, 1)
-        .await
-        .expect("claim");
+    let claimed = jobs::claim(
+        &db.app,
+        "worker-a",
+        "local",
+        HOUR,
+        1,
+        colophon_db::Stop::NEVER,
+    )
+    .await
+    .expect("claim");
     assert_eq!(claimed.len(), 1);
     exact(&db, "a claim").await;
     assert!(
@@ -183,7 +190,12 @@ async fn every_write_path_keeps_the_running_total_exact() {
     .execute(&owner)
     .await
     .expect("past their deadline");
-    assert!(jobs::expire(&db.app).await.expect("sweep") > 0);
+    assert!(
+        jobs::expire(&db.app, colophon_db::Stop::NEVER)
+            .await
+            .expect("sweep")
+            > 0
+    );
     exact(&db, "the deadline sweep").await;
 
     // Assets: an upload admits its verify job; the worker records a new size, claims the job
@@ -212,7 +224,7 @@ async fn every_write_path_keeps_the_running_total_exact() {
         .await
         .expect("a recorded size");
     exact(&db, "a recorded size").await;
-    let claimed = assets::claim(&db.app, "worker-a", HOUR, 10)
+    let claimed = assets::claim(&db.app, "worker-a", HOUR, 10, colophon_db::Stop::NEVER)
         .await
         .expect("claim");
     assert_eq!(claimed.len(), 1);
@@ -225,7 +237,9 @@ async fn every_write_path_keeps_the_running_total_exact() {
         .execute(&owner)
         .await
         .expect("lease lapsed");
-    assets::expire(&db.app).await.expect("sweep");
+    assets::expire(&db.app, colophon_db::Stop::NEVER)
+        .await
+        .expect("sweep");
     exact(&db, "the asset sweep").await;
 
     // Bulk: create and append through the real paths; the job opening (running) keeps its
@@ -327,7 +341,9 @@ async fn every_write_path_keeps_the_running_total_exact() {
     exact(&db, "a plan closing").await;
 
     // The fold changes where the total lives, never what it is.
-    work::fold_payload(&db.app).await.expect("fold");
+    work::fold_payload(&db.app, colophon_db::Stop::NEVER)
+        .await
+        .expect("fold");
     exact(&db, "after a fold").await;
     owner.close().await;
     db.drop().await;
@@ -449,7 +465,9 @@ async fn a_planted_error_is_reported_and_never_repaired() {
         .expect("plant +1");
     let (_, _, drift) = work::reconcile_payload(&db.app).await.expect("reconcile");
     assert_eq!(drift, 1, "the planted byte is reported");
-    work::fold_payload(&db.app).await.expect("fold");
+    work::fold_payload(&db.app, colophon_db::Stop::NEVER)
+        .await
+        .expect("fold");
     let mut tx = enter(&db.app, alice, project).await;
     bulk_job(&mut tx, 100).await.expect("bulk job");
     tx.commit().await.expect("commit");
@@ -495,9 +513,16 @@ async fn the_tick_folds_the_log_away_and_never_waits_on_an_admission() {
     release(&db, alice, project, 0).await;
     release(&db, alice, project, 1).await;
     // Workers' changes are only ever logged.
-    for claimed in jobs::claim(&db.app, "worker-a", "local", HOUR, 10)
-        .await
-        .expect("claim")
+    for claimed in jobs::claim(
+        &db.app,
+        "worker-a",
+        "local",
+        HOUR,
+        10,
+        colophon_db::Stop::NEVER,
+    )
+    .await
+    .expect("claim")
     {
         jobs::finish(&db.app, &claimed, "worker-a", &succeeded())
             .await
@@ -512,17 +537,25 @@ async fn the_tick_folds_the_log_away_and_never_waits_on_an_admission() {
     let mut held = enter(&db.app, alice, project).await;
     bulk_job(&mut held, 100).await.expect("bulk job");
     assert_eq!(
-        tokio::time::timeout(Duration::from_secs(5), work::fold_payload(&worker_pool))
-            .await
-            .expect("the tick never waits")
-            .expect("fold"),
+        tokio::time::timeout(
+            Duration::from_secs(5),
+            work::fold_payload(&worker_pool, colophon_db::Stop::NEVER)
+        )
+        .await
+        .expect("the tick never waits")
+        .expect("fold"),
         None,
         "busy: skipped"
     );
     held.commit().await.expect("commit");
 
     // Nothing admitted now: the tick folds the log back to nothing.
-    assert!(work::fold_payload(&db.app).await.expect("fold").is_some());
+    assert!(
+        work::fold_payload(&db.app, colophon_db::Stop::NEVER)
+            .await
+            .expect("fold")
+            .is_some()
+    );
     let (deltas, _) = work::payload_log(&db.app).await.expect("log");
     assert_eq!(deltas, 0);
     exact(&db, "after the tick").await;
@@ -553,7 +586,7 @@ async fn sweep_beside_an_open_admission(db: &TestDb) -> Result<u64, DbError> {
 
     let mut open = enter(&fresh, alice, admitting).await;
     bulk_job(&mut open, 100).await.expect("bulk job");
-    let swept = jobs::expire(&fresh).await;
+    let swept = jobs::expire(&fresh, colophon_db::Stop::NEVER).await;
     open.transaction.rollback().await.expect("rollback");
     sqlx::query(sqlx::AssertSqlSafe(format!(
         "ALTER ROLE colophon_app IN DATABASE {} RESET lock_timeout",
@@ -607,6 +640,10 @@ async fn a_counter_updated_in_the_triggers_would_make_workers_wait() {
 
 #[tokio::test]
 #[ignore = "needs the local stack: scripts/stack.sh up"]
+#[expect(
+    clippy::too_many_lines,
+    reason = "every concurrent path that touches the counter, in one race"
+)]
 async fn admissions_sweeps_finishes_and_supersedes_never_deadlock() {
     let db = TestDb::new().await;
     let alice = db.administrator("alice").await;
@@ -669,7 +706,7 @@ async fn admissions_sweeps_finishes_and_supersedes_never_deadlock() {
         work_set.spawn(async move {
             let name = format!("worker-{worker}");
             for _ in 0..40 {
-                for claimed in jobs::claim(&pool, &name, "local", HOUR, 5)
+                for claimed in jobs::claim(&pool, &name, "local", HOUR, 5, colophon_db::Stop::NEVER)
                     .await
                     .map_err(debug)?
                 {
@@ -684,8 +721,12 @@ async fn admissions_sweeps_finishes_and_supersedes_never_deadlock() {
                 .execute(&owner)
                 .await
                 .map_err(debug)?;
-                jobs::expire(&pool).await.map_err(debug)?;
-                work::fold_payload(&pool).await.map_err(debug)?;
+                jobs::expire(&pool, colophon_db::Stop::NEVER)
+                    .await
+                    .map_err(debug)?;
+                work::fold_payload(&pool, colophon_db::Stop::NEVER)
+                    .await
+                    .map_err(debug)?;
             }
             Ok::<(), String>(())
         });
