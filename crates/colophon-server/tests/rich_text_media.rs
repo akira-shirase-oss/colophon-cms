@@ -925,3 +925,64 @@ async fn a_search_never_finds_another_projects_uploads() {
     .expect("request");
     assert_eq!(none.body["data"], json!([]), "{}", none.body);
 }
+
+/// A save that names an image and that image's landing take the asset row and the account's usage
+/// row in one order (D-249, migration 0099), so they never deadlock: posts naming a just-uploaded
+/// image twice are saved while the worker (polling every 50 ms) lands those images, many at once.
+/// Every save is created — none answered 503 for a deadlock — every image lands well inside its
+/// lease, and Postgres counted no deadlock in this database at all (a landing that loses one is
+/// retried at once, so only the counter would show it). On the old order this deadlocked every run.
+#[tokio::test]
+#[ignore = "needs the stack and scripts/migrate.sh"]
+async fn a_save_naming_an_image_and_its_landing_never_deadlock() {
+    const ROUNDS: usize = 6;
+    const AT_ONCE: usize = 8;
+    let _server = common::Server::start_with(&FAST).await;
+    let database = common::owner_database().await;
+    let deadlocks = async || {
+        // A transaction's statistics reach the view within a second of its end.
+        tokio::time::sleep(Duration::from_millis(1500)).await;
+        sqlx::query_scalar::<_, i64>(
+            "SELECT deadlocks FROM pg_stat_database WHERE datname = current_database()",
+        )
+        .fetch_one(&database)
+        .await
+        .expect("deadlocks")
+    };
+    let before = deadlocks().await;
+    let owner = sign_in("dev-owner").await;
+    let project = project(&owner).await;
+    posts(&owner, &project).await;
+    // A session each: one credential may have only a few uploads in flight.
+    let mut sessions = Vec::with_capacity(AT_ONCE);
+    for _ in 0..AT_ONCE {
+        sessions.push(sign_in("dev-owner").await);
+    }
+    for round in 0..ROUNDS {
+        let mut racing = tokio::task::JoinSet::new();
+        for (n, session) in sessions.iter().enumerate() {
+            let (session, project) = (session.clone(), project.clone());
+            racing.spawn(async move {
+                let name = format!("race-{round}-{n}.png");
+                let image = upload(&session, &project, WIDE_PNG, &name).await;
+                let saved = create_post(&session, &project, &[&image, &image]).await;
+                (image, saved)
+            });
+        }
+        for (image, saved) in racing.join_all().await {
+            assert_eq!(
+                saved.status,
+                StatusCode::CREATED,
+                "round {round}: {}",
+                saved.body
+            );
+            // Landed inside its lease (30 s): a landing left to the lease would take longer.
+            let record = until(&owner, &project, &image, 15, |asset| {
+                asset["state"].as_str() != Some("quarantined")
+            })
+            .await;
+            assert_eq!(record["state"], "usable", "{record}");
+        }
+    }
+    assert_eq!(deadlocks().await, before, "Postgres counted a deadlock");
+}

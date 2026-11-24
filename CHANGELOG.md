@@ -29,6 +29,7 @@ through `--version` and `GET /version`.
 
 ### Fixed
 
+- **Saving a post that names an image could fail with "the server is busy" at the moment that image finished processing** (D-249): the save and the image's processing locked the same two rows in opposite orders. Both now take them in one order, so they never deadlock, and an image whose processing still loses a lock conflict is recorded again at once instead of after half a minute.
 - MCP: a tool that only reads, such as previewing a rollback, is no longer marked destructive, and `if_match` takes the ETag as its header gave it, quotes included (D-247).
 - MCP tests follow the D-247 catalog: the expected tool list is built from the catalog itself; every tool that publishes, approves, removes or manages access is shown to send nothing without `confirm: true`; the API still refuses what the token may not do; deleting a project is never offered.
 

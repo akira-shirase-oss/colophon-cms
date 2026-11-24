@@ -157,6 +157,8 @@ pub async fn create(
     revision: NewRevision<'_>,
     locale: Option<&str>,
 ) -> Result<Draft, DbError> {
+    // The assets it names before anything it writes: D-249's lock order.
+    lock_assets(tx, revision.assets).await?;
     let reservation = crate::budgets::reserve(tx, Kind::Documents, 1).await?;
     // A new entry is public unless the caller gated it; `entries.draft_visibility` and the
     // revision's own `visibility` always agree (the list's copy is the revision's).
@@ -265,6 +267,8 @@ async fn save_impl(
     // Only a save that will land reserves its document (D-113); a stale or missing draft
     // returned above consumed nothing. A bulk item's document is covered by the job's
     // own reservation, taken when its chunk was accepted (D-116).
+    // The assets it names before anything it writes: D-249's lock order.
+    lock_assets(tx, revision.assets).await?;
     let reservation = if cover {
         Some(crate::budgets::reserve(tx, Kind::Documents, 1).await?)
     } else {
@@ -632,6 +636,30 @@ fn missing_asset(asset: &ContentAsset) -> DbError {
     }
 }
 
+/// Takes FOR KEY SHARE on every asset `assets` names, in id order, before the save writes anything
+/// (D-249, migration 0099): the asset rows first, then the account's counters, the order the
+/// worker takes them in when it lands or deletes an asset — so a save naming an image and that
+/// image's landing can't each hold what the other waits for. Ids that don't parse lock nothing;
+/// [`insert_assets`] refuses them where they are named.
+async fn lock_assets(tx: &mut ProjectTransaction, assets: &[ContentAsset]) -> Result<(), DbError> {
+    let mut ids: Vec<Uuid> = assets
+        .iter()
+        .filter_map(|asset| Uuid::try_parse(&asset.asset).ok())
+        .collect();
+    if ids.is_empty() {
+        return Ok(());
+    }
+    ids.sort_unstable();
+    ids.dedup();
+    sqlx::query("SELECT colophon_lock_assets($1, $2)")
+        .bind(tx.environment)
+        .bind(&ids)
+        .execute(&mut *tx.transaction)
+        .await
+        .map_err(DbError::from_query)?;
+    Ok(())
+}
+
 /// Keeps a new revision's asset references (migration 0036, media M1), as [`insert_references`]
 /// keeps its entries: a precheck names the first id that isn't an asset of this environment for
 /// the refusal, and the foreign key is the rule — a draft may hold a quarantined or rejected
@@ -639,7 +667,8 @@ fn missing_asset(asset: &ContentAsset) -> DbError {
 /// role may not update `assets` (state changes are the worker's, migration 0035) so it cannot
 /// take the lock itself — migration 0039's `asset_references_asset_live` trigger takes it for
 /// it instead, refusing a name for an asset that is `deleting`, `deleted` or on a delete job's
-/// way the same way `ON DELETE RESTRICT` would.
+/// way the same way `ON DELETE RESTRICT` would. The save already holds it by now: [`lock_assets`]
+/// took it before the save's first write (D-249), so the trigger's is the same lock again.
 async fn insert_assets(
     tx: &mut ProjectTransaction,
     revision: Uuid,
@@ -1224,6 +1253,8 @@ pub async fn create_localization(
     if let Some(row) = occupied {
         return Ok(Localized::Occupied(row.id));
     }
+    // The assets it names before anything it writes: D-249's lock order.
+    lock_assets(tx, revision.assets).await?;
     let reservation = crate::budgets::reserve(tx, Kind::Documents, 1).await?;
     let entry = sqlx::query!(
         "INSERT INTO entries (project_id, environment_id, id, collection, draft_revision_id, draft_slug, draft_title, created_by, single, locale, localization_id, draft_visibility)
