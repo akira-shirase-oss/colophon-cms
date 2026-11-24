@@ -8,7 +8,6 @@
 <script lang="ts">
 	import type { Snippet } from 'svelte';
 	import { MediaQuery } from 'svelte/reactivity';
-	import { pageWidth } from './pageWidth.svelte.ts';
 	import { NARROW_QUERY } from './preview.ts';
 
 	let { open, id, children, pane }: { open: boolean; id: string; children: Snippet; pane: Snippet } = $props();
@@ -45,13 +44,6 @@
 	// Opening the preview shows it; on a phone, that means its tab.
 	$effect(() => {
 		if (open) tab = 'preview';
-	});
-	// Side by side takes the page's whole width.
-	$effect(() => {
-		pageWidth.wide = split;
-		return () => {
-			pageWidth.wide = false;
-		};
 	});
 
 	let container = $state<HTMLDivElement | null>(null);

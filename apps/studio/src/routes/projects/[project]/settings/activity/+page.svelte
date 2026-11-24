@@ -100,13 +100,13 @@
 	{#if mine.isError}
 		<Problem error={mine.error} what="this project" retry={() => mine.refetch()} />
 	{:else if mine.isPending}
-		<Skeleton class="h-40 w-full max-w-3xl rounded-xl" />
+		<Skeleton class="h-40 w-full rounded-xl" />
 	{:else if !reads}
-		<p class="max-w-3xl rounded-lg border border-border bg-card px-4 py-3 text-sm text-muted-foreground" data-testid="activity-hidden">
+		<p class="rounded-lg border border-border bg-card px-4 py-3 text-sm text-muted-foreground" data-testid="activity-hidden">
 			Your role can't see the activity log. Owners can.
 		</p>
 	{:else}
-		<div class="mb-6 flex max-w-3xl flex-col gap-3 sm:flex-row sm:items-end" role="search" aria-label="Narrow the activity">
+		<div class="mb-6 flex flex-col gap-3 sm:flex-row sm:items-end" role="search" aria-label="Narrow the activity">
 			<label class="grid gap-1.5 text-sm">
 				<span class="font-medium">Kind of change</span>
 				<select class={select} bind:value={action} data-testid="activity-kind">
@@ -134,11 +134,11 @@
 		</div>
 
 		{#if events.isPending}
-			<Skeleton class="h-48 w-full max-w-3xl rounded-xl" />
+			<Skeleton class="h-48 w-full rounded-xl" />
 		{:else if events.isError}
-			<div class="max-w-3xl"><Problem error={events.error} what="the activity log" retry={() => events.refetch()} /></div>
+			<div><Problem error={events.error} what="the activity log" retry={() => events.refetch()} /></div>
 		{:else if loaded.length === 0}
-			<div class="max-w-3xl">
+			<div>
 				<EmptyState icon={HistoryIcon} title={action !== '' || actor !== '' ? 'Nothing matches' : 'No changes yet'} testid="activity-empty">
 					{action !== '' || actor !== ''
 						? 'No change of this kind, or by this person, is recorded. Show everything to see the rest.'
@@ -146,7 +146,7 @@
 				</EmptyState>
 			</div>
 		{:else}
-			<div class="max-w-3xl space-y-6" class:opacity-60={events.isPlaceholderData} data-testid="activity">
+			<div class="space-y-6" class:opacity-60={events.isPlaceholderData} data-testid="activity">
 				{#each days as group (group.day)}
 					<section aria-label={group.day}>
 						<h2 class="mb-2 text-sm font-semibold text-muted-foreground">{group.day}</h2>
@@ -170,7 +170,7 @@
 				</div>
 			{/if}
 		{/if}
-		<TechnicalDetails class="mt-10 max-w-3xl">
+		<TechnicalDetails class="mt-10">
 			<p>This is the project's audit log: <span class="font-mono">GET /api/v1/projects/{project}/audit</span>, which needs <span class="font-mono">audit.read</span>.</p>
 			<p>The database refuses every update and delete of it, from the application and from the tables' owner.</p>
 		</TechnicalDetails>

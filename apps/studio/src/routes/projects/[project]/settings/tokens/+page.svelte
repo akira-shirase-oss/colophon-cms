@@ -174,14 +174,14 @@
 	{#if mine.isError}
 		<Problem error={mine.error} what="this project" retry={() => mine.refetch()} />
 	{:else if mine.isPending}
-		<Skeleton class="h-40 w-full max-w-3xl rounded-xl" />
+		<Skeleton class="h-40 w-full rounded-xl" />
 	{:else if !manages}
-		<p class="max-w-3xl rounded-lg border border-border bg-card px-4 py-3 text-sm text-muted-foreground" data-testid="tokens-hidden">
+		<p class="rounded-lg border border-border bg-card px-4 py-3 text-sm text-muted-foreground" data-testid="tokens-hidden">
 			Your role doesn't manage API tokens, so they stay hidden. An owner can make one for you.
 		</p>
 	{:else}
 		{#if made?.secret}
-			<section class="mb-8 max-w-3xl rounded-xl border border-live/40 bg-live-soft/50 p-5" aria-labelledby="secret-heading" data-testid="token-secret">
+			<section class="mb-8 rounded-xl border border-live/40 bg-live-soft/50 p-5" aria-labelledby="secret-heading" data-testid="token-secret">
 				<h2 id="secret-heading" class="font-semibold">Copy “{made.name}” now</h2>
 				<p class="mt-1 text-sm">
 					<strong>You won't see it again.</strong> Colophon keeps only a fingerprint of it, so a lost token can't be shown again: revoke it and make a new
@@ -201,7 +201,7 @@
 			</section>
 		{/if}
 
-		<section class="max-w-3xl" aria-label="Tokens">
+		<section aria-label="Tokens">
 			{#if tokens.isPending}
 				<Skeleton class="h-24 w-full rounded-xl" />
 			{:else if tokens.isError}

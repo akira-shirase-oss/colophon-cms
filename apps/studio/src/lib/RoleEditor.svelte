@@ -184,7 +184,7 @@
 	}
 </script>
 
-<form class="max-w-4xl" onsubmit={save} aria-label="Role {role.name}">
+<form onsubmit={save} aria-label="Role {role.name}">
 	{#if role.fixed}
 		<p class="mb-6 rounded-lg border border-border bg-card px-4 py-3 text-sm text-muted-foreground" data-testid="role-fixed">
 			Owners can always do everything, so this role can't be changed. A project always keeps at least one owner.
