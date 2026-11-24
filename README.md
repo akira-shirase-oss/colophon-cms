@@ -18,7 +18,9 @@
   <a href="docs/modules/README.md">Modules</a>
 </p>
 
-> **Status: every milestone through P7 is built; the v0.1 release is next (November 2026).**
+> **Status: live, in alpha (0.1.0-alpha.7).** The hosted service runs at
+> [colophonapp.404human.dev](https://colophonapp.404human.dev) with open sign-up, and every milestone through P7 is
+> built. **v0.1**, which makes the stability promises in [docs/RELEASES.md](docs/RELEASES.md), comes next.
 > The foundation delivered a pinned toolchain with CI that runs exactly what `scripts/check.sh` runs, a local stack
 > (PostgreSQL, Valkey, Garage), one error envelope, and the rich-text format: 42 shared fixtures, a Tiptap editor that
 > opens a document only if it can give it back byte for byte, and a Rust validator and a renderer that agree with it.
@@ -31,12 +33,12 @@
 > audit log. Content modelling covers the Strapi and Sanity shapes — references the database refuses to let dangle,
 > objects, lists, page-builder blocks, locales — with schema migrations that dry-run every stored entry and resume
 > after a crash. The developer surface is whole: a bounded query API, GraphQL, a typed SDK, OpenAPI, Strapi/Sanity
-> import, and an MCP server where agents can draft and propose but never approve — enforced by an evaluation suite
-> gated on zero unauthorized actions. Operators get encrypted backups, a rehearsed six-stage restore, bounded-table
+> import, and an MCP server you connect by signing in: it acts for you, with your role, in all your projects, asks for
+> your explicit yes before anything that publishes, deletes or changes who has access, and never deletes a project. Operators get encrypted backups, a rehearsed six-stage restore, bounded-table
 > retention and a multi-instance stack that survives failover; sites get five Astro demos that rebuild themselves on
 > publish with live delivery updates, and visitors get real accounts with gated content enforced by Postgres
 > row-level security. What remains before **v0.1**: the rehearsed usability sessions and one independent install
-> (both human-run), and the first public demo. Nothing here claims a feature, benchmark or security
+> (both human-run). Nothing here claims a feature, benchmark or security
 > review that doesn't exist — progress is logged step by step at
 > **[404human.dev/colophon](https://404human.dev/colophon/)**.
 

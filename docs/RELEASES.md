@@ -22,7 +22,7 @@ verified are listed there).
   module docs.
 - **Promise only what one person can keep:** few promises, each dated.
 
-## Now (pre-release)
+## Now (alpha, before v0.1)
 
 1. `CHANGELOG.md` at the repository root, one entry per merged step, newest first; the website renders it at
    `/changelog` with a feed. Each step's merge adds its entry; a malformed entry fails the site's build.

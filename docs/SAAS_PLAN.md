@@ -1,7 +1,9 @@
 # Colophon as a SaaS — plan
 
-Status: **plan, not built.** Written 2026-11-13. Nothing here is deployed yet; every claim about today's code
-cites where it lives. Numbers measured on the droplet do not exist yet and are marked *unmeasured*.
+Status: **built and live** at [colophonapp.404human.dev](https://colophonapp.404human.dev) (since 2026-11-23): open
+self-serve sign-up, projects, teams, and MCP connected by signing in. This file is the plan as written on 2026-11-13
+and is kept as the record; what shipped differs in places, and `CHANGELOG.md` and `DECISIONS.md` (D-235 onward) say
+how. Numbers it marks *unmeasured* were unmeasured when it was written.
 
 ## The goal
 

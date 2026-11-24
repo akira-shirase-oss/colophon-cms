@@ -1,6 +1,6 @@
 {
   "name": "@colophon-cms/rich-text",
-  "version": "0.1.0-alpha.6",
+  "version": "0.1.0-alpha.7",
   "license": "MIT",
   "description": "Render Colophon CMS rich text (colophon/rich-text v1, stored as JSON) to safe HTML, exactly as the Studio and Colophon's own sites do. Zero dependencies.",
   "keywords": [

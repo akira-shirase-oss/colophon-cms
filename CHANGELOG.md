@@ -8,6 +8,8 @@ through `--version` and `GET /version`.
 
 ## [Unreleased]
 
+## [0.1.0-alpha.7] — 2026-11-24
+
 ### Added
 
 - **One connection for all your projects** (D-248): connecting an AI app by signing in now covers every project you're in, with your role in each, and ones you join later; there is no project to pick. Ask the app to list your projects and work in any of them. Connections made for one project keep working there.
