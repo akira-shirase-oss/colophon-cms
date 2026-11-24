@@ -83,7 +83,7 @@ impl<'a> Line<'a> {
 }
 
 /// The address as stored: the throttle key, bounded like its column.
-fn stored_address(address: &str) -> Option<&str> {
+pub(crate) fn stored_address(address: &str) -> Option<&str> {
     (!address.is_empty() && address.len() <= 64).then_some(address)
 }
 

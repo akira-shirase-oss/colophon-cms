@@ -626,30 +626,27 @@ pub(crate) async fn sign_in(
     public_write_origin(&headers, services)?;
     let email = clean_email(&body.email)?;
     check_sign_in_password(&body.password)?;
-    match identity::password_sign_in(
+    // The session's tokens before the attempt: a match stores the session, its line in the staff
+    // auth log and the forgotten throttle key in the attempt's own last statement (D-250).
+    let (session_token, csrf_token) = (random()?, random()?);
+    let (token_hash, csrf_hash) = (tokens::hash(&session_token), tokens::hash(&csrf_token));
+    match identity::password_sign_in_session(
         &services.pool,
         &services.passwords,
         &email,
         &address,
         &body.password,
+        identity::NewSession {
+            token_hash: &token_hash,
+            csrf_hash: &csrf_hash,
+            expires_at: expires_in(services.sessions.lifetime),
+        },
     )
     .await
     {
-        Ok(identity::PasswordSignIn::SignedIn(id)) => {
+        Ok(identity::SessionSignIn::SignedIn { identity: id, .. }) => {
+            tracing::info!(identity = %id, "signed in");
             rotate_presented(services, &headers, &address, id).await;
-            let (session_token, csrf_token) = issue_session(services, id).await?;
-            staff_auth_line(
-                services,
-                colophon_db::staff_auth::Line {
-                    identity: Some(id),
-                    detail: Some("password"),
-                    ..colophon_db::staff_auth::Line::new(
-                        colophon_db::staff_auth::Event::SignedIn,
-                        &address,
-                    )
-                },
-            )
-            .await;
             let mut response = StatusCode::NO_CONTENT.into_response();
             session_cookies(
                 &mut response,
@@ -663,7 +660,7 @@ pub(crate) async fn sign_in(
         // answer (D-154). Not one kind of work: a paused attempt runs no Argon2, so its
         // timing can tell a guesser they are paused — never whether the account exists, since
         // a missing account verifies against the dummy hash like a real one.
-        Ok(identity::PasswordSignIn::Refused) => {
+        Ok(identity::SessionSignIn::Refused) => {
             sign_in_failed(services, &address, &email).await;
             Err(ApiError::SignInFailed)
         }
