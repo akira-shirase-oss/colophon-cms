@@ -32,9 +32,9 @@
 
 <svelte:head><title>Connected apps · Colophon Studio</title></svelte:head>
 
-<div class="mx-auto max-w-2xl space-y-4">
+<div class="space-y-4">
 	<h1 class="page-title">Connected apps</h1>
-	<p class="text-sm text-muted-foreground">
+	<p class="max-w-prose text-sm text-muted-foreground">
 		AI apps you connected to Colophon. Each acts as you, with your role in each of your projects. Disconnect one and it stops working at once.
 	</p>
 	{#if error}<p role="alert" class="text-sm text-destructive">{error}</p>{/if}

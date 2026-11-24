@@ -169,8 +169,11 @@
 	</div>
 {/if}
 
+<!-- Audience roles and sign-in activity sit side by side on wide screens. -->
+{#if (manages && (roles.data ?? []).length > 0) || readsLog}
+<div class="mt-10 grid items-start gap-10 xl:grid-cols-2">
 {#if manages && (roles.data ?? []).length > 0}
-	<section class="mt-10 max-w-2xl" aria-labelledby="roles-heading">
+	<section aria-labelledby="roles-heading">
 		<h2 id="roles-heading" class="mb-3 text-base font-semibold">Audience roles</h2>
 		<ul class="overflow-hidden rounded-xl border border-border bg-card" data-testid="audience-roles">
 			{#each roles.data ?? [] as role (role.name)}
@@ -185,7 +188,7 @@
 {/if}
 
 {#if readsLog}
-	<section class="mt-10 max-w-2xl" aria-labelledby="activity-heading">
+	<section aria-labelledby="activity-heading">
 		<h2 id="activity-heading" class="mb-3 text-base font-semibold">Sign-in activity</h2>
 		{#if activity.isPending}
 			<p class="text-sm text-muted-foreground">Loading…</p>
@@ -205,4 +208,6 @@
 			</ul>
 		{/if}
 	</section>
+{/if}
+</div>
 {/if}

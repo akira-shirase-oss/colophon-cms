@@ -144,18 +144,18 @@
 		<Problem error={mine.error} what="this project" retry={() => mine.refetch()} />
 	{:else if mine.isPending || stages.isPending}
 		<Skeleton class="mb-4 h-6 w-40" />
-		<Skeleton class="h-40 w-full max-w-3xl rounded-xl" />
+		<Skeleton class="h-40 w-full rounded-xl" />
 	{:else if stages.isError}
 		<Problem error={stages.error} what="the review stages" retry={() => stages.refetch()} />
 	{:else if !changes}
 		<!-- Every member may read the list; only a schema.change role may replace it. -->
-		<p class="max-w-3xl rounded-lg border border-border bg-card px-4 py-3 text-sm text-muted-foreground" data-testid="stages-read-only">
+		<p class="rounded-lg border border-border bg-card px-4 py-3 text-sm text-muted-foreground" data-testid="stages-read-only">
 			Your role can't change the review stages. This is the workflow publish requests go through.
 		</p>
 		{#if (stages.data?.stages ?? []).length === 0}
-			<p class="mt-4 max-w-3xl text-sm text-muted-foreground" data-testid="stages-none">No review stages are set, so one approval publishes a request.</p>
+			<p class="mt-4 text-sm text-muted-foreground" data-testid="stages-none">No review stages are set, so one approval publishes a request.</p>
 		{:else}
-			<ol class="mt-4 max-w-3xl overflow-hidden rounded-xl border border-border bg-card" data-testid="stages">
+			<ol class="mt-4 overflow-hidden rounded-xl border border-border bg-card" data-testid="stages">
 				{#each stages.data?.stages ?? [] as stage, index (stage.key)}
 					<li class="rule-dotted flex items-center gap-3 px-4 py-3 text-sm last:border-b-0">
 						<span class="text-xs text-muted-foreground tabular">{index + 1}.</span>
@@ -166,7 +166,7 @@
 			</ol>
 		{/if}
 	{:else if (stages.data?.stages ?? []).length === 0 && draft.length === 0}
-		<div class="max-w-3xl">
+		<div>
 			<EmptyState icon={ListChecksIcon} title="No review stages" testid="stages-empty">
 				With none set, one approval publishes a request — the way it always worked. Add stages to make publishing need a named sign-off at each one, in any order.
 				{#snippet action()}
@@ -175,7 +175,7 @@
 			</EmptyState>
 		</div>
 	{:else}
-		<section class="max-w-3xl" aria-label="Review stages">
+		<section aria-label="Review stages">
 			<ol class="space-y-3" data-testid="stages">
 				{#each draft as row, index (index)}
 					<li class="rounded-xl border border-border bg-card px-4 py-3" data-testid="stage">
@@ -204,7 +204,7 @@
 			</ol>
 			<div class="mt-4 flex flex-wrap items-center gap-3">
 				<Button variant="outline" size="sm" onclick={addStage} disabled={busy || draft.length >= 20} data-testid="add-stage"><PlusIcon data-icon="inline-start" />Add a stage</Button>
-				<span class="text-xs text-muted-foreground">A stage's short name is what a review names; changing it makes a different stage, and approvals recorded for the old one stop counting.</span>
+				<span class="max-w-prose text-xs text-muted-foreground">A stage's short name is what a review names; changing it makes a different stage, and approvals recorded for the old one stop counting.</span>
 			</div>
 			{#if rowProblem !== ''}<p class="mt-3 text-sm text-muted-foreground" data-testid="stages-problem">{rowProblem}</p>{/if}
 			{#if error}
@@ -216,11 +216,11 @@
 			<div class="mt-6 flex justify-end">
 				<Button onclick={save} disabled={busy || !dirty || rowProblem !== '' || draft.length === 0} data-testid="save-stages">{busy ? 'Saving…' : 'Save stages'}</Button>
 			</div>
-			<p class="mt-3 text-xs text-muted-foreground">Saving replaces the whole list. Removing a stage drops its gate; reviews recorded for a stage that keeps its short name still count. Saving an empty list is allowed — one approval publishes again.</p>
+			<p class="mt-3 max-w-prose text-xs text-muted-foreground">Saving replaces the whole list. Removing a stage drops its gate; reviews recorded for a stage that keeps its short name still count. Saving an empty list is allowed — one approval publishes again.</p>
 		</section>
 	{/if}
 
-	<TechnicalDetails class="mt-8 max-w-3xl">
+	<TechnicalDetails class="mt-8">
 		<p>
 			The API calls this the environment's <em>review stages</em>: GET answers the list with an ETag over it, PUT replaces it whole under
 			<code>schema.change</code> with <code>If-Match</code> and an idempotency key.

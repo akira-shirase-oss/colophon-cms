@@ -54,7 +54,7 @@
 	{:else if loaded && types.data}
 		{#if role}
 			{#if forInvite}
-				<div class="mb-6 flex max-w-4xl flex-wrap items-center justify-between gap-3 rounded-xl border border-border bg-card px-4 py-3 text-sm" data-testid="role-for-invite">
+				<div class="mb-6 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-border bg-card px-4 py-3 text-sm" data-testid="role-for-invite">
 					<p>Choose what <strong class="font-medium" data-user-content>{role.name}</strong> may do, then save. You'll go back to your invitation with it chosen.</p>
 					<Button variant="outline" size="sm" href={invite}>Back to the invitation</Button>
 				</div>
@@ -70,7 +70,7 @@
 			</p>
 		{/if}
 	{:else}
-		<div class="grid max-w-4xl gap-3" aria-busy="true">
+		<div class="grid gap-3" aria-busy="true">
 			<Skeleton class="h-10 w-80" />
 			<Skeleton class="h-48 w-full" />
 		</div>

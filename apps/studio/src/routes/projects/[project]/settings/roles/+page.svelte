@@ -97,9 +97,9 @@
 	{#if roles.isError}
 		<Problem error={roles.error} what="roles" retry={() => roles.refetch()} />
 	{:else if roles.isPending}
-		<Skeleton class="h-48 w-full max-w-3xl rounded-xl" />
+		<Skeleton class="h-48 w-full rounded-xl" />
 	{:else}
-		<ul class="max-w-3xl overflow-hidden rounded-xl border border-border bg-card" data-testid="roles">
+		<ul class="overflow-hidden rounded-xl border border-border bg-card" data-testid="roles">
 			{#each roles.data as item (item.key)}
 				<li class="rule-dotted last:border-b-0">
 					<a class="flex items-center gap-4 px-4 py-3 hover:bg-accent" href={resolve('/projects/[project]/settings/roles/[role]', { project, role: item.key })}>

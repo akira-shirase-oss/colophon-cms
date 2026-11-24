@@ -100,17 +100,17 @@
 	{#if mine.isError}
 		<Problem error={mine.error} what="this project" retry={() => mine.refetch()} />
 	{:else if mine.isPending}
-		<Skeleton class="h-32 w-full max-w-3xl rounded-xl" />
+		<Skeleton class="h-32 w-full rounded-xl" />
 	{:else if !manages}
-		<p class="max-w-3xl rounded-lg border border-border bg-card px-4 py-3 text-sm text-muted-foreground" data-testid="destinations-hidden">
+		<p class="rounded-lg border border-border bg-card px-4 py-3 text-sm text-muted-foreground" data-testid="destinations-hidden">
 			Your role doesn't manage website connections, so they stay hidden: their addresses may carry secrets.
 		</p>
 	{:else if destinations.isError}
 		<Problem error={destinations.error} what="website connections" retry={() => destinations.refetch()} />
 	{:else if destinations.isPending}
-		<Skeleton class="h-32 w-full max-w-3xl rounded-xl" />
+		<Skeleton class="h-32 w-full rounded-xl" />
 	{:else if !any}
-		<div class="max-w-3xl">
+		<div>
 			<EmptyState icon={GlobeIcon} title="No website connections yet" testid="connections-empty">
 				Connect your website so each release rebuilds it, clears its cache, or is checked on the live site. Until then, releases are published in Colophon and
 				your site reads them whenever it asks.
@@ -120,7 +120,7 @@
 			</EmptyState>
 		</div>
 	{:else}
-		<ul class="max-w-3xl overflow-hidden rounded-xl border border-border bg-card" data-testid="destinations">
+		<ul class="overflow-hidden rounded-xl border border-border bg-card" data-testid="destinations">
 			{#each destinations.data as destination (destination.id)}
 				<li class="rule-dotted flex flex-wrap items-center gap-x-4 gap-y-2 px-4 py-3 last:border-b-0">
 					<span class="min-w-0 flex-1">

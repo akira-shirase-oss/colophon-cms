@@ -24,7 +24,7 @@
 	</header>
 	<main class="mx-2 mb-2 flex-1 rounded-2xl border border-sidebar-border bg-background">
 		{#key page.url.pathname}
-			<div class="page-enter mx-auto w-full max-w-6xl px-5 py-8 sm:px-10 sm:py-12">
+			<div class="page-enter w-full min-w-0 px-5 py-8 sm:px-8 sm:py-12 lg:px-10">
 				{@render children()}
 			</div>
 		{/key}

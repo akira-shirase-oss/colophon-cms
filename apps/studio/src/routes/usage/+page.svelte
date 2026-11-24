@@ -40,9 +40,9 @@
 
 <svelte:head><title>Usage · Colophon Studio</title></svelte:head>
 
-<div class="mx-auto max-w-xl py-8">
+<div class="py-8">
 	<h1 class="page-title">Usage</h1>
-	<p class="mt-2 text-sm text-pretty text-muted-foreground">What your account uses across the projects you own, and how much it may.</p>
+	<p class="mt-2 max-w-prose text-sm text-pretty text-muted-foreground">What your account uses across the projects you own, and how much it may.</p>
 	<div class="mt-8">
 		{#if who.isPending || (who.data && used.isPending)}
 			<div class="space-y-6" aria-busy="true" data-testid="usage-loading">
@@ -56,7 +56,7 @@
 		{:else if used.isError}
 			<Problem error={used.error} />
 		{:else}
-			<ul class="space-y-6 rounded-2xl border border-border bg-card p-6" data-testid="usage">
+			<ul class="grid gap-6 rounded-2xl border border-border bg-card p-6 md:grid-cols-2 2xl:grid-cols-4" data-testid="usage">
 				{#each rows as [label, meter, show] (label)}
 					{@const full = meter.limit !== null && meter.used >= meter.limit}
 					<li data-testid={`usage-${label.toLowerCase()}`}>
