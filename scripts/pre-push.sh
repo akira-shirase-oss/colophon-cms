@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 # The pre-push hook (D-241; installed by scripts/install-hooks.sh): what CI would otherwise be the
 # first to catch. Warns when the branch doesn't contain origin/main as last fetched (no fetch here),
-# runs the leak check over everything being pushed, then QUICK=1 scripts/check.sh: every check CI
-# runs except the stack's. A push whose new commits touch only docs/, *.md or perf/results/ runs
-# the leak check alone. Git hands the refs being pushed on stdin: "<local ref> <local sha> <remote
-# ref> <remote sha>" a line.
+# checks every pushed commit's identity and runs the leak check over everything being pushed, then
+# QUICK=1 scripts/check.sh: every check CI runs except the stack's. A push whose new commits touch
+# only docs/, *.md or perf/results/ runs the identity and leak checks alone. Git hands the refs
+# being pushed on stdin: "<local ref> <local sha> <remote ref> <remote sha>" a line.
 # Bash 3.2 (macOS /bin/bash): no -u (an empty array would be "unbound").
 set -o pipefail
 cd "$(git rev-parse --show-toplevel)" || exit 1
@@ -48,6 +48,7 @@ for range in "${ranges[@]}"; do
     while IFS= read -r path; do changed+=("$path"); done < <(git show --name-only --format= "$range")
   fi
 done
+step "identity (every commit pushed)" pushed_identity_check "${ranges[@]}"
 hook_clean_git_env
 step "leak check (everything pushed)" leak_check "$diff"
 
@@ -59,7 +60,7 @@ for path in "${changed[@]}"; do
   esac
 done
 if (( docs_only == 1 )); then
-  echo "pre-push: docs only; the leak check is the whole hook" >&2
+  echo "pre-push: docs only; the identity and leak checks are the whole hook" >&2
   hook_verdict
   exit 0
 fi

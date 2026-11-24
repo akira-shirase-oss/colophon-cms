@@ -112,6 +112,24 @@ leak_check() {
   (( hits == 0 ))
 }
 
+# pushed_identity_check RANGE...: when this checkout asks for an identity, every commit being pushed
+# that origin/main (as last fetched) doesn't already have must carry it as author and committer —
+# so a commit some tool or test made in this repository under another name never leaves it.
+pushed_identity_check() {
+  local want range wrong=""
+  want=$(git config --get colophon.requireEmail || true)
+  [[ -n "$want" ]] || return 0
+  for range in "$@"; do
+    wrong+=$(git log --format='%h author <%ae> committer <%ce> %s' "$range" --not origin/main 2>/dev/null |
+      awk -v want="$want" 'index($0, "author <" want "> committer <" want ">") == 0')
+  done
+  if [[ -n "$wrong" ]]; then
+    echo "commits not by <$want> (author and committer both); fix them before pushing:"
+    echo "$wrong"
+    return 1
+  fi
+}
+
 # identity_check: when this checkout asks for one (scripts/install-hooks.sh --require-email), the
 # author and committer must both be that address. Builders of the project set it; contributors don't.
 identity_check() {

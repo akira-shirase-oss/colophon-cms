@@ -263,25 +263,42 @@ mod tests {
         assert!(!is_commit_id(""));
     }
 
-    /// Runs git with a throwaway identity and no signing, whatever the machine's config says.
+    /// Runs git with a throwaway identity and no signing, whatever the machine's config says — in
+    /// `dir`'s own repository and nowhere else: a hook's `GIT_DIR` and friends would point it at
+    /// the real checkout (a pre-push once committed this test's "one" into it), so they're cleared
+    /// and the search for a repository stops above `dir`.
     fn run_git(dir: &Path, args: &[&str]) -> bool {
-        Command::new("git")
-            .args([
-                "-c",
-                "user.name=test",
-                "-c",
-                "user.email=test@example.invalid",
-            ])
-            .args([
-                "-c",
-                "commit.gpgsign=false",
-                "-c",
-                "core.hooksPath=/dev/null",
-            ])
-            .args(args)
-            .current_dir(dir)
-            .output()
-            .is_ok_and(|output| output.status.success())
+        let mut git = Command::new("git");
+        for variable in [
+            "GIT_DIR",
+            "GIT_WORK_TREE",
+            "GIT_INDEX_FILE",
+            "GIT_OBJECT_DIRECTORY",
+            "GIT_ALTERNATE_OBJECT_DIRECTORIES",
+            "GIT_COMMON_DIR",
+            "GIT_PREFIX",
+        ] {
+            git.env_remove(variable);
+        }
+        if let Some(parent) = dir.parent() {
+            git.env("GIT_CEILING_DIRECTORIES", parent);
+        }
+        git.args([
+            "-c",
+            "user.name=test",
+            "-c",
+            "user.email=test@example.invalid",
+        ])
+        .args([
+            "-c",
+            "commit.gpgsign=false",
+            "-c",
+            "core.hooksPath=/dev/null",
+        ])
+        .args(args)
+        .current_dir(dir)
+        .output()
+        .is_ok_and(|output| output.status.success())
     }
 
     #[test]
@@ -297,6 +314,20 @@ mod tests {
             eprintln!("git is not installed: skipping (the fallback is `unknown`)");
             return;
         }
+        // Everything below writes to this scratch repository: refuse to go on in any other.
+        let top = Command::new("git")
+            .args(["rev-parse", "--show-toplevel"])
+            .env_remove("GIT_DIR")
+            .env_remove("GIT_WORK_TREE")
+            .current_dir(&repo)
+            .output()
+            .expect("git rev-parse");
+        let top = std::path::PathBuf::from(String::from_utf8_lossy(&top.stdout).trim());
+        assert_eq!(
+            top.canonicalize().ok(),
+            repo.canonicalize().ok(),
+            "the scratch repository is its own top level"
+        );
         assert!(run_git(&repo, &["add", "tracked/Cargo.toml"]));
         assert!(run_git(&repo, &["commit", "-q", "-m", "one"]));
         // A source tree unpacked inside this repository, but not part of it.
