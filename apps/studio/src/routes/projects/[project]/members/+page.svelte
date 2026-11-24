@@ -304,7 +304,7 @@
 </Dialog.Root>
 
 {#if manages}
-	<section class="mt-12 max-w-4xl" aria-labelledby="invitations-heading">
+	<section class="mt-12" aria-labelledby="invitations-heading">
 		<h2 id="invitations-heading" class="mb-3 text-base font-semibold">Pending invitations</h2>
 		{#if pending.isPending}
 			<p class="text-sm text-muted-foreground">Loading…</p>

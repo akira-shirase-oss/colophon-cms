@@ -96,7 +96,7 @@
 	}
 </script>
 
-<section id="preview" class="mt-12 max-w-3xl scroll-mt-20" aria-labelledby="preview-target-heading" data-testid="preview-target">
+<section id="preview" class="mt-12 scroll-mt-20" aria-labelledby="preview-target-heading" data-testid="preview-target">
 	<div class="mb-3 flex flex-wrap items-center gap-x-3 gap-y-1">
 		<h2 id="preview-target-heading" class="text-lg font-semibold tracking-tight">Preview on your site</h2>
 		{#if target.isSuccess}

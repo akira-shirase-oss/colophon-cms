@@ -27,7 +27,6 @@
 	import { getEntry, may, mayAny, SETTINGS_ACTIONS } from '#lib/api.ts';
 	import { rememberProject } from '#lib/lastProject.ts';
 	import { watchProject } from '#lib/live.ts';
-	import { pageWidth } from '#lib/pageWidth.svelte.ts';
 	import { ago, changesetsQuery, entriesQuery, meQuery, projectQuery, releasesQuery, rolesQuery, typesQuery } from '#lib/queries.ts';
 	import AccountMenu from '#lib/shell/AccountMenu.svelte';
 	import ThemeToggle from '#lib/shell/ThemeToggle.svelte';
@@ -163,9 +162,10 @@
 </script>
 
 <!-- One continuous surface (Studio v2): the sidebar takes the page's own ground, and the content no longer sits
-     in a bordered, rounded, inset panel; spacing alone separates them, and the top bar keeps its one hairline. -->
+     in a bordered, rounded, inset panel. A 1px --sidebar-border hairline on the sidebar's inner edge (desktop only;
+     the phone sheet is unchanged) marks where the sidebar ends, and the top bar keeps its one hairline. -->
 <Sidebar.Provider style="--sidebar: var(--background)">
-	<Sidebar.Root variant="inset" collapsible="icon">
+	<Sidebar.Root variant="inset" collapsible="icon" class="md:border-e md:border-sidebar-border">
 		<!-- One landmark for the whole sidebar, so screen-reader users can jump to it. -->
 		<nav aria-label="Project" class="flex min-h-0 flex-1 flex-col">
 		<Sidebar.Header>
@@ -405,8 +405,8 @@
 			</div>
 		</header>
 		{#key page.url.pathname}
-			<!-- The entry editor beside its site preview takes the whole width (pageWidth). -->
-			<div class="page-enter mx-auto w-full {pageWidth.wide ? 'max-w-none' : 'max-w-6xl'} flex-1 px-5 py-8 sm:px-8 lg:px-10">
+			<!-- Every page takes the whole width beside the sidebar; long prose keeps its own measure inside. -->
+			<div class="page-enter w-full min-w-0 flex-1 px-5 py-8 sm:px-8 lg:px-10">
 				{@render children()}
 			</div>
 		{/key}

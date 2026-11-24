@@ -276,7 +276,7 @@
 					No project matches <strong class="font-medium text-foreground">{filter.trim()}</strong>.
 				</p>
 			{:else}
-				<ul class="stagger grid gap-3 sm:grid-cols-2 lg:grid-cols-3" data-testid="projects" aria-labelledby="all-projects">
+				<ul class="stagger grid gap-3 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-4" data-testid="projects" aria-labelledby="all-projects">
 					{#each shown as project, index (project.id)}
 						<li style="--i: {index}">
 							<a

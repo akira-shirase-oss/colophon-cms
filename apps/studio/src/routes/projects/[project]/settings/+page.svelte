@@ -67,9 +67,10 @@
 		<Problem error={mine.error} what="this project's settings" retry={() => mine.refetch()} />
 	{:else if mine.isPending}
 		<Skeleton class="mb-4 h-6 w-40" />
-		<Skeleton class="h-40 w-full max-w-3xl rounded-xl" />
+		<Skeleton class="h-40 w-full rounded-xl" />
 	{:else if mine.data}
-		<section class="max-w-3xl" aria-label="Project">
+		<div class="grid gap-x-10 gap-y-8 xl:grid-cols-2">
+		<section aria-label="Project">
 			<FormRow label="Name">
 				<p class="text-sm" data-user-content>{mine.data.name}</p>
 			</FormRow>
@@ -78,7 +79,7 @@
 			</FormRow>
 		</section>
 
-		<section class="mt-8 max-w-3xl" aria-labelledby="types-title">
+		<section aria-labelledby="types-title">
 			<h2 id="types-title" class="mb-1 text-base font-semibold">Content types and components</h2>
 			<p class="mb-4 text-sm text-muted-foreground">The kinds of content this project holds and their fields are built in Content types, in the main menu.</p>
 			<a
@@ -94,8 +95,9 @@
 				<span class="text-sm text-muted-foreground">{changesTypes ? 'Open' : 'View'}</span>
 			</a>
 		</section>
+		</div>
 
-		<TechnicalDetails class="mt-8 max-w-3xl">
+		<TechnicalDetails class="mt-8">
 			<div class="grid gap-0.5">
 				<span class="font-medium text-foreground">Project id</span>
 				<span class="flex min-w-0 items-center gap-2">
