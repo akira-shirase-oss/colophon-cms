@@ -44,22 +44,17 @@ pub async fn begin_isolated(
     scope: Scope,
     isolation: Isolation,
 ) -> Result<Transaction<'static, Postgres>, DbError> {
-    let mut transaction = match isolation {
-        Isolation::PerStatement => crate::begin_tx(pool).await,
-        Isolation::Snapshot => crate::begin_tx_snapshot(pool).await,
-    }
-    .map_err(DbError::from_query)?;
+    // The context is set in the begin's own round trip (D-250): one simple query, the begin and
+    // then the two settings. Only ids reach the text — a `Uuid` formats as hex and hyphens, so
+    // nothing in it can be SQL — and an unset scope is the empty string, as before.
     let identity = scope.identity.map(|id| id.to_string()).unwrap_or_default();
     let project = scope.project.map(|id| id.to_string()).unwrap_or_default();
-    sqlx::query!(
-        "SELECT set_config('app.identity_id', $1, true) AS identity_scope, set_config('app.project_id', $2, true) AS project_scope",
-        identity,
-        project
-    )
-    .fetch_one(&mut *transaction)
-    .await
-    .map_err(DbError::from_query)?;
-    Ok(transaction)
+    let settings = format!(
+        "SELECT set_config('app.identity_id', '{identity}', true), set_config('app.project_id', '{project}', true)"
+    );
+    crate::transactions::begin_tx_then(pool, matches!(isolation, Isolation::Snapshot), &settings)
+        .await
+        .map_err(DbError::from_query)
 }
 
 /// A transaction inside a project the caller belongs to, in one of its environments. The only

@@ -180,6 +180,26 @@ pub async fn begin_tx_snapshot(
     .await
 }
 
+/// Begins a transaction — at Postgres's default isolation, or with `snapshot` a repeatable-read
+/// one as [`begin_tx_snapshot`] — and runs `then` in the same simple query: one round trip
+/// (D-250). The caller builds `then` from values that can't carry SQL (ids, fixed words);
+/// [`crate::scope::begin_isolated`] sets the row-security context in it rather than in a second
+/// statement.
+pub async fn begin_tx_then(
+    pool: &PgPool,
+    snapshot: bool,
+    then: &str,
+) -> Result<Transaction<'static, Postgres>, sqlx::Error> {
+    let begin = if snapshot {
+        "BEGIN ISOLATION LEVEL REPEATABLE READ"
+    } else {
+        "BEGIN"
+    };
+    let statement = format!("{begin}; {then}");
+    let pool = pool.clone();
+    detached(async move { pool.begin_with(sqlx::AssertSqlSafe(statement)).await }).await
+}
+
 /// Runs `begin` to completion in its own task, even if the caller stops waiting. A task that
 /// panicked or was cancelled (the runtime shutting down) is an error, never a panic here.
 async fn detached<F>(begin: F) -> Result<Transaction<'static, Postgres>, sqlx::Error>

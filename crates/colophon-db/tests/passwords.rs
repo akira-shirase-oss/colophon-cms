@@ -378,3 +378,104 @@ async fn a_paused_key_is_refused_without_taking_a_slot() {
     assert_eq!(gate.available(), 1);
     db.drop().await;
 }
+
+/// Records the summary of every statement sqlx runs on this thread.
+#[derive(Clone, Default)]
+struct Statements(std::sync::Arc<std::sync::Mutex<Vec<String>>>);
+
+impl<S: tracing::Subscriber> tracing_subscriber::Layer<S> for Statements {
+    fn on_event(
+        &self,
+        event: &tracing::Event<'_>,
+        _context: tracing_subscriber::layer::Context<'_, S>,
+    ) {
+        struct Summary(String);
+        impl tracing::field::Visit for Summary {
+            fn record_str(&mut self, field: &tracing::field::Field, value: &str) {
+                if field.name() == "summary" {
+                    value.clone_into(&mut self.0);
+                }
+            }
+            fn record_debug(&mut self, field: &tracing::field::Field, value: &dyn std::fmt::Debug) {
+                if field.name() == "summary" {
+                    self.0 = format!("{value:?}");
+                }
+            }
+        }
+        if event.metadata().target() == "sqlx::query" {
+            let mut summary = Summary(String::new());
+            event.record(&mut summary);
+            self.0
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .push(summary.0);
+        }
+    }
+}
+
+/// A sign-in's round trips (D-250): on success three statements — the pause check, the count with
+/// the account's read, the session with its log line — and no BEGIN or COMMIT, from a new address
+/// as from a trusted one; a miss two. Each statement, on a connection that has run it before, is
+/// one round trip, so this is the sign-in's whole wait on the database.
+#[tokio::test(flavor = "current_thread")]
+#[ignore = "needs the local stack: scripts/stack.sh up"]
+async fn a_sign_in_waits_on_the_database_three_times() {
+    use tracing_subscriber::layer::SubscriberExt as _;
+    let db = TestDb::new().await;
+    let password = "correct horse battery staple";
+    made(&db.app, "rita@example.com", password).await;
+    let statements = Statements::default();
+    let _recording =
+        tracing::subscriber::set_default(tracing_subscriber::registry().with(statements.clone()));
+    let session = |seed: u8| identity::NewSession {
+        token_hash: Box::leak(Box::new([seed; 32])),
+        csrf_hash: Box::leak(Box::new([seed.wrapping_add(1); 32])),
+        expires_at: OffsetDateTime::now_utc() + time::Duration::HOUR,
+    };
+    let taken = |statements: &Statements| {
+        std::mem::take(
+            &mut *statements
+                .0
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner),
+        )
+    };
+    for (address, seed) in [
+        ("198.51.100.1", 1),
+        ("198.51.100.1", 3),
+        ("198.51.100.2", 5),
+    ] {
+        taken(&statements);
+        let signed = identity::password_sign_in_session(
+            &db.app,
+            &common::gate(),
+            "rita@example.com",
+            address,
+            password,
+            session(seed),
+        )
+        .await
+        .expect("sign-in");
+        assert!(matches!(signed, identity::SessionSignIn::SignedIn { .. }));
+        let ran = taken(&statements);
+        assert_eq!(ran.len(), 3, "{address}: {ran:#?}");
+        assert!(
+            !ran.iter()
+                .any(|sql| sql.starts_with("BEGIN") || sql.starts_with("COMMIT")),
+            "{ran:#?}"
+        );
+    }
+    taken(&statements);
+    let missed = identity::password_sign_in_session(
+        &db.app,
+        &common::gate(),
+        "rita@example.com",
+        "198.51.100.3",
+        "wrong",
+        session(7),
+    )
+    .await
+    .expect("sign-in");
+    assert_eq!(missed, identity::SessionSignIn::Refused);
+    assert_eq!(taken(&statements).len(), 2);
+}

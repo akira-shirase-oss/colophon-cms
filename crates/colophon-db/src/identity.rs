@@ -287,11 +287,11 @@ pub enum PasswordSignIn {
 
 /// Signs in with an email and a password, as a client at `address` (D-150, D-154, D-213). A key
 /// already paused is refused first, with one read and no slot; then the slot, so a request the
-/// password bound sheds costs nothing else. Then one short
-/// transaction counts the attempt against the (staff, email, address) key — refusing at once,
-/// unverified, while that key is paused — and reads the account; Argon2 runs with no
-/// transaction open and no connection held; a match forgets the key. A guesser pauses only
-/// their own address, and a pause answers exactly as a wrong password does.
+/// password bound sheds costs nothing else. Then one statement counts the attempt against the
+/// (staff, email, address) key — refusing at once, unverified, while that key is paused — and
+/// reads the account; Argon2 runs with no transaction open and no connection held; a match
+/// forgets the key. A guesser pauses only their own address, and a pause answers exactly as a
+/// wrong password does. Three statements on success, none of them a BEGIN or COMMIT (D-250).
 pub async fn password_sign_in(
     pool: &PgPool,
     gate: &crate::passwords::PasswordGate,
@@ -299,48 +299,148 @@ pub async fn password_sign_in(
     address: &str,
     password: &str,
 ) -> Result<PasswordSignIn, DbError> {
-    use crate::throttle::{self, Counted, Realm};
-    // A key already paused is refused before it takes a slot (D-213): only work that will
-    // hash holds one.
-    let mut transaction = crate::begin_tx(pool).await.map_err(DbError::from_query)?;
-    let paused = throttle::paused(&mut transaction, Realm::Staff, email, address).await?;
-    transaction.commit().await.map_err(DbError::from_query)?;
-    if paused {
-        return Ok(PasswordSignIn::Refused);
-    }
-    let slot = gate.slot().await?;
-    let mut transaction = crate::begin_tx(pool).await.map_err(DbError::from_query)?;
-    if throttle::count(&mut transaction, Realm::Staff, email, address).await? == Counted::Paused {
-        return Ok(PasswordSignIn::Refused);
-    }
-    let row = sqlx::query!(
-        "SELECT id, password_hash FROM identities
-         WHERE issuer = $1 AND subject = $2 AND disabled_at IS NULL",
-        PASSWORD_ISSUER,
-        email
-    )
-    .fetch_optional(&mut *transaction)
-    .await
-    .map_err(DbError::from_query)?;
-    transaction.commit().await.map_err(DbError::from_query)?;
-    // Argon2 with nothing held. No such account verifies against the dummy hash anyway, so
-    // the answer can't be told apart.
-    let hash = row.as_ref().and_then(|row| row.password_hash.as_deref());
-    let right = slot.verify(password, hash).await;
-    let Some(row) = row.filter(|_| right) else {
+    let Some(identity) = verify_password(pool, gate, email, address, password).await? else {
         return Ok(PasswordSignIn::Refused);
     };
-    let mut transaction = crate::begin_tx(pool).await.map_err(DbError::from_query)?;
-    throttle::clear(&mut transaction, Realm::Staff, email, address).await?;
-    sqlx::query!(
-        "UPDATE identities SET last_sign_in_at = now() WHERE id = $1",
-        row.id
+    sqlx::query(
+        "WITH cleared AS (INSERT INTO sign_in_throttle (realm, email, address, failures, locked_until, trusted)
+                          VALUES ($1, $2, $3, 0, NULL, true)
+                          ON CONFLICT (realm, email, address) DO UPDATE
+                              SET failures = 0, locked_until = NULL, trusted = true, updated_at = now()
+                          RETURNING 1)
+         UPDATE identities SET last_sign_in_at = now() WHERE id = $4",
     )
-    .execute(&mut *transaction)
+    .bind(crate::throttle::Realm::Staff.key())
+    .bind(email)
+    .bind(address)
+    .bind(identity)
+    .execute(pool)
     .await
     .map_err(DbError::from_query)?;
-    transaction.commit().await.map_err(DbError::from_query)?;
-    Ok(PasswordSignIn::SignedIn(row.id))
+    Ok(PasswordSignIn::SignedIn(identity))
+}
+
+/// A session a sign-in starts: only its hashes are stored.
+#[derive(Debug, Clone, Copy)]
+pub struct NewSession<'a> {
+    /// SHA-256 of the session token.
+    pub token_hash: &'a [u8; 32],
+    /// SHA-256 of its CSRF token.
+    pub csrf_hash: &'a [u8; 32],
+    /// When it ends regardless of use.
+    pub expires_at: OffsetDateTime,
+}
+
+/// What [`password_sign_in_session`] did.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SessionSignIn {
+    /// The password matched; the session is stored and the staff auth log has its line.
+    SignedIn {
+        /// Who signed in.
+        identity: Uuid,
+        /// The new session's id.
+        session: Uuid,
+    },
+    /// As [`PasswordSignIn::Refused`]: one answer for a wrong password, no account and a pause.
+    Refused,
+}
+
+/// [`password_sign_in`], and on a match the session in the same last statement (D-250): the key
+/// forgotten, `last_sign_in_at`, the session — none for an account disabled meanwhile (D-235),
+/// [`DbError::AccountDisabled`] — and its `signed_in` line in the staff auth log, one round trip,
+/// all or nothing. Three round trips on success: the pause check, the count and read, this.
+pub async fn password_sign_in_session(
+    pool: &PgPool,
+    gate: &crate::passwords::PasswordGate,
+    email: &str,
+    address: &str,
+    password: &str,
+    session: NewSession<'_>,
+) -> Result<SessionSignIn, DbError> {
+    let Some(identity) = verify_password(pool, gate, email, address, password).await? else {
+        return Ok(SessionSignIn::Refused);
+    };
+    let id = Uuid::now_v7();
+    let made: i64 = sqlx::query_scalar(
+        "WITH cleared AS (INSERT INTO sign_in_throttle (realm, email, address, failures, locked_until, trusted)
+                          VALUES ($1, $2, $3, 0, NULL, true)
+                          ON CONFLICT (realm, email, address) DO UPDATE
+                              SET failures = 0, locked_until = NULL, trusted = true, updated_at = now()
+                          RETURNING 1),
+              seen AS (UPDATE identities SET last_sign_in_at = now()
+                       WHERE id = $4 AND disabled_at IS NULL
+                       RETURNING id),
+              made AS (INSERT INTO sessions (id, token_hash, csrf_hash, identity_id, expires_at)
+                       SELECT $5, $6, $7, seen.id, $8 FROM seen
+                       RETURNING identity_id),
+              logged AS (INSERT INTO staff_auth_events (id, event, identity_id, address, detail)
+                         SELECT $9, $10, made.identity_id, $11, 'password' FROM made
+                         RETURNING 1)
+         SELECT count(*) FROM made",
+    )
+    .bind(crate::throttle::Realm::Staff.key())
+    .bind(email)
+    .bind(address)
+    .bind(identity)
+    .bind(id)
+    .bind(&session.token_hash[..])
+    .bind(&session.csrf_hash[..])
+    .bind(session.expires_at)
+    .bind(Uuid::now_v7())
+    .bind(crate::staff_auth::Event::SignedIn.as_str())
+    .bind(crate::staff_auth::stored_address(address))
+    .fetch_one(pool)
+    .await
+    .map_err(DbError::from_query)?;
+    if made == 0 {
+        return Err(DbError::AccountDisabled);
+    }
+    Ok(SessionSignIn::SignedIn {
+        identity,
+        session: id,
+    })
+}
+
+/// The pause check, the slot, the count and read, Argon2: the account a matching password names,
+/// or `None` for the one refusal (D-154). Two statements, neither in a transaction: each is its
+/// own (D-250).
+async fn verify_password(
+    pool: &PgPool,
+    gate: &crate::passwords::PasswordGate,
+    email: &str,
+    address: &str,
+    password: &str,
+) -> Result<Option<Uuid>, DbError> {
+    use crate::throttle::{self, Realm};
+    // A key already paused is refused before it takes a slot (D-213): only work that will
+    // hash holds one.
+    if throttle::paused(pool, Realm::Staff, email, address).await? {
+        return Ok(None);
+    }
+    let slot = gate.slot().await?;
+    // Counted before any Argon2, and the account read in the same statement: a paused key is
+    // refused unverified (migration 0100 keeps D-162's lock order inside the function).
+    let (paused, id, hash): (bool, Option<Uuid>, Option<String>) = throttle::bind_count(
+        sqlx::query_as(
+            "SELECT c.paused, i.id, i.password_hash
+             FROM colophon_sign_in_count($1, $2, $3, $4, $5, $6, $7) AS c (paused)
+             LEFT JOIN identities i ON i.issuer = $8 AND i.subject = $2 AND i.disabled_at IS NULL",
+        )
+        .bind(Realm::Staff.key())
+        .bind(email)
+        .bind(address),
+    )
+    .bind(PASSWORD_ISSUER)
+    .fetch_one(pool)
+    .await
+    .map_err(DbError::from_query)?;
+    if paused {
+        return Ok(None);
+    }
+    // Argon2 with nothing held. No such account verifies against the dummy hash anyway, so
+    // the answer can't be told apart.
+    let right = slot.verify(password, hash.as_deref()).await;
+    Ok(id.filter(|_| right))
 }
 
 /// A live session, as stored.
@@ -612,6 +712,21 @@ pub struct Identity {
     pub installation_set_up: bool,
 }
 
+/// `profile`'s one row: the identity, then its projects as parallel arrays (D-250).
+type ProfileRow = (
+    Uuid,
+    String,
+    String,
+    Option<String>,
+    bool,
+    bool,
+    Vec<Uuid>,
+    Vec<String>,
+    Vec<String>,
+    Vec<String>,
+    Vec<String>,
+);
+
 /// An identity and the projects it is a member of: everything `/me` shows.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Profile {
@@ -631,24 +746,74 @@ pub async fn profile(pool: &PgPool, id: Uuid) -> Result<Option<Profile>, DbError
         },
     )
     .await?;
-    let identity = sqlx::query_as!(
-        Identity,
-        r#"SELECT i.id, i.issuer, i.subject, i.display_name,
-                  EXISTS (SELECT 1 FROM administrators a WHERE a.identity_id = i.id) AS "administrator!",
-                  colophon_installation_set_up() AS "installation_set_up!"
-           FROM identities i WHERE i.id = $1"#,
-        id
+    // The account and its projects in one statement (D-250): the projects as parallel arrays,
+    // in `projects::list_in`'s order and under its limit.
+    let row: Option<ProfileRow> = sqlx::query_as(
+        "SELECT i.id, i.issuer, i.subject, i.display_name,
+                EXISTS (SELECT 1 FROM administrators a WHERE a.identity_id = i.id),
+                colophon_installation_set_up(),
+                coalesce(array_agg(p.id ORDER BY p.name, p.id) FILTER (WHERE p.id IS NOT NULL), '{}'),
+                coalesce(array_agg(p.slug ORDER BY p.name, p.id) FILTER (WHERE p.id IS NOT NULL), '{}'),
+                coalesce(array_agg(p.name ORDER BY p.name, p.id) FILTER (WHERE p.id IS NOT NULL), '{}'),
+                coalesce(array_agg(p.role ORDER BY p.name, p.id) FILTER (WHERE p.id IS NOT NULL), '{}'),
+                coalesce(array_agg(p.role_name ORDER BY p.name, p.id) FILTER (WHERE p.id IS NOT NULL), '{}')
+         FROM identities i
+         LEFT JOIN LATERAL (
+             SELECT p.id, p.slug, p.name, m.role, r.name AS role_name FROM projects p
+             JOIN memberships m ON m.project_id = p.id AND m.identity_id = i.id
+             JOIN roles r ON r.project_id = m.project_id AND r.key = m.role
+             ORDER BY p.name, p.id
+             LIMIT 1000
+         ) p ON true
+         WHERE i.id = $1
+         GROUP BY i.id",
     )
+    .bind(id)
     .fetch_optional(&mut *transaction)
     .await
     .map_err(DbError::from_query)?;
-    let profile = match identity {
-        Some(identity) => Some(Profile {
-            identity,
-            projects: projects::list_in(&mut transaction, id).await?,
-        }),
-        None => None,
-    };
+    let profile = row.map(
+        |(
+            id,
+            issuer,
+            subject,
+            display_name,
+            administrator,
+            installation_set_up,
+            ids,
+            slugs,
+            names,
+            roles,
+            role_names,
+        )| {
+            Profile {
+                identity: Identity {
+                    id,
+                    issuer,
+                    subject,
+                    display_name,
+                    administrator,
+                    installation_set_up,
+                },
+                projects: ids
+                    .into_iter()
+                    .zip(slugs)
+                    .zip(names)
+                    .zip(roles)
+                    .zip(role_names)
+                    .map(
+                        |((((id, slug), name), role), role_name)| projects::Project {
+                            id,
+                            slug,
+                            name,
+                            role,
+                            role_name,
+                        },
+                    )
+                    .collect(),
+            }
+        },
+    );
     transaction.commit().await.map_err(DbError::from_query)?;
     Ok(profile)
 }

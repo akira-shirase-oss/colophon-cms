@@ -38,7 +38,7 @@ pub enum Realm {
 }
 
 impl Realm {
-    fn key(self) -> String {
+    pub(crate) fn key(self) -> String {
         match self {
             Self::Staff => "staff".to_owned(),
             Self::Audience(project) => format!("audience:{project}"),
@@ -58,42 +58,53 @@ pub(crate) enum Counted {
 /// Whether the key is paused right now, read without a lock and without counting (D-213):
 /// asked before an attempt takes a password slot, so a paused key never holds one. [`count`]
 /// still decides under its lock; this only spares the slot when the answer is already known.
-pub(crate) async fn paused(
-    tx: &mut Transaction<'_, Postgres>,
+/// One statement (D-250): the key and, for an address the account never let in, the account's
+/// untrusted misses.
+pub(crate) async fn paused<'e>(
+    executor: impl sqlx::PgExecutor<'e>,
     realm: Realm,
     email: &str,
     address: &str,
 ) -> Result<bool, DbError> {
-    let realm = realm.key();
-    let key = sqlx::query!(
-        r#"SELECT coalesce(locked_until > now(), false) AS "paused!", trusted
-           FROM sign_in_throttle
-           WHERE realm = $1 AND email = $2 AND address = $3"#,
-        realm,
-        email,
-        address
+    let paused: bool = sqlx::query_scalar(
+        "SELECT coalesce(k.locked_until > now(), false)
+             OR (NOT coalesce(k.trusted, false)
+                 AND (SELECT coalesce(sum(t.failures), 0)::bigint FROM sign_in_throttle t
+                      WHERE t.realm = $1 AND t.email = $2 AND NOT t.trusted
+                        AND t.updated_at > now() - make_interval(secs => $4)) >= $5)
+         FROM (SELECT 1) one
+         LEFT JOIN sign_in_throttle k ON k.realm = $1 AND k.email = $2 AND k.address = $3",
     )
-    .fetch_optional(&mut **tx)
+    .bind(realm.key())
+    .bind(email)
+    .bind(address)
+    .bind(window_secs())
+    .bind(ACCOUNT_LOCK_AFTER)
+    .fetch_one(executor)
     .await
     .map_err(DbError::from_query)?;
-    if key.as_ref().is_some_and(|key| key.paused) {
-        return Ok(true);
-    }
-    if key.as_ref().is_some_and(|key| key.trusted) {
-        return Ok(false);
-    }
-    let recent = sqlx::query_scalar!(
-        r#"SELECT coalesce(sum(failures), 0)::bigint AS "misses!" FROM sign_in_throttle
-           WHERE realm = $1 AND email = $2 AND NOT trusted
-             AND updated_at > now() - make_interval(secs => $3)"#,
-        realm,
-        email,
-        f64::from(u32::try_from(ACCOUNT_WINDOW.whole_seconds()).unwrap_or(u32::MAX))
-    )
-    .fetch_one(&mut **tx)
-    .await
-    .map_err(DbError::from_query)?;
-    Ok(recent >= ACCOUNT_LOCK_AFTER)
+    Ok(paused)
+}
+
+fn window_secs() -> f64 {
+    f64::from(u32::try_from(ACCOUNT_WINDOW.whole_seconds()).unwrap_or(u32::MAX))
+}
+
+fn lock_for_secs() -> f64 {
+    f64::from(u32::try_from(LOCK_FOR.whole_seconds()).unwrap_or(u32::MAX))
+}
+
+/// Binds `colophon_sign_in_count($1, … $7)`'s parameters after the realm, email and address
+/// (`$1` to `$3`): the lock and the account ceiling, so a caller reading in the same statement
+/// ([`count`], the staff sign-in) counts exactly as this module does.
+pub(crate) fn bind_count<O>(
+    query: sqlx::query::QueryAs<'_, Postgres, O, sqlx::postgres::PgArguments>,
+) -> sqlx::query::QueryAs<'_, Postgres, O, sqlx::postgres::PgArguments> {
+    query
+        .bind(LOCK_AFTER)
+        .bind(lock_for_secs())
+        .bind(ACCOUNT_LOCK_AFTER)
+        .bind(window_secs())
 }
 
 /// Counts one attempt for the key inside `tx`, before any verify. A paused key's attempt
@@ -107,75 +118,22 @@ pub(crate) async fn count(
     email: &str,
     address: &str,
 ) -> Result<Counted, DbError> {
-    let realm = realm.key();
-    // One attempt at an account at a time (D-162): the account's advisory lock, then the key's
-    // row. A row lock alone serialized nothing while the key had no row yet, so concurrent
-    // first attempts all passed the check below and the one counted after the pause took it
-    // for a pause that had run out. Under this lock the check, the account's sum and the count
-    // are one step; the transaction commits at once, before any Argon2 (D-150).
-    sqlx::query!(
-        "SELECT 1 AS \"locked!\" FROM pg_advisory_xact_lock(22355, hashtext($1 || '/' || $2))",
-        realm,
-        email
+    // One statement (D-250, migration 0100): the account's advisory lock, then the key's row,
+    // the account's sum and the count, in that order, under the transaction (D-162).
+    let (paused,): (bool,) = bind_count(
+        sqlx::query_as("SELECT colophon_sign_in_count($1, $2, $3, $4, $5, $6, $7)")
+            .bind(realm.key())
+            .bind(email)
+            .bind(address),
     )
     .fetch_one(&mut **tx)
     .await
     .map_err(DbError::from_query)?;
-    let key = sqlx::query!(
-        r#"SELECT coalesce(locked_until > now(), false) AS "paused!", trusted
-           FROM sign_in_throttle
-           WHERE realm = $1 AND email = $2 AND address = $3
-           FOR UPDATE"#,
-        realm,
-        email,
-        address
-    )
-    .fetch_optional(&mut **tx)
-    .await
-    .map_err(DbError::from_query)?;
-    if key.as_ref().is_some_and(|key| key.paused) {
-        return Ok(Counted::Paused);
-    }
-    // The account's ceiling (D-162), for addresses it has never let in: their misses summed.
-    if !key.as_ref().is_some_and(|key| key.trusted) {
-        let recent = sqlx::query_scalar!(
-            r#"SELECT coalesce(sum(failures), 0)::bigint AS "misses!" FROM sign_in_throttle
-               WHERE realm = $1 AND email = $2 AND NOT trusted
-                 AND updated_at > now() - make_interval(secs => $3)"#,
-            realm,
-            email,
-            f64::from(u32::try_from(ACCOUNT_WINDOW.whole_seconds()).unwrap_or(u32::MAX))
-        )
-        .fetch_one(&mut **tx)
-        .await
-        .map_err(DbError::from_query)?;
-        if recent >= ACCOUNT_LOCK_AFTER {
-            return Ok(Counted::Paused);
-        }
-    }
-    sqlx::query!(
-        "INSERT INTO sign_in_throttle AS t (realm, email, address, failures, locked_until)
-         VALUES ($1, $2, $3, 1, CASE WHEN 1 >= $4 THEN now() + make_interval(secs => $5) END)
-         ON CONFLICT (realm, email, address) DO UPDATE SET
-             failures = CASE WHEN t.locked_until > now() THEN t.failures
-                             WHEN t.locked_until IS NOT NULL THEN 1
-                             ELSE least(t.failures + 1, 1000000) END,
-             locked_until = CASE
-                 WHEN t.locked_until > now() THEN t.locked_until
-                 WHEN (CASE WHEN t.locked_until IS NOT NULL THEN 1 ELSE t.failures + 1 END) >= $4
-                     THEN now() + make_interval(secs => $5)
-             END,
-             updated_at = now()",
-        realm,
-        email,
-        address,
-        LOCK_AFTER,
-        f64::from(u32::try_from(LOCK_FOR.whole_seconds()).unwrap_or(u32::MAX))
-    )
-    .execute(&mut **tx)
-    .await
-    .map_err(DbError::from_query)?;
-    Ok(Counted::Verify)
+    Ok(if paused {
+        Counted::Paused
+    } else {
+        Counted::Verify
+    })
 }
 
 /// Clears the key after a match and marks the address trusted for the account (D-162): the

@@ -614,6 +614,9 @@ pub fn slow_statements() -> SlowStatements {
     SLOW_STATEMENTS.get().copied().unwrap_or_default()
 }
 
+/// Connections a pool keeps open once it has had them (D-250).
+const WARM_CONNECTIONS: u32 = 2;
+
 /// Builds the pool without connecting. Connections open on first use, so the server starts
 /// (and reports "not ready") while the database is down, instead of failing to start. The URL
 /// is held to [`check_url`]'s TLS rule first.
@@ -622,9 +625,18 @@ pub fn connect_lazy(url: &str, settings: PoolSettings) -> Result<PgPool, DbError
     // No ping on checkout: it is a round trip on every query. sqlx still pings each connection
     // as it returns to the pool and drops broken ones, so only a connection that breaks while
     // idle (a database restart) reaches a caller, and fails that one request (D-033).
+    //
+    // Warm connections (D-250): no idle timeout, so a connection traffic opened stays open with
+    // its prepared statements cached — one round trip a statement, not Parse and Describe and then
+    // Bind and Execute (two) on a connection made moments ago, and no TCP, TLS and startup trips
+    // before the first. sqlx's 30-minute lifetime still replaces every connection in time (a
+    // proxy's or a restart's broken ones too), and after it reaps one, tops the pool back up to
+    // two. sqlx tries that in the background and only logs (at debug) if the database is down, so
+    // the server still starts, and reports not ready, without one.
     Ok(PgPoolOptions::new()
         .max_connections(settings.max_connections)
-        .min_connections(0)
+        .min_connections(settings.max_connections.min(WARM_CONNECTIONS))
+        .idle_timeout(None)
         .acquire_timeout(settings.acquire_timeout)
         .test_before_acquire(false)
         // A connection handed back inside a transaction is closed, not pooled (D-217), checked on
