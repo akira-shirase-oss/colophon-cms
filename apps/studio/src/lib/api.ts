@@ -987,6 +987,50 @@ export async function importEntries(project: string, collection: string, body: s
 	}
 }
 
+/** One item's place in an import's report (D-114). */
+export interface ImportOutcome {
+	/** Its pointer in the body sent: `/2` for a JSON list, `/line/3` for lines. */
+	item: string;
+	/** `would_create`, `would_update` and `invalid` only in a plan; `created` and `updated` once applied. */
+	status: 'created' | 'updated' | 'skipped' | 'would_create' | 'would_update' | 'invalid';
+	/** The entry the item writes or named. */
+	entry?: string;
+	/** The source's own id for it: a Sanity `_id`, a Strapi `id` or `documentId`. */
+	source?: string;
+	/** Source keys set aside rather than imported. */
+	unmapped?: string[];
+	/** Why an `invalid` item would be refused. */
+	refusal?: { code: string; pointer: string; message: string };
+	/** Why a `skipped` item was skipped. */
+	reason?: string;
+}
+
+const importPath = (project: string, collection: string, query: Record<string, string>) =>
+	`${base(project)}/collections/${collection}/import${Object.keys(query).length === 0 ? '' : `?${new URLSearchParams(query)}`}`;
+
+/** What importing `items` into `collection` would do, item by item, with nothing written
+ *  (`?dry_run=true`, D-114): a prediction, not a reservation; the import checks everything again.
+ *  `items` go as one JSON list, so an outcome's `item` is `/{index}`. At most 512. `kind` is the
+ *  Sanity `_type` to take (`?type=`). */
+export async function planImport(project: string, collection: string, items: unknown[], kind?: string): Promise<ImportOutcome[]> {
+	const response = await send('POST', importPath(project, collection, { dry_run: 'true', ...(kind === undefined ? {} : { type: kind }) }), items);
+	return ((await response.json()) as { data: { outcomes: ImportOutcome[] } }).data.outcomes;
+}
+
+/** Imports `items` into `collection` as drafts: all of them or, when the server refuses one, none
+ *  (its refusal's pointer names the item, `/{index}/…`). Sending the same items with the same `key`
+ *  again is safe: the server answers what it already did. */
+export async function applyImport(
+	project: string,
+	collection: string,
+	items: unknown[],
+	key: string,
+	kind?: string
+): Promise<{ imported: number; outcomes: ImportOutcome[] }> {
+	const response = await send('POST', importPath(project, collection, kind === undefined ? {} : { type: kind }), items, { 'Idempotency-Key': key });
+	return ((await response.json()) as { data: { imported: number; outcomes: ImportOutcome[] } }).data;
+}
+
 /** Saves `content` on top of the revision `etag` names; `locale` rides the same write, an empty
  *  tag clearing to the default (D-087). Sending the same key again is safe. */
 export async function saveEntry(

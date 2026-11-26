@@ -10,16 +10,23 @@ through `--version` and `GET /version`.
 
 ### Added
 
+- **Import content, starting from where your content is now**: a new page in the Studio's sidebar asks "Where is your content now?" and takes Strapi (a REST answer or its export), Sanity (a dataset export), a folder of Markdown files with front matter (Astro, Hugo, Jekyll, Eleventy, Next.js blogs), another Colophon project's export, or a JSON file. Each choice says how to get the content out in three steps. You pick the content type and the files, press Check to see how many entries will be created, updated or skipped and which can't be imported and why, then import the ones that can. Markdown front matter is matched to your fields (`pubDate` goes to `pub_date`), and you can change any match. Everything arrives as a draft; nothing is published. Long files go in batches, and an import that stops part way says exactly how much landed. WordPress, Contentful, Ghost and CSV aren't supported yet.
+
 - **A connected AI app can set a site up from nothing** (D-251): it can create a project (`create_project`, within your account's limit), upload an image you hand it (`upload_asset` and `replace_asset` take the file as base64 with its name and type, up to about 1.4 MiB), and change one field of a draft without resending the rest (`edit_entry`: `set` and `unset`, saved on the revision it read).
 
 ### Fixed
 
+- A content type can no longer be named `audience`, `import`, `media` or `tasks`: the Studio has pages at those names, so such a collection could be made and then never opened.
 - The MCP tools and the API document described a content type definition and a query in shapes the API refuses. Both now give the real shape with an example, and say that a field must be `index`ed to be filtered or sorted on.
 - `upload_asset` and `replace_asset` over MCP took no file, so every call was refused.
 - `edit_entry` saves nothing when the draft already holds the values it was given, so an entry isn't shown as having unpublished changes it doesn't have.
 - A restart of the server no longer fails requests for several seconds while someone has the Studio open: live-update streams now end when the server begins to shut down, instead of holding the old process until its deadline (D-252).
 
 ### Changed
+
+- **"Migrations" in the Studio is now "Content type changes"**: the page lists plans for changing a content type, not moving content between systems, and it now points to Import content for that.
+
+- **Website connections say how Colophon reaches each address**: every row in Settings → Website connections, and each kind in the add form, shows the HTTP method beside the address: `POST` for a site rebuild and a cache clear, `GET` for a site check.
 
 - **Signing in is several times faster** (D-250): a sign-in now waits on the database three times instead of about fifteen, every request that reads as you begins its work in one round trip instead of two, the Studio's first load after signing in (`/me`) takes four round trips instead of six, and the server keeps its database connections warm so none of this pays to reconnect or re-prepare. Through 20 ms of database latency, sign-in went from about 0.46 s to 0.09 s.
 

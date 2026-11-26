@@ -308,7 +308,10 @@ screen-reader journeys pass, and no screen ever shows a success the server has n
   structures still fit three deep (`componentFits`), shows its fields read-only with a link to its page, and the
   entry editor fills it like any group. Changing one takes `schema.change` everywhere; a role without it reads it,
   and the server refuses its change too. Tests: `tests/components.spec.ts`, `tests/server/components.spec.ts`.
-- D-100 and D-101 in the Studio: **content-schema migrations** (step M.5c). *Migrations* in the main navigation
+- D-100 and D-101 in the Studio: **content-schema migrations** (step M.5c). *Content type changes* in the main
+  navigation (called *Migrations* until the Import content page arrived: people looking to move content in from
+  another CMS landed there and found nothing to do; the route, `…/migrations`, and its test ids are unchanged, and
+  the page now says that bringing content in is done on *Import content*, with a link)
   (shown to roles with `schema.change` anywhere, beside *Content types*) opens `…/migrations`: every plan with its
   state badge, entries done and in the way, and the versions it moves between. A plan's page
   (`…/migrations/{migration}`) says the collection, the definition it moves to (in the Technical details with the
@@ -324,6 +327,61 @@ screen-reader journeys pass, and no screen ever shows a success the server has n
   the entries in the way as before, and *Plan a migration for this change* plans the very definition the save sent
   and opens the new plan. Test: `tests/server/migrations.spec.ts` (refusal → plan → item → resolve → approve →
   apply → `done` through the real worker).
+- **Import content** (`…/import`, `routes/projects/[project]/import`, `lib/importing.ts`; over D-086 and D-114's
+  import route, unchanged). *Import content* in the main navigation, under Work, and in the command palette, for
+  roles with `content.create` anywhere. The page starts from the question a person moving in has, "Where is your
+  content now?", and offers what the server's import can take: **Strapi** (a REST answer with `data` beside
+  `meta`, or its export's file of entries), **Sanity** (a dataset export's `.ndjson`), **Markdown files** (a
+  folder of `.md` files with YAML front matter), **Colophon** (a collection's `.jsonl` export) and a **JSON
+  file**. One line says what isn't supported yet (WordPress, Contentful, Ghost, CSV) and links to the
+  repository's issues. A chosen source shows how to get the content out, in three numbered steps and one line of
+  what won't come across; an instruction the repository can't verify about another product is phrased generically.
+  - **The flow.** Choose the content type (collection types the role may create entries in; a single type is not
+    offered), choose the file or files, press *Check the file*, then *Import N entries*. The check is the server's
+    dry run (`?dry_run=true`): the summary says how many will be created, updated and skipped and how many can't be
+    imported, and lists each of those with its file or title, the field the refusal points at (by its label) and
+    the reason in plain words (`refusalWords`; a server message with an internal word in it is replaced, and the
+    server's code, pointer and message stay in Technical details). The import sends only the entries the check
+    accepted. The page says, before the button and after the run, that imported entries are drafts and nothing is
+    published; on success it links to the collection. Changing the source, the type, the files, a kind or a
+    mapping takes the last check away, since it would be about something else.
+  - **What the page does itself**, because the server leaves it to its caller: it reads each file into items the
+    way `import_items` reads a body (a JSON list, a `data` list beside `meta`, or one object a line) and sends them
+    as JSON lists of at most 100 items and 4 MiB (`batches`; the server's limits are 512 and 16 MiB, and 100 keeps
+    one batch a short transaction on a small server). An archive (gzip or zip, by its first bytes), an empty file,
+    a line that isn't JSON, a file over 32 MiB, more than 10,000 entries, and a file whose items don't have the
+    chosen source's shape (`shapeOf`, the shapes `colophon_domain::transfer::map` tells apart) are each said, with
+    what to do. A mixed Sanity export, or a Strapi export file, lists the kinds it holds and takes one (`?type=`
+    for Sanity, so the server's own `_type` rule agrees).
+  - **Markdown files and plain JSON** get their names matched to the content type's fields: by the field's exact
+    name in code, then ignoring case, spaces, hyphens and underscores (`pubDate` → `pub_date`). The matches are a
+    list of selects the person can change; a name matched to nothing is left out and named. A Markdown file's front
+    matter is YAML between two `---` lines, read by the `yaml` package (already in the lockfile through Vite;
+    exact-pinned in the Studio; aliases bounded by its default); `+++` (TOML) and unclosed front matter are said
+    to be unread, and such a file is left out and listed. The body goes into the type's Markdown field: with none
+    the page says so and stops, with several the person chooses. A URL-name field the front matter doesn't fill is
+    made from the file's name (`slugify`, the server's rule). Values are put in the form the server's validation
+    takes, and no further: a date field keeps the date of a full timestamp, a date-and-time field gets UTC
+    (`2026-10-25T14:30:00Z`; no zone is read as UTC), empty text is left out, one-line text is trimmed, and line
+    endings are `\n` (the server refuses a carriage return).
+  - **A run that stops is a part, never a success** (ST1, ST4). Each batch has its own `Idempotency-Key`. A batch
+    the server refuses lands none of itself: the page says how many entries are in, which batch was refused (and
+    the entry and field its pointer names), and how many were never sent, and offers *Check what's left*, which
+    checks only the entries not yet imported. A batch with no answer (or a 5xx) is sent again twice with the same
+    key; still unanswered, the page says it isn't known whether that batch landed and offers *Try again*, which
+    resends it with that key, so it is never added twice. The count shown as imported is the server's.
+  - **Known limits, said on the page where they bite.** The check runs each batch on its own, so it can't see two
+    entries in different batches that clash (the same URL name); the import stops at the second. The server
+    refuses a name the content type doesn't declare, so a Strapi or Sanity file needs a content type with the same
+    field names, and fields those products keep as objects (block text, pictures, references) aren't converted.
+    A Colophon export carries no entry ids, so the same file imported twice adds its entries twice.
+  - The collection page's own *Import* button (one file, sent as it is) stays.
+  - Tests: `tests/importing.spec.ts` (the pure parts: front matter, items, shapes, matching, values, batches, the
+    check's summary, a run's words, sending again), `tests/import-page.spec.ts` (ten journeys against a mocked
+    API: sources, Markdown to drafts, a changed mapping, no Markdown field, a mixed Sanity export and a wrong
+    file, batches with a refused one, an unanswered one, no content types, a role that can't create, the renamed
+    schema page, 390px; axe in light and dark, plain words, one primary), and `tests/server/transfer.spec.ts`
+    (Markdown files through the real check and import).
 - **The content-type builder, rebuilt as a CMS builder** (D-079, 2026-10-28; notes in
   [research/cms-ui-patterns.md](../research/cms-ui-patterns.md)). *Content types* in the main navigation (shown to roles
   with `schema.change` anywhere) opens `…/settings/types`: a left panel (`BuilderFrame.svelte`) of collections, single
@@ -356,9 +414,12 @@ screen-reader journeys pass, and no screen ever shows a success the server has n
   and the public API address, each with *Copy*, in a closed *Technical details*. *Roles* (`…/settings/roles`) lists
   the roles; *New role*, for roles that manage them, opens a dialog for the name and the short name made from it, then
   the role's page (`…/settings/roles/{role}`, in the same frame, named by the role's name in the trail; deleting a
-  role returns here). *Website connections* (`…/settings/connections`) lists them with their on/off switch; *Add a
-  connection* opens a dialog with the kind as three cards (site rebuild, CDN clear, site check, each in a line), the
-  name and the address. *New token* opens the token form in a dialog; the secret is still shown once, on the page.
+  role returns here). *Website connections* (`…/settings/connections`) lists them with their on/off switch; each row
+  names the HTTP method Colophon uses, as a small badge before the address (`POST` for a site rebuild and a cache
+  clear, `GET` for a site check, as the worker sends them), read out as a sentence ("Colophon sends a POST to this
+  address"); *Add a
+  connection* opens a dialog with the kind as three cards (site rebuild, CDN clear, site check, each in a line, with
+  its method), the name and the address (`tests/connections-method.spec.ts`). *New token* opens the token form in a dialog; the secret is still shown once, on the page.
   The empty state carries a list's one button and the header carries it once there is something in the list, so it
   is never offered twice. A page is in the panel only for roles that can use it (Roles for anyone in Settings);
   opened by address, it says why it's empty. The old `…/settings#website-connections` (the first-run checklist and a

@@ -7,6 +7,7 @@
 	import ChevronsUpDownIcon from '@lucide/svelte/icons/chevrons-up-down';
 	import FileTextIcon from '@lucide/svelte/icons/file-text';
 	import ImageIcon from '@lucide/svelte/icons/image';
+	import ImportIcon from '@lucide/svelte/icons/import';
 	import LayersIcon from '@lucide/svelte/icons/layers';
 	import LayoutDashboardIcon from '@lucide/svelte/icons/layout-dashboard';
 	import ListTodoIcon from '@lucide/svelte/icons/list-todo';
@@ -60,6 +61,8 @@
 	// The content-type builder, for roles that may change content types somewhere (like Strapi's
 	// Content-Type Builder for administrators).
 	const builds = $derived(mayAny(mine.data, ['schema.change']));
+	// Importing creates entries, so the page is offered to roles that may create them somewhere.
+	const imports = $derived(mayAny(mine.data, ['content.create']));
 	const inBuilder = $derived(route.startsWith('/projects/[project]/settings/types') || route.startsWith('/projects/[project]/settings/components'));
 	let searching = $state(false);
 	// The home page shows someone's work in the project they last opened here.
@@ -77,8 +80,9 @@
 		'/projects/[project]/changesets/[changeset]': 'Publish requests',
 		'/projects/[project]/releases': 'Releases',
 		'/projects/[project]/releases/[generation]': 'Releases',
-		'/projects/[project]/migrations': 'Migrations',
-		'/projects/[project]/migrations/[migration]': 'Migrations',
+		'/projects/[project]/migrations': 'Content type changes',
+		'/projects/[project]/migrations/[migration]': 'Content type changes',
+		'/projects/[project]/import': 'Import content',
 		'/projects/[project]/tasks': 'Tasks',
 		'/projects/[project]/media': 'Media',
 		'/projects/[project]/members': 'Members',
@@ -136,13 +140,13 @@
 						? resolve('/projects/[project]/settings', { project })
 						: section === 'Content types'
 							? resolve('/projects/[project]/settings/types', { project })
-							: section === 'Migrations'
+							: section === 'Content type changes'
 								? resolve('/projects/[project]/migrations', { project })
 								: resolve('/projects/[project]/releases', { project });
 			trail.push({ label: section, href: detail ? href : undefined });
 			if (route.endsWith('[generation]')) trail.push({ label: `Release ${page.params.generation}` });
 			if (route.endsWith('[changeset]')) trail.push({ label: 'Publish request' });
-			if (route.endsWith('[migration]')) trail.push({ label: 'Migration' });
+			if (route.endsWith('[migration]')) trail.push({ label: 'Plan' });
 			const settingsPage = SETTINGS_PAGE[route];
 			if (settingsPage !== undefined) {
 				trail.push({ label: settingsPage, href: route.endsWith('[role]') ? resolve('/projects/[project]/settings/roles', { project }) : undefined });
@@ -265,6 +269,15 @@
 							{/snippet}
 						</Sidebar.MenuButton>
 					</Sidebar.MenuItem>
+					{#if imports}
+						<Sidebar.MenuItem>
+							<Sidebar.MenuButton isActive={route.startsWith('/projects/[project]/import')} tooltipContent="Import content">
+								{#snippet child({ props })}
+									<a href={resolve('/projects/[project]/import', { project })} data-testid="import-link" {...props}><ImportIcon /><span>Import content</span></a>
+								{/snippet}
+							</Sidebar.MenuButton>
+						</Sidebar.MenuItem>
+					{/if}
 				</Sidebar.Menu>
 			</Sidebar.Group>
 
@@ -329,9 +342,9 @@
 							</Sidebar.MenuButton>
 						</Sidebar.MenuItem>
 						<Sidebar.MenuItem>
-							<Sidebar.MenuButton isActive={route.startsWith('/projects/[project]/migrations')} tooltipContent="Migrations">
+							<Sidebar.MenuButton isActive={route.startsWith('/projects/[project]/migrations')} tooltipContent="Content type changes">
 								{#snippet child({ props })}
-									<a href={resolve('/projects/[project]/migrations', { project })} data-testid="migrations-link" {...props}><RouteIcon /><span>Migrations</span></a>
+									<a href={resolve('/projects/[project]/migrations', { project })} data-testid="migrations-link" {...props}><RouteIcon /><span>Content type changes</span></a>
 								{/snippet}
 							</Sidebar.MenuButton>
 						</Sidebar.MenuItem>
@@ -418,6 +431,7 @@
 	types={readable}
 	{settings}
 	{builds}
+	{imports}
 	connections={may(mine.data, 'destinations.manage')}
 	tokens={may(mine.data, 'tokens.manage')}
 	activity={may(mine.data, 'audit.read')}

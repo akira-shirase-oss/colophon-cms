@@ -41,7 +41,7 @@ async fn create(session: &Session, project: &str, content: &Value) -> Reply {
     send(
         session,
         Method::POST,
-        &format!("{}/collections/tasks/entries", base(project)),
+        &format!("{}/collections/chores/entries", base(project)),
         Some(content),
     )
     .await
@@ -61,7 +61,7 @@ async fn a_new_entry_gets_the_defaults_of_what_it_leaves_out_and_a_save_gets_non
         &owner,
         Method::POST,
         &types,
-        Some(&json!({"slug": "tasks", "definition": wrong})),
+        Some(&json!({"slug": "chores", "definition": wrong})),
     )
     .await;
     assert_eq!(
@@ -84,7 +84,7 @@ async fn a_new_entry_gets_the_defaults_of_what_it_leaves_out_and_a_save_gets_non
         &owner,
         Method::POST,
         &types,
-        Some(&json!({"slug": "tasks", "definition": tasks()})),
+        Some(&json!({"slug": "chores", "definition": tasks()})),
     )
     .await;
     assert_eq!(made.status, StatusCode::CREATED, "{}", made.body);
@@ -111,7 +111,7 @@ async fn a_new_entry_gets_the_defaults_of_what_it_leaves_out_and_a_save_gets_non
     let saved = call(
         &owner,
         Method::PUT,
-        &format!("{}/collections/tasks/entries/{entry}", base(&project)),
+        &format!("{}/collections/chores/entries/{entry}", base(&project)),
         Some(&json!({"title": "Write docs"})),
         &[
             ("if-match", &filled.etag().expect("an ETag")),
@@ -140,7 +140,7 @@ async fn defaults_fill_fields_a_role_may_not_set_and_it_still_may_not_set_them()
         &owner,
         Method::POST,
         &format!("{}/content-types", base(&project)),
-        Some(&json!({"slug": "tasks", "definition": tasks()})),
+        Some(&json!({"slug": "chores", "definition": tasks()})),
     )
     .await;
     assert_eq!(made.status, StatusCode::CREATED, "{}", made.body);
@@ -152,8 +152,8 @@ async fn defaults_fill_fields_a_role_may_not_set_and_it_still_may_not_set_them()
             "key": "titles-only",
             "name": "Titles only",
             "permissions": [
-                {"action": "content.read", "subject": "tasks"},
-                {"action": "content.create", "subject": "tasks", "fields": ["title"]}
+                {"action": "content.read", "subject": "chores"},
+                {"action": "content.create", "subject": "chores", "fields": ["title"]}
             ]
         })),
     )
