@@ -10,6 +10,8 @@ through `--version` and `GET /version`.
 
 ### Added
 
+- **Import content, starting from where your content is now**: a new page in the Studio's sidebar asks "Where is your content now?" and takes Strapi (a REST answer or its export), Sanity (a dataset export), a folder of Markdown files with front matter (Astro, Hugo, Jekyll, Eleventy, Next.js blogs), another Colophon project's export, or a JSON file. Each choice says how to get the content out in three steps. You pick the content type and the files, press Check to see how many entries will be created, updated or skipped and which can't be imported and why, then import the ones that can. Markdown front matter is matched to your fields (`pubDate` goes to `pub_date`), and you can change any match. Everything arrives as a draft; nothing is published. Long files go in batches, and an import that stops part way says exactly how much landed. WordPress, Contentful, Ghost and CSV aren't supported yet.
+
 - **A connected AI app can set a site up from nothing** (D-251): it can create a project (`create_project`, within your account's limit), upload an image you hand it (`upload_asset` and `replace_asset` take the file as base64 with its name and type, up to about 1.4 MiB), and change one field of a draft without resending the rest (`edit_entry`: `set` and `unset`, saved on the revision it read).
 
 ### Fixed
@@ -18,6 +20,8 @@ through `--version` and `GET /version`.
 - `upload_asset` and `replace_asset` over MCP took no file, so every call was refused.
 
 ### Changed
+
+- **"Migrations" in the Studio is now "Content type changes"**: the page lists plans for changing a content type, not moving content between systems, and it now points to Import content for that.
 
 - **Website connections say how Colophon reaches each address**: every row in Settings → Website connections, and each kind in the add form, shows the HTTP method beside the address: `POST` for a site rebuild and a cache clear, `GET` for a site check.
 
