@@ -50,12 +50,16 @@ use crate::{
 /// Studio pages that sit beside a project's collections, at `/studio/projects/{project}/{slug}`.
 /// Slugs the Studio's own routes already use; a collection with one could never be reached
 /// there (`reserved_slug`, D-042).
-const RESERVED_SLUGS: [&str; 5] = [
-    "members",
-    "settings",
+const RESERVED_SLUGS: [&str; 9] = [
+    "audience",
     "changesets",
-    "releases",
+    "import",
+    "media",
+    "members",
     "migrations",
+    "releases",
+    "settings",
+    "tasks",
 ];
 
 const CREATE: &str = "content_type.create";
@@ -819,5 +823,38 @@ mod tests {
             if_match(&HeaderMap::new()),
             Err(ApiError::PreconditionRequired(_))
         ));
+    }
+
+    /// Every page the Studio serves beside a project's collections is a reserved slug: a
+    /// collection called `media` or `tasks` would otherwise be made and never be reachable
+    /// (D-253 found four pages missing from the list). Read from the Studio's own routes, so a
+    /// page added there fails this until its name is reserved here.
+    #[test]
+    fn every_studio_page_beside_the_collections_is_a_reserved_slug() {
+        let routes = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../apps/studio/src/routes/projects/[project]");
+        let mut pages: Vec<String> = std::fs::read_dir(&routes)
+            .expect("the Studio's project routes are in the repository")
+            .filter_map(Result::ok)
+            .filter(|entry| entry.path().is_dir())
+            .filter_map(|entry| entry.file_name().into_string().ok())
+            // `[collection]` is the collections' own route, not a page beside them.
+            .filter(|name| !name.starts_with('['))
+            .collect();
+        pages.sort();
+        assert!(
+            pages.len() >= 5,
+            "found only {pages:?} under {}",
+            routes.display()
+        );
+        let mut reserved: Vec<String> = RESERVED_SLUGS
+            .iter()
+            .map(|slug| (*slug).to_owned())
+            .collect();
+        reserved.sort();
+        assert_eq!(
+            pages, reserved,
+            "the Studio's pages and the reserved slugs differ"
+        );
     }
 }

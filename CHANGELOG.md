@@ -16,6 +16,7 @@ through `--version` and `GET /version`.
 
 ### Fixed
 
+- A content type can no longer be named `audience`, `import`, `media` or `tasks`: the Studio has pages at those names, so such a collection could be made and then never opened.
 - The MCP tools and the API document described a content type definition and a query in shapes the API refuses. Both now give the real shape with an example, and say that a field must be `index`ed to be filtered or sorted on.
 - `upload_asset` and `replace_asset` over MCP took no file, so every call was refused.
 

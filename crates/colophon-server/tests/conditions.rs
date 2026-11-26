@@ -53,18 +53,18 @@ fn reason(reply: &Reply) -> (StatusCode, Value, Value) {
     )
 }
 
-/// A project with `media` defined as `definition`; the project and its entries' path.
+/// A project with `clips` (a media type) defined as `definition`; the project and its entries' path.
 async fn with_media(owner: &Session, definition: Value) -> (String, String) {
     let project = project(owner).await;
     let made = send(
         owner,
         Method::POST,
         &format!("{}/content-types", base(&project)),
-        Some(&json!({"slug": "media", "definition": definition})),
+        Some(&json!({"slug": "clips", "definition": definition})),
     )
     .await;
     assert_eq!(made.status, StatusCode::CREATED, "{}", made.body);
-    let entries = format!("{}/collections/media/entries", base(&project));
+    let entries = format!("{}/collections/clips/entries", base(&project));
     (project, entries)
 }
 
@@ -144,7 +144,7 @@ async fn making_a_field_conditional_waits_for_entries_that_hold_it_where_it_wont
     assert_eq!(essay.status, StatusCode::CREATED, "{}", essay.body);
 
     let only_video = media(Some(json!({"field": "kind", "is": "video"})));
-    let path = format!("{}/content-types/media", base(&project));
+    let path = format!("{}/content-types/clips", base(&project));
     let change = || {
         let (owner, path, definition) = (&owner, path.clone(), only_video.clone());
         async move {
