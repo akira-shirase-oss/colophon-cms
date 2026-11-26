@@ -145,6 +145,8 @@ pub struct ReadinessReport {
 struct Inner {
     role: &'static str,
     draining: AtomicBool,
+    /// Wakes whoever waits for the drain to begin ([`Readiness::until_draining`]).
+    drain_began: tokio::sync::Notify,
     database: AtomicU8,
     cache: AtomicU8,
 }
@@ -166,6 +168,7 @@ impl Readiness {
         Self(Arc::new(Inner {
             role,
             draining: AtomicBool::new(false),
+            drain_began: tokio::sync::Notify::new(),
             database: AtomicU8::new(CheckState::Unknown.to_u8()),
             cache: AtomicU8::new(cache.to_u8()),
         }))
@@ -187,16 +190,38 @@ impl Readiness {
         CheckState::from_u8(self.slot(dependency).swap(next.to_u8(), Ordering::Relaxed))
     }
 
-    /// Starts draining. Terminal: no probe result can make the process ready again.
+    /// Starts draining. Terminal: no probe result can make the process ready again. Everything
+    /// waiting in [`Self::until_draining`] wakes.
     pub fn begin_drain(&self) {
-        self.0.draining.store(true, Ordering::Relaxed);
+        self.0.draining.store(true, Ordering::SeqCst);
+        self.0.drain_began.notify_waiters();
+    }
+
+    /// Whether the drain has begun.
+    pub fn is_draining(&self) -> bool {
+        self.0.draining.load(Ordering::SeqCst)
+    }
+
+    /// Resolves once the drain has begun; at once if it already has. A response that would
+    /// otherwise stay open for as long as its client listens (a live-event stream) ends on
+    /// this, so a restart never waits out the shutdown grace for it with the listener closed.
+    pub async fn until_draining(&self) {
+        let began = self.0.drain_began.notified();
+        tokio::pin!(began);
+        // Registered before the flag is read: a drain that begins between the read and the
+        // await still wakes this.
+        began.as_mut().enable();
+        if self.is_draining() {
+            return;
+        }
+        began.await;
     }
 
     /// The current report.
     pub fn report(&self) -> ReadinessReport {
         let database = CheckState::from_u8(self.0.database.load(Ordering::Relaxed));
         let cache = CheckState::from_u8(self.0.cache.load(Ordering::Relaxed));
-        let draining = self.0.draining.load(Ordering::Relaxed);
+        let draining = self.is_draining();
         ReadinessReport {
             status: Status::derive(draining, database, cache),
             role: self.0.role,
@@ -328,5 +353,31 @@ mod tests {
                 "checks": { "database": "up", "cache": "down" }
             })
         );
+    }
+
+    #[tokio::test]
+    async fn waiting_for_the_drain_wakes_when_it_begins_and_at_once_after() {
+        let readiness = Readiness::new("all", false);
+        assert!(!readiness.is_draining());
+        // Before the drain, a waiter waits.
+        let waiting = tokio::spawn({
+            let readiness = readiness.clone();
+            async move { readiness.until_draining().await }
+        });
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        assert!(!waiting.is_finished(), "it resolved with no drain");
+        readiness.begin_drain();
+        tokio::time::timeout(std::time::Duration::from_secs(1), waiting)
+            .await
+            .expect("the waiter wakes when the drain begins")
+            .expect("the waiter didn't panic");
+        // After it, at once: a stream opened late doesn't wait for a wake-up that already went.
+        assert!(readiness.is_draining());
+        tokio::time::timeout(
+            std::time::Duration::from_secs(1),
+            readiness.until_draining(),
+        )
+        .await
+        .expect("already draining resolves at once");
     }
 }
