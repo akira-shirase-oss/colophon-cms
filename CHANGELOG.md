@@ -8,6 +8,15 @@ through `--version` and `GET /version`.
 
 ## [Unreleased]
 
+### Added
+
+- **A connected AI app can set a site up from nothing** (D-251): it can create a project (`create_project`, within your account's limit), upload an image you hand it (`upload_asset` and `replace_asset` take the file as base64 with its name and type, up to about 1.4 MiB), and change one field of a draft without resending the rest (`edit_entry`: `set` and `unset`, saved on the revision it read).
+
+### Fixed
+
+- The MCP tools and the API document described a content type definition and a query in shapes the API refuses. Both now give the real shape with an example, and say that a field must be `index`ed to be filtered or sorted on.
+- `upload_asset` and `replace_asset` over MCP took no file, so every call was refused.
+
 ### Changed
 
 - **Signing in is several times faster** (D-250): a sign-in now waits on the database three times instead of about fifteen, every request that reads as you begins its work in one round trip instead of two, the Studio's first load after signing in (`/me`) takes four round trips instead of six, and the server keeps its database connections warm so none of this pays to reconnect or re-prepare. Through 20 ms of database latency, sign-in went from about 0.46 s to 0.09 s.

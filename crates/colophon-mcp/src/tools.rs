@@ -301,7 +301,7 @@ impl Tool {
                 json!(["collection", "id"]),
             ),
             Self::QueryEntries => (
-                json!({"collection": collection, "query": {"type": "object", "description": "The query document: filters, sort, fields, limit and depth, checked by the API against the collection's content type."}, "cursor": cursor}),
+                json!({"collection": collection, "query": {"type": "object", "description": QUERY_SHAPE}, "cursor": cursor}),
                 json!(["collection", "query"]),
             ),
             Self::CreateDraft => (
@@ -399,6 +399,9 @@ const COMMENT_STATES: [&str; 2] = ["open", "resolved"];
 
 /// A task's `?status=` values.
 const TASK_STATUSES: [&str; 3] = ["open", "done", "cancelled"];
+
+/// The query document's shape, said where a model reads it (the domain's `Query::validate`).
+pub(crate) const QUERY_SHAPE: &str = "The query document, a JSON object holding only `filters`, `sort`, `fields`, `limit` and `depth`, all optional: {\"filters\": [{\"field\": \"slug\", \"op\": \"eq\", \"value\": \"hello\"}], \"sort\": [{\"field\": \"published_at\", \"dir\": \"desc\"}], \"fields\": [\"title\", \"slug\"], \"limit\": 20, \"depth\": 0}. `op` is one of eq, in, lt, lte, gt, gte, contains; `dir` is asc or desc. A field you filter or sort on must be declared `index`ed in the content type (list_content_types shows it), or the query is refused with `field_not_indexed`. At most 8 filters and 4 sort keys; `limit` is 1 to 100; `depth` (how deep references expand) is 0 to 2.";
 
 /// A tool's result: what `tools/call` answers.
 #[derive(Debug, Clone, PartialEq)]

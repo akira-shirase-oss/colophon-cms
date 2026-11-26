@@ -923,6 +923,177 @@ async fn one_connection_acts_in_every_project_of_its_person_with_their_role_in_e
     assert!(all, "{}", apps.body);
 }
 
+/// A 1×1 PNG, base64-encoded: the smallest file an upload tool can be handed.
+const PNG_BASE64: &str =
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAAC0lEQVR4nGNgAAIAAAUAAXpeqz8AAAAASUVORK5CYII=";
+
+#[tokio::test]
+#[ignore = "needs the stack and scripts/migrate.sh"]
+#[expect(
+    clippy::too_many_lines,
+    reason = "one journey, read top to bottom: each step stands on the one before"
+)]
+async fn a_connection_sets_a_site_up_from_nothing_project_type_entry_and_one_field() {
+    let _server = Server::start().await;
+    let owner = sign_in("dev-owner").await;
+    let (_, access, _) = connected(&owner).await;
+    let session = session(&access).await;
+
+    // A project of their own (D-251), listed at once with their role.
+    let slug = common::unique_slug();
+    let made = tool(
+        &access,
+        &session,
+        "create_project",
+        &json!({"name": "Made over MCP", "slug": slug}),
+    )
+    .await;
+    assert!(worked(&made), "{made}");
+    let project = made["structuredContent"]["data"]["id"]
+        .as_str()
+        .expect("the project's id")
+        .to_owned();
+    let listed = tool(&access, &session, "list_projects", &json!({})).await;
+    assert!(listed.to_string().contains(&project), "{listed}");
+    // The same slug again is the API's own refusal, not a second project.
+    let again = tool(
+        &access,
+        &session,
+        "create_project",
+        &json!({"name": "Made over MCP", "slug": slug}),
+    )
+    .await;
+    assert_eq!(refused(&again), Some(409), "{again}");
+
+    // A content type in the shape the tool's own description gives, then a draft.
+    let typed = tool(
+        &access,
+        &session,
+        "create_content_type",
+        &json!({"project": project, "body": {"slug": "posts", "definition": {
+        "name": "Posts", "title_field": "title", "fields": [
+            {"id": "title", "label": "Title", "type": "text", "required": true},
+            {"id": "slug", "label": "URL name", "type": "slug", "source": "title", "index": true},
+            {"id": "body", "label": "Body", "type": "markdown"},
+            {"id": "note", "label": "Note", "type": "text"}
+        ]}}}),
+    )
+    .await;
+    assert!(worked(&typed), "{typed}");
+    let drafted = tool(
+        &access,
+        &session,
+        "create_entry",
+        &json!({"project": project, "collection": "posts", "body": {
+            "title": "Helo", "slug": "hello", "body": "A long body that is never sent again.", "note": "draft"
+        }}),
+    )
+    .await;
+    assert!(worked(&drafted), "{drafted}");
+    let entry = drafted["structuredContent"]["data"]["id"]
+        .as_str()
+        .expect("the entry's id")
+        .to_owned();
+    let revision = drafted["structuredContent"]["data"]["revision"]["id"]
+        .as_str()
+        .expect("the draft's revision")
+        .to_owned();
+
+    // The query's documented shape finds it by its URL name.
+    let found = tool(
+        &access,
+        &session,
+        "query_entries",
+        &json!({"project": project, "collection": "posts", "body": {
+            "filters": [{"field": "slug", "op": "eq", "value": "hello"}], "fields": ["title"], "limit": 1
+        }}),
+    )
+    .await;
+    assert!(
+        worked(&found) && found.to_string().contains(&entry),
+        "{found}"
+    );
+
+    // One field fixed and one cleared; the body stays, though it was never sent.
+    let edited = tool(
+        &access,
+        &session,
+        "edit_entry",
+        &json!({"project": project, "collection": "posts", "entry": entry, "if_match": revision,
+                "set": {"title": "Hello"}, "unset": ["note"]}),
+    )
+    .await;
+    assert!(worked(&edited), "{edited}");
+    let read = tool(
+        &access,
+        &session,
+        "get_entry",
+        &json!({"project": project, "collection": "posts", "entry": entry}),
+    )
+    .await;
+    let content = &read["structuredContent"]["data"]["content"];
+    assert_eq!(content["title"], "Hello", "{read}");
+    assert_eq!(
+        content["body"], "A long body that is never sent again.",
+        "{read}"
+    );
+    assert!(content.get("note").is_none_or(Value::is_null), "{read}");
+    // On the revision that is now stale, nothing is saved.
+    let stale = tool(
+        &access,
+        &session,
+        "edit_entry",
+        &json!({"project": project, "collection": "posts", "entry": entry, "if_match": revision,
+                "set": {"title": "Overwritten"}}),
+    )
+    .await;
+    assert_eq!(stale["isError"], json!(true), "{stale}");
+    let after = tool(
+        &access,
+        &session,
+        "get_entry",
+        &json!({"project": project, "collection": "posts", "entry": entry}),
+    )
+    .await;
+    assert_eq!(
+        after["structuredContent"]["data"]["content"]["title"], "Hello",
+        "{after}"
+    );
+}
+
+#[tokio::test]
+#[ignore = "needs the stack and scripts/migrate.sh"]
+async fn a_connection_uploads_an_image_handed_over_as_base64() {
+    let _server = Server::start().await;
+    let owner = sign_in("dev-owner").await;
+    let project = project(&owner).await;
+    let (_, access, _) = connected(&owner).await;
+    let session = session(&access).await;
+    // Its name and type ride in the tool's arguments: accepted into quarantine, as an upload is.
+    let uploaded = tool(
+        &access,
+        &session,
+        "upload_asset",
+        &json!({"project": project, "file_name": "dot.png", "content_type": "image/png", "content_base64": PNG_BASE64}),
+    )
+    .await;
+    assert!(worked(&uploaded), "{uploaded}");
+    assert!(
+        uploaded["structuredContent"]["data"]["id"].is_string(),
+        "{uploaded}"
+    );
+    // What isn't a file never reaches the API.
+    let not_a_file = tool(
+        &access,
+        &session,
+        "upload_asset",
+        &json!({"project": project, "file_name": "dot.png", "content_type": "image/png", "content_base64": "not base64!"}),
+    )
+    .await;
+    assert_eq!(not_a_file["isError"], json!(true), "{not_a_file}");
+    assert_eq!(refused(&not_a_file), None, "it was sent: {not_a_file}");
+}
+
 #[tokio::test]
 #[ignore = "needs the stack and scripts/migrate.sh"]
 async fn a_connection_made_for_one_project_still_acts_there_alone() {
@@ -945,6 +1116,14 @@ async fn a_connection_made_for_one_project_still_acts_there_alone() {
     assert!(worked(&read), "{read}");
     let listed = tool(&access, &session, "list_projects", &json!({})).await;
     assert_eq!(listed["isError"], json!(true), "{listed}");
+    let created = tool(
+        &access,
+        &session,
+        "create_project",
+        &json!({"name": "Not from here", "slug": common::unique_slug()}),
+    )
+    .await;
+    assert_eq!(created["isError"], json!(true), "{created}");
     let elsewhere = tool(&access, &session, "list_entries", &articles(&other)).await;
     assert_eq!(elsewhere["isError"], json!(true), "{elsewhere}");
     let apps = call(&owner, Method::GET, "/api/v1/me/connected-apps", None, &[])

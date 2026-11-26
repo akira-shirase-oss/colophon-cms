@@ -653,6 +653,7 @@ dependencies = [
 name = "colophon-mcp"
 version = "0.1.0-alpha.7"
 dependencies = [
+ "base64 0.22.1",
  "proptest",
  "reqwest",
  "serde",

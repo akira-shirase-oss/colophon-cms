@@ -86,6 +86,14 @@ session, so a project they aren't in is not found and a removed membership is re
 deletes a project. Only through `/mcp`; the Studio's Connected apps page lists and disconnects connections. A
 connection approved for one project (D-246) keeps acting there alone. Project API tokens keep working beside it.
 
+Such a session can set a site up from nothing (D-251). `create_project` makes a project the person owns, within
+their account's limit (only an all-projects session has it; the in-process audience of its grant admits
+`POST /api/v1/projects` and nothing else on the list). An upload tool (`upload_asset`, `replace_asset`) takes the
+file as `content_base64` with its `file_name` and `content_type`, at most about 1.4 MiB because one message is at
+most 2 MiB. `edit_entry`, in every kind of session, changes the top-level fields named in `set` and clears those in
+`unset`: it reads the draft, applies them to what it read and saves on the caller's revision, so a draft that
+changed in between is refused by the API and nothing is written.
+
 **Built: local stdio and remote Streamable HTTP (D-121, below).** `crates/colophon-mcp`, a library and the
 `colophon-mcp` binary, speaks MCP **2025-11-25** on
 stdin and stdout: one JSON-RPC 2.0 message per line, no batches (MCP removed them in 2025-06-18), logs on stderr only.

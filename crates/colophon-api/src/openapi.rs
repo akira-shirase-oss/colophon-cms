@@ -5996,7 +5996,7 @@ fn schema_parts() -> Value {
         },
         "TypeDefinition": {
             "type": "object",
-            "description": "a content type definition: `kind` (`collection` or `single`), `title` field name, `fields` (each with its `type` and options), `locales` policy. Rust revalidates every mutation against it; its canonical form hashes to `definition_hash`.",
+            "description": "a content type definition, a JSON object holding only `name` (what people call it), `title_field` (the id of a required single-line `text` field: it names each entry), `single` (true for a single type, which holds at most one entry; default false) and `fields`: {\"name\": \"Articles\", \"title_field\": \"title\", \"fields\": [{\"id\": \"title\", \"label\": \"Title\", \"type\": \"text\", \"required\": true}, {\"id\": \"slug\", \"label\": \"URL name\", \"type\": \"slug\", \"source\": \"title\", \"index\": true}, {\"id\": \"body\", \"label\": \"Body\", \"type\": \"rich_text\"}]}. A field has an `id` (lowercase letters, digits and underscores), a `label`, a `type` and optionally `description`, `required`, `unique`, `index`, `default`, `when` and its type's own options. `type` is one of text, rich_text, number, boolean, enum, datetime, slug, email, url, date, time, json, markdown, color, reference, asset, object, list, blocks. Rust revalidates every mutation against it; its canonical form hashes to `definition_hash`.",
         },
         "TypeVersionView": {
             "type": "object",
@@ -6232,7 +6232,7 @@ fn entry_parts() -> Value {
         },
         "QueryDocument": {
             "type": "object",
-            "description": "the bounded query document (DX.1, D-103): `filters` (field, operator, value — only indexes the type declares), `sort`, `fields` (a selection that can only narrow), `limit`, `depth` (reference population levels). The canonical form hashes to `query_hash`.",
+            "description": "the bounded query document (DX.1, D-103), a JSON object holding only `filters`, `sort`, `fields`, `limit` and `depth`, all optional: {\"filters\": [{\"field\": \"slug\", \"op\": \"eq\", \"value\": \"hello\"}], \"sort\": [{\"field\": \"published_at\", \"dir\": \"desc\"}], \"fields\": [\"title\", \"slug\"], \"limit\": 20, \"depth\": 0}. `op` is one of eq, in, lt, lte, gt, gte, contains; `dir` is asc or desc. A filtered or sorted field must be declared `index`ed in the content type (`field_not_indexed` otherwise); `fields` is a selection that can only narrow; at most 8 filters and 4 sort keys, a `limit` of 1 to 100 and a `depth` (reference population levels) of 0 to 2. The canonical form hashes to `query_hash`.",
         },
         "ImportBody": {
             "description": "one JSON object per line, one JSON array of the same objects, or a Strapi API response's `{\"data\": […], \"meta\": {…}}`. Each item is a native content document, a Strapi entity (`{\"type\": \"api::…\", \"data\": {…}}`, `{\"version\":…,\"data\":{…}}`, `{id, attributes}` or a flat `documentId`/`id` document) or a Sanity document (`_id`, `_type`). At most 512 items.",

@@ -235,15 +235,18 @@ async fn oauth_access(
 }
 
 /// Whether an in-process request of an OAuth grant may go to `path`: under its one project, or
-/// with no project (D-248) under any project, plus reading the list of the person's projects.
-/// Deleting a project itself never: MCP doesn't offer it, and this holds even if a tool tried.
+/// with no project (D-248) under any project, plus reading the list of the person's projects and
+/// creating one (D-251: the route holds it to the account's own project limit, as for their
+/// session). Deleting a project itself never: MCP doesn't offer it, and this holds even if a tool
+/// tried.
 fn oauth_reaches(project: Option<Uuid>, method: &axum::http::Method, path: &str) -> bool {
     const PROJECTS: &str = "/api/v1/projects";
     let Some(rest) = path.strip_prefix(PROJECTS) else {
         return false;
     };
     if rest.is_empty() {
-        return project.is_none() && *method == axum::http::Method::GET;
+        return project.is_none()
+            && (*method == axum::http::Method::GET || *method == axum::http::Method::POST);
     }
     let Some(rest) = rest.strip_prefix('/') else {
         return false;
@@ -460,11 +463,16 @@ mod tests {
             &format!("/api/v1/projects/{mine}x/members")
         ));
         // All the person's projects (D-248): any project's routes (the API decides membership)
-        // and reading the list of theirs; never creating one through the list.
+        // reading the list of theirs, and creating one (D-251; the route applies the account's
+        // limit). Nothing else on the list, and a one-project grant never creates one.
         assert!(oauth_reaches(None, &Method::GET, &under(other, "/members")));
         assert!(oauth_reaches(None, &Method::PATCH, &under(mine, "")));
         assert!(oauth_reaches(None, &Method::GET, "/api/v1/projects"));
-        assert!(!oauth_reaches(None, &Method::POST, "/api/v1/projects"));
+        assert!(oauth_reaches(None, &Method::POST, "/api/v1/projects"));
+        for method in [Method::PUT, Method::PATCH, Method::DELETE] {
+            assert!(!oauth_reaches(None, &method, "/api/v1/projects"));
+        }
+        assert!(!oauth_reaches(one, &Method::POST, "/api/v1/projects"));
         // Never deleting a project, whichever grant, and nothing outside projects.
         for grant in [one, None] {
             assert!(!oauth_reaches(grant, &Method::DELETE, &under(mine, "")));
