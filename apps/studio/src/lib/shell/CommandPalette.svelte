@@ -6,6 +6,7 @@
 	import FileTextIcon from '@lucide/svelte/icons/file-text';
 	import GlobeIcon from '@lucide/svelte/icons/globe';
 	import HistoryIcon from '@lucide/svelte/icons/history';
+	import ImportIcon from '@lucide/svelte/icons/import';
 	import KeyRoundIcon from '@lucide/svelte/icons/key-round';
 	import LayersIcon from '@lucide/svelte/icons/layers';
 	import LayoutDashboardIcon from '@lucide/svelte/icons/layout-dashboard';
@@ -30,6 +31,7 @@
 		types,
 		settings = false,
 		builds = false,
+		imports = false,
 		connections = false,
 		tokens = false,
 		activity = false,
@@ -42,6 +44,8 @@
 		settings?: boolean;
 		/** Whether the role sees the content-type builder. */
 		builds?: boolean;
+		/** Whether the role may create entries somewhere, so may import them. */
+		imports?: boolean;
 		/** Whether the role manages website connections. */
 		connections?: boolean;
 		tokens?: boolean;
@@ -93,6 +97,7 @@
 		{ label: 'Publish requests', icon: LayersIcon, href: resolve('/projects/[project]/changesets', { project }) },
 		{ label: 'Releases', icon: PackageCheckIcon, href: resolve('/projects/[project]/releases', { project }) },
 		{ label: 'Members', icon: UsersIcon, href: resolve('/projects/[project]/members', { project }) },
+		...(imports ? [{ label: 'Import content', icon: ImportIcon, href: resolve('/projects/[project]/import', { project }) }] : []),
 		...(builds ? [{ label: 'Content types', icon: ShapesIcon, href: resolve('/projects/[project]/settings/types', { project }) }] : []),
 		...(settings ? [{ label: 'Settings', icon: Settings2Icon, href: resolve('/projects/[project]/settings', { project }) }] : []),
 		...(settings ? [{ label: 'Roles', icon: ShieldCheckIcon, href: resolve('/projects/[project]/settings/roles', { project }) }] : []),

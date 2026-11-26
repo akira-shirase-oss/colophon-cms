@@ -4,7 +4,7 @@
 // The shapes are the ones the server's own tests import (crates/colophon-server/tests/transfer.rs).
 
 import { expect, test } from '@playwright/test';
-import type { Definition, ImportOutcome } from '../src/lib/api.ts';
+import { ApiError, type Definition, type ImportOutcome } from '../src/lib/api.ts';
 import {
 	autoMap,
 	batches,
@@ -24,6 +24,7 @@ import {
 	pointerInItem,
 	readItems,
 	refusalWords,
+	retrying,
 	runWords,
 	SERVER_MAX_ITEMS,
 	shapeOf,
@@ -31,6 +32,7 @@ import {
 	suggestedKind,
 	summarize,
 	titleOf,
+	unanswered,
 	utcTimestamp,
 	wrongSource
 } from '../src/lib/importing.ts';
@@ -368,7 +370,13 @@ test.describe('a run’s result', () => {
 			title: 'Imported 220 entries',
 			text: 'They are drafts. Nothing is published until you publish it.'
 		});
-		expect(runWords({ sizes: [1], done: 1, stopped: null }).title).toBe('Imported 1 entry');
+		expect(runWords({ sizes: [1], done: 1, stopped: null })).toEqual({ ok: true, title: 'Imported 1 entry', text: 'It is a draft. Nothing is published until you publish it.' });
+		// The count is the server's: what it says it skipped is not called imported.
+		expect(runWords({ sizes: [100, 20], done: 2, imported: 117, stopped: null })).toEqual({
+			ok: true,
+			title: 'Imported 117 entries',
+			text: 'They are drafts. Nothing is published until you publish it. 3 entries were skipped.'
+		});
 	});
 
 	test('a refused batch after others landed is a part, never a success', () => {
@@ -403,5 +411,56 @@ test.describe('a run’s result', () => {
 		expect(said.text).toBe(
 			'Batch 2 of 3 (entries 101 to 200) got no answer, so it isn’t known whether those were imported. The 100 entries before it are in, as drafts. The 1 entry after it was not sent. Try again: the same batch is never added twice.'
 		);
+	});
+});
+
+test.describe('sending a batch again', () => {
+	const waits: number[] = [];
+	const wait = async (ms: number) => void waits.push(ms);
+
+	test('no answer and a busy server are tried again, with the wait the server asked for', async () => {
+		waits.length = 0;
+		const failures = [new ApiError('retry', 'no answer from the server'), new ApiError('retry', 'busy', 429, 'rate_limited', null, null, 4000)];
+		let calls = 0;
+		const answer = await retrying(async () => {
+			calls += 1;
+			const failure = failures.shift();
+			if (failure !== undefined) throw failure;
+			return 'landed';
+		}, wait);
+		expect(answer).toBe('landed');
+		expect(calls).toBe(3);
+		expect(waits).toEqual([1500, 4000]);
+	});
+
+	test('a refusal is never sent again, and the last failure is the caller’s', async () => {
+		waits.length = 0;
+		let calls = 0;
+		const refused = new ApiError('refused', '`Title` is required', 422, 'missing_field');
+		await expect(
+			retrying(async () => {
+				calls += 1;
+				throw refused;
+			}, wait)
+		).rejects.toBe(refused);
+		expect(calls).toBe(1);
+		const silent = new ApiError('retry', 'no answer from the server');
+		calls = 0;
+		await expect(
+			retrying(async () => {
+				calls += 1;
+				throw silent;
+			}, wait)
+		).rejects.toBe(silent);
+		expect(calls).toBe(3);
+	});
+
+	test('only a batch with no answer may have landed', () => {
+		expect(unanswered(new ApiError('retry', 'no answer from the server'))).toBe(true);
+		expect(unanswered(new ApiError('retry', 'gateway timeout', 504))).toBe(true);
+		expect(unanswered(new ApiError('retry', 'busy', 429, 'rate_limited', null, null, 1000))).toBe(false);
+		expect(unanswered(new ApiError('refused', 'no', 422))).toBe(false);
+		expect(unanswered(new ApiError('signed-out', 'sign in', 401))).toBe(false);
+		expect(unanswered(new Error('other'))).toBe(false);
 	});
 });

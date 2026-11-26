@@ -12,7 +12,7 @@
 // returns), each rule taken from `colophon_domain::schema`.
 
 import { parse as parseYaml } from 'yaml';
-import type { Content, Definition, FieldDefinition, ImportOutcome } from './api.ts';
+import { ApiError, type Content, type Definition, type FieldDefinition, type ImportOutcome } from './api.ts';
 import { slugify } from './content.ts';
 import { plainOr } from './errors.ts';
 import { count } from './words.ts';
@@ -412,6 +412,29 @@ export function batches<T>(items: T[], maxItems = BATCH_ITEMS, maxBytes = BATCH_
 	return out;
 }
 
+/** Sends one batch, and again when the server didn't answer or said it is busy: at most `tries`
+ *  times, waiting as long as a busy server asks (or a little longer each time when none came).
+ *  Safe for a check, which writes nothing, and for an import sent with the same key each time.
+ *  Any other failure, and the last one, is the caller's. */
+export async function retrying<T>(work: () => Promise<T>, wait: (ms: number) => Promise<unknown>, tries = 3): Promise<T> {
+	for (let attempt = 1; ; attempt += 1) {
+		try {
+			return await work();
+		} catch (failure) {
+			const again =
+				attempt < tries && failure instanceof ApiError && failure.failure === 'retry' && (failure.status !== 429 || failure.retryAfter !== null);
+			if (!again) throw failure;
+			await wait(failure.retryAfter ?? 1500 * attempt);
+		}
+	}
+}
+
+/** Whether a failed batch may have been imported all the same: no answer came, or the server
+ *  failed while answering. A refusal, a busy server and a signed-out session wrote nothing. */
+export function unanswered(failure: unknown): boolean {
+	return failure instanceof ApiError && failure.failure === 'retry' && failure.status !== 429;
+}
+
 // ---- A check's result
 
 /** One entry the check found it can't import. */
@@ -540,6 +563,8 @@ export interface Run {
 	sizes: number[];
 	/** Batches the server answered as imported, from the first. */
 	done: number;
+	/** How many entries those answers say were created or updated; all of them when left out. */
+	imported?: number;
 	/** The batch the run stopped at, if it stopped: `refused` means the server turned it away and
 	 *  wrote none of it; `unanswered` means no answer came, so whether it landed isn't known. */
 	stopped: null | { batch: number; how: 'refused' | 'unanswered' };
@@ -550,9 +575,17 @@ export interface Run {
 export function runWords(run: Run): { ok: boolean; title: string; text: string } {
 	const total = run.sizes.reduce((sum, size) => sum + size, 0);
 	const landed = run.sizes.slice(0, run.done).reduce((sum, size) => sum + size, 0);
+	const imported = run.imported ?? landed;
 	const entries = (n: number) => count(n, 'entry', 'entries');
+	// What the server said it left alone, of the batches it answered.
+	const skipped = landed - imported;
+	const left = skipped > 0 ? ` ${count(skipped, 'entry was', 'entries were')} skipped.` : '';
 	if (run.stopped === null) {
-		return { ok: true, title: `Imported ${entries(landed)}`, text: 'They are drafts. Nothing is published until you publish it.' };
+		return {
+			ok: true,
+			title: `Imported ${entries(imported)}`,
+			text: `${imported === 1 ? 'It is a draft' : 'They are drafts'}. Nothing is published until you publish it.${left}`
+		};
 	}
 	const { batch, how } = run.stopped;
 	const were = (n: number) => (n === 1 ? 'was' : 'were');
@@ -568,18 +601,23 @@ export function runWords(run: Run): { ok: boolean; title: string; text: string }
 	const size = run.sizes[batch] ?? 0;
 	const after = total - landed - size;
 	const which = `Batch ${batch + 1} of ${run.sizes.length} (${size === 1 ? `entry ${(landed + 1).toLocaleString()}` : `entries ${(landed + 1).toLocaleString()} to ${(landed + size).toLocaleString()}`})`;
-	const before = landed === 0 ? 'Nothing before it was imported' : `The ${entries(landed)} before it ${landed === 1 ? 'is' : 'are'} in, as ${landed === 1 ? 'a draft' : 'drafts'}`;
+	const before =
+		landed === 0
+			? 'Nothing before it was imported'
+			: skipped > 0
+				? `Of the ${entries(landed)} before it, ${imported.toLocaleString()} ${imported === 1 ? 'is' : 'are'} in, as ${imported === 1 ? 'a draft' : 'drafts'}`
+				: `The ${entries(landed)} before it ${landed === 1 ? 'is' : 'are'} in, as ${landed === 1 ? 'a draft' : 'drafts'}`;
 	const rest = after === 0 ? '' : ` The ${entries(after)} after it ${were(after)} not sent.`;
 	if (how === 'refused') {
 		return {
 			ok: false,
-			title: landed === 0 ? 'Nothing was imported' : `Imported ${landed.toLocaleString()} of ${entries(total)}`,
+			title: imported === 0 ? 'Nothing was imported' : `Imported ${imported.toLocaleString()} of ${entries(total)}`,
 			text: `${which} was refused, and none of that batch was imported. ${before}.${rest}`
 		};
 	}
 	return {
 		ok: false,
-		title: landed === 0 ? 'The import didn’t finish' : `Imported ${landed.toLocaleString()} of ${entries(total)} so far`,
+		title: imported === 0 ? 'The import didn’t finish' : `Imported ${imported.toLocaleString()} of ${entries(total)} so far`,
 		text: `${which} got no answer, so it isn’t known whether ${size === 1 ? 'it was' : 'those were'} imported. ${before}.${rest} Try again: the same batch is never added twice.`
 	};
 }

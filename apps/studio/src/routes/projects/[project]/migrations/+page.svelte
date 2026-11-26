@@ -26,21 +26,27 @@
 	const typeName = (collection: string) => types.data?.find((type) => type.slug === collection)?.definition.name ?? collection;
 </script>
 
-<svelte:head><title>Migrations · Colophon Studio</title></svelte:head>
+<svelte:head><title>Content type changes · Colophon Studio</title></svelte:head>
 
-<PageHeader title="Migrations">
+<PageHeader title="Content type changes">
 	{#snippet description()}
 		When a change to a content type would leave entries invalid, a plan carries it out: it names every entry in the way, waits for approval, and a
 		worker applies it. Plans are made from a content type's page, on the refusal that names the entries.
 	{/snippet}
 </PageHeader>
 
+<!-- People looking to move content in from another CMS used to land here (the page was called Migrations). -->
+<p class="-mt-4 mb-8 max-w-2xl text-sm text-muted-foreground" data-testid="migrations-import-note">
+	Bringing content in from another CMS is done on
+	<a class="font-medium text-link underline" href={resolve('/projects/[project]/import', { project })}>Import content</a>.
+</p>
+
 {#if plans.isPending || mine.isPending}
 	<Skeleton class="h-48 w-full rounded-xl" />
 {:else if plans.isError}
-	<Problem error={plans.error} what="migrations" />
+	<Problem error={plans.error} what="content type changes" />
 {:else if plans.data.length === 0}
-	<EmptyState icon={RouteIcon} title="No migrations yet" testid="migrations-empty">
+	<EmptyState icon={RouteIcon} title="No plans yet" testid="migrations-empty">
 		A plan appears here when a content-type change can't apply while entries stay as they are. Until then every type change applies directly.
 	</EmptyState>
 {:else}
