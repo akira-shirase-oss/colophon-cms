@@ -128,7 +128,19 @@
 							<strong class="font-medium" data-user-content>{destination.name}</strong>
 							<Badge variant="secondary">{CONNECTION_KIND[destination.kind].name}{destination.location ? ` at ${destination.location}` : ''}</Badge>
 						</span>
-						<code class="block truncate font-mono text-xs text-muted-foreground">{destination.url}</code>
+						<!-- The method Colophon uses for this kind, then the address: the badge stays whole and the address truncates. -->
+						<span class="mt-0.5 flex min-w-0 items-center gap-1.5">
+							<span
+								class="shrink-0 rounded-md border border-border px-1.5 font-mono text-xs text-muted-foreground"
+								title={CONNECTION_KIND[destination.kind].sends}
+								data-testid="connection-method"
+								data-method={CONNECTION_KIND[destination.kind].method}
+							>
+								<span aria-hidden="true">{CONNECTION_KIND[destination.kind].method}</span>
+								<span class="sr-only">{CONNECTION_KIND[destination.kind].sends}:</span>
+							</span>
+							<code class="min-w-0 truncate font-mono text-xs text-muted-foreground">{destination.url}</code>
+						</span>
 					</span>
 					<label class="flex items-center gap-2 text-sm">
 						<input
@@ -163,7 +175,13 @@
 					<label class="flex items-start gap-2.5 rounded-xl border border-border bg-card px-3 py-2.5 has-checked:border-ring">
 						<input type="radio" class="mt-0.5 size-4 accent-primary" name="connection-kind" value={option} bind:group={kind} />
 						<span>
-							<span class="font-medium">{CONNECTION_KIND[option].name}</span>
+							<span class="flex flex-wrap items-center gap-x-2">
+								<span class="font-medium">{CONNECTION_KIND[option].name}</span>
+								<span class="rounded-md border border-border px-1.5 font-mono text-xs text-muted-foreground" title={CONNECTION_KIND[option].sends} data-testid="kind-method">
+									<span aria-hidden="true">{CONNECTION_KIND[option].method}</span>
+									<span class="sr-only">({CONNECTION_KIND[option].sends}).</span>
+								</span>
+							</span>
 							<span class="block text-xs text-muted-foreground">{CONNECTION_KIND[option].detail}</span>
 						</span>
 					</label>

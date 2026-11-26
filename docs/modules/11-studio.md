@@ -356,9 +356,12 @@ screen-reader journeys pass, and no screen ever shows a success the server has n
   and the public API address, each with *Copy*, in a closed *Technical details*. *Roles* (`…/settings/roles`) lists
   the roles; *New role*, for roles that manage them, opens a dialog for the name and the short name made from it, then
   the role's page (`…/settings/roles/{role}`, in the same frame, named by the role's name in the trail; deleting a
-  role returns here). *Website connections* (`…/settings/connections`) lists them with their on/off switch; *Add a
-  connection* opens a dialog with the kind as three cards (site rebuild, CDN clear, site check, each in a line), the
-  name and the address. *New token* opens the token form in a dialog; the secret is still shown once, on the page.
+  role returns here). *Website connections* (`…/settings/connections`) lists them with their on/off switch; each row
+  names the HTTP method Colophon uses, as a small badge before the address (`POST` for a site rebuild and a cache
+  clear, `GET` for a site check, as the worker sends them), read out as a sentence ("Colophon sends a POST to this
+  address"); *Add a
+  connection* opens a dialog with the kind as three cards (site rebuild, CDN clear, site check, each in a line, with
+  its method), the name and the address (`tests/connections-method.spec.ts`). *New token* opens the token form in a dialog; the secret is still shown once, on the page.
   The empty state carries a list's one button and the header carries it once there is something in the list, so it
   is never offered twice. A page is in the panel only for roles that can use it (Roles for anyone in Settings);
   opened by address, it says why it's empty. The old `…/settings#website-connections` (the first-run checklist and a

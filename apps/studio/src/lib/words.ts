@@ -44,11 +44,31 @@ export function count(n: number, one: string, many: string): string {
 	return `${n.toLocaleString()} ${n === 1 ? one : many}`;
 }
 
-/** What each kind of website connection does, as a noun and as the action it takes. */
-export const CONNECTION_KIND: Record<Destination['kind'], { name: string; does: string; detail: string }> = {
-	webhook: { name: 'Site rebuild', does: 'Rebuild the site', detail: 'Tells your website a new release is out, so it can rebuild.' },
-	cdn: { name: 'Cache clear', does: 'Clear the cache', detail: 'Asks the cache in front of your site (a CDN) to drop the copies each release changed.' },
-	probe: { name: 'Site check', does: 'Check the site', detail: 'Reads your live site after each release to confirm readers see it.' }
+/** What each kind of website connection does, as a noun and as the action it takes, and the HTTP
+ *  method Colophon's worker uses for it: a site check reads the page (GET); a site rebuild and a
+ *  cache clear are sent (POST). `sends` says the method as a sentence, for screen readers. */
+export const CONNECTION_KIND: Record<Destination['kind'], { name: string; does: string; detail: string; method: 'GET' | 'POST'; sends: string }> = {
+	webhook: {
+		name: 'Site rebuild',
+		does: 'Rebuild the site',
+		detail: 'Tells your website a new release is out, so it can rebuild.',
+		method: 'POST',
+		sends: 'Colophon sends a POST to this address'
+	},
+	cdn: {
+		name: 'Cache clear',
+		does: 'Clear the cache',
+		detail: 'Asks the cache in front of your site (a CDN) to drop the copies each release changed.',
+		method: 'POST',
+		sends: 'Colophon sends a POST to this address'
+	},
+	probe: {
+		name: 'Site check',
+		does: 'Check the site',
+		detail: 'Reads your live site after each release to confirm readers see it.',
+		method: 'GET',
+		sends: 'Colophon reads this address with GET'
+	}
 };
 
 /** Where something stands, in the words its StatusBadge shows (D-182): an entry for readers,

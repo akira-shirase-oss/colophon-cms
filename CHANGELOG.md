@@ -19,6 +19,8 @@ through `--version` and `GET /version`.
 
 ### Changed
 
+- **Website connections say how Colophon reaches each address**: every row in Settings → Website connections, and each kind in the add form, shows the HTTP method beside the address: `POST` for a site rebuild and a cache clear, `GET` for a site check.
+
 - **Signing in is several times faster** (D-250): a sign-in now waits on the database three times instead of about fifteen, every request that reads as you begins its work in one round trip instead of two, the Studio's first load after signing in (`/me`) takes four round trips instead of six, and the server keeps its database connections warm so none of this pays to reconnect or re-prepare. Through 20 ms of database latency, sign-in went from about 0.46 s to 0.09 s.
 
 ## [0.1.0-alpha.7] — 2026-11-24

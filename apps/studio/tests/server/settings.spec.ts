@@ -69,6 +69,9 @@ test('an owner finds each setting on a page of its own, from a left panel, with 
 	await expect(connection).toBeHidden();
 	await expect(page.getByTestId('destinations')).toContainText('Site build');
 	await expect(page.getByTestId('destinations')).toContainText('Announce releases');
+	// The row says how Colophon reaches the address: a site rebuild is sent with POST.
+	await expect(page.getByTestId('destinations').getByTestId('connection-method')).toHaveAttribute('data-method', 'POST');
+	await expect(page.getByTestId('destinations').getByTestId('connection-method')).toContainText('Colophon sends a POST to this address');
 	// Now the list, and still one way to add another, which starts afresh.
 	await expect(page.getByTestId('connections-empty')).toHaveCount(0);
 	await expect(page.getByRole('button', { name: /add .*connection/i })).toHaveCount(1);
