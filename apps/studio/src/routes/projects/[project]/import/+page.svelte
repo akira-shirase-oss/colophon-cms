@@ -191,7 +191,8 @@
 				return {
 					id: piece.id,
 					value,
-					label: titleOf(piece.item, definition.title_field),
+					// The title as it will be stored, where the mapping made one; else as the source nests it.
+					label: titleOf(value, definition.title_field) || titleOf(piece.item, definition.title_field),
 					where: several ? `Entry ${piece.place} of ${piece.file}` : `Entry ${piece.place}`
 				};
 			});
@@ -269,6 +270,17 @@
 	}
 
 	let picker = $state(0);
+	/** Opening a file chooser starts over: both choosers are emptied first, so choosing the same
+	 *  file again (after fixing it) is read again, and the page never shows files that one chooser
+	 *  names while it works from the other's. */
+	function reopen() {
+		for (const id of ['import-file', 'import-folder']) {
+			const input = document.getElementById(id);
+			if (input instanceof HTMLInputElement) input.value = '';
+		}
+		forgetFiles();
+	}
+
 	async function choose(event: Event) {
 		const input = event.currentTarget as HTMLInputElement;
 		const files = [...(input.files ?? [])];
@@ -611,13 +623,14 @@
 								type="file"
 								multiple={source !== 'colophon' && source !== 'json'}
 								accept={source === 'markdown' ? '.md,.markdown,.mdx,text/markdown' : '.json,.jsonl,.ndjson,.txt,application/json'}
+								onclick={reopen}
 								onchange={choose}
 								disabled={busy}
 								data-testid="import-file"
 							/>
 							{#if source === 'markdown'}
 								<label class="mt-2 font-medium" for="import-folder">Or a whole folder</label>
-								<Input id="import-folder" type="file" webkitdirectory onchange={choose} disabled={busy} data-testid="import-folder" />
+								<Input id="import-folder" type="file" webkitdirectory onclick={reopen} onchange={choose} disabled={busy} data-testid="import-folder" />
 								<span class="text-muted-foreground">Files that aren't Markdown are passed over.</span>
 							{/if}
 						</div>

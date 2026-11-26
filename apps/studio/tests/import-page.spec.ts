@@ -275,6 +275,14 @@ test('a name can be pointed at another field or left out, and the check starts o
 	// A required field nothing fills is said before the check.
 	await mapped('headline').selectOption('');
 	await expect(page.getByTestId('import-unfilled')).toContainText('Nothing here fills Title and URL name, which are required.');
+
+	// Opening the chooser starts over, so the same file, fixed and chosen again, is read again.
+	const [chooser] = await Promise.all([page.waitForEvent('filechooser'), page.getByTestId('import-file').click()]);
+	await expect(page.getByTestId('import-mapping')).toHaveCount(0);
+	await chooser.setFiles(file('posts.json', JSON.stringify([{ title: 'Fixed' }, { title: 'Too' }])));
+	await expect(page.getByTestId('import-found')).toContainText('1 file read: 2 entries.');
+	await expect(mapped('title')).toHaveValue('title');
+	await expect(mapped('headline')).toHaveCount(0);
 });
 
 test('a content type with no Markdown field says so and stops', async ({ page }) => {
