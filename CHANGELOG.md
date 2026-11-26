@@ -16,6 +16,7 @@ through `--version` and `GET /version`.
 
 - The MCP tools and the API document described a content type definition and a query in shapes the API refuses. Both now give the real shape with an example, and say that a field must be `index`ed to be filtered or sorted on.
 - `upload_asset` and `replace_asset` over MCP took no file, so every call was refused.
+- `edit_entry` saves nothing when the draft already holds the values it was given, so an entry isn't shown as having unpublished changes it doesn't have.
 - A restart of the server no longer fails requests for several seconds while someone has the Studio open: live-update streams now end when the server begins to shut down, instead of holding the old process until its deadline (D-252).
 
 ### Changed

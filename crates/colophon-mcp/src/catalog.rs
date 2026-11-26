@@ -308,6 +308,11 @@ pub async fn edit_entry<B: Backend>(api: &B, arguments: Value) -> Outcome {
         content.remove(name);
     }
     content.extend(edit.set);
+    // Nothing to change: the draft already says this. Saving it again would add a revision with
+    // the same content, and the entry would read as having unpublished changes it doesn't have.
+    if content == *current {
+        return Outcome::from_answer(&read);
+    }
     let content = Value::Object(content);
     let key = new_idempotency_key();
     let request = Request::new(Method::PUT, edit.path)
@@ -1221,6 +1226,23 @@ mod tests {
             Some(format!("\"{REVISION}\"").as_str())
         );
         assert!(sent[1].has_key);
+    }
+
+    #[tokio::test]
+    async fn edit_entry_saves_nothing_when_the_draft_already_says_it() {
+        let draft = json!({"data": {"id": ENTRY, "content": {"title": "Hello", "tags": ["a"]}}});
+        let backend = Recording::new(ONE, [draft.clone()]);
+        let outcome = edit_entry(
+            &backend,
+            json!({"collection": "posts", "entry": ENTRY, "if_match": REVISION,
+                   "set": {"title": "Hello", "tags": ["a"]}, "unset": ["note"]}),
+        )
+        .await;
+        assert!(!outcome.is_error, "{}", outcome.text);
+        assert_eq!(outcome.structured, draft, "it answers the draft as it is");
+        let sent = backend.sent();
+        assert_eq!(sent.len(), 1, "only the read: {sent:?}");
+        assert_eq!(sent[0].method, Method::GET);
     }
 
     #[tokio::test]
