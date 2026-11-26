@@ -152,7 +152,6 @@ impl Work {
                 Ok(allowed) => {
                     let mut tools = allowed.tools();
                     let taken: Vec<&str> = Tool::ALL.iter().map(|tool| tool.name()).collect();
-                    tools.push(crate::catalog::edit_entry_definition(false));
                     tools.extend(crate::catalog::definitions(&taken));
                     jsonrpc::success(id, &json!({ "tools": tools }))
                 }

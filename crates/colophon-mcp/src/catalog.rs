@@ -69,12 +69,16 @@ pub fn named(name: &str) -> Option<&'static Op> {
     CATALOG.iter().find(|op| op.name == name)
 }
 
-/// The definitions to list, skipping any name a hand-written tool already uses.
+/// The definitions to list, skipping any name a hand-written tool already uses: `edit_entry`
+/// (D-251), then every operation of the document.
 pub fn definitions(taken: &[&str]) -> Vec<Value> {
-    CATALOG
-        .iter()
-        .filter(|op| !taken.contains(&op.name.as_str()))
-        .map(|op| op.definition(false))
+    std::iter::once(edit_entry_definition(false))
+        .chain(
+            CATALOG
+                .iter()
+                .filter(|op| !taken.contains(&op.name.as_str()))
+                .map(|op| op.definition(false)),
+        )
         .collect()
 }
 
