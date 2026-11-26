@@ -122,6 +122,10 @@ pub(crate) enum Callable {
     Api(&'static crate::catalog::Op),
     /// `list_projects`, in an all-projects session (D-248).
     ListProjects,
+    /// `create_project`, in an all-projects session (D-251).
+    CreateProject,
+    /// `edit_entry`: some of a draft's fields, the rest kept (D-251).
+    EditEntry,
 }
 
 impl Callable {
@@ -130,6 +134,8 @@ impl Callable {
             Self::Tool(tool) => tool.name(),
             Self::Api(op) => op.name.as_str(),
             Self::ListProjects => crate::catalog::LIST_PROJECTS,
+            Self::CreateProject => crate::catalog::CREATE_PROJECT,
+            Self::EditEntry => crate::catalog::EDIT_ENTRY,
         }
     }
 }
@@ -146,6 +152,7 @@ impl Work {
                 Ok(allowed) => {
                     let mut tools = allowed.tools();
                     let taken: Vec<&str> = Tool::ALL.iter().map(|tool| tool.name()).collect();
+                    tools.push(crate::catalog::edit_entry_definition(false));
                     tools.extend(crate::catalog::definitions(&taken));
                     jsonrpc::success(id, &json!({ "tools": tools }))
                 }
@@ -175,6 +182,14 @@ impl Work {
                         crate::catalog::LIST_PROJECTS,
                         "this connection is for one project",
                     ),
+                    Callable::CreateProject if all => {
+                        crate::catalog::create_project(api, arguments).await
+                    }
+                    Callable::CreateProject => tools::Outcome::invalid(
+                        crate::catalog::CREATE_PROJECT,
+                        "this connection is for one project",
+                    ),
+                    Callable::EditEntry => crate::catalog::edit_entry(api, arguments).await,
                 };
                 tracing::info!(
                     tool = tool.name(),
@@ -220,8 +235,13 @@ pub(crate) fn tool_call(mut params: Map<String, Value>) -> Result<(Callable, Val
     if name == crate::catalog::LIST_PROJECTS {
         return Ok((Callable::ListProjects, Value::Object(Map::new())));
     }
-    let tool = Tool::named(name)
-        .map(Callable::Tool)
+    let special = match name.as_str() {
+        crate::catalog::CREATE_PROJECT => Some(Callable::CreateProject),
+        crate::catalog::EDIT_ENTRY => Some(Callable::EditEntry),
+        _ => None,
+    };
+    let tool = special
+        .or_else(|| Tool::named(name).map(Callable::Tool))
         .or_else(|| crate::catalog::named(name).map(Callable::Api))
         .ok_or_else(|| {
             let shown: String = name.chars().take(64).collect();

@@ -707,12 +707,21 @@ impl Backend for Dispatch {
         if let Some(key) = request.idempotency_key_value() {
             builder = builder.header("idempotency-key", key);
         }
-        let body = match request.body() {
-            Some(body) => {
+        let body = match (request.upload_body(), request.body()) {
+            // An upload (D-251): the file's bytes with the two headers the upload contract reads,
+            // and its length, so the upload gate admits it by size as it would over the network.
+            (Some(file), _) => {
+                builder = builder
+                    .header(api::FILE_NAME_HEADER, file.file_name)
+                    .header(header::CONTENT_TYPE, file.content_type)
+                    .header(header::CONTENT_LENGTH, file.bytes.len());
+                Body::from(file.bytes.to_vec())
+            }
+            (None, Some(body)) => {
                 builder = builder.header(header::CONTENT_TYPE, "application/json");
                 Body::from(serde_json::to_vec(body).unwrap_or_default())
             }
-            None => Body::empty(),
+            (None, None) => Body::empty(),
         };
         let mut request = builder.body(body).map_err(|_| api::ApiError::BadUrl)?;
         // The mark of a tool's own request (D-246): an OAuth token is accepted here, in-process,

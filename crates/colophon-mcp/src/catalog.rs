@@ -17,7 +17,7 @@ use std::sync::LazyLock;
 use reqwest::Method;
 use serde_json::{Map, Value, json};
 
-use crate::api::{Backend, Request, new_idempotency_key};
+use crate::api::{Backend, Request, Upload, new_idempotency_key};
 use crate::tools::Outcome;
 
 /// The project-level routes (members, roles, tokens, invitations, audit, audience).
@@ -39,6 +39,9 @@ pub struct Op {
     path_params: Vec<Param>,
     query_params: Vec<Param>,
     body: Option<Value>,
+    /// The body is a file's bytes (an upload, D-251): the tool takes them base64-encoded, with
+    /// the file's name and type.
+    upload: bool,
     if_match: bool,
     idempotency: bool,
     read_only: bool,
@@ -85,8 +88,288 @@ pub fn definitions_all_projects() -> Vec<Value> {
         "inputSchema": {"type": "object", "properties": {}, "additionalProperties": false},
         "annotations": {"title": "List projects", "readOnlyHint": true, "destructiveHint": false, "idempotentHint": true, "openWorldHint": false},
     })];
+    tools.push(json!({
+        "name": CREATE_PROJECT,
+        "title": "Create project",
+        "description": "Creates a project you own, within your account's project limit, and returns its id. Give it content types next (create_content_type), then entries.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "name": {"type": "string", "minLength": 1, "maxLength": 100, "description": "what people call the project, such as `Company website`"},
+                "slug": {"type": "string", "description": "its URL name: lowercase letters and digits in groups joined by single hyphens, such as `company-website`"},
+            },
+            "required": ["name", "slug"],
+            "additionalProperties": false,
+        },
+        "annotations": {"title": "Create project", "readOnlyHint": false, "destructiveHint": false, "idempotentHint": false, "openWorldHint": false},
+    }));
+    tools.push(edit_entry_definition(true));
     tools.extend(CATALOG.iter().map(|op| op.definition(true)));
     tools
+}
+
+/// The project-creating tool of an all-projects session (D-251).
+pub const CREATE_PROJECT: &str = "create_project";
+
+/// `create_project`, for an all-projects session: the API holds it to the account's limit.
+pub async fn create_project<B: Backend>(api: &B, arguments: Value) -> Outcome {
+    let Value::Object(args) = arguments else {
+        return Outcome::invalid(CREATE_PROJECT, "arguments must be an object");
+    };
+    if let Some(unknown) = args
+        .keys()
+        .find(|key| !matches!(key.as_str(), "name" | "slug"))
+    {
+        return Outcome::invalid(CREATE_PROJECT, &format!("unknown argument `{unknown}`"));
+    }
+    let (Some(Value::String(name)), Some(Value::String(slug))) =
+        (args.get("name"), args.get("slug"))
+    else {
+        return Outcome::invalid(CREATE_PROJECT, "`name` and `slug` are required strings");
+    };
+    let body = json!({ "name": name, "slug": slug });
+    let request = Request::new(Method::POST, "/api/v1/projects").json(&body);
+    match api.send(&request).await {
+        Ok(answer) => Outcome::from_answer(&answer),
+        Err(error) => Outcome::from_api_error(CREATE_PROJECT, false, "", &error),
+    }
+}
+
+/// The tool that changes some of a draft's fields and leaves the rest (D-251).
+pub const EDIT_ENTRY: &str = "edit_entry";
+
+/// Every argument `edit_entry` takes.
+const EDIT_ENTRY_ARGUMENTS: [&str; 7] = [
+    "project",
+    "environment",
+    "collection",
+    "entry",
+    "if_match",
+    "set",
+    "unset",
+];
+
+/// `edit_entry`'s definition; with `project` for an all-projects session.
+pub fn edit_entry_definition(all_projects: bool) -> Value {
+    let mut properties = Map::new();
+    let mut required = Vec::new();
+    if all_projects {
+        properties.insert(
+            "project".into(),
+            json!({"type": "string", "format": "uuid", "description": "the project to act in: an id from list_projects"}),
+        );
+        required.push("project");
+    }
+    properties.insert(
+        "environment".into(),
+        json!({"type": "string", "default": "production", "description": "the environment's slug, such as `production`"}),
+    );
+    properties.insert(
+        "collection".into(),
+        json!({"type": "string", "description": "the collection's slug"}),
+    );
+    properties.insert(
+        "entry".into(),
+        json!({"type": "string", "format": "uuid", "description": "the entry's id"}),
+    );
+    properties.insert(
+        "if_match".into(),
+        json!({"type": "string", "description": "the draft's revision you read (its ETag, or revision.id), so you change exactly what you looked at"}),
+    );
+    properties.insert(
+        "set".into(),
+        json!({"type": "object", "description": "the fields to change, by field id, each with its whole new value (a list or an object field is replaced, not merged). Fields you leave out stay as they are"}),
+    );
+    properties.insert(
+        "unset".into(),
+        json!({"type": "array", "items": {"type": "string"}, "maxItems": 100, "uniqueItems": true, "description": "field ids to clear"}),
+    );
+    required.extend(["collection", "entry", "if_match"]);
+    json!({
+        "name": EDIT_ENTRY,
+        "title": "Edit entry",
+        "description": "Changes some fields of a draft and keeps every other field as it is, so a small fix never resends a long body: `set` the fields to change, `unset` the ones to clear. Saves a new revision on top of the one you read (`if_match`); if the draft changed since, nothing is saved. Publishes nothing. The API decides it with your own permissions.",
+        "inputSchema": {"type": "object", "properties": properties, "required": required, "additionalProperties": false},
+        "annotations": {"title": "Edit entry", "readOnlyHint": false, "destructiveHint": false, "idempotentHint": true, "openWorldHint": false},
+    })
+}
+
+/// What an `edit_entry` call asks for, checked: the draft's path, the revision the caller read,
+/// and the fields to change and to clear.
+struct Edit {
+    path: String,
+    revision: String,
+    set: Map<String, Value>,
+    unset: Vec<String>,
+}
+
+/// One path segment of an `edit_entry` call: an id or a slug, or why it can't be one.
+fn segment(
+    args: &Map<String, Value>,
+    name: &str,
+    fallback: Option<&str>,
+) -> Result<String, String> {
+    let value = match (args.get(name), fallback) {
+        (Some(Value::String(text)), _) => text.clone(),
+        (None, Some(fallback)) => fallback.to_owned(),
+        _ => return Err(format!("`{name}` is required")),
+    };
+    let safe = !value.is_empty()
+        && value.len() <= 200
+        && value
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_'));
+    if safe {
+        Ok(value)
+    } else {
+        Err(format!("`{name}` has characters an id or slug can't have"))
+    }
+}
+
+/// Reads an `edit_entry` call's arguments; `project` is the session's own, or `None` when the
+/// call must name one (an all-projects session).
+fn edit_of(project: Option<uuid::Uuid>, args: &Map<String, Value>) -> Result<Edit, String> {
+    if let Some(unknown) = args
+        .keys()
+        .find(|key| !EDIT_ENTRY_ARGUMENTS.contains(&key.as_str()))
+    {
+        return Err(format!("unknown argument `{unknown}`"));
+    }
+    let project = match project {
+        Some(own) => own,
+        None => args
+            .get("project")
+            .and_then(Value::as_str)
+            .and_then(|id| uuid::Uuid::parse_str(id).ok())
+            .ok_or("`project` must be a project id from list_projects")?,
+    };
+    let environment = segment(args, "environment", Some("production"))?;
+    let collection = segment(args, "collection", None)?;
+    let entry = segment(args, "entry", None)?;
+    let Some(Value::String(revision)) = args.get("if_match") else {
+        return Err("`if_match` is required: the revision you read".into());
+    };
+    let set = match args.get("set") {
+        None | Some(Value::Null) => Map::new(),
+        Some(Value::Object(fields)) => fields.clone(),
+        Some(_) => return Err("`set` is an object of field ids and their new values".into()),
+    };
+    let unset = match args.get("unset") {
+        None | Some(Value::Null) => Vec::new(),
+        Some(Value::Array(names)) if names.len() <= 100 => names
+            .iter()
+            .map(|name| name.as_str().map(str::to_owned))
+            .collect::<Option<Vec<String>>>()
+            .ok_or("`unset` is a list of field ids")?,
+        Some(_) => return Err("`unset` is a list of at most 100 field ids".into()),
+    };
+    if set.is_empty() && unset.is_empty() {
+        return Err("name at least one field in `set` or `unset`".into());
+    }
+    if let Some(both) = unset.iter().find(|name| set.contains_key(*name)) {
+        return Err(format!("`{both}` is in both `set` and `unset`"));
+    }
+    Ok(Edit {
+        path: format!(
+            "/api/v1/projects/{project}/environments/{environment}/collections/{collection}/entries/{entry}"
+        ),
+        revision: revision.trim().trim_matches('"').to_owned(),
+        set,
+        unset,
+    })
+}
+
+/// Runs `edit_entry`: reads the draft, changes the named fields in what it read, and saves that
+/// on the revision the caller read. The save's `If-Match` is the caller's revision, so it lands
+/// only when the draft read here is still that revision; otherwise the API's own stale-revision
+/// refusal is the answer and nothing is written.
+pub async fn edit_entry<B: Backend>(api: &B, arguments: Value) -> Outcome {
+    let Value::Object(args) = arguments else {
+        return Outcome::invalid(EDIT_ENTRY, "arguments must be an object");
+    };
+    let own = (!all_projects(api)).then(|| api.project());
+    let edit = match edit_of(own, &args) {
+        Ok(edit) => edit,
+        Err(problem) => return Outcome::invalid(EDIT_ENTRY, &problem),
+    };
+    let read = match api.send(&Request::get(edit.path.clone())).await {
+        Ok(answer) => answer,
+        Err(error) => return Outcome::from_api_error(EDIT_ENTRY, true, "", &error),
+    };
+    let Some(Value::Object(current)) = read.body.pointer("/data/content") else {
+        return Outcome::from_api_error(EDIT_ENTRY, true, "", &crate::api::ApiError::BadAnswer);
+    };
+    let mut content = current.clone();
+    for name in &edit.unset {
+        content.remove(name);
+    }
+    content.extend(edit.set);
+    let content = Value::Object(content);
+    let key = new_idempotency_key();
+    let request = Request::new(Method::PUT, edit.path)
+        .json(&content)
+        .if_match(&edit.revision)
+        .idempotency_key(&key);
+    match api.send(&request).await {
+        Ok(answer) => Outcome::from_answer(&answer),
+        Err(error) => Outcome::from_api_error(EDIT_ENTRY, false, &key, &error),
+    }
+}
+
+const FILE_NAME: &str = "file_name";
+const CONTENT_TYPE: &str = "content_type";
+const CONTENT_BASE64: &str = "content_base64";
+
+/// The largest file an upload tool can carry: what base64 leaves of one message, less room for
+/// the rest of the call.
+const MAX_UPLOAD_BYTES: usize = (crate::jsonrpc::MAX_MESSAGE_BYTES - 64 * 1024) / 4 * 3;
+
+/// A file an upload tool was handed.
+struct File {
+    name: String,
+    content_type: String,
+    bytes: Vec<u8>,
+}
+
+/// The file in an upload tool's arguments, decoded; or what is wrong with them.
+fn file_of(args: &Map<String, Value>) -> Result<File, String> {
+    let text = |name: &str| match args.get(name) {
+        Some(Value::String(text)) if !text.is_empty() => Ok(text.clone()),
+        _ => Err(format!("`{name}` is required")),
+    };
+    let (name, content_type, encoded) =
+        (text(FILE_NAME)?, text(CONTENT_TYPE)?, text(CONTENT_BASE64)?);
+    // Header values: one line of visible ASCII, as HTTP takes them. The API checks the rest.
+    for (field, value) in [(FILE_NAME, &name), (CONTENT_TYPE, &content_type)] {
+        if value.len() > 255 || !value.bytes().all(|b| (0x20..0x7f).contains(&b)) {
+            return Err(format!(
+                "`{field}` is at most 255 plain ASCII characters, on one line"
+            ));
+        }
+    }
+    let bytes = decode_base64(&encoded).ok_or_else(|| {
+        format!("`{CONTENT_BASE64}` isn't base64 (standard alphabet, padding optional)")
+    })?;
+    if bytes.is_empty() {
+        return Err(format!("`{CONTENT_BASE64}` holds no bytes"));
+    }
+    Ok(File {
+        name,
+        content_type,
+        bytes,
+    })
+}
+
+/// Standard base64 (RFC 4648 §4), with or without padding, line breaks ignored. `None` for
+/// anything else.
+fn decode_base64(text: &str) -> Option<Vec<u8>> {
+    use base64::engine::{DecodePaddingMode, Engine as _, GeneralPurpose, GeneralPurposeConfig};
+    const LENIENT_PADDING: GeneralPurpose = GeneralPurpose::new(
+        &base64::alphabet::STANDARD,
+        GeneralPurposeConfig::new().with_decode_padding_mode(DecodePaddingMode::Indifferent),
+    );
+    let compact: String = text.chars().filter(|c| !matches!(c, '\n' | '\r')).collect();
+    LENIENT_PADDING.decode(compact).ok()
 }
 
 /// The project-list tool of an all-projects session (D-248).
@@ -197,6 +480,8 @@ fn build(document: &str) -> Vec<Op> {
             let body = operation["requestBody"]["content"]["application/json"]["schema"]
                 .as_object()
                 .map(|schema| plain(&Value::Object(schema.clone()), &schemas, 0));
+            let upload =
+                operation["requestBody"]["content"]["application/octet-stream"].is_object();
             let words = format!("{name} {}", path.to_ascii_lowercase().replace('-', "_"));
             // A read is never destructive, even one that previews a rollback.
             let destructive = method != Method::GET
@@ -221,6 +506,7 @@ fn build(document: &str) -> Vec<Op> {
                 path_params,
                 query_params,
                 body,
+                upload,
                 if_match,
                 idempotency,
                 read_only,
@@ -309,6 +595,23 @@ impl Op {
         if let Some(body) = &self.body {
             properties.insert("body".into(), body.clone());
             required.push(Value::String("body".into()));
+        }
+        if self.upload {
+            properties.insert(
+                FILE_NAME.into(),
+                json!({"type": "string", "minLength": 1, "maxLength": 255, "description": "the file's name, such as `team-photo.jpg`"}),
+            );
+            properties.insert(
+                CONTENT_TYPE.into(),
+                json!({"type": "string", "description": "the image type you claim for it, such as `image/png`, `image/jpeg` or `image/webp`; the server checks the bytes"}),
+            );
+            properties.insert(
+                CONTENT_BASE64.into(),
+                json!({"type": "string", "minLength": 1, "description": format!("the file's bytes, base64-encoded. One message carries at most {} KiB, so a file of up to about {} KiB fits; a larger one is uploaded in the Studio", crate::jsonrpc::MAX_MESSAGE_BYTES / 1024, MAX_UPLOAD_BYTES / 1024)}),
+            );
+            for name in [FILE_NAME, CONTENT_TYPE, CONTENT_BASE64] {
+                required.push(Value::String(name.into()));
+            }
         }
         if self.if_match {
             properties.insert(
@@ -426,6 +729,12 @@ pub async fn call<B: Backend>(api: &B, op: &'static Op, arguments: Value) -> Out
         .chain(&op.query_params)
         .map(|param| param.name.as_str())
         .chain(["body", "if_match", "confirm", "project"])
+        .chain(
+            op.upload
+                .then_some([FILE_NAME, CONTENT_TYPE, CONTENT_BASE64])
+                .into_iter()
+                .flatten(),
+        )
         .collect();
     if let Some(unknown) = args.keys().find(|key| !allowed.contains(&key.as_str())) {
         return Outcome::invalid(&op.name, &format!("unknown argument `{unknown}`"));
@@ -459,9 +768,24 @@ pub async fn call<B: Backend>(api: &B, op: &'static Op, arguments: Value) -> Out
     if op.body.is_some() && body.is_none() {
         return Outcome::invalid(&op.name, "`body` is required");
     }
+    let file = if op.upload {
+        match file_of(&args) {
+            Ok(file) => Some(file),
+            Err(problem) => return Outcome::invalid(&op.name, &problem),
+        }
+    } else {
+        None
+    };
     let mut request = Request::new(op.method.clone(), path);
     if let Some(body) = body.as_ref() {
         request = request.json(body);
+    }
+    if let Some(file) = file.as_ref() {
+        request = request.upload(Upload {
+            bytes: &file.bytes,
+            file_name: &file.name,
+            content_type: &file.content_type,
+        });
     }
     if op.if_match
         && let Some(Value::String(tag)) = args.get("if_match")
@@ -636,7 +960,13 @@ mod tests {
         assert_eq!(tools[0]["name"], LIST_PROJECTS);
         assert!(tools.len() > 80);
         assert!(tools.iter().all(|tool| tool["name"] != "delete_project"));
-        for tool in &tools[1..] {
+        assert!(tools.iter().any(|tool| tool["name"] == CREATE_PROJECT));
+        assert!(tools.iter().any(|tool| tool["name"] == EDIT_ENTRY));
+        // Every tool but the two that are about no one project takes a project.
+        for tool in tools
+            .iter()
+            .filter(|tool| tool["name"] != LIST_PROJECTS && tool["name"] != CREATE_PROJECT)
+        {
             let required = tool["inputSchema"]["required"].to_string();
             assert!(
                 required.contains("\"project\""),
@@ -665,6 +995,263 @@ mod tests {
                 &format!("/api/v1/projects/{}/members", uuid::Uuid::now_v7())
             )
             .is_err()
+        );
+    }
+
+    /// What reached a [`Recording`] backend: one request, owned.
+    #[derive(Debug, Clone, PartialEq)]
+    struct Sent {
+        method: Method,
+        path: String,
+        body: Option<Value>,
+        file: Option<(String, String, Vec<u8>)>,
+        if_match: Option<String>,
+        has_key: bool,
+    }
+
+    /// A backend that keeps what reaches it and answers from a list, in order; when the list
+    /// runs out, the API is "unreachable".
+    struct Recording {
+        project: uuid::Uuid,
+        sent: std::sync::Mutex<Vec<Sent>>,
+        answers: std::sync::Mutex<std::collections::VecDeque<Value>>,
+    }
+
+    impl Recording {
+        fn new(project: uuid::Uuid, answers: impl IntoIterator<Item = Value>) -> Self {
+            Self {
+                project,
+                sent: std::sync::Mutex::default(),
+                answers: std::sync::Mutex::new(answers.into_iter().collect()),
+            }
+        }
+
+        fn sent(&self) -> Vec<Sent> {
+            self.sent
+                .lock()
+                .expect("invariant: no test panics holding it")
+                .clone()
+        }
+    }
+
+    impl Backend for Recording {
+        fn project(&self) -> uuid::Uuid {
+            self.project
+        }
+
+        fn attempt<'a>(
+            &'a self,
+            request: &'a Request<'a>,
+            _deadline: tokio::time::Instant,
+        ) -> impl Future<Output = Result<crate::api::Answer, crate::api::ApiError>> + Send + 'a
+        {
+            self.sent
+                .lock()
+                .expect("invariant: no test panics holding it")
+                .push(Sent {
+                    method: request.method().clone(),
+                    path: request.path().to_owned(),
+                    body: request.body().cloned(),
+                    file: request.upload_body().map(|file| {
+                        (
+                            file.file_name.to_owned(),
+                            file.content_type.to_owned(),
+                            file.bytes.to_vec(),
+                        )
+                    }),
+                    if_match: request.if_match_tag().map(str::to_owned),
+                    has_key: request.idempotency_key_value().is_some(),
+                });
+            let next = self
+                .answers
+                .lock()
+                .expect("invariant: no test panics holding it")
+                .pop_front();
+            std::future::ready(next.map_or_else(
+                || Err(crate::api::ApiError::Unreachable("no answer left".into())),
+                |body| {
+                    Ok(crate::api::Answer {
+                        body,
+                        replayed: false,
+                    })
+                },
+            ))
+        }
+    }
+
+    const ONE: uuid::Uuid = uuid::Uuid::from_u128(0x0190_a000_0000_7000_8000_0000_0000_0001);
+    const ENTRY: &str = "0190a000-0000-7000-8000-0000000000e1";
+    const REVISION: &str = "0190a000-0000-7000-8000-0000000000f1";
+
+    #[tokio::test]
+    async fn an_upload_sends_the_file_s_bytes_with_its_name_and_type() {
+        let op = named("upload_asset").expect("the upload tool");
+        let definition = op.definition(false);
+        let required = definition["inputSchema"]["required"].to_string();
+        for name in [FILE_NAME, CONTENT_TYPE, CONTENT_BASE64] {
+            assert!(required.contains(name), "{name} is required: {required}");
+        }
+        assert!(named("replace_asset").expect("the replace tool").upload);
+
+        let backend = Recording::new(ONE, [json!({"data": {"id": "a"}})]);
+        // "PNG!" with and without its padding, and across a line break: all the same four bytes.
+        for encoded in ["UE5HIQ==", "UE5HIQ", "UE5H\nIQ=="] {
+            assert_eq!(
+                decode_base64(encoded).as_deref(),
+                Some(&b"PNG!"[..]),
+                "{encoded}"
+            );
+        }
+        let outcome = call(
+            &backend,
+            op,
+            json!({"file_name": "dot.png", "content_type": "image/png", "content_base64": "UE5HIQ=="}),
+        )
+        .await;
+        assert!(!outcome.is_error, "{}", outcome.text);
+        let sent = backend.sent();
+        assert_eq!(sent.len(), 1);
+        assert_eq!(sent[0].method, Method::POST);
+        assert!(
+            sent[0].path.ends_with("/environments/production/assets"),
+            "{}",
+            sent[0].path
+        );
+        assert_eq!(
+            sent[0].file,
+            Some(("dot.png".into(), "image/png".into(), b"PNG!".to_vec()))
+        );
+        assert_eq!(sent[0].body, None, "the body is the file, not JSON");
+        assert!(sent[0].has_key, "an upload carries an idempotency key");
+    }
+
+    #[tokio::test]
+    async fn an_upload_that_isn_t_a_file_is_refused_before_anything_is_sent() {
+        let op = named("upload_asset").expect("the upload tool");
+        let backend = Recording::new(ONE, []);
+        for arguments in [
+            json!({}),
+            json!({"file_name": "dot.png", "content_type": "image/png"}),
+            json!({"file_name": "dot.png", "content_type": "image/png", "content_base64": "not base64!"}),
+            json!({"file_name": "dot.png", "content_type": "image/png", "content_base64": "===="}),
+            // A header value can't hold a line break: no second header rides in on a name.
+            json!({"file_name": "dot.png\r\nX-Evil: 1", "content_type": "image/png", "content_base64": "UE5HIQ=="}),
+            json!({"file_name": "dot.png", "content_type": "image/png\nx", "content_base64": "UE5HIQ=="}),
+        ] {
+            let outcome = call(&backend, op, arguments.clone()).await;
+            assert!(outcome.is_error, "{arguments} was accepted");
+        }
+        assert!(backend.sent().is_empty(), "a request was sent");
+        // A tool that isn't an upload doesn't take a file.
+        let other = named("list_assets").expect("a read");
+        let outcome = call(&backend, other, json!({"file_name": "x"})).await;
+        assert!(outcome.is_error && backend.sent().is_empty());
+    }
+
+    #[tokio::test]
+    async fn create_project_posts_the_name_and_slug_and_only_across_projects() {
+        let backend = Recording::new(uuid::Uuid::nil(), [json!({"data": {"id": "p"}})]);
+        let outcome = create_project(
+            &backend,
+            json!({"name": "Company website", "slug": "company-website"}),
+        )
+        .await;
+        assert!(!outcome.is_error, "{}", outcome.text);
+        let sent = backend.sent();
+        assert_eq!(sent.len(), 1);
+        assert_eq!(
+            (&sent[0].method, sent[0].path.as_str()),
+            (&Method::POST, "/api/v1/projects")
+        );
+        assert_eq!(
+            sent[0].body,
+            Some(json!({"name": "Company website", "slug": "company-website"}))
+        );
+        for arguments in [
+            json!({}),
+            json!({"name": "x"}),
+            json!({"name": "x", "slug": 1}),
+            json!({"name": "x", "slug": "x", "owner": "someone-else"}),
+        ] {
+            assert!(create_project(&backend, arguments).await.is_error);
+        }
+        assert_eq!(backend.sent().len(), 1, "a refused call sent something");
+        // A one-project connection can't reach the project list at all (the path is refused).
+        assert!(crate::api::full_path(ONE, "/api/v1/projects").is_err());
+    }
+
+    #[tokio::test]
+    async fn edit_entry_changes_the_named_fields_and_keeps_the_rest() {
+        let draft = json!({"data": {"id": ENTRY, "content": {
+            "title": "Hello", "body": "a long body", "tags": ["a", "b"], "status": "old note"
+        }}});
+        let backend = Recording::new(ONE, [draft, json!({"data": {"id": ENTRY}})]);
+        let outcome = edit_entry(
+            &backend,
+            json!({"collection": "posts", "entry": ENTRY, "if_match": format!("\"{REVISION}\""),
+                   "set": {"title": "Hello again", "tags": ["c"]}, "unset": ["status"]}),
+        )
+        .await;
+        assert!(!outcome.is_error, "{}", outcome.text);
+        let sent = backend.sent();
+        let path = format!(
+            "/api/v1/projects/{ONE}/environments/production/collections/posts/entries/{ENTRY}"
+        );
+        assert_eq!(sent.len(), 2);
+        assert_eq!(
+            (&sent[0].method, sent[0].path.as_str()),
+            (&Method::GET, path.as_str())
+        );
+        assert_eq!(
+            (&sent[1].method, sent[1].path.as_str()),
+            (&Method::PUT, path.as_str())
+        );
+        assert_eq!(
+            sent[1].body,
+            Some(json!({"title": "Hello again", "body": "a long body", "tags": ["c"]})),
+            "set replaces whole values, unset clears, everything else is what was read"
+        );
+        // The save stands on the revision the caller read, not on whatever the read found.
+        assert_eq!(
+            sent[1].if_match.as_deref(),
+            Some(format!("\"{REVISION}\"").as_str())
+        );
+        assert!(sent[1].has_key);
+    }
+
+    #[tokio::test]
+    async fn edit_entry_refuses_what_it_can_t_mean_before_anything_is_sent() {
+        let backend = Recording::new(ONE, []);
+        for arguments in [
+            json!({"collection": "posts", "entry": ENTRY, "if_match": REVISION}),
+            json!({"collection": "posts", "entry": ENTRY, "if_match": REVISION, "set": {}, "unset": []}),
+            json!({"collection": "posts", "entry": ENTRY, "set": {"title": "x"}}),
+            json!({"collection": "posts", "entry": "../../x", "if_match": REVISION, "set": {"title": "x"}}),
+            json!({"collection": "posts/../roles", "entry": ENTRY, "if_match": REVISION, "set": {"title": "x"}}),
+            json!({"collection": "posts", "entry": ENTRY, "if_match": REVISION, "set": {"title": "x"}, "unset": ["title"]}),
+            json!({"collection": "posts", "entry": ENTRY, "if_match": REVISION, "set": ["title"]}),
+            json!({"collection": "posts", "entry": ENTRY, "if_match": REVISION, "set": {"title": "x"}, "body": {}}),
+        ] {
+            let outcome = edit_entry(&backend, arguments.clone()).await;
+            assert!(outcome.is_error, "{arguments} was accepted");
+        }
+        assert!(backend.sent().is_empty(), "a request was sent");
+        // Across projects it names its project, and nothing is saved when the read fails.
+        let all = Recording::new(uuid::Uuid::nil(), []);
+        let no_project = json!({"collection": "posts", "entry": ENTRY, "if_match": REVISION, "set": {"title": "x"}});
+        assert!(edit_entry(&all, no_project).await.is_error);
+        assert_eq!(all.sent().len(), 0, "a request was sent without a project");
+        let unreachable = edit_entry(
+            &all,
+            json!({"project": ONE.to_string(), "collection": "posts", "entry": ENTRY, "if_match": REVISION, "set": {"title": "x"}}),
+        )
+        .await;
+        assert!(unreachable.is_error);
+        // The read is tried again while the API can't be reached; no save ever follows it.
+        assert_ne!(all.sent().len(), 0, "the read never went out");
+        assert!(
+            all.sent().iter().all(|sent| sent.method == Method::GET),
+            "something other than the read went out"
         );
     }
 }

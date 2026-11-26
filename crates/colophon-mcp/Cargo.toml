@@ -13,6 +13,8 @@ name = "colophon-mcp"
 path = "src/main.rs"
 
 [dependencies]
+# Decodes the file an upload tool is handed (D-251).
+base64.workspace = true
 reqwest.workspace = true
 serde.workspace = true
 serde_json.workspace = true

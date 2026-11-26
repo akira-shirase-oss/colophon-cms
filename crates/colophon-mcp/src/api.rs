@@ -150,6 +150,18 @@ pub struct Answer {
     pub replayed: bool,
 }
 
+/// A file sent as a request's body (an upload, D-251): its bytes, and the name and claimed type
+/// the upload contract takes in `X-Colophon-File-Name` and `Content-Type`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Upload<'a> {
+    /// The file's bytes.
+    pub bytes: &'a [u8],
+    /// The file's name.
+    pub file_name: &'a str,
+    /// The type the caller claims for it, such as `image/png`; the server verifies the bytes.
+    pub content_type: &'a str,
+}
+
 /// One request: a method, a path under `{P}`, and what goes with it.
 #[derive(Debug)]
 pub struct Request<'a> {
@@ -157,6 +169,7 @@ pub struct Request<'a> {
     path: String,
     query: Vec<(&'static str, &'a str)>,
     body: Option<&'a Value>,
+    upload: Option<Upload<'a>>,
     if_match: Option<String>,
     idempotency_key: Option<&'a str>,
 }
@@ -174,6 +187,7 @@ impl<'a> Request<'a> {
             path: path.into(),
             query: Vec::new(),
             body: None,
+            upload: None,
             if_match: None,
             idempotency_key: None,
         }
@@ -190,6 +204,13 @@ impl<'a> Request<'a> {
     #[must_use]
     pub fn json(mut self, body: &'a Value) -> Self {
         self.body = Some(body);
+        self
+    }
+
+    /// Sends `file` as the body, with the upload contract's two headers, instead of JSON.
+    #[must_use]
+    pub fn upload(mut self, file: Upload<'a>) -> Self {
+        self.upload = Some(file);
         self
     }
 
@@ -227,6 +248,11 @@ impl<'a> Request<'a> {
         self.body
     }
 
+    /// The file sent as the body, when one is.
+    pub fn upload_body(&self) -> Option<Upload<'a>> {
+        self.upload
+    }
+
     /// The `If-Match` value, when sent: one strong `ETag`, quotes included.
     pub fn if_match_tag(&self) -> Option<&str> {
         self.if_match.as_deref()
@@ -237,6 +263,9 @@ impl<'a> Request<'a> {
         self.idempotency_key
     }
 }
+
+/// The header an upload names its file in.
+pub const FILE_NAME_HEADER: &str = "x-colophon-file-name";
 
 /// Carries a tool's [`Request`] to Colophon's API: [`Api`] sends it over HTTP from a
 /// subprocess or a remote caller; the hosted transport ([`crate::remote`], D-121) gets one
@@ -375,7 +404,12 @@ impl Backend for Api {
         if let Some(key) = request.idempotency_key {
             builder = builder.header("idempotency-key", key);
         }
-        if let Some(body) = request.body {
+        if let Some(file) = request.upload {
+            builder = builder
+                .header(FILE_NAME_HEADER, file.file_name)
+                .header(header::CONTENT_TYPE, file.content_type)
+                .body(file.bytes.to_vec());
+        } else if let Some(body) = request.body {
             builder = builder.json(body);
         }
         let limit = deadline.min(Instant::now() + ATTEMPT_TIMEOUT);
