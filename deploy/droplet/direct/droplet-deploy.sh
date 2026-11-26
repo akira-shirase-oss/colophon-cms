@@ -46,10 +46,25 @@ log "unpacked $version ($("$release/bin/colophon-server" --version 2>/dev/null |
 
 old=$(current_version)
 if [[ -s $CREDS/migration_database_url ]]; then
-  state=$("$release/bin/colophon" admin migrate-status --database-url-file "$CREDS/migration_database_url" --json 2>/dev/null | jq -r '.data.status // empty' || true)
+  # A database that answers slowly once (a cold connection to a managed Postgres) is no reason to fail a
+  # deploy: three tries at each step, five seconds apart. Nothing has switched yet, and a migration that was
+  # cut short runs again from where it stopped.
+  state=""
+  for attempt in 1 2 3; do
+    state=$("$release/bin/colophon" admin migrate-status --database-url-file "$CREDS/migration_database_url" --json 2>/dev/null | jq -r '.data.status // empty' || true)
+    [[ -n $state ]] && break
+    log "can't read migration status (try $attempt of 3)"
+    if ((attempt < 3)); then sleep 5; fi
+  done
   case "$state" in current | behind) ;; unknown) die "the database has migrations this build doesn't know: refusing";; *) die "can't read migration status: nothing switched";; esac
   log "migrating (old release keeps serving)"
-  "$release/bin/colophon" admin migrate --database-url-file "$CREDS/migration_database_url" || die "migration failed: nothing switched; ${old:-none} still serves"
+  migrated=0
+  for attempt in 1 2 3; do
+    if "$release/bin/colophon" admin migrate --database-url-file "$CREDS/migration_database_url"; then migrated=1; break; fi
+    log "the migration didn't finish (try $attempt of 3)"
+    if ((attempt < 3)); then sleep 5; fi
+  done
+  ((migrated)) || die "migration failed: nothing switched; ${old:-none} still serves"
 fi
 [[ -n $old && $old != "$version" ]] && echo "$old" >"$ROOT/previous"
 log "switching ${old:-nothing} -> $version"

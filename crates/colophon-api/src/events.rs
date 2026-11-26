@@ -382,6 +382,7 @@ pub(crate) async fn delivery_events(
     Path(path): Path<EventsPath>,
     crate::admission::ClientAddress(address): crate::admission::ClientAddress,
 ) -> Result<Response, ApiError> {
+    refuse_while_draining(&state)?;
     let services = services(&state)?;
     let project = Uuid::try_parse(&path.project).map_err(|_| ApiError::NotFound)?;
     // The environment must resolve exactly as a delivery read would, so an unknown project or
@@ -400,7 +401,9 @@ pub(crate) async fn delivery_events(
         })?;
 
     let limits = services.events.limits();
-    let frames = public_frames(subscription, environment.id, limits).map(Ok::<_, Infallible>);
+    let frames = public_frames(subscription, environment.id, limits)
+        .take_until(drain_of(&state))
+        .map(Ok::<_, Infallible>);
 
     let mut response = Sse::new(frames)
         .keep_alive(
@@ -487,6 +490,7 @@ pub(crate) async fn events(
     caller: SignedIn,
     Path(path): Path<EventsPath>,
 ) -> Result<Response, ApiError> {
+    refuse_while_draining(&state)?;
     let tx = entries::open(&state, caller, &path.project, &path.environment).await?;
     let (project, environment) = (tx.project, tx.environment);
     tx.commit().await.map_err(ApiError::from_db)?;
@@ -513,6 +517,7 @@ pub(crate) async fn events(
         }
     };
     let frames = frames(subscription, environment, limits, Box::new(still_member))
+        .take_until(drain_of(&state))
         .map(|frame| Ok::<_, Infallible>(frame.into_event()));
 
     let mut response = Sse::new(frames)
@@ -625,6 +630,26 @@ fn frames(
     stream::once(async { Out::Hello }).chain(changes)
 }
 
+/// A stream opened while the server is shutting down would be cut at once: the client is told
+/// to come back (503), and finds the next process.
+fn refuse_while_draining(state: &AppState) -> Result<(), ApiError> {
+    if state.readiness.is_draining() {
+        return Err(ApiError::Unavailable(
+            "this server is restarting: connect again in a moment",
+        ));
+    }
+    Ok(())
+}
+
+/// Resolves when the server begins to drain. Every live stream ends on it: a stream is a
+/// response that never finishes by itself, so without this a restart keeps the old process for
+/// the whole shutdown grace with its listener already closed, and requests fail meanwhile. The
+/// client's `EventSource` connects again and reaches the new process.
+fn drain_of(state: &AppState) -> impl Future<Output = ()> + Send + 'static {
+    let readiness = state.readiness.clone();
+    async move { readiness.until_draining().await }
+}
+
 /// `sleep_until`, or never when there is no deadline.
 async fn until(deadline: Option<Instant>) {
     match deadline {
@@ -699,6 +724,34 @@ mod tests {
                 .is_err(),
             "hints stay inside their project"
         );
+    }
+
+    #[tokio::test]
+    async fn a_live_stream_ends_when_the_server_begins_to_drain() {
+        let bus = EventBus::new(limits());
+        let project = Uuid::now_v7();
+        let environment = Uuid::now_v7();
+        let state = AppState::without_services(crate::Readiness::new("all", false));
+        let subscription = bus.subscribe_public(project, "198.51.100.1").expect("room");
+        let mut frames = Box::pin(
+            public_frames(subscription, environment, limits()).take_until(drain_of(&state)),
+        );
+        assert!(frames.next().await.is_some(), "hello comes first");
+        // Open and quiet: nothing ends it while the server runs.
+        assert!(
+            tokio::time::timeout(Duration::from_millis(20), frames.next())
+                .await
+                .is_err(),
+            "the stream ended with the server running"
+        );
+        assert!(refuse_while_draining(&state).is_ok());
+        state.readiness.begin_drain();
+        let ended = tokio::time::timeout(Duration::from_secs(1), frames.next())
+            .await
+            .expect("the stream ends when the drain begins, not at the shutdown deadline");
+        assert!(ended.is_none(), "a frame came instead of the end");
+        // And a stream asked for now is told to come back, not opened and cut.
+        assert!(refuse_while_draining(&state).is_err());
     }
 
     #[tokio::test]
