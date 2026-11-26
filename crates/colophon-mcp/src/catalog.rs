@@ -499,8 +499,9 @@ fn build(document: &str) -> Vec<Op> {
                 .iter()
                 .any(|segment| path.contains(segment));
             let read_only = method == Method::GET;
-            let confirm =
-                !read_only && (destructive || people || DECIDES.iter().any(|w| name.contains(w)));
+            // Whole words of the name: `issue_preview` holds "review" and decides nothing.
+            let decides = name.split('_').any(|word| DECIDES.contains(&word));
+            let confirm = !read_only && (destructive || people || decides);
             let summary = operation["summary"]
                 .as_str()
                 .or_else(|| operation["description"].as_str())
@@ -948,6 +949,34 @@ mod tests {
             "{} with confirm: true was not sent",
             op.name
         );
+    }
+
+    #[test]
+    fn a_preview_needs_no_yes_but_a_review_does() {
+        // "preview" holds "review": opening or renewing a preview of a draft, or saying where
+        // previews open, decides nothing for readers or for people's access (D-254).
+        for name in [
+            "issue_preview",
+            "new_preview_code",
+            "renew_preview",
+            "set_preview_target",
+        ] {
+            let op = named(name).unwrap_or_else(|| panic!("{name} is a tool"));
+            assert!(!op.confirm && !op.destructive, "{name} asks for a yes");
+        }
+        // What does decide still asks, and ending a preview is still a removal.
+        for name in [
+            "review_changeset",
+            "submit_changeset",
+            "publish_changeset",
+            "schedule_changeset",
+            "approve_migration",
+            "apply_migration",
+            "revoke_preview",
+        ] {
+            let op = named(name).unwrap_or_else(|| panic!("{name} is a tool"));
+            assert!(op.confirm, "{name} no longer asks for a yes");
+        }
     }
 
     #[test]
